@@ -1,0 +1,76 @@
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { LucideIcon } from 'lucide-react'
+
+/**
+ * Keys of the vertical modules shipped in `src/verticals/`.
+ *
+ * A key is stored on `accounts.vertical_key` (migration 047) and is how
+ * the account installs a vertical. This union grows one entry per
+ * shipped vertical — barbería is the first.
+ */
+export type VerticalKey = 'barberia'
+
+/**
+ * Sidebar entry contributed by a vertical. `labelKey` resolves against
+ * the `Sidebar` namespace of the i18n catalogues (messages/*.json).
+ */
+export interface VerticalNavItem {
+  /** Dashboard route that renders the vertical UI. */
+  href: string
+  labelKey: string
+  icon: LucideIcon
+}
+
+/**
+ * Static, client-safe description of a vertical: identity + nav.
+ * Runtime behaviour (inbound handling, installers) lives server-side —
+ * see `dispatch.ts` — so this can be imported by client components.
+ */
+export interface VerticalManifest {
+  key: VerticalKey
+  /** Display name. Spanish is the product language for SHIFT deployments. */
+  name: string
+  /** One-liner shown on setup / settings surfaces. */
+  description: string
+  /**
+   * Sidebar section. Optional: a vertical can be backend-only (an
+   * automation pack, for example) and ship without its own nav entry.
+   */
+  nav?: VerticalNavItem
+}
+
+/** Row of `booking_sessions` as seen by the dispatcher. */
+export interface VerticalSession {
+  id: string
+  /** Dialog state so far — free-form; the vertical controller owns it. */
+  state: Record<string, unknown>
+  /** ISO timestamp; the session is only active while this is in the future. */
+  expiresAt: string
+}
+
+/**
+ * Everything a vertical handler gets to process one inbound message.
+ * Mirrors what the core pipelines (flows / AI auto-reply) receive.
+ */
+export interface VerticalInboundContext {
+  accountId: string
+  conversationId: string
+  contactId: string
+  /** Owner of the account's WhatsApp config (same convention as flows/AI). */
+  configOwnerUserId: string
+  /** Meta message id, when the transport provided one. */
+  inboundMessageId?: string
+  /** Service-role client. Handlers run server-side only. */
+  db: SupabaseClient
+  /** Active booking session, when one exists. */
+  session: VerticalSession | null
+}
+
+export interface VerticalDispatchResult {
+  /** True when the vertical took ownership of this inbound message. */
+  consumed: boolean
+}
+
+export type VerticalInboundHandler = (
+  ctx: VerticalInboundContext,
+) => Promise<VerticalDispatchResult>

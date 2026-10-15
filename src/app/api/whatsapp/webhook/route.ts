@@ -17,6 +17,7 @@ import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
 import { resumeAwaitingReply, runAutomationsForTrigger } from '@/lib/automations/engine'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
+import { dispatchInboundToVertical } from '@/lib/verticals/dispatch'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
 import {
   handleTemplateWebhookChange,
@@ -898,6 +899,25 @@ async function processMessage(
   })
   const flowConsumed = flowResult.consumed
 
+  // Vertical module dispatch (src/lib/verticals/*, migration 047).
+  // Runs between flows and automations: flows still win, and when the
+  // vertical consumes, the content-level automation triggers and the
+  // AI auto-reply below stand down — the vertical owns the thread
+  // (e.g. an active booking conversation). Awaited because we need
+  // `consumed` before the rest of the pipeline; the dispatcher has its
+  // own try/catch and never throws. Accounts without a vertical
+  // early-exit on a single account lookup.
+  const verticalResult = flowConsumed
+    ? { consumed: false }
+    : await dispatchInboundToVertical({
+        accountId,
+        conversationId: conversation.id,
+        contactId: contactRecord.id,
+        configOwnerUserId,
+        inboundMessageId: message.id,
+      })
+  const verticalConsumed = verticalResult.consumed
+
   // Fire any automations that react to this webhook event. All dispatches
   // run here (not earlier) so the contact, conversation, and inbound
   // message all exist before any step — including send_message — runs.
@@ -911,9 +931,9 @@ async function processMessage(
   // message, that suppresses the content-level triggers and AI reply
   // below so the customer doesn't get a second bot answering. Runs
   // BEFORE the trigger dispatch so the message that parks a run can
-  // never also resume it. Flows still win: only checked if no flow
-  // consumed the message. Never throws.
-  const automationConsumed = flowConsumed
+  // never also resume it. Flows and the vertical module still win:
+  // only checked if neither consumed the message. Never throws.
+  const automationConsumed = flowConsumed || verticalConsumed
     ? false
     : await resumeAwaitingReply({
         accountId,
@@ -924,7 +944,7 @@ async function processMessage(
           interactive_reply_id: interactiveReplyId ?? undefined,
         },
       })
-  const contentConsumed = flowConsumed || automationConsumed
+  const contentConsumed = flowConsumed || verticalConsumed || automationConsumed
 
   const automationTriggers: (
     | 'new_contact_created'
@@ -933,8 +953,9 @@ async function processMessage(
     | 'keyword_match'
     | 'interactive_reply'
   )[] = []
-  // Content-level triggers are suppressed when a flow or a waiting
-  // automation consumed the message — see the comment blocks above.
+  // Content-level triggers are suppressed when a flow, the vertical
+  // module, or a waiting automation consumed the message — see the
+  // comment blocks above.
   if (!contentConsumed) {
     automationTriggers.push('new_message_received', 'keyword_match')
     // Interactive tap → fire the interactive_reply trigger too (only
@@ -977,8 +998,9 @@ async function processMessage(
   }
 
   // AI auto-reply. Runs only for plain-text inbound the deterministic
-  // flow runner did NOT consume (flows win over the LLM), and only when
-  // the account has enabled it. Awaited inside `after()` (same reason as
+  // layers did NOT consume — the flow runner and the vertical module
+  // win over the LLM — and only when the account has enabled it.
+  // Awaited inside `after()` (same reason as
   // the webhook dispatch below); `dispatchInboundToAiReply` owns its
   // eligibility gates + try/catch and never throws.
   if (!contentConsumed && !interactiveReplyId && inboundText.trim()) {

@@ -43,6 +43,9 @@ interface AccountSummary {
   /** Default deal currency (ISO-4217). NOT NULL DEFAULT 'USD' in the
    *  DB (migration 021); narrowed to DEFAULT_CURRENCY when absent. */
   default_currency: string;
+  /** Installed vertical module key (migration 047). Null for classic
+   *  accounts without a vertical; drives per-vertical navigation. */
+  vertical_key: string | null;
 }
 
 /**
@@ -235,13 +238,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // account name lookup itself can't.
         let accountRow: AccountSummary | null = null;
         if (data.account_id) {
-          const { data: account, error: accountErr } = await supabase
+          let accountRes = await supabase
             .from("accounts")
-            // default_currency added in migration 021; narrowed to the
-            // USD fallback below for older schemas where it reads null.
-            .select("id, name, default_currency")
+            // default_currency added in migration 021; vertical_key in
+            // 047. Both are narrowed below for older schemas where they
+            // read null — and a schema without the 047 column retries
+            // once without it so the account strip keeps working while
+            // a deployment lags its migration.
+            .select("id, name, default_currency, vertical_key")
             .eq("id", data.account_id)
             .maybeSingle();
+          if (accountRes.error?.code === "42703") {
+            accountRes = await supabase
+              .from("accounts")
+              .select("id, name, default_currency")
+              .eq("id", data.account_id)
+              .maybeSingle();
+          }
+          const account = accountRes.data;
+          const accountErr = accountRes.error;
           if (accountErr) {
             console.error("[AuthProvider] fetchAccount error:", {
               message: accountErr.message,
@@ -254,6 +269,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               id: account.id,
               name: account.name,
               default_currency: account.default_currency ?? DEFAULT_CURRENCY,
+              vertical_key: account.vertical_key ?? null,
             };
           }
         }
