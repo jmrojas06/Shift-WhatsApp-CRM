@@ -133,6 +133,50 @@ BEGIN
       'idx_automation_pending_awaiting_reply is missing — migration 045 did not apply';
   END IF;
 
+  -- 047 installs accounts.vertical_key and the booking_* schema. The
+  -- load-bearing bit is the double-booking guard: if the EXCLUDE
+  -- constraint silently no-ops (typo'd name/opclass), two customers can
+  -- hold the same barber at the same time and nothing else notices.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'accounts'
+      AND column_name = 'vertical_key'
+  ) THEN
+    RAISE EXCEPTION
+      'accounts.vertical_key is missing — migration 047 did not apply';
+  END IF;
+
+  IF to_regclass('public.booking_appointments') IS NULL
+     OR to_regclass('public.booking_sessions') IS NULL
+     OR to_regclass('public.booking_events') IS NULL THEN
+    RAISE EXCEPTION
+      'booking_* tables are missing — migration 047 did not apply';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'booking_appointments_no_overlap'
+      AND conrelid = 'public.booking_appointments'::regclass
+      AND contype = 'x'
+  ) THEN
+    RAISE EXCEPTION
+      'booking_appointments_no_overlap is missing — migration 047 did not apply';
+  END IF;
+
+  IF NOT has_function_privilege(
+       'service_role', 'public.log_booking_appointment_event()', 'EXECUTE'
+     )
+     OR has_function_privilege(
+       'anon', 'public.log_booking_appointment_event()', 'EXECUTE'
+     )
+     OR has_function_privilege(
+       'authenticated', 'public.log_booking_appointment_event()', 'EXECUTE'
+     ) THEN
+    RAISE EXCEPTION
+      'log_booking_appointment_event grants are wrong — migration 047 did not apply';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
