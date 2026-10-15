@@ -27,6 +27,7 @@ import {
   Zap,
 } from "lucide-react";
 import type { AccountRole } from "@/lib/auth/roles";
+import { getVerticalNav } from "@/lib/verticals/registry";
 
 // Per-role chip metadata used in the sidebar's account strip + the
 // Members tab roster. Keeping this near both consumers in a single
@@ -132,6 +133,15 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
     !!account?.name &&
     account.name !== profile?.full_name;
 
+  // Modules installed for this account's vertical (e.g. the barbería
+  // agenda) render inline with the primary nav. Empty for classic
+  // accounts — nav entries appear only once `vertical_key` is set on
+  // the account (migration 047).
+  const navItemsWithVerticals: NavItem[] = [
+    ...navItems,
+    ...getVerticalNav(account?.vertical_key ?? null),
+  ];
+
   // Close the drawer when route changes — users opened it to navigate,
   // so once they pick a destination the drawer should get out of the way.
   useEffect(() => {
@@ -208,7 +218,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
         {/* Main navigation */}
         <nav className="flex-1 overflow-y-auto px-3 py-4">
           <ul className="flex flex-col gap-1">
-            {navItems.map((item) => {
+            {navItemsWithVerticals.map((item) => {
               const isActive =
                 pathname === item.href ||
                 (item.href !== "/dashboard" && pathname.startsWith(item.href));
