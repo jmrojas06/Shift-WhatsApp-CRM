@@ -30,6 +30,7 @@ on:
     paths:
       - 'supabase/**'
       - '.github/workflows/migrations.yml'
+  workflow_dispatch:
 
 concurrency:
   group: migrations-${{ github.ref }}
