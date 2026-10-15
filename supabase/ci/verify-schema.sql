@@ -164,6 +164,23 @@ BEGIN
       'booking_appointments_no_overlap is missing — migration 047 did not apply';
   END IF;
 
+  -- The partial unique index behind "one active booking session per
+  -- (account, contact)" — the dispatcher's single-row lookup contract
+  -- for the Phase 2 booking controller. Dropping the WHERE clause (or
+  -- the UNIQUE) would silently allow two live sessions and the bot
+  -- would lose track of which dialog it is driving.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND tablename = 'booking_sessions'
+      AND indexname = 'idx_booking_sessions_one_active'
+      AND indexdef LIKE 'CREATE UNIQUE INDEX%'
+      AND indexdef LIKE '%WHERE%'
+  ) THEN
+    RAISE EXCEPTION
+      'idx_booking_sessions_one_active is missing or not partial-unique — migration 047 did not apply';
+  END IF;
+
   IF NOT has_function_privilege(
        'service_role', 'public.log_booking_appointment_event()', 'EXECUTE'
      )
