@@ -13,12 +13,13 @@
 // ============================================================
 
 import { useCallback, useEffect, useState } from 'react'
-import { Loader2, Scissors, Users } from 'lucide-react'
+import { CalendarDays, Loader2, Scissors, Users } from 'lucide-react'
 
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/use-auth'
 import { formatCurrency } from '@/lib/currency'
 import { GatedButton } from '@/components/ui/gated-button'
+import { Button } from '@/components/ui/button'
 import {
   Card,
   CardAction,
@@ -27,10 +28,26 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 
 import { BARBERIA_TEXTS as T } from '@/verticals/barberia/texts'
+import type { AppointmentStatus } from '@/verticals/barberia/appointments'
+import { formatLongDate, formatTimeLabel } from '@/verticals/barberia/agent/format'
+import {
+  addDaysToKey,
+  startOfZonedDay,
+  zonedDateKey,
+  zonedParts,
+} from '@/verticals/barberia/agent/time'
 import {
   BARBERIA_AI_PROMPT,
   type BarberiaInstallReport,
@@ -53,8 +70,50 @@ interface BookingStaffRow {
   is_active: boolean
 }
 
+interface AppointmentRow {
+  id: string
+  starts_at: string
+  status: string
+  service_id: string | null
+  staff_id: string | null
+  contact_id: string | null
+}
+
+interface AgendaAppointment {
+  id: string
+  starts_at: string
+  status: AppointmentStatus
+  serviceName: string | null
+  staffName: string | null
+  contactName: string | null
+  contactPhone: string | null
+}
+
+const STATUS_LABELS: Record<AppointmentStatus, string> = {
+  pending: T.agendaStatusPending,
+  confirmed: T.agendaStatusConfirmed,
+  completed: T.agendaStatusCompleted,
+  no_show: T.agendaStatusNoShow,
+  cancelled: T.agendaStatusCancelled,
+}
+
+const STATUS_BADGE_VARIANTS: Record<
+  AppointmentStatus,
+  'default' | 'secondary' | 'outline' | 'destructive'
+> = {
+  pending: 'outline',
+  confirmed: 'default',
+  completed: 'secondary',
+  no_show: 'destructive',
+  cancelled: 'outline',
+}
+
+/** Estados desde los que la agenda permite actuar. */
+const EDITABLE_STATUSES: readonly AppointmentStatus[] = ['pending', 'confirmed']
+
 export default function BarberiaPage() {
-  const { account, accountId, canEditSettings, defaultCurrency } = useAuth()
+  const { account, accountId, canEditSettings, canSendMessages, defaultCurrency } =
+    useAuth()
   const supabase = createClient()
 
   const [services, setServices] = useState<BookingServiceRow[]>([])
@@ -65,7 +124,19 @@ export default function BarberiaPage() {
   const [report, setReport] = useState<BarberiaInstallReport | null>(null)
   const [installError, setInstallError] = useState<string | null>(null)
 
+  const [appointments, setAppointments] = useState<AgendaAppointment[]>([])
+  const [agendaLoading, setAgendaLoading] = useState(true)
+  const [agendaFailed, setAgendaFailed] = useState(false)
+  const [agendaError, setAgendaError] = useState<string | null>(null)
+  const [changingId, setChangingId] = useState<string | null>(null)
+  const [pastPrompt, setPastPrompt] = useState<{
+    appointment: AgendaAppointment
+    status: AppointmentStatus
+  } | null>(null)
+
   const isBarberia = account?.vertical_key === 'barberia'
+  /** Owner/admin/agent mueven citas; viewer es solo-lectura. */
+  const canManageAppointments = canSendMessages
 
   const load = useCallback(async () => {
     if (!accountId || !isBarberia) return
@@ -92,9 +163,154 @@ export default function BarberiaPage() {
     setListsLoading(false)
   }, [accountId, isBarberia, supabase])
 
+  /**
+   * Agenda del día en America/Bogota: ventana [inicio del día local,
+   * inicio del día siguiente). Nombre de servicio/barbero/contacto se
+   * resuelve con consultas aparte — sin embeds de PostgREST, que se
+   * rompen cuando el schema cache está frío (ver auth/account.ts).
+   */
+  const loadAgenda = useCallback(async () => {
+    if (!accountId || !isBarberia) return
+    setAgendaLoading(true)
+    setAgendaFailed(false)
+    try {
+      const dayKey = zonedDateKey(new Date())
+      const from = startOfZonedDay(dayKey)
+      const to = startOfZonedDay(addDaysToKey(dayKey, 1))
+      const { data, error } = await supabase
+        .from('booking_appointments')
+        .select('id, starts_at, status, service_id, staff_id, contact_id')
+        .eq('account_id', accountId)
+        .gte('starts_at', from.toISOString())
+        .lt('starts_at', to.toISOString())
+        .order('starts_at', { ascending: true })
+
+      if (error) {
+        setAgendaFailed(true)
+        return
+      }
+
+      const rows = (data ?? []) as AppointmentRow[]
+      const ids = (values: (string | null)[]) =>
+        [...new Set(values.filter((v): v is string => Boolean(v)))]
+      const serviceIds = ids(rows.map((r) => r.service_id))
+      const staffIds = ids(rows.map((r) => r.staff_id))
+      const contactIds = ids(rows.map((r) => r.contact_id))
+
+      const [svcRows, staffRows, contactRows] = await Promise.all([
+        serviceIds.length
+          ? supabase
+              .from('booking_services')
+              .select('id, name')
+              .eq('account_id', accountId)
+              .in('id', serviceIds)
+              .then((r) => (r.data ?? []) as { id: string; name: string }[])
+          : Promise.resolve([] as { id: string; name: string }[]),
+        staffIds.length
+          ? supabase
+              .from('booking_staff')
+              .select('id, name')
+              .eq('account_id', accountId)
+              .in('id', staffIds)
+              .then((r) => (r.data ?? []) as { id: string; name: string }[])
+          : Promise.resolve([] as { id: string; name: string }[]),
+        contactIds.length
+          ? supabase
+              .from('contacts')
+              .select('id, name, phone')
+              .eq('account_id', accountId)
+              .in('id', contactIds)
+              .then(
+                (r) =>
+                  (r.data ?? []) as {
+                    id: string
+                    name: string | null
+                    phone: string | null
+                  }[],
+              )
+          : Promise.resolve(
+              [] as { id: string; name: string | null; phone: string | null }[],
+            ),
+      ])
+
+      const serviceNames = new Map(svcRows.map((s) => [s.id, s.name]))
+      const staffNames = new Map(staffRows.map((s) => [s.id, s.name]))
+      const contacts = new Map(contactRows.map((c) => [c.id, c]))
+
+      setAppointments(
+        rows.map((row) => {
+          const contact = row.contact_id
+            ? contacts.get(row.contact_id)
+            : undefined
+          return {
+            id: row.id,
+            starts_at: row.starts_at,
+            status: row.status as AppointmentStatus,
+            serviceName: row.service_id
+              ? (serviceNames.get(row.service_id) ?? null)
+              : null,
+            staffName: row.staff_id
+              ? (staffNames.get(row.staff_id) ?? null)
+              : null,
+            contactName: contact?.name ?? null,
+            contactPhone: contact?.phone ?? null,
+          }
+        }),
+      )
+    } catch {
+      setAgendaFailed(true)
+    } finally {
+      setAgendaLoading(false)
+    }
+  }, [accountId, isBarberia, supabase])
+
+  const changeStatus = useCallback(
+    async (
+      appointment: AgendaAppointment,
+      status: AppointmentStatus,
+      confirmPast: boolean,
+    ) => {
+      setChangingId(appointment.id)
+      setAgendaError(null)
+      try {
+        const res = await fetch(
+          `/api/verticals/barberia/appointments/${appointment.id}`,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status, confirm_past: confirmPast }),
+          },
+        )
+        const payload = (await res.json().catch(() => null)) as {
+          error?: string
+          code?: string
+        } | null
+        if (
+          res.status === 409 &&
+          payload?.code === 'past_confirmation_required'
+        ) {
+          setPastPrompt({ appointment, status })
+          return
+        }
+        if (!res.ok) {
+          setAgendaError(payload?.error ?? T.agendaChangeFailed)
+          return
+        }
+        setPastPrompt(null)
+        await loadAgenda()
+      } catch {
+        setAgendaError(T.agendaChangeFailed)
+      } finally {
+        setChangingId(null)
+      }
+    },
+    [loadAgenda],
+  )
+
   useEffect(() => {
     void load()
-  }, [load])
+    void loadAgenda()
+  }, [load, loadAgenda])
 
   const handleInstall = useCallback(async () => {
     setInstalling(true)
@@ -149,6 +365,7 @@ export default function BarberiaPage() {
   }
 
   const installed = services.length > 0 || staff.length > 0
+  const todayLabel = formatLongDate(zonedDateKey(new Date()))
 
   const sectionLines: Array<[string, InstallSectionCounts]> = report
     ? [
@@ -177,6 +394,105 @@ export default function BarberiaPage() {
         <h1 className="text-2xl font-bold text-foreground">{T.title}</h1>
         <p className="mt-1 text-sm text-muted-foreground">{T.subtitle}</p>
       </div>
+
+      {/* Agenda del día */}
+      <Card>
+        <CardHeader>
+          <CardTitle>{T.agendaTitle}</CardTitle>
+          <CardAction>
+            <span className="text-sm text-muted-foreground">{todayLabel}</span>
+          </CardAction>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {agendaFailed && (
+            <Alert variant="destructive">
+              <AlertDescription>{T.loadError}</AlertDescription>
+            </Alert>
+          )}
+
+          {agendaError && (
+            <Alert variant="destructive">
+              <AlertDescription>{agendaError}</AlertDescription>
+            </Alert>
+          )}
+
+          {agendaLoading ? (
+            <p className="text-sm text-muted-foreground">{T.loading}</p>
+          ) : appointments.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-8 text-center">
+              <CalendarDays className="mb-2 h-8 w-8 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">{T.agendaEmpty}</p>
+            </div>
+          ) : (
+            <ul className="divide-y divide-border">
+              {appointments.map((appointment) => {
+                const parts = zonedParts(new Date(appointment.starts_at))
+                const editable =
+                  canManageAppointments &&
+                  EDITABLE_STATUSES.includes(appointment.status)
+                return (
+                  <li
+                    key={appointment.id}
+                    className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">
+                        {formatTimeLabel(parts)} ·{' '}
+                        {appointment.serviceName ?? T.agendaServiceGone}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {appointment.staffName ?? T.agendaStaffGone} ·{' '}
+                        {appointment.contactName?.trim() ||
+                          appointment.contactPhone ||
+                          T.agendaContactFallback}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant={STATUS_BADGE_VARIANTS[appointment.status]}>
+                        {STATUS_LABELS[appointment.status]}
+                      </Badge>
+                      {editable && (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={changingId === appointment.id}
+                            onClick={() =>
+                              void changeStatus(appointment, 'completed', false)
+                            }
+                          >
+                            {T.agendaActionComplete}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={changingId === appointment.id}
+                            onClick={() =>
+                              void changeStatus(appointment, 'no_show', false)
+                            }
+                          >
+                            {T.agendaActionNoShow}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={changingId === appointment.id}
+                            onClick={() =>
+                              void changeStatus(appointment, 'cancelled', false)
+                            }
+                          >
+                            {T.agendaActionCancel}
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Estado de instalación + botón */}
       <Card>
@@ -397,6 +713,51 @@ export default function BarberiaPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Confirmación explícita para editar una cita que ya pasó */}
+      <Dialog
+        open={pastPrompt !== null}
+        onOpenChange={(open) => {
+          if (!open) setPastPrompt(null)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{T.agendaPastTitle}</DialogTitle>
+            <DialogDescription>
+              {pastPrompt &&
+                (() => {
+                  const parts = zonedParts(
+                    new Date(pastPrompt.appointment.starts_at),
+                  )
+                  return T.agendaPastBody(
+                    formatLongDate(parts.dateKey),
+                    formatTimeLabel(parts),
+                  )
+                })()}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPastPrompt(null)}>
+              {T.agendaPastBack}
+            </Button>
+            <Button
+              disabled={changingId !== null}
+              onClick={() => {
+                if (pastPrompt) {
+                  void changeStatus(
+                    pastPrompt.appointment,
+                    pastPrompt.status,
+                    true,
+                  )
+                }
+              }}
+            >
+              {T.agendaPastConfirm}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
