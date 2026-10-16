@@ -14,6 +14,9 @@
 //     tiene ninguna fila de horario.
 //   - `ai_configs.system_prompt` solo se escribe si está vacío; si ya
 //     hay uno, se devuelve 'already_set' con advertencia.
+//   - `accounts.default_currency` solo se ajusta (USD→COP) mientras
+//     siga en el default de la migración 021 sin tocar; una moneda ya
+//     elegida por el dueño nunca se pisa.
 //
 // El cliente de base de datos llega por inyección: la ruta server-only
 // pasa el service-role (`supabaseAdmin()`); los tests, un fake en
@@ -39,6 +42,16 @@ export interface InstallBarberiaArgs {
 }
 
 type InsertRow = Record<string, unknown>
+
+/**
+ * Moneda con la que nace toda cuenta desde la migración 021. No es
+ * una preferencia del dueño: es el valor por defecto SIN TOCAR, la
+ * única señal fiable de que nadie ha elegido moneda todavía.
+ */
+const UNTOUCHED_DEFAULT_CURRENCY = 'USD'
+
+/** Moneda que la plantilla fija para una barbería en Colombia. */
+const BARBERIA_CURRENCY = 'COP'
 
 interface IdNameRow {
   id: string
@@ -83,6 +96,7 @@ export async function installBarberiaTemplate(
   const { db, accountId, userId } = args
 
   const report: BarberiaInstallReport = {
+    currency: 'kept',
     services: counts(),
     staff: counts(),
     staffServices: counts(),
@@ -94,6 +108,35 @@ export async function installBarberiaTemplate(
     knowledge: counts(),
     aiPrompt: 'no_config' as AiPromptOutcome,
     warnings: [],
+  }
+
+  // ----------------------------------------------------------
+  // 0. Moneda por defecto (regla de la plantilla)
+  //
+  // Una barbería colombiana cobra en COP, pero la cuenta nace en el
+  // default de la migración 021 ('USD') sin que el dueño lo haya
+  // elegido. La instalación la ajusta SOLO mientras la columna siga
+  // en ese default intacto; si ya hay una moneda elegida (COP
+  // incluido) no se toca nada. Idempotente por construcción: tras
+  // la primera instalación el valor ya no es el default.
+  // ----------------------------------------------------------
+  const { data: accountRow, error: accountError } = await db
+    .from('accounts')
+    .select('default_currency')
+    .eq('id', accountId)
+    .maybeSingle()
+  if (accountError) throw accountError
+
+  const currentCurrency =
+    (accountRow as { default_currency?: string | null } | null)
+      ?.default_currency ?? UNTOUCHED_DEFAULT_CURRENCY
+  if (currentCurrency === UNTOUCHED_DEFAULT_CURRENCY) {
+    const { error } = await db
+      .from('accounts')
+      .update({ default_currency: BARBERIA_CURRENCY })
+      .eq('id', accountId)
+    if (error) throw error
+    report.currency = 'set_cop'
   }
 
   // ----------------------------------------------------------

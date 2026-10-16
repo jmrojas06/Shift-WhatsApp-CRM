@@ -11,6 +11,13 @@ export interface InstallSectionCounts {
   skipped: number
 }
 
+/** Qué pasó con la moneda de la cuenta durante la instalación. */
+export type CurrencyOutcome =
+  /** La cuenta seguía en el default intacto (USD) y se pasó a COP. */
+  | 'set_cop'
+  /** El dueño ya tenía una moneda elegida (COP incluido): no se tocó. */
+  | 'kept'
+
 /** Qué pasó con el prompt del agente de IA durante la instalación. */
 export type AiPromptOutcome =
   /** Se escribió porque `ai_configs.system_prompt` estaba vacío. */
@@ -21,6 +28,7 @@ export type AiPromptOutcome =
   | 'no_config'
 
 export interface BarberiaInstallReport {
+  currency: CurrencyOutcome
   services: InstallSectionCounts
   staff: InstallSectionCounts
   staffServices: InstallSectionCounts

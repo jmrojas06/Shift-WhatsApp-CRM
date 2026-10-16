@@ -301,6 +301,10 @@ describe('installBarberiaTemplate', () => {
       ],
       tags: [{ id: 'ajeno-tag', account_id: 'acc-2', name: 'cita-pendiente' }],
       pipelines: [{ id: 'ajeno-pipe', account_id: 'acc-2', name: 'Barbería' }],
+      accounts: [
+        { id: ACCOUNT, default_currency: 'USD' },
+        { id: 'acc-2', default_currency: 'USD' },
+      ],
     })
 
     const report = await install(db)
@@ -315,5 +319,48 @@ describe('installBarberiaTemplate', () => {
     expect(
       db._tables.pipelines.filter((r) => r.account_id === 'acc-2'),
     ).toHaveLength(1)
+    // La regla de moneda también queda acotada a la cuenta que instala.
+    const other = db._tables.accounts.find((r) => r.id === 'acc-2')
+    expect(other?.default_currency).toBe('USD')
+  })
+
+  // ----------------------------------------------------------
+  // Regla de moneda (Fase 1): una barbería colombiana cobra en COP,
+  // y la cuenta nace en 'USD' (default de la migración 021). La
+  // instalación ajusta la moneda SOLO mientras siga en ese default
+  // intacto; una elección explícita del dueño nunca se pisa.
+  // ----------------------------------------------------------
+  it('fija COP cuando la cuenta sigue en la moneda por defecto', async () => {
+    const db = fakeDb({
+      accounts: [{ id: ACCOUNT, default_currency: 'USD' }],
+    })
+
+    const report = await install(db)
+
+    expect(report.currency).toBe('set_cop')
+    expect(db._tables.accounts[0].default_currency).toBe('COP')
+  })
+
+  it('la regla de moneda es idempotente: reinstalar ya no la toca', async () => {
+    const db = fakeDb({
+      accounts: [{ id: ACCOUNT, default_currency: 'USD' }],
+    })
+
+    await install(db)
+    const second = await install(db)
+
+    expect(second.currency).toBe('kept')
+    expect(db._tables.accounts[0].default_currency).toBe('COP')
+  })
+
+  it('respeta la moneda que el dueño ya configuró explícitamente', async () => {
+    const db = fakeDb({
+      accounts: [{ id: ACCOUNT, default_currency: 'EUR' }],
+    })
+
+    const report = await install(db)
+
+    expect(report.currency).toBe('kept')
+    expect(db._tables.accounts[0].default_currency).toBe('EUR')
   })
 })
