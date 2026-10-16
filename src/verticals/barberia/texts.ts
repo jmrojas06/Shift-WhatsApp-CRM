@@ -51,6 +51,31 @@ export const BARBERIA_TEXTS = {
   staffCount: (n: number) => (n === 1 ? '1 barbero' : `${n} barberos`),
   minutes: (n: number) => `${n} min`,
 
+  // ----------------------------------------------------------
+  // Agenda del día
+  // ----------------------------------------------------------
+  agendaTitle: 'Agenda de hoy',
+  agendaEmpty: 'No hay citas para hoy.',
+  agendaServiceGone: 'Servicio eliminado',
+  agendaStaffGone: 'Sin barbero',
+  agendaContactFallback: 'Sin nombre',
+  agendaStatusPending: 'Pendiente',
+  agendaStatusConfirmed: 'Confirmada',
+  agendaStatusCompleted: 'Completada',
+  agendaStatusNoShow: 'No asistió',
+  agendaStatusCancelled: 'Cancelada',
+  agendaActionComplete: 'Completada',
+  agendaActionNoShow: 'No asistió',
+  agendaActionCancel: 'Cancelar',
+  agendaChangeFailed:
+    'No se pudo actualizar la cita. Recarga la agenda e inténtalo de nuevo.',
+  agendaPastTitle: 'La cita ya pasó',
+  agendaPastBody: (date: string, time: string) =>
+    `La cita del ${date} a las ${time} ya pasó. ¿Seguro que quieres cambiar su estado?`,
+  agendaPastConfirm: 'Sí, cambiar',
+  agendaPastBack: 'Volver',
+  viewerGate: 'acciones sobre las citas',
+
   sections: {
     services: 'Servicios',
     staff: 'Barberos',
@@ -63,4 +88,123 @@ export const BARBERIA_TEXTS = {
     aiAgent: 'Agente de IA',
     pipeline: 'Pipeline',
   },
+} as const
+
+// ============================================================
+// Copy del agente de reservas por WhatsApp (controlador).
+//
+// Todo el diálogo del bot vive aquí: menús, resumen, confirmación,
+// errores y handoff. El controlador nunca redacta texto en línea;
+// así el copy se revisa en un solo archivo.
+//
+// Las plantillas que reciben datos lo hacen como funciones con
+// argumentos con nombre — nada de concatenaciones en el llamador.
+// ============================================================
+
+/** Datos de una cita usados en resumen y confirmaciones. */
+export interface BarberiaAppointmentSummary {
+  service: string
+  staff: string
+  /** 'martes 20 de octubre de 2026' (formatLongDate). */
+  date: string
+  /** '3:00 p. m.' (formatTimeLabel). */
+  time: string
+  /** '$25.000'. */
+  price: string
+}
+
+export const BARBERIA_AGENT_TEXTS = {
+  // ----------------------------------------------------------
+  // Arranque: menú de servicios
+  // ----------------------------------------------------------
+  serviceMenuBody:
+    '¡Hola! 👋 Soy el asistente de la barbería. ¿Qué servicio quieres agendar?',
+  serviceMenuButton: 'Ver servicios',
+  /** Se agrega al pie cuando la lista se recortó a los primeros 10. */
+  optionsTruncated: 'Te muestro las primeras opciones.',
+
+  // ----------------------------------------------------------
+  // Menú de barberos
+  // ----------------------------------------------------------
+  staffMenuBody: '¿Con cuál barbero quieres tu cita?',
+  staffMenuButton: 'Ver barberos',
+  staffAnyTitle: 'Cualquiera',
+  staffAnyDescription: 'Te asignamos al barbero que esté disponible',
+
+  // ----------------------------------------------------------
+  // Días
+  // ----------------------------------------------------------
+  dayMenuBody: '¿Qué día te queda bien?',
+  dayMenuButton: 'Ver días',
+  dayToday: 'Hoy',
+  dayTomorrow: 'Mañana',
+
+  // ----------------------------------------------------------
+  // Horas
+  // ----------------------------------------------------------
+  slotMenuBody: (day: string) => `Horarios disponibles para ${day}:`,
+  slotMenuButton: 'Ver horarios',
+
+  // ----------------------------------------------------------
+  // Resumen y confirmación
+  // ----------------------------------------------------------
+  summaryBody: (a: BarberiaAppointmentSummary) =>
+    `Así queda tu cita:\n\n💈 ${a.service}\n👤 ${a.staff}\n📅 ${a.date}\n🕐 ${a.time}\n💵 ${a.price}\n\n¿La confirmamos?`,
+  summaryConfirm: 'Confirmar ✅',
+  summaryReschedule: 'Reprogramar',
+  summaryCancel: 'Cancelar',
+  confirmed: (a: BarberiaAppointmentSummary) =>
+    `¡Listo! Tu cita quedó agendada.\n\n💈 ${a.service}\n👤 ${a.staff}\n📅 ${a.date}\n🕐 ${a.time}\n\nTe esperamos ✂️. Si necesitas cambiarla, escríbeme "cita".`,
+
+  // ----------------------------------------------------------
+  // Errores y recuperación
+  // ----------------------------------------------------------
+  retry: 'No entendí 😅. Por favor elige una de las opciones.',
+  slotTaken:
+    'Uy, ese horario se ocupó mientras elegías 😅. Te muestro otras opciones:',
+  dayTaken: 'Ese día se llenó mientras elegías 😅. Mira los días disponibles:',
+  noDaysAvailable:
+    'Por ahora no tengo horarios disponibles. Escríbeme "asesor" y un humano te ayuda a cuadrar tu cita.',
+  noServices:
+    'Aún no hay servicios configurados en la barbería. Escríbeme "asesor" y te ayudamos.',
+  noStaffForService:
+    'Por ahora no hay barberos disponibles para ese servicio. Elige otro, por favor:',
+  confirmError:
+    'Uy, no pude agendar tu cita en este momento 😅. Intenta de nuevo o escríbeme "asesor".',
+
+  // ----------------------------------------------------------
+  // Gestión de una cita existente
+  // ----------------------------------------------------------
+  manageMenuBody: (a: { service: string; date: string; time: string }) =>
+    `Vi que tienes una cita:\n\n💈 ${a.service}\n📅 ${a.date}\n🕐 ${a.time}\n\n¿Qué quieres hacer?`,
+  manageNew: 'Nueva cita',
+  manageReschedule: 'Reprogramar',
+  manageCancel: 'Cancelar cita',
+  rescheduleStart: 'Listo, elige el nuevo día para tu cita:',
+  cancelConfirmBody: (a: { date: string; time: string }) =>
+    `¿Seguro que quieres cancelar tu cita del ${a.date} a las ${a.time}?`,
+  cancelYes: 'Sí, cancelar',
+  cancelNo: 'No, volver',
+  cancelDone:
+    'Listo, tu cita quedó cancelada. Cuando quieras agendar otra, escríbeme "cita". 🙌',
+  cancelDeclined: 'Perfecto, dejo tu cita como está. ¡Te esperamos! ✂️',
+  rescheduleDone: (a: BarberiaAppointmentSummary) =>
+    `¡Listo! Tu cita quedó reprogramada.\n\n💈 ${a.service}\n👤 ${a.staff}\n📅 ${a.date}\n🕐 ${a.time}\n\n¡Te esperamos! ✂️`,
+  /** La cita gestionada ya no existe o ya no está activa. */
+  managedAppointmentGone:
+    'Veo que esa cita ya no está activa. Escríbeme "cita" para agendar una nueva.',
+  /** Se abandonó un borrador de cita nueva desde el resumen. */
+  draftCancelled:
+    'Listo, no agendé nada. Cuando quieras agendar, escríbeme "cita". 🙌',
+
+  // ----------------------------------------------------------
+  // Handoff a un humano
+  // ----------------------------------------------------------
+  handoff:
+    'Entiendo. Dejo tu conversación con un asesor humano para que te ayude. En breve te contactan. 🙌',
+  handoffNote:
+    'El cliente pidió hablar con una persona desde el flujo de citas (agente de barbería en pausa).',
+  handoffNotificationTitle: 'Cliente pide un asesor (Barbería)',
+  handoffNotificationBody: (name: string) =>
+    `${name} pidió hablar con una persona desde el flujo de citas.`,
 } as const

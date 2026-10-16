@@ -1,3 +1,5 @@
+import { barberiaInboundHandler } from '@/verticals/barberia/agent'
+
 import { supabaseAdmin } from './admin-client'
 import { getVerticalManifest } from './registry'
 import type {
@@ -16,7 +18,7 @@ import type {
  * bundle. Phase 2 plugs the barbería booking controller in here.
  */
 const VERTICAL_HANDLERS: Partial<Record<VerticalKey, VerticalInboundHandler>> =
-  {}
+  { barberia: barberiaInboundHandler }
 
 interface DispatchArgs {
   accountId: string
