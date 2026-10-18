@@ -96,20 +96,45 @@ Para desactivarla, el mismo upsert con `false`.
 ## Programar el runner
 
 El endpoint es `GET /api/verticals/barberia/reminders/run` y se protege
-con el header `x-cron-secret` contra `AUTOMATION_CRON_SECRET` (el mismo
-secreto que usan los crons de automatizaciones; sin secreto configurado
-responde 503; con secreto incorrecto, 401).
+contra `AUTOMATION_CRON_SECRET` (el mismo secreto que usan los crons de
+automatizaciones). Acepta el secreto de dos formas:
 
-Como el proyecto no usa `vercel.json`, hay dos opciones:
+- `x-cron-secret: <secreto>` — pinger externo o cron del host.
+- `Authorization: Bearer <secreto>` — lo agrega Vercel Cron cuando
+  existe la env `CRON_SECRET` en el proyecto.
 
-- **Pinger externo** (cron-job.org, UptimeRobot, etc.) cada **10–15
-  minutos** apuntando a la URL con el header.
-- **Manual** (probar, o completar una corrida):
+Sin secreto configurado responde 503; con secreto incorrecto, 401.
+
+### En Vercel (recomendado)
+
+El repo incluye `vercel.json` con el cron nativo cada 10 minutos
+(requiere plan Pro). Para activarlo define en Vercel:
+
+- `AUTOMATION_CRON_SECRET` — secreto largo y aleatorio
+  (`openssl rand -hex 32`).
+- `CRON_SECRET` — el **mismo** valor (Vercel lo manda como Bearer).
+
+Verificación: Vercel → proyecto → **Cron Jobs** (cada corrida con su
+log). Guía completa: `docs/despliegue-vercel.md`.
+
+### Pinger externo (alternativa o respaldo)
+
+cron-job.org, UptimeRobot u otro pinger cada **10–15 minutos** con el
+header `x-cron-secret`. Además avisa por correo si la ejecución falla —
+útil como vigilante del cron nativo.
+
+### Manual (probar, o completar una corrida)
 
 ```bash
 curl -s -H "x-cron-secret: $AUTOMATION_CRON_SECRET" \
   https://<tu-dominio>/api/verticals/barberia/reminders/run
 ```
+
+### Alertas de fallos
+
+Con `ALERT_WEBHOOK_URL` definida (opcional, compatible con Slack), el
+runner avisa ahí cuando la corrida lanza una excepción o queda con
+`failed > 0` o `errors` no vacío. Sin la variable, no hay alertas.
 
 Respuesta (resumen de la corrida):
 
