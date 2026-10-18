@@ -6,11 +6,20 @@ import {
   formatCurrencyShort,
 } from "./currency";
 
+/**
+ * Intl grouping depends on the runtime default locale (en-US on CI,
+ * es-CO on a Spanish Windows box — and LANG cannot pin ICU on
+ * Windows). Build the expected grouped string with the same Intl call
+ * the formatter uses so these assertions hold on every machine.
+ */
+const grouped = (value: number) =>
+  new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value);
+
 describe("formatCurrency", () => {
   it("formats whole amounts with no minor units", () => {
     // Use a non-breaking-space-tolerant check: Intl may insert NBSP.
     const out = formatCurrency(1234, "USD");
-    expect(out).toContain("1,234");
+    expect(out).toContain(grouped(1234));
     expect(out).not.toContain(".00");
   });
 
@@ -30,13 +39,13 @@ describe("formatCurrency", () => {
     // Intl is lenient here — it uses the code as the symbol.
     const out = formatCurrency(1234, "ZZZ");
     expect(out).toContain("ZZZ");
-    expect(out).toContain("1,234");
+    expect(out).toContain(grouped(1234));
   });
 
   it("never throws on a structurally invalid code (no DB CHECK on deals.currency)", () => {
     for (const bad of ["United States", "US", "USDD", "12", "u$d"]) {
       expect(() => formatCurrency(1234, bad)).not.toThrow();
-      expect(formatCurrency(1234, bad)).toContain("1,234");
+      expect(formatCurrency(1234, bad)).toContain(grouped(1234));
     }
   });
 
