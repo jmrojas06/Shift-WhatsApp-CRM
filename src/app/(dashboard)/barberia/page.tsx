@@ -13,7 +13,7 @@
 // ============================================================
 
 import { useCallback, useEffect, useState } from 'react'
-import { CalendarDays, Loader2, Scissors, Users } from 'lucide-react'
+import { BellRing, CalendarDays, Loader2, Scissors, Users } from 'lucide-react'
 
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/use-auth'
@@ -42,6 +42,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { BARBERIA_TEXTS as T } from '@/verticals/barberia/texts'
 import type { AppointmentStatus } from '@/verticals/barberia/appointments'
 import { formatLongDate, formatTimeLabel } from '@/verticals/barberia/agent/format'
+import { pickDueReminder } from '@/verticals/barberia/agent/reminders'
 import {
   addDaysToKey,
   startOfZonedDay,
@@ -77,6 +78,24 @@ interface AppointmentRow {
   service_id: string | null
   staff_id: string | null
   contact_id: string | null
+}
+
+interface ReminderAppointmentRow extends AppointmentRow {
+  reminder_sent_at: string | null
+  reminder_2h_sent_at: string | null
+}
+
+interface ReminderItem {
+  id: string
+  startsAt: string
+  serviceName: string | null
+  staffName: string | null
+  contactName: string | null
+  contactPhone: string | null
+  /** Señal que el runner enviaría ahora mismo (o null). */
+  pendingKind: 'h24' | 'h2' | null
+  sent24At: string | null
+  sent2hAt: string | null
 }
 
 interface AgendaAppointment {
@@ -133,6 +152,11 @@ export default function BarberiaPage() {
     appointment: AgendaAppointment
     status: AppointmentStatus
   } | null>(null)
+
+  const [reminders, setReminders] = useState<ReminderItem[]>([])
+  const [remindersTwoHour, setRemindersTwoHour] = useState(false)
+  const [remindersLoading, setRemindersLoading] = useState(true)
+  const [remindersFailed, setRemindersFailed] = useState(false)
 
   const isBarberia = account?.vertical_key === 'barberia'
   /** Owner/admin/agent mueven citas; viewer es solo-lectura. */
@@ -264,6 +288,135 @@ export default function BarberiaPage() {
     }
   }, [accountId, isBarberia, supabase])
 
+  /**
+   * Recordatorios: citas activas dentro de ±48 h con el estado de sus
+   * dos señales. La clasificación usa `pickDueReminder` — la MISMA
+   * función pura que el runner — para que la sección muestre lo que
+   * el cron enviará en la próxima pasada o ya envió.
+   */
+  const loadReminders = useCallback(async () => {
+    if (!accountId || !isBarberia) return
+    setRemindersLoading(true)
+    setRemindersFailed(false)
+    try {
+      const now = new Date()
+      const fromIso = new Date(now.getTime() - 48 * 3_600_000).toISOString()
+      const toIso = new Date(now.getTime() + 48 * 3_600_000).toISOString()
+      const [appointmentsRes, settingsRes] = await Promise.all([
+        supabase
+          .from('booking_appointments')
+          .select(
+            'id, starts_at, status, service_id, staff_id, contact_id, reminder_sent_at, reminder_2h_sent_at',
+          )
+          .eq('account_id', accountId)
+          .in('status', ['pending', 'confirmed'])
+          .gte('starts_at', fromIso)
+          .lt('starts_at', toIso)
+          .order('starts_at', { ascending: true }),
+        supabase
+          .from('booking_settings')
+          .select('reminders_2h_enabled')
+          .eq('account_id', accountId)
+          .maybeSingle(),
+      ])
+
+      if (appointmentsRes.error) {
+        setRemindersFailed(true)
+        return
+      }
+
+      const twoHourEnabled =
+        (settingsRes.data as { reminders_2h_enabled?: boolean } | null)
+          ?.reminders_2h_enabled === true
+      setRemindersTwoHour(twoHourEnabled)
+
+      const rows = (appointmentsRes.data ?? []) as ReminderAppointmentRow[]
+      const ids = (values: (string | null)[]) =>
+        [...new Set(values.filter((v): v is string => Boolean(v)))]
+      const serviceIds = ids(rows.map((r) => r.service_id))
+      const staffIds = ids(rows.map((r) => r.staff_id))
+      const contactIds = ids(rows.map((r) => r.contact_id))
+
+      const [svcRows, staffRows, contactRows] = await Promise.all([
+        serviceIds.length
+          ? supabase
+              .from('booking_services')
+              .select('id, name')
+              .eq('account_id', accountId)
+              .in('id', serviceIds)
+              .then((r) => (r.data ?? []) as { id: string; name: string }[])
+          : Promise.resolve([] as { id: string; name: string }[]),
+        staffIds.length
+          ? supabase
+              .from('booking_staff')
+              .select('id, name')
+              .eq('account_id', accountId)
+              .in('id', staffIds)
+              .then((r) => (r.data ?? []) as { id: string; name: string }[])
+          : Promise.resolve([] as { id: string; name: string }[]),
+        contactIds.length
+          ? supabase
+              .from('contacts')
+              .select('id, name, phone')
+              .eq('account_id', accountId)
+              .in('id', contactIds)
+              .then(
+                (r) =>
+                  (r.data ?? []) as {
+                    id: string
+                    name: string | null
+                    phone: string | null
+                  }[],
+              )
+          : Promise.resolve(
+              [] as { id: string; name: string | null; phone: string | null }[],
+            ),
+      ])
+
+      const serviceNames = new Map(svcRows.map((s) => [s.id, s.name]))
+      const staffNames = new Map(staffRows.map((s) => [s.id, s.name]))
+      const contacts = new Map(contactRows.map((c) => [c.id, c]))
+      const nowMs = now.getTime()
+
+      setReminders(
+        rows.map((row) => {
+          const contact = row.contact_id
+            ? contacts.get(row.contact_id)
+            : undefined
+          return {
+            id: row.id,
+            startsAt: row.starts_at,
+            serviceName: row.service_id
+              ? (serviceNames.get(row.service_id) ?? null)
+              : null,
+            staffName: row.staff_id
+              ? (staffNames.get(row.staff_id) ?? null)
+              : null,
+            contactName: contact?.name ?? null,
+            contactPhone: contact?.phone ?? null,
+            pendingKind: pickDueReminder({
+              startsAtMs: new Date(row.starts_at).getTime(),
+              nowMs,
+              reminderSentAtMs: row.reminder_sent_at
+                ? new Date(row.reminder_sent_at).getTime()
+                : null,
+              reminder2hSentAtMs: row.reminder_2h_sent_at
+                ? new Date(row.reminder_2h_sent_at).getTime()
+                : null,
+              twoHourEnabled,
+            }),
+            sent24At: row.reminder_sent_at,
+            sent2hAt: row.reminder_2h_sent_at,
+          }
+        }),
+      )
+    } catch {
+      setRemindersFailed(true)
+    } finally {
+      setRemindersLoading(false)
+    }
+  }, [accountId, isBarberia, supabase])
+
   const changeStatus = useCallback(
     async (
       appointment: AgendaAppointment,
@@ -310,7 +463,8 @@ export default function BarberiaPage() {
   useEffect(() => {
     void load()
     void loadAgenda()
-  }, [load, loadAgenda])
+    void loadReminders()
+  }, [load, loadAgenda, loadReminders])
 
   const handleInstall = useCallback(async () => {
     setInstalling(true)
@@ -387,6 +541,11 @@ export default function BarberiaPage() {
         ? T.aiPromptAlreadySet
         : T.aiPromptNoConfig
     : ''
+
+  const remindersPending = reminders.filter((r) => r.pendingKind !== null)
+  const remindersSent = reminders.filter(
+    (r) => r.pendingKind === null && (r.sent24At || r.sent2hAt),
+  )
 
   return (
     <div className="space-y-6">
@@ -490,6 +649,137 @@ export default function BarberiaPage() {
                 )
               })}
             </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Recordatorios de citas */}
+      <Card>
+        <CardHeader>
+          <CardTitle>{T.remindersTitle}</CardTitle>
+          <CardAction>
+            <Badge variant={remindersTwoHour ? 'default' : 'outline'}>
+              {remindersTwoHour ? T.remindersTwoHourOn : T.remindersTwoHourOff}
+            </Badge>
+          </CardAction>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-1">
+            <p className="text-xs text-muted-foreground">{T.remindersHint}</p>
+            <p className="text-xs text-muted-foreground">
+              {T.remindersWindowNote}
+            </p>
+          </div>
+
+          {remindersFailed && (
+            <Alert variant="destructive">
+              <AlertDescription>{T.remindersLoadFailed}</AlertDescription>
+            </Alert>
+          )}
+
+          {remindersLoading ? (
+            <p className="text-sm text-muted-foreground">{T.loading}</p>
+          ) : remindersPending.length === 0 && remindersSent.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-8 text-center">
+              <BellRing className="mb-2 h-8 w-8 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">
+                {T.remindersEmpty}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-5">
+              {remindersPending.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                    {T.remindersPendingTitle}
+                  </p>
+                  <ul className="divide-y divide-border">
+                    {remindersPending.map((item) => {
+                      const parts = zonedParts(new Date(item.startsAt))
+                      return (
+                        <li
+                          key={item.id}
+                          className="flex flex-wrap items-center justify-between gap-3 py-3"
+                        >
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium">
+                              {formatLongDate(parts.dateKey)} ·{' '}
+                              {formatTimeLabel(parts)} ·{' '}
+                              {item.serviceName ?? T.agendaServiceGone}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {item.staffName ?? T.agendaStaffGone} ·{' '}
+                              {item.contactName?.trim() ||
+                                item.contactPhone ||
+                                T.agendaContactFallback}
+                            </p>
+                          </div>
+                          <Badge variant="outline">
+                            {item.pendingKind === 'h2'
+                              ? T.remindersPending2h
+                              : T.remindersPending24h}
+                          </Badge>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              {remindersSent.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                    {T.remindersSentTitle}
+                  </p>
+                  <ul className="divide-y divide-border">
+                    {remindersSent.map((item) => {
+                      const parts = zonedParts(new Date(item.startsAt))
+                      const sentAt = item.sent2hAt ?? item.sent24At
+                      const sentParts = sentAt
+                        ? zonedParts(new Date(sentAt))
+                        : null
+                      return (
+                        <li
+                          key={item.id}
+                          className="flex flex-wrap items-center justify-between gap-3 py-3"
+                        >
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium">
+                              {formatLongDate(parts.dateKey)} ·{' '}
+                              {formatTimeLabel(parts)} ·{' '}
+                              {item.serviceName ?? T.agendaServiceGone}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {item.staffName ?? T.agendaStaffGone} ·{' '}
+                              {item.contactName?.trim() ||
+                                item.contactPhone ||
+                                T.agendaContactFallback}
+                              {sentParts &&
+                                ` · ${T.remindersSentAt(
+                                  formatLongDate(sentParts.dateKey),
+                                  formatTimeLabel(sentParts),
+                                )}`}
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {item.sent24At && (
+                              <Badge variant="secondary">
+                                {T.remindersSent24h}
+                              </Badge>
+                            )}
+                            {item.sent2hAt && (
+                              <Badge variant="secondary">
+                                {T.remindersSent2h}
+                              </Badge>
+                            )}
+                          </div>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              )}
+            </div>
           )}
         </CardContent>
       </Card>
