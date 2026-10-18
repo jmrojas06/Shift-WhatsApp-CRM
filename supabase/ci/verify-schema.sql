@@ -244,6 +244,44 @@ BEGIN
       'booking_settings RLS is not enabled — migration 048 did not apply';
   END IF;
 
+  -- Phase 4 (049): the config page saves address + bot texts here. A
+  -- missing `bot_texts` column (or one that can be NULL / hold an array)
+  -- would only surface at runtime, when the bot merges overrides.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'booking_settings'
+      AND column_name = 'bot_texts'
+      AND data_type = 'jsonb'
+      AND is_nullable = 'NO'
+  ) THEN
+    RAISE EXCEPTION
+      'booking_settings.bot_texts is missing or nullable — migration 049 did not apply';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'booking_settings'
+      AND column_name = 'address'
+      AND data_type = 'text'
+  ) THEN
+    RAISE EXCEPTION
+      'booking_settings.address is missing — migration 049 did not apply';
+  END IF;
+
+  -- The object CHECK is the guard that keeps booleans/arrays/strings
+  -- out: the merge code assumes `Record<string, string>`.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'booking_settings_bot_texts_object_check'
+      AND conrelid = 'public.booking_settings'::regclass
+      AND contype = 'c'
+  ) THEN
+    RAISE EXCEPTION
+      'booking_settings_bot_texts_object_check is missing — migration 049 did not apply';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
