@@ -194,6 +194,56 @@ BEGIN
       'log_booking_appointment_event grants are wrong — migration 047 did not apply';
   END IF;
 
+  -- Phase 3 (048): the reminder runner claims each signal with a
+  -- conditional UPDATE over these columns, so their absence (or a
+  -- non-partial due index) breaks idempotency rather than the send.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'booking_appointments'
+      AND column_name = 'reminder_2h_sent_at'
+      AND data_type = 'timestamp with time zone'
+  ) THEN
+    RAISE EXCEPTION
+      'booking_appointments.reminder_2h_sent_at is missing — migration 048 did not apply';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND tablename = 'booking_appointments'
+      AND indexname = 'idx_booking_appointments_due_reminder_2h'
+      AND indexdef LIKE '%WHERE%'
+  ) THEN
+    RAISE EXCEPTION
+      'idx_booking_appointments_due_reminder_2h is missing or not partial — migration 048 did not apply';
+  END IF;
+
+  -- `booking_settings` defaults the optional 2 h signal to OFF: the
+  -- product decision is "24 h always, 2 h on purpose". A flipped
+  -- default would start sending an extra message to every account.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'booking_settings'
+      AND column_name = 'reminders_2h_enabled'
+      AND data_type = 'boolean'
+      AND is_nullable = 'NO'
+      AND column_default = 'false'
+  ) THEN
+    RAISE EXCEPTION
+      'booking_settings.reminders_2h_enabled is missing or not default-false — migration 048 did not apply';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_class
+    WHERE oid = to_regclass('public.booking_settings')
+      AND relrowsecurity
+  ) THEN
+    RAISE EXCEPTION
+      'booking_settings RLS is not enabled — migration 048 did not apply';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
