@@ -76,6 +76,27 @@ export const BARBERIA_TEXTS = {
   agendaPastBack: 'Volver',
   viewerGate: 'acciones sobre las citas',
 
+  // ----------------------------------------------------------
+  // Recordatorios (Fase 3)
+  // ----------------------------------------------------------
+  remindersTitle: 'Recordatorios',
+  remindersHint:
+    'Cada cita recibe un recordatorio 24 horas antes; la segunda señal (2 horas antes) se activa por cuenta.',
+  remindersWindowNote:
+    'Con la conversación abierta (el cliente escribió en las últimas 24 h) se envía un mensaje con botones; si no, la plantilla aprobada de Meta.',
+  remindersTwoHourOn: '2 h activado',
+  remindersTwoHourOff: '2 h desactivado',
+  remindersPendingTitle: 'Por enviar',
+  remindersSentTitle: 'Enviados',
+  remindersEmpty: 'No hay recordatorios pendientes ni enviados en este momento.',
+  remindersPending24h: 'Pendiente 24 h',
+  remindersPending2h: 'Pendiente 2 h',
+  remindersSent24h: 'Enviado 24 h',
+  remindersSent2h: 'Enviado 2 h',
+  remindersSentAt: (date: string, time: string) => `enviado el ${date} a las ${time}`,
+  remindersLoadFailed:
+    'No se pudieron cargar los recordatorios. Recarga la página e inténtalo de nuevo.',
+
   sections: {
     services: 'Servicios',
     staff: 'Barberos',
@@ -196,6 +217,34 @@ export const BARBERIA_AGENT_TEXTS = {
   /** Se abandonó un borrador de cita nueva desde el resumen. */
   draftCancelled:
     'Listo, no agendé nada. Cuando quieras agendar, escríbeme "cita". 🙌',
+  /** Catálogo cambiado: el servicio de la cita ya no existe. */
+  serviceFallback: 'tu servicio',
+
+  // ----------------------------------------------------------
+  // Recordatorios (Fase 3)
+  //
+  // El mismo contenido se envía como mensaje libre (ventana de 24 h
+  // abierta) o como plantilla de Meta (ventana cerrada). Los botones
+  // son Confirmar / Reprogramar / Cancelar con ids estáticos rem:*.
+  // ----------------------------------------------------------
+  reminderBody: (a: {
+    business: string
+    service: string
+    staff: string
+    date: string
+    time: string
+  }) =>
+    `¡Hola! 👋 Te recordamos tu cita en ${a.business}:\n\n💈 ${a.service}\n👤 ${a.staff}\n📅 ${a.date}\n🕐 ${a.time}\n\n¿Nos confirmas?`,
+  reminderConfirm: 'Confirmar',
+  reminderReschedule: 'Reprogramar',
+  reminderCancel: 'Cancelar',
+  reminderConfirmed: (a: {
+    service: string
+    staff: string
+    date: string
+    time: string
+  }) =>
+    `¡Listo! Tu cita queda confirmada:\n\n💈 ${a.service}\n👤 ${a.staff}\n📅 ${a.date}\n🕐 ${a.time}\n\n¡Te esperamos! ✂️`,
 
   // ----------------------------------------------------------
   // Handoff a un humano

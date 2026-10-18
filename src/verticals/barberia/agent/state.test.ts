@@ -9,6 +9,8 @@ import {
   newBookingState,
   normalizeText,
   parseOptionId,
+  parseReminderId,
+  remId,
   slotId,
   staffId,
   svcId,
@@ -149,5 +151,26 @@ describe('newBookingState', () => {
       appointmentId: 'a1',
       fails: 0,
     })
+  })
+})
+
+describe('ids del recordatorio', () => {
+  it('codifica los botones del recordatorio y los decodifica exactos', () => {
+    expect(remId('confirm')).toBe('rem:confirm')
+    expect(remId('reschedule')).toBe('rem:reschedule')
+    expect(remId('cancel')).toBe('rem:cancel')
+
+    expect(parseReminderId('rem:confirm')).toBe('confirm')
+    expect(parseReminderId('rem:reschedule')).toBe('reschedule')
+    expect(parseReminderId('rem:cancel')).toBe('cancel')
+  })
+
+  it('no acepta ids de otras familias ni acciones desconocidas', () => {
+    expect(parseReminderId('act:confirm')).toBeNull()
+    expect(parseReminderId('svc:rem:x')).toBeNull()
+    expect(parseReminderId('rem:desconocido')).toBeNull()
+    expect(parseReminderId('rem:')).toBeNull()
+    expect(parseReminderId('rem:confirm:extra')).toBeNull()
+    expect(parseReminderId('')).toBeNull()
   })
 })

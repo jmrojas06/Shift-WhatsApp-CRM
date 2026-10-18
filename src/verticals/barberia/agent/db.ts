@@ -253,6 +253,41 @@ export async function loadStaffName(
   return ((data as Record<string, unknown> | null)?.name as string | null) ?? null
 }
 
+/** Nombre del servicio (recordatorios); null si el catálogo cambió. */
+export async function loadServiceName(
+  db: SupabaseClient,
+  accountId: string,
+  serviceId: string,
+): Promise<string | null> {
+  const { data } = await db
+    .from('booking_services')
+    .select('name')
+    .eq('id', serviceId)
+    .eq('account_id', accountId)
+    .maybeSingle()
+  return ((data as Record<string, unknown> | null)?.name as string | null) ?? null
+}
+
+/**
+ * Conversación más reciente del contacto: fallback para citas sin
+ * `conversation_id` (p. ej. creadas a mano desde la agenda).
+ */
+export async function findContactConversationId(
+  db: SupabaseClient,
+  accountId: string,
+  contactId: string,
+): Promise<string | null> {
+  const { data } = await db
+    .from('conversations')
+    .select('id')
+    .eq('account_id', accountId)
+    .eq('contact_id', contactId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  return ((data as { id?: string } | null)?.id as string | null) ?? null
+}
+
 export async function listWorkBlocks(
   db: SupabaseClient,
   accountId: string,
@@ -447,6 +482,30 @@ export async function cancelAppointment(
       cancel_reason: args.reason,
       cancelled_at: args.cancelledAtIso,
       updated_at: args.cancelledAtIso,
+    })
+    .eq('id', args.id)
+    .eq('account_id', args.accountId)
+}
+
+/**
+ * Confirmación de una cita existente (botón Confirmar del
+ * recordatorio). Idempotente: una cita ya confirmada solo refresca
+ * `confirmed_at`. El trigger de 047 registra el cambio de estado.
+ */
+export async function markAppointmentConfirmed(
+  db: SupabaseClient,
+  args: {
+    accountId: string
+    id: string
+    confirmedAtIso: string
+  },
+): Promise<void> {
+  await db
+    .from('booking_appointments')
+    .update({
+      status: 'confirmed',
+      confirmed_at: args.confirmedAtIso,
+      updated_at: args.confirmedAtIso,
     })
     .eq('id', args.id)
     .eq('account_id', args.accountId)

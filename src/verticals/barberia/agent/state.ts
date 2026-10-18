@@ -68,6 +68,32 @@ export const dayId = (key: string): string => `day:${key}`
 export const slotId = (iso: string): string => `slot:${iso}`
 export const actId = (action: string): string => `act:${action}`
 
+// ------------------------------------------------------------
+// Ids del recordatorio (Fase 3)
+//
+// Los tres botones del recordatorio viajan con id estático
+// `rem:<acción>`: en el mensaje libre son los ids de botón y en la
+// plantilla de Meta son el payload de los quick replies, que NO
+// admite valores dinámicos. La cita sobre la que se actúa se
+// resuelve en el controlador (próxima cita activa del contacto).
+// ------------------------------------------------------------
+
+export const REMINDER_ACTIONS = ['confirm', 'reschedule', 'cancel'] as const
+
+export type ReminderAction = (typeof REMINDER_ACTIONS)[number]
+
+export const remId = (action: ReminderAction): string => `rem:${action}`
+
+/** 'rem:confirm' → 'confirm'; todo lo demás → null. */
+export function parseReminderId(id: string): ReminderAction | null {
+  const prefix = 'rem:'
+  if (!id.startsWith(prefix)) return null
+  const action = id.slice(prefix.length)
+  return (REMINDER_ACTIONS as readonly string[]).includes(action)
+    ? (action as ReminderAction)
+    : null
+}
+
 export type OptionKind = 'svc' | 'staff' | 'day' | 'slot' | 'act'
 
 const OPTION_KINDS: readonly OptionKind[] = ['svc', 'staff', 'day', 'slot', 'act']
