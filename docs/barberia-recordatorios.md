@@ -76,7 +76,13 @@ Crear en WhatsApp Manager → *Plantillas de mensaje* → **Crear plantilla**:
 
 ## Activar la señal de 2 h
 
-Por cuenta, en la base (no hay interruptor en la interfaz todavía):
+Desde la interfaz: `/barberia` → **Configuración** → pestaña **Bot y
+recordatorios** → interruptor «Segunda señal 2 h antes» (solo
+owner/admin; el cambio se guarda al instante). Ver
+`docs/barberia-configuracion.md`.
+
+Como respaldo (por ejemplo, una cuenta sin acceso a la interfaz), el
+mismo dato se puede fijar en la base:
 
 ```sql
 insert into booking_settings (account_id, reminders_2h_enabled)
@@ -85,9 +91,7 @@ on conflict (account_id)
 do update set reminders_2h_enabled = excluded.reminders_2h_enabled;
 ```
 
-Para desactivarla, el mismo upsert con `false`. La sección
-**Recordatorios** de `/barberia` muestra el estado («2 h activado» /
-«2 h desactivado»).
+Para desactivarla, el mismo upsert con `false`.
 
 ## Programar el runner
 

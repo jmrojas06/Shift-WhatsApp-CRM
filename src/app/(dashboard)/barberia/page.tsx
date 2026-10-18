@@ -13,7 +13,15 @@
 // ============================================================
 
 import { useCallback, useEffect, useState } from 'react'
-import { BellRing, CalendarDays, Loader2, Scissors, Users } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import {
+  BellRing,
+  CalendarDays,
+  Loader2,
+  Scissors,
+  Settings2,
+  Users,
+} from 'lucide-react'
 
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/use-auth'
@@ -133,6 +141,7 @@ const EDITABLE_STATUSES: readonly AppointmentStatus[] = ['pending', 'confirmed']
 export default function BarberiaPage() {
   const { account, accountId, canEditSettings, canSendMessages, defaultCurrency } =
     useAuth()
+  const router = useRouter()
   const supabase = createClient()
 
   const [services, setServices] = useState<BookingServiceRow[]>([])
@@ -549,9 +558,18 @@ export default function BarberiaPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">{T.title}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{T.subtitle}</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">{T.title}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{T.subtitle}</p>
+        </div>
+        <Button
+          variant="outline"
+          onClick={() => router.push('/barberia/configuracion')}
+        >
+          <Settings2 className="h-4 w-4" />
+          {T.config.openConfig}
+        </Button>
       </div>
 
       {/* Agenda del día */}
