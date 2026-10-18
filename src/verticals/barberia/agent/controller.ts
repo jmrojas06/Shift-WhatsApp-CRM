@@ -53,6 +53,7 @@ import {
   loadHandoffAgentId,
   loadInboundMessage,
   loadStaffName,
+  markAppointmentConfirmed,
   markConversationHandoff,
   updateSession,
   upsertBarberiaDeal,
@@ -72,12 +73,14 @@ import {
   matchChoice,
   newBookingState,
   parseOptionId,
+  parseReminderId,
   slotId,
   staffId,
   svcId,
   type BookingState,
   type BookingStep,
   type OfferedOption,
+  type ReminderAction,
 } from './state'
 import { addDaysToKey, startOfZonedDay, zonedDateKey, zonedParts } from './time'
 
@@ -159,6 +162,17 @@ export async function handleBarberiaInbound(
   const text = inbound?.text ?? ''
   const replyId = inbound?.replyId ?? null
 
+  // 0) Tap de un recordatorio (Confirmar / Reprogramar / Cancelar).
+  //    Los ids `rem:*` son estáticos — también viajan como quick
+  //    replies de la plantilla de Meta—, así que la cita se resuelve
+  //    como la próxima cita activa del contacto. Se atienden aunque
+  //    haya una sesión a medias (y sin abrir una nueva para confirmar).
+  const reminderAction = replyId ? parseReminderId(replyId) : null
+  if (reminderAction) {
+    await handleReminderTap(dialog, args.session ?? null, reminderAction)
+    return { consumed: true }
+  }
+
   // 1) Pedir un humano gana sobre cualquier paso del flujo.
   if (replyId === null && containsHandoffWord(text)) {
     await performHandoff(dialog, args.session?.id ?? null)
@@ -206,6 +220,98 @@ export async function handleBarberiaInbound(
   })
   await conclude(dialog, sessionId, state)
   return { consumed: true }
+}
+
+// ------------------------------------------------------------
+// Recordatorios (taps rem:*) — Fase 3
+// ------------------------------------------------------------
+
+/**
+ * Acciones Confirmar / Reprogramar / Cancelar del recordatorio.
+ *
+ * La cita sobre la que se actúa es la PRÓXIMA cita activa del
+ * contacto: los botones de la plantilla de Meta no admiten ids
+ * dinámicos, así que no viaja el id de la cita en el tap.
+ *
+ *   - Confirmar: marca la cita y responde; no toca la sesión.
+ *   - Reprogramar: retoma el flujo existente (`pick_day` en modo
+ *     reschedule) reutilizando la fila de sesión si ya había una.
+ *   - Cancelar: entra a la confirmación de cancelación existente
+ *     (`manage_cancel_confirm`), que ya cancela con etiqueta y evento.
+ */
+async function handleReminderTap(
+  dialog: Dialog,
+  session: VerticalSession | null,
+  action: ReminderAction,
+): Promise<void> {
+  const appt = await findNextAppointment(
+    dialog.db,
+    dialog.accountId,
+    dialog.contactId,
+    dialog.nowIso,
+  )
+  if (!appt) {
+    await dialog.sender.sendText({
+      text: BARBERIA_AGENT_TEXTS.managedAppointmentGone,
+    })
+    return
+  }
+
+  if (action === 'confirm') {
+    await markAppointmentConfirmed(dialog.db, {
+      accountId: dialog.accountId,
+      id: appt.id,
+      confirmedAtIso: dialog.nowIso,
+    })
+    await bestEffort('evento confirmed (recordatorio)', () =>
+      insertBookingEvent(dialog.db, {
+        accountId: dialog.accountId,
+        appointmentId: appt.id,
+        event: 'confirmed',
+        payload: { via: 'recordatorio' },
+      }),
+    )
+
+    const service = appt.serviceId
+      ? await findService(dialog, appt.serviceId)
+      : null
+    const staffName = appt.staffId
+      ? await loadStaffName(dialog.db, dialog.accountId, appt.staffId)
+      : null
+    const parts = zonedParts(appt.startsAt)
+    await dialog.sender.sendText({
+      text: BARBERIA_AGENT_TEXTS.reminderConfirmed({
+        service: service?.name ?? BARBERIA_AGENT_TEXTS.serviceFallback,
+        staff: staffName ?? BARBERIA_AGENT_TEXTS.staffAnyTitle,
+        date: formatLongDate(parts.dateKey),
+        time: formatTimeLabel(parts),
+      }),
+    })
+    return
+  }
+
+  const state =
+    action === 'reschedule'
+      ? newBookingState('pick_day', {
+          mode: 'reschedule',
+          appointmentId: appt.id,
+          serviceId: appt.serviceId ?? undefined,
+          staffId: appt.staffId ?? 'any',
+        })
+      : newBookingState('manage_cancel_confirm', { appointmentId: appt.id })
+
+  let sessionId = session?.id
+  if (!sessionId) {
+    sessionId = crypto.randomUUID()
+    await createSession(dialog.db, {
+      id: sessionId,
+      accountId: dialog.accountId,
+      contactId: dialog.contactId,
+      state: toJson(state),
+      expiresAtIso: expiryIso(dialog),
+    })
+  }
+  await conclude(dialog, sessionId, state)
 }
 
 // ------------------------------------------------------------

@@ -1143,3 +1143,135 @@ describe('handoff a un humano', () => {
     expect(db._tables.booking_appointments).toHaveLength(0)
   })
 })
+
+describe('botones del recordatorio (rem:*)', () => {
+  it('confirmar actualiza la cita y registra el evento, sin abrir sesión', async () => {
+    const seed = baseSeed()
+    seed.booking_appointments = [
+      appointmentRow({ status: 'pending', confirmed_at: null }),
+    ]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, { replyId: 'rem:confirm' })
+
+    expect(res.consumed).toBe(true)
+    const appt = db._tables.booking_appointments[0]
+    expect(appt.status).toBe('confirmed')
+    expect(appt.confirmed_at).toBe('2026-10-19T13:00:00.000Z')
+
+    const event = db._tables.booking_events.find(
+      (e) => e.event === 'confirmed',
+    )
+    expect(event).toMatchObject({ appointment_id: 'appt-old', actor: 'bot' })
+    expect(db._tables.contact_tags ?? []).toHaveLength(0)
+
+    expect(last(rec).bodyText).toContain('queda confirmada')
+    expect(last(rec).bodyText).toContain('Corte clásico')
+    expect(last(rec).bodyText).toContain('Andrés')
+    expect(sessionRow(db)).toBeUndefined()
+  })
+
+  it('confirmar una cita ya confirmada es idempotente y también responde', async () => {
+    const seed = baseSeed()
+    seed.booking_appointments = [appointmentRow({ status: 'confirmed' })]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, { replyId: 'rem:confirm' })
+
+    expect(res.consumed).toBe(true)
+    const appt = db._tables.booking_appointments[0]
+    expect(appt.status).toBe('confirmed')
+    expect(appt.confirmed_at).toBe('2026-10-19T13:00:00.000Z')
+    expect(last(rec).bodyText).toContain('queda confirmada')
+  })
+
+  it('sin cita próxima activa avisa que ya no está en vez de inventar', async () => {
+    const seed = baseSeed()
+    seed.booking_appointments = [appointmentRow({ status: 'cancelled' })]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, { replyId: 'rem:confirm' })
+
+    expect(res.consumed).toBe(true)
+    expect(last(rec).bodyText).toContain('ya no está activa')
+    expect(sessionRow(db)).toBeUndefined()
+    expect(db._tables.booking_events).toHaveLength(0)
+  })
+
+  it('reprogramar abre el flujo existente con la cita del recordatorio', async () => {
+    const seed = baseSeed()
+    seed.booking_appointments = [appointmentRow()]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, { replyId: 'rem:reschedule' })
+
+    expect(res.consumed).toBe(true)
+    const state = sessionRow(db)?.state as Record<string, unknown>
+    expect(state.step).toBe('pick_day')
+    expect(state.mode).toBe('reschedule')
+    expect(state.appointmentId).toBe('appt-old')
+    expect(state.serviceId).toBe(SERVICE_CORTE)
+    expect(state.staffId).toBe(STAFF_ANDRES)
+    expect(last(rec).bodyText).toContain('nuevo día')
+  })
+
+  it('cancelar entra al flujo existente y el "Sí, cancelar" cancela de verdad', async () => {
+    const seed = baseSeed()
+    seed.booking_appointments = [appointmentRow()]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, { replyId: 'rem:cancel' })
+
+    expect(res.consumed).toBe(true)
+    expect((sessionRow(db)?.state as Record<string, unknown>).step).toBe(
+      'manage_cancel_confirm',
+    )
+    expect(last(rec).bodyText).toContain('¿Seguro')
+    expect(optionTitles(last(rec))).toContain('Sí, cancelar')
+
+    await send(db, rec, { replyId: 'act:cancel_yes' })
+
+    const appt = db._tables.booking_appointments[0]
+    expect(appt.status).toBe('cancelled')
+    expect(appt.cancel_reason).toBe('cliente')
+    expect(last(rec).bodyText).toContain('cancelada')
+    expect(sessionRow(db)).toBeUndefined()
+  })
+
+  it('con una sesión a medias reutiliza la fila en vez de duplicarla', async () => {
+    const seed = baseSeed()
+    seed.booking_appointments = [appointmentRow()]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'hola' })
+    const sessionId = sessionRow(db)?.id
+
+    await send(db, rec, { replyId: 'rem:reschedule' })
+
+    const active = db._tables.booking_sessions.filter(
+      (r) => r.status === 'active',
+    )
+    expect(active).toHaveLength(1)
+    expect(active[0].id).toBe(sessionId)
+    const state = active[0].state as Record<string, unknown>
+    expect(state.step).toBe('pick_day')
+    expect(state.mode).toBe('reschedule')
+  })
+
+  it('un rem:* desconocido no se consume ni arranca nada', async () => {
+    const db = makeFakeDb(baseSeed())
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, { replyId: 'rem:tomar' })
+
+    expect(res.consumed).toBe(false)
+    expect(rec.calls).toHaveLength(0)
+    expect(sessionRow(db)).toBeUndefined()
+  })
+})
