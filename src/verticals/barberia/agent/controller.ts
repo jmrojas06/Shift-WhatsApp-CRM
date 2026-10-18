@@ -27,6 +27,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { VerticalDispatchResult, VerticalSession } from '@/lib/verticals/types'
 
 import { BARBERIA_AGENT_TEXTS, type BarberiaAppointmentSummary } from '../texts'
+import { mergeBotTexts, type BarberiaAgentTextsMerged } from '../bot-texts'
 import {
   computeDaySlots,
   mergeSlotsByStart,
@@ -49,6 +50,7 @@ import {
   listWorkBlocks,
   loadAccount,
   loadAppointment,
+  loadBotTexts,
   loadContact,
   loadHandoffAgentId,
   loadInboundMessage,
@@ -150,6 +152,7 @@ export async function handleBarberiaInbound(
     contactId: args.contactId,
     configOwnerUserId: args.configOwnerUserId,
     account: await loadAccount(args.db, args.accountId),
+    texts: mergeBotTexts(await loadBotTexts(args.db, args.accountId)),
   }
 
   const inbound = args.inboundMessageId
@@ -328,6 +331,12 @@ interface Dialog {
   contactId: string
   configOwnerUserId: string
   account: AccountInfo | null
+  /**
+   * Copy del controlador con los overrides de Configuración ya
+   * aplicados (Fase 4). Los textos con datos de la cita se leen
+   * directo de BARBERIA_AGENT_TEXTS: no son editables.
+   */
+  texts: BarberiaAgentTextsMerged
 }
 
 function expiryIso(dialog: Dialog): string {
@@ -396,7 +405,7 @@ async function registerFail(
     return
   }
   const next = { ...state, fails }
-  await dialog.sender.sendText({ text: BARBERIA_AGENT_TEXTS.retry })
+  await dialog.sender.sendText({ text: dialog.texts.retry })
   await conclude(dialog, sessionId, next)
 }
 
@@ -664,7 +673,7 @@ async function confirmAppointment(
   }
   const service = await findService(dialog, state.serviceId)
   if (!service) {
-    await dialog.sender.sendText({ text: BARBERIA_AGENT_TEXTS.noServices })
+    await dialog.sender.sendText({ text: dialog.texts.noServices })
     await closeSession(dialog.db, {
       id: sessionId,
       accountId: dialog.accountId,
@@ -883,7 +892,7 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
       const services = await listServices(dialog.db, dialog.accountId)
       if (!services.length) {
         await dialog.sender.sendText({
-          text: BARBERIA_AGENT_TEXTS.noServices,
+          text: dialog.texts.noServices,
         })
         return { state, closed: true }
       }
@@ -892,7 +901,7 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
         title: service.name,
       }))
       await sendOptions(dialog, {
-        bodyText: BARBERIA_AGENT_TEXTS.serviceMenuBody,
+        bodyText: dialog.texts.serviceMenuBody,
         buttonLabel: BARBERIA_AGENT_TEXTS.serviceMenuButton,
         options: options.map((o, i) => ({
           ...o,
@@ -938,7 +947,7 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
       const days = await dayOptions(dialog, state)
       if (!days.length) {
         await dialog.sender.sendText({
-          text: BARBERIA_AGENT_TEXTS.noDaysAvailable,
+          text: dialog.texts.noDaysAvailable,
         })
         return { state, closed: true }
       }
@@ -1367,7 +1376,7 @@ async function performHandoff(
     })
   }
 
-  await dialog.sender.sendText({ text: BARBERIA_AGENT_TEXTS.handoff })
+  await dialog.sender.sendText({ text: dialog.texts.handoff })
 }
 
 async function bestEffort(label: string, fn: () => Promise<unknown>) {

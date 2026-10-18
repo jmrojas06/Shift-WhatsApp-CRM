@@ -6,6 +6,19 @@
 // copy vive aquí, junto al manifest y las semillas.
 // ============================================================
 
+/**
+ * Claves del copy del bot que el dueño puede sobreescribir desde
+ * Configuración (Fase 4). Son mensajes planos (sin datos de la cita):
+ * los textos con placeholders se quedan en código para no romper el
+ * resumen, la confirmación ni la plantilla de Meta.
+ */
+export type EditableBotTextKey =
+  | 'welcome'
+  | 'retry'
+  | 'noServices'
+  | 'noDaysAvailable'
+  | 'handoff'
+
 export const BARBERIA_TEXTS = {
   title: 'Barbería',
   subtitle: 'Tu plantilla de barbería: servicios, barberos y horarios.',
@@ -81,7 +94,7 @@ export const BARBERIA_TEXTS = {
   // ----------------------------------------------------------
   remindersTitle: 'Recordatorios',
   remindersHint:
-    'Cada cita recibe un recordatorio 24 horas antes; la segunda señal (2 horas antes) se activa por cuenta.',
+    'Cada cita recibe un recordatorio 24 horas antes; la segunda señal (2 horas antes) se activa en Configuración.',
   remindersWindowNote:
     'Con la conversación abierta (el cliente escribió en las últimas 24 h) se envía un mensaje con botones; si no, la plantilla aprobada de Meta.',
   remindersTwoHourOn: '2 h activado',
@@ -108,6 +121,188 @@ export const BARBERIA_TEXTS = {
     knowledge: 'Documentos de conocimiento',
     aiAgent: 'Agente de IA',
     pipeline: 'Pipeline',
+  },
+
+  // ----------------------------------------------------------
+  // Configuración (Fase 4) — /barberia/configuracion
+  // ----------------------------------------------------------
+  config: {
+    title: 'Configuración',
+    subtitle:
+      'Administra tu negocio, tus servicios, tus barberos y los textos del bot.',
+    openConfig: 'Configuración',
+    backToAgenda: 'Volver a la agenda',
+    loading: 'Cargando la configuración…',
+    loadFailed:
+      'No se pudo cargar la configuración. Recarga la página e inténtalo de nuevo.',
+    retry: 'Reintentar',
+    saveFailed:
+      'No se pudieron guardar los cambios. Inténtalo de nuevo en un momento.',
+    saved: 'Cambios guardados.',
+    saving: 'Guardando…',
+    viewerGate: 'editar la configuración',
+
+    validation: {
+      nameRequired: 'El nombre es obligatorio.',
+      priceInvalid:
+        'El precio debe estar entre 0 y 99.999.999,99 con máximo 2 decimales.',
+      durationInvalid:
+        'La duración debe ser un número entero entre 1 y 480 minutos.',
+      incompleteHours: 'Completa la hora de inicio y de fin de cada bloque.',
+      invalidDateTime: 'Completa la fecha y la hora de cada campo.',
+      endBeforeStart: 'La fecha de fin debe ser posterior a la de inicio.',
+    },
+
+    actions: {
+      edit: 'Editar',
+      activate: 'Activar',
+      deactivate: 'Desactivar',
+      cancel: 'Cancelar',
+    },
+
+    tabs: {
+      business: 'Negocio',
+      services: 'Servicios',
+      staff: 'Barberos',
+      schedule: 'Horarios',
+      timeOff: 'Bloqueos',
+      bot: 'Bot y recordatorios',
+    },
+
+    business: {
+      title: 'Datos del negocio',
+      name: 'Nombre del negocio',
+      nameHint:
+        'Es el nombre que ven tus clientes en WhatsApp y en los recordatorios.',
+      address: 'Dirección',
+      addressPlaceholder: 'Cra. 7 # 45-12, Bogotá',
+      addressHint: 'Dirección del local (opcional).',
+      timezone: 'Zona horaria',
+      timezoneValue: 'America/Bogota (fija)',
+      timezoneHint: 'Todas las citas se agendan y se muestran en hora de Bogotá.',
+      currency: 'Moneda',
+      currencyHint: 'Se usa para mostrar el precio de los servicios.',
+      save: 'Guardar datos del negocio',
+    },
+
+    reminders: {
+      title: 'Recordatorios de citas',
+      alwaysTitle: 'Recordatorio 24 h antes',
+      alwaysBody:
+        'Siempre activo: cada cita recibe un recordatorio el día anterior.',
+      twoHourTitle: 'Segunda señal 2 h antes',
+      twoHourBody:
+        'Envía un recordatorio adicional dos horas antes de la cita.',
+    },
+
+    services: {
+      title: 'Servicios',
+      empty:
+        'Aún no hay servicios. Crea el primero para que el bot pueda ofrecerlo.',
+      add: 'Agregar servicio',
+      createTitle: 'Nuevo servicio',
+      editTitle: 'Editar servicio',
+      name: 'Nombre',
+      description: 'Descripción',
+      descriptionPlaceholder: 'Corte clásico con máquina y tijera',
+      duration: 'Duración (minutos)',
+      price: 'Precio',
+      active: 'Activo',
+      inactive: 'Inactivo',
+      activeHint:
+        'Los servicios inactivos dejan de ofrecerse en nuevas reservas; las citas existentes no se modifican.',
+      moveUp: 'Subir',
+      moveDown: 'Bajar',
+      save: 'Guardar servicio',
+    },
+
+    staff: {
+      title: 'Barberos',
+      empty:
+        'Aún no hay barberos. Crea el equipo para asignarles horarios y servicios.',
+      add: 'Agregar barbero',
+      createTitle: 'Nuevo barbero',
+      editTitle: 'Editar barbero',
+      name: 'Nombre',
+      bio: 'Descripción',
+      bioPlaceholder: 'Especialista en fades y barba',
+      bioHint: 'Descripción corta (opcional).',
+      active: 'Activo',
+      inactive: 'Inactivo',
+      servicesTitle: 'Servicios que atiende',
+      servicesHint:
+        'Solo se ofrecerá este barbero para los servicios marcados. La opción "Cualquiera" asigna al que esté disponible.',
+      noServicesAvailable:
+        'Todavía no hay servicios activos. Créalos en la pestaña Servicios.',
+      save: 'Guardar barbero',
+    },
+
+    schedule: {
+      title: 'Horario semanal',
+      subtitle:
+        'Define cuándo acepta citas cada barbero. Los cambios aplican de inmediato a nuevas reservas; las citas ya confirmadas no se tocan.',
+      pickStaff: 'Barbero',
+      pickStaffEmpty: 'Crea primero un barbero para configurar su horario.',
+      hint: 'Para el almuerzo, usa dos bloques (por ejemplo 9:00–12:00 y 13:00–18:00).',
+      empty: 'Sin bloques este día.',
+      addBlock: 'Agregar bloque',
+      removeBlock: 'Quitar bloque',
+      save: 'Guardar horario',
+      weekdays: [
+        'Domingo',
+        'Lunes',
+        'Martes',
+        'Miércoles',
+        'Jueves',
+        'Viernes',
+        'Sábado',
+      ],
+    },
+
+    timeOff: {
+      title: 'Bloqueos puntuales',
+      subtitle:
+        'Vacaciones, citas médicas o días no disponibles. Mientras un bloqueo está activo, el bot no ofrece horas en ese rango.',
+      pickStaff: 'Barbero',
+      pickStaffEmpty: 'Crea primero un barbero para programar bloqueos.',
+      from: 'Desde',
+      to: 'Hasta',
+      reason: 'Motivo',
+      reasonPlaceholder: 'Vacaciones, diligencia personal…',
+      add: 'Agregar bloqueo',
+      empty: 'No hay bloqueos programados.',
+      upcoming: 'Próximos bloqueos',
+      delete: 'Eliminar',
+      deleteTitle: 'Eliminar bloqueo',
+      deleteBody: '¿Seguro que quieres eliminar este bloqueo? El barbero vuelve a estar disponible en ese rango.',
+      deleteYes: 'Sí, eliminar',
+      deleteNo: 'Cancelar',
+      past: 'Pasado',
+    },
+
+    bot: {
+      title: 'Textos del bot',
+      hint: 'Personaliza los mensajes del flujo de reservas. Deja un campo vacío para usar el texto por defecto. Los mensajes con datos de la cita (resumen, confirmación, recordatorio) no se editan aquí.',
+      defaultLabel: 'Texto por defecto:',
+      useDefault: 'Usar texto por defecto',
+      save: 'Guardar textos',
+      labels: {
+        welcome: 'Bienvenida',
+        retry: 'Respuesta no entendida',
+        noServices: 'Sin servicios activos',
+        noDaysAvailable: 'Sin horarios disponibles',
+        handoff: 'Pase a un asesor',
+      } satisfies Record<EditableBotTextKey, string>,
+      hints: {
+        welcome: 'Primer mensaje cuando el cliente escribe "hola" o "cita".',
+        retry:
+          'Cuando la respuesta no coincide con el menú (se reenvía el menú).',
+        noServices: 'Cuando el catálogo no tiene servicios activos.',
+        noDaysAvailable:
+          'Cuando no hay horarios libres en los próximos días.',
+        handoff: 'Cuando el cliente pide hablar con una persona.',
+      } satisfies Record<EditableBotTextKey, string>,
+    },
   },
 } as const
 

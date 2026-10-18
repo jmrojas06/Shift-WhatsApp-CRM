@@ -13,6 +13,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { sanitizeBotTexts, type BotTextOverrides } from '../bot-texts'
 import type { WorkBlock } from './availability'
 
 export interface AccountInfo {
@@ -720,4 +721,25 @@ export async function insertNotification(
     title: args.title,
     body: args.body,
   })
+}
+
+/**
+ * Overrides de copy del bot configurados desde la UI (Fase 4).
+ *
+ * Tolera todo: fila ausente, columna vacía o jsonb con basura — ante
+ * la duda devuelve `{}` y el controlador usa el copy por defecto. Un
+ * error de configuración NUNCA puede tumbar la conversación.
+ */
+export async function loadBotTexts(
+  db: SupabaseClient,
+  accountId: string,
+): Promise<BotTextOverrides> {
+  const { data } = await db
+    .from('booking_settings')
+    .select('bot_texts')
+    .eq('account_id', accountId)
+    .maybeSingle()
+  const raw = (data as { bot_texts?: unknown } | null)?.bot_texts
+  const clean = sanitizeBotTexts(raw ?? {})
+  return clean.ok ? clean.value : {}
 }

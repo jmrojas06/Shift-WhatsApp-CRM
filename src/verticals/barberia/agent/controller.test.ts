@@ -5,6 +5,7 @@ import type { VerticalSession } from '@/lib/verticals/types'
 
 import { handleBarberiaInbound, type BarberiaSender } from './controller'
 import { dayId, slotId, staffId, svcId } from './state'
+import { BARBERIA_AGENT_TEXTS } from '../texts'
 
 // ============================================================
 // Controlador de reservas — contrato completo del diálogo.
@@ -1273,5 +1274,89 @@ describe('botones del recordatorio (rem:*)', () => {
     expect(res.consumed).toBe(false)
     expect(rec.calls).toHaveLength(0)
     expect(sessionRow(db)).toBeUndefined()
+  })
+})
+
+describe('textos del bot personalizados (Fase 4)', () => {
+  it('usa la bienvenida configurada en booking_settings.bot_texts', async () => {
+    const seed = baseSeed()
+    seed.booking_settings = [
+      {
+        account_id: ACCOUNT,
+        bot_texts: { welcome: '¡Hola de Don Pedro! 💈 ¿Qué te agendo?' },
+      },
+    ]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'hola' })
+
+    expect(last(rec).bodyText).toBe(
+      '¡Hola de Don Pedro! 💈 ¿Qué te agendo?',
+    )
+    // El menú (botones) y el resto del flujo no cambian.
+    expect(optionTitles(last(rec))).toEqual([
+      'Corte clásico',
+      'Perfilado de barba',
+    ])
+  })
+
+  it('sin overrides usa el copy por defecto', async () => {
+    const db = makeFakeDb(baseSeed())
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'hola' })
+
+    expect(last(rec).bodyText).toBe(BARBERIA_AGENT_TEXTS.serviceMenuBody)
+  })
+
+  it('un override con basura (tipo equivocado) no rompe: cae al default', async () => {
+    const seed = baseSeed()
+    seed.booking_settings = [
+      { account_id: ACCOUNT, bot_texts: { welcome: 42 } },
+    ]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, { text: 'hola' })
+
+    expect(res.consumed).toBe(true)
+    expect(last(rec).bodyText).toBe(BARBERIA_AGENT_TEXTS.serviceMenuBody)
+  })
+
+  it('el reintento también es editable', async () => {
+    const seed = baseSeed()
+    seed.booking_settings = [
+      {
+        account_id: ACCOUNT,
+        bot_texts: { retry: 'Mmm, no te entendí. Toca una opción 🙂' },
+      },
+    ]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'hola' })
+    await send(db, rec, { text: 'quiero un tinte verde' })
+
+    // El retry va y después el menú se re-ofrece (re-pregunta).
+    expect(messagesWith(rec, 'Mmm, no te entendí')).toHaveLength(1)
+    expect(messagesWith(rec, BARBERIA_AGENT_TEXTS.retry)).toHaveLength(0)
+    expect(last(rec).kind).toBe('buttons')
+  })
+
+  it('los overrides de otra cuenta no se filtran', async () => {
+    const seed = baseSeed()
+    seed.booking_settings = [
+      {
+        account_id: 'acc-otra',
+        bot_texts: { welcome: 'Texto de otra barbería' },
+      },
+    ]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'hola' })
+
+    expect(last(rec).bodyText).toBe(BARBERIA_AGENT_TEXTS.serviceMenuBody)
   })
 })
