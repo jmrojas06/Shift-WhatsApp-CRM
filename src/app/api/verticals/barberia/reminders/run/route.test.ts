@@ -203,6 +203,11 @@ describe('GET /api/verticals/barberia/reminders/run', () => {
     expect(h.state.alerts[0]).toContain('no se pudieron leer las cuentas')
   })
 
+  it('declara maxDuration = 60 para que la corrida no se corte', async () => {
+    const mod = await import('./route')
+    expect(mod.maxDuration).toBe(60)
+  })
+
   it('avisa y responde 500 si el runner lanza', async () => {
     h.state.runnerError = new Error('boom')
 
