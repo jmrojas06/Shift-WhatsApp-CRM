@@ -131,6 +131,11 @@ export async function expireStaleSessions(
     .lte('expires_at', nowIso)
 }
 
+/**
+ * Crea la sesión activa del contacto. Lanza si la base la rechaza
+ * (p. ej. el índice único de sesión activa de 047): sin fila, el
+ * siguiente tap del cliente no tendría a qué engancharse.
+ */
 export async function createSession(
   db: SupabaseClient,
   args: {
@@ -141,7 +146,7 @@ export async function createSession(
     expiresAtIso: string
   },
 ): Promise<void> {
-  await db.from('booking_sessions').insert({
+  const { error } = await db.from('booking_sessions').insert({
     id: args.id,
     account_id: args.accountId,
     contact_id: args.contactId,
@@ -149,6 +154,9 @@ export async function createSession(
     status: 'active',
     expires_at: args.expiresAtIso,
   })
+  if (error) {
+    throw new Error(`No se pudo crear la sesión de reservas: ${error.message}`)
+  }
 }
 
 export async function updateSession(

@@ -98,6 +98,24 @@ function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
       return failures.splice(idx, 1)[0].error
     }
 
+    // Índice único parcial de 047 (idx_booking_sessions_one_active):
+    // una sola sesión 'active' por (account_id, contact_id).
+    const violatesOneActiveSession = (row: Row, self?: Row): boolean =>
+      table === 'booking_sessions' &&
+      row.status === 'active' &&
+      ensure(table).some(
+        (r) =>
+          r !== self &&
+          r.status === 'active' &&
+          r.account_id === row.account_id &&
+          r.contact_id === row.contact_id,
+      )
+    const UNIQUE_VIOLATION = {
+      code: '23505',
+      message:
+        'duplicate key value violates unique constraint "idx_booking_sessions_one_active"',
+    }
+
     const run = (): { data: unknown; error: unknown } => {
       if (op === 'select') {
         return { data: candidateRows().map((r) => ({ ...r })), error: null }
@@ -106,6 +124,9 @@ function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
         const fail = takeFailure('insert')
         if (fail) return { data: null, error: fail }
         const rows = Array.isArray(payload) ? payload : [payload as Row]
+        if (rows.some((r) => violatesOneActiveSession(r))) {
+          return { data: null, error: UNIQUE_VIOLATION }
+        }
         inserted = rows.map((r) => ({ ...r }))
         ensure(table).push(...inserted)
         return { data: null, error: null }
@@ -135,8 +156,17 @@ function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
       if (op === 'update') {
         const fail = takeFailure('update')
         if (fail) return { data: null, error: fail }
-        for (const row of candidateRows()) Object.assign(row, payload as Row)
-        return { data: null, error: null }
+        const targets = candidateRows()
+        if (
+          targets.some((row) =>
+            violatesOneActiveSession({ ...row, ...(payload as Row) }, row),
+          )
+        ) {
+          return { data: null, error: UNIQUE_VIOLATION }
+        }
+        for (const row of targets) Object.assign(row, payload as Row)
+        // Con `.select()` PostgREST devuelve las filas afectadas.
+        return { data: targets.map((r) => ({ ...r })), error: null }
       }
       const fail = takeFailure('delete')
       if (fail) return { data: null, error: fail }
@@ -1263,6 +1293,58 @@ describe('botones del recordatorio (rem:*)', () => {
     const state = active[0].state as Record<string, unknown>
     expect(state.step).toBe('pick_day')
     expect(state.mode).toBe('reschedule')
+  })
+
+  it('reprogramar con una sesión vencida que sigue "active" la expira y el flujo avanza', async () => {
+    // Reserva abandonada de ayer: quedó 'active' con expires_at vencido.
+    // El dispatcher no la entrega (está vencida), pero el índice único
+    // de sesión activa sigue contándola.
+    const seed = baseSeed()
+    seed.booking_appointments = [appointmentRow()]
+    seed.booking_sessions = [
+      {
+        id: 'sess-abandonada',
+        account_id: ACCOUNT,
+        contact_id: CONTACT,
+        state: { step: 'pick_service', mode: 'book', options: [], fails: 0 },
+        status: 'active',
+        expires_at: '2026-10-18T20:00:00.000Z',
+      },
+    ]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, { replyId: 'rem:reschedule' })
+
+    expect(res.consumed).toBe(true)
+    const old = db._tables.booking_sessions.find(
+      (s) => s.id === 'sess-abandonada',
+    )
+    expect(old?.status).toBe('expired')
+    const fresh = sessionRow(db)
+    expect(fresh?.id).not.toBe('sess-abandonada')
+    expect((fresh?.state as Record<string, unknown>).step).toBe('pick_day')
+
+    // El siguiente tap (un día) encuentra la sesión y avanza.
+    const next = await send(db, rec, { replyId: dayId(MONDAY) })
+    expect(next.consumed).toBe(true)
+    expect((sessionRow(db)?.state as Record<string, unknown>).step).toBe(
+      'pick_slot',
+    )
+  })
+
+  it('si crear la sesión falla, el error sube (no se manda un menú huérfano)', async () => {
+    const seed = baseSeed()
+    seed.booking_appointments = [appointmentRow()]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    db._failNext('insert', 'booking_sessions', { message: 'boom' })
+
+    await expect(
+      send(db, rec, { replyId: 'rem:reschedule' }),
+    ).rejects.toThrow()
+    expect(rec.calls).toHaveLength(0)
   })
 
   it('un rem:* desconocido no se consume ni arranca nada', async () => {

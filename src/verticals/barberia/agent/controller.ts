@@ -213,16 +213,32 @@ export async function handleBarberiaInbound(
     ? newBookingState('manage_menu', { appointmentId: existing.id })
     : newBookingState('pick_service')
 
+  const sessionId = await openSession(dialog, state)
+  await conclude(dialog, sessionId, state)
+  return { consumed: true }
+}
+
+/**
+ * Abre una sesión nueva. Antes expira las vencidas que sigan en
+ * 'active' (una reserva abandonada): el índice único de 047 las
+ * cuenta aunque el dispatcher ya no las entregue.
+ */
+async function openSession(dialog: Dialog, state: BookingState): Promise<string> {
+  await expireStaleSessions(
+    dialog.db,
+    dialog.accountId,
+    dialog.contactId,
+    dialog.nowIso,
+  )
   const sessionId = crypto.randomUUID()
-  await createSession(args.db, {
+  await createSession(dialog.db, {
     id: sessionId,
-    accountId: args.accountId,
-    contactId: args.contactId,
+    accountId: dialog.accountId,
+    contactId: dialog.contactId,
     state: toJson(state),
     expiresAtIso: expiryIso(dialog),
   })
-  await conclude(dialog, sessionId, state)
-  return { consumed: true }
+  return sessionId
 }
 
 // ------------------------------------------------------------
@@ -303,17 +319,7 @@ async function handleReminderTap(
         })
       : newBookingState('manage_cancel_confirm', { appointmentId: appt.id })
 
-  let sessionId = session?.id
-  if (!sessionId) {
-    sessionId = crypto.randomUUID()
-    await createSession(dialog.db, {
-      id: sessionId,
-      accountId: dialog.accountId,
-      contactId: dialog.contactId,
-      state: toJson(state),
-      expiresAtIso: expiryIso(dialog),
-    })
-  }
+  const sessionId = session?.id ?? (await openSession(dialog, state))
   await conclude(dialog, sessionId, state)
 }
 
