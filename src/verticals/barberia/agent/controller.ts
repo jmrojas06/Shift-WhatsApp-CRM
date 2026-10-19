@@ -53,6 +53,7 @@ import {
   loadAppointment,
   loadBotTexts,
   loadContact,
+  loadConversationAssignee,
   loadHandoffAgentId,
   loadInboundMessage,
   loadStaffName,
@@ -134,6 +135,12 @@ export interface HandleBarberiaInboundArgs {
   configOwnerUserId: string
   inboundMessageId?: string
   session?: VerticalSession | null
+  /**
+   * Un humano es dueño del hilo (agente asignado o bot en pausa). Solo
+   * se atienden los taps del recordatorio y la confirmación de una
+   * cancelación abierta desde él; todo lo demás es del humano.
+   */
+  humanOwned?: boolean
 }
 
 // ------------------------------------------------------------
@@ -144,6 +151,29 @@ export async function handleBarberiaInbound(
   args: HandleBarberiaInboundArgs,
 ): Promise<VerticalDispatchResult> {
   const now = args.now ?? new Date()
+
+  const inbound = args.inboundMessageId
+    ? await loadInboundMessage(
+        args.db,
+        args.conversationId,
+        args.inboundMessageId,
+      )
+    : null
+  const text = inbound?.text ?? ''
+  const replyId = inbound?.replyId ?? null
+  const reminderAction = replyId ? parseReminderId(replyId) : null
+  const humanOwned = args.humanOwned === true
+
+  // Hilo de un humano: antes de cargar nada más, soltar todo lo que no
+  // sea respuesta a un mensaje del sistema.
+  if (
+    humanOwned &&
+    !reminderAction &&
+    !isCancelConfirmTap(args.session ?? null, replyId)
+  ) {
+    return { consumed: false }
+  }
+
   const dialog: Dialog = {
     db: args.db,
     sender: args.sender,
@@ -157,24 +187,26 @@ export async function handleBarberiaInbound(
     texts: mergeBotTexts(await loadBotTexts(args.db, args.accountId)),
   }
 
-  const inbound = args.inboundMessageId
-    ? await loadInboundMessage(
-        args.db,
-        args.conversationId,
-        args.inboundMessageId,
-      )
-    : null
-  const text = inbound?.text ?? ''
-  const replyId = inbound?.replyId ?? null
-
   // 0) Tap de un recordatorio (Confirmar / Reprogramar / Cancelar).
   //    Los ids `rem:*` son estáticos — también viajan como quick
   //    replies de la plantilla de Meta—, así que la cita se resuelve
   //    como la próxima cita activa del contacto. Se atienden aunque
-  //    haya una sesión a medias (y sin abrir una nueva para confirmar).
-  const reminderAction = replyId ? parseReminderId(replyId) : null
+  //    haya una sesión a medias (y sin abrir una nueva para confirmar),
+  //    y también cuando un humano es dueño del hilo (D1).
   if (reminderAction) {
-    await handleReminderTap(dialog, args.session ?? null, reminderAction)
+    await handleReminderTap(
+      dialog,
+      args.session ?? null,
+      reminderAction,
+      humanOwned,
+    )
+    return { consumed: true }
+  }
+
+  // Hilo de un humano: solo queda el "Sí, cancelar" / "No" de una
+  // cancelación que abrió el recordatorio (filtrado arriba).
+  if (humanOwned && args.session) {
+    await advanceSession(dialog, args.session, { text, replyId })
     return { consumed: true }
   }
 
@@ -260,10 +292,21 @@ async function openSession(dialog: Dialog, state: BookingState): Promise<string>
  *   - Cancelar: entra a la confirmación de cancelación existente
  *     (`manage_cancel_confirm`), que ya cancela con etiqueta y evento.
  */
+/** ¿Es el tap "Sí, cancelar" / "No" de una confirmación de cancelación abierta? */
+function isCancelConfirmTap(
+  session: VerticalSession | null,
+  replyId: string | null,
+): boolean {
+  if (!session || !replyId) return false
+  if (session.state.step !== 'manage_cancel_confirm') return false
+  return replyId === actId('cancel_yes') || replyId === actId('back')
+}
+
 async function handleReminderTap(
   dialog: Dialog,
   session: VerticalSession | null,
   action: ReminderAction,
+  humanOwned = false,
 ): Promise<void> {
   const appt = await findNextAppointment(
     dialog.db,
@@ -314,6 +357,14 @@ async function handleReminderTap(
         time: formatTimeLabel(parts),
       }),
     })
+    return
+  }
+
+  // Reprogramar con un humano a cargo: el bot NO abre su flujo encima
+  // del agente. Avisa al agente (o al dueño), deja rastro y le dice al
+  // cliente que una persona sigue.
+  if (action === 'reschedule' && humanOwned) {
+    await handoffRescheduleRequest(dialog, appt)
     return
   }
 
@@ -1432,6 +1483,67 @@ async function performHandoff(
   }
 
   await dialog.sender.sendText({ text: dialog.texts.handoff })
+}
+
+/**
+ * D1 — "Reprogramar" del recordatorio cuando un humano es dueño del
+ * hilo: avisa al agente asignado (o al dueño si nadie está asignado),
+ * registra el intento en booking_events y le responde al cliente que
+ * una persona continúa. La cita no se toca.
+ */
+async function handoffRescheduleRequest(
+  dialog: Dialog,
+  appt: AppointmentInfo,
+): Promise<void> {
+  const assignee = await loadConversationAssignee(
+    dialog.db,
+    dialog.accountId,
+    dialog.conversationId,
+  )
+  const notifyUserId = assignee ?? dialog.account?.ownerUserId ?? null
+  const parts = zonedParts(appt.startsAt)
+  const date = formatLongDate(parts.dateKey)
+  const time = formatTimeLabel(parts)
+
+  if (notifyUserId) {
+    const contact = await loadContact(
+      dialog.db,
+      dialog.accountId,
+      dialog.contactId,
+    )
+    const who = contact?.name?.trim() || contact?.phone || 'Un cliente'
+    await bestEffort('aviso de reprogramación al agente', () =>
+      insertNotification(dialog.db, {
+        accountId: dialog.accountId,
+        userId: notifyUserId,
+        conversationId: dialog.conversationId,
+        contactId: dialog.contactId,
+        title: BARBERIA_AGENT_TEXTS.rescheduleRequestNotificationTitle,
+        body: BARBERIA_AGENT_TEXTS.rescheduleRequestNotificationBody({
+          who,
+          date,
+          time,
+        }),
+      }),
+    )
+  }
+
+  await bestEffort('evento reschedule_requested', () =>
+    insertBookingEvent(dialog.db, {
+      accountId: dialog.accountId,
+      appointmentId: appt.id,
+      event: 'reschedule_requested',
+      payload: {
+        via: 'recordatorio',
+        handled_by: 'humano',
+        notified_user_id: notifyUserId,
+      },
+    }),
+  )
+
+  await dialog.sender.sendText({
+    text: BARBERIA_AGENT_TEXTS.rescheduleHandedToHuman,
+  })
 }
 
 async function bestEffort(label: string, fn: () => Promise<unknown>) {

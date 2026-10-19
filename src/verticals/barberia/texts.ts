@@ -449,6 +449,16 @@ export const BARBERIA_AGENT_TEXTS = {
     'Entiendo. Dejo tu conversación con un asesor humano para que te ayude. En breve te contactan. 🙌',
   handoffNote:
     'El cliente pidió hablar con una persona desde el flujo de citas (agente de barbería en pausa).',
+  /** D1: "Reprogramar" del recordatorio con un humano a cargo del chat. */
+  rescheduleHandedToHuman:
+    'Listo, le avisé a un asesor para que te ayude a reprogramar. Te escribe por este chat; mientras tanto tu cita sigue igual. ✂️',
+  rescheduleRequestNotificationTitle: 'Cliente quiere reprogramar (Barbería)',
+  rescheduleRequestNotificationBody: (a: {
+    who: string
+    date: string
+    time: string
+  }) =>
+    `${a.who} tocó "Reprogramar" en el recordatorio de su cita del ${a.date} a las ${a.time}. Respóndele por este chat.`,
   handoffNotificationTitle: 'Cliente pide un asesor (Barbería)',
   handoffNotificationBody: (name: string) =>
     `${name} pidió hablar con una persona desde el flujo de citas.`,

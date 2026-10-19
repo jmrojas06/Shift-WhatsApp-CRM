@@ -488,6 +488,7 @@ async function send(
   rec: Recorder,
   input: { text?: string; replyId?: string | null },
   now: Date = NOW,
+  opts: { humanOwned?: boolean } = {},
 ) {
   const inboundMessageId = seedInbound(db, input)
   return handleBarberiaInbound({
@@ -500,8 +501,16 @@ async function send(
     configOwnerUserId: OWNER,
     inboundMessageId,
     session: currentSession(db, now),
+    humanOwned: opts.humanOwned,
   })
 }
+
+/** Como lo llama el dispatcher cuando un humano es dueño del hilo (D1). */
+const sendHuman = (
+  db: FakeDb,
+  rec: Recorder,
+  input: { text?: string; replyId?: string | null },
+) => send(db, rec, input, NOW, { humanOwned: true })
 
 function last(rec: Recorder): SenderCall {
   const call = rec.calls.at(-1)
@@ -1485,6 +1494,112 @@ describe('botones del recordatorio (rem:*)', () => {
     expect(res.consumed).toBe(false)
     expect(rec.calls).toHaveLength(0)
     expect(sessionRow(db)).toBeUndefined()
+  })
+})
+
+describe('recordatorio con un humano a cargo del chat (D1)', () => {
+  function humanSeed(assignedAgentId: string | null = HANDOFF_AGENT) {
+    const seed = baseSeed()
+    seed.booking_appointments = [
+      appointmentRow({ status: 'pending', confirmed_at: null }),
+    ]
+    seed.conversations[0].assigned_agent_id = assignedAgentId
+    seed.conversations[0].ai_autoreply_disabled = assignedAgentId === null
+    return seed
+  }
+
+  it('Confirmar funciona aunque haya agente asignado', async () => {
+    const db = makeFakeDb(humanSeed())
+    const rec = makeRecorder()
+
+    const res = await sendHuman(db, rec, { replyId: 'rem:confirm' })
+
+    expect(res.consumed).toBe(true)
+    expect(db._tables.booking_appointments[0].status).toBe('confirmed')
+    expect(last(rec).bodyText).toContain('queda confirmada')
+    expect(sessionRow(db)).toBeUndefined()
+  })
+
+  it('Cancelar funciona aunque la IA esté en pausa: pide confirmación y cancela', async () => {
+    const db = makeFakeDb(humanSeed(null))
+    const rec = makeRecorder()
+
+    const first = await sendHuman(db, rec, { replyId: 'rem:cancel' })
+    expect(first.consumed).toBe(true)
+    expect(optionTitles(last(rec))).toContain('Sí, cancelar')
+
+    const second = await sendHuman(db, rec, { replyId: 'act:cancel_yes' })
+    expect(second.consumed).toBe(true)
+    expect(db._tables.booking_appointments[0].status).toBe('cancelled')
+    expect(last(rec).bodyText).toContain('cancelada')
+    expect(sessionRow(db)).toBeUndefined()
+  })
+
+  it('Reprogramar con agente asignado NO abre el flujo: avisa al agente, registra y responde', async () => {
+    const db = makeFakeDb(humanSeed())
+    const rec = makeRecorder()
+
+    const res = await sendHuman(db, rec, { replyId: 'rem:reschedule' })
+
+    expect(res.consumed).toBe(true)
+    // Sin flujo del bot y la cita intacta.
+    expect(db._tables.booking_sessions).toHaveLength(0)
+    expect(db._tables.booking_appointments[0].status).toBe('pending')
+    // Aviso al agente asignado.
+    expect(db._tables.notifications).toHaveLength(1)
+    expect(db._tables.notifications[0]).toMatchObject({
+      account_id: ACCOUNT,
+      user_id: HANDOFF_AGENT,
+      type: 'conversation_assigned',
+      conversation_id: CONVERSATION,
+      contact_id: CONTACT,
+    })
+    expect(String(db._tables.notifications[0].body)).toContain('Carlos')
+    // Intento registrado.
+    const event = db._tables.booking_events.find(
+      (e) => e.event === 'reschedule_requested',
+    )
+    expect(event).toMatchObject({ appointment_id: 'appt-old', actor: 'bot' })
+    // El cliente sabe que sigue un humano.
+    expect(last(rec).bodyText).toBe(BARBERIA_AGENT_TEXTS.rescheduleHandedToHuman)
+    expect(rec.calls).toHaveLength(1)
+  })
+
+  it('Reprogramar con la IA en pausa y sin agente avisa al dueño', async () => {
+    const db = makeFakeDb(humanSeed(null))
+    const rec = makeRecorder()
+
+    await sendHuman(db, rec, { replyId: 'rem:reschedule' })
+
+    expect(db._tables.notifications[0].user_id).toBe(OWNER)
+    expect(db._tables.booking_sessions).toHaveLength(0)
+  })
+
+  it('cualquier otro mensaje en el hilo del humano no se consume ni responde', async () => {
+    const db = makeFakeDb(humanSeed())
+    const rec = makeRecorder()
+
+    const greeting = await sendHuman(db, rec, { text: 'hola, quiero una cita' })
+    const handoffWord = await sendHuman(db, rec, { text: 'asesor' })
+    const staleTap = await sendHuman(db, rec, { replyId: dayId(MONDAY) })
+
+    expect(greeting.consumed).toBe(false)
+    expect(handoffWord.consumed).toBe(false)
+    expect(staleTap.consumed).toBe(false)
+    expect(rec.calls).toHaveLength(0)
+    expect(db._tables.booking_sessions).toHaveLength(0)
+  })
+
+  it('sin humano a cargo, Reprogramar sigue abriendo el flujo normal', async () => {
+    const seed = baseSeed()
+    seed.booking_appointments = [appointmentRow()]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    await send(db, rec, { replyId: 'rem:reschedule' })
+
+    expect((sessionRow(db)?.state as Record<string, unknown>).step).toBe('pick_day')
+    expect(db._tables.notifications).toHaveLength(0)
   })
 })
 

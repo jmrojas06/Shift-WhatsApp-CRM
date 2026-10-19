@@ -35,12 +35,12 @@ interface DispatchArgs {
  * automation triggers are suppressed and the AI auto-reply never sees
  * it.
  *
- * Stands down, exactly like the AI auto-reply core, when a human owns
- * the conversation (`assigned_agent_id`) or auto-replies were disabled
- * for it (`ai_autoreply_disabled`, set on handoff). An active booking
- * session claims the message even before its handler lands — sessions
- * are only created by the Phase 2 controller, so that branch is inert
- * until then.
+ * When a human owns the conversation (`assigned_agent_id`) or
+ * auto-replies were disabled for it (`ai_autoreply_disabled`, set on
+ * handoff), the handler still runs with `humanOwned: true` — only so it
+ * can answer taps on system messages (reminder buttons) — and nothing is
+ * consumed unless the handler says so. Otherwise an active booking
+ * session claims the message even between handler invocations.
  *
  * Owns its try/catch and never throws: the webhook must keep its 200
  * to Meta even when this lookup fails.
@@ -75,8 +75,11 @@ export async function dispatchInboundToVertical(
       assigned_agent_id: string | null
       ai_autoreply_disabled: boolean | null
     }
-    if (conv.assigned_agent_id) return notConsumed
-    if (conv.ai_autoreply_disabled) return notConsumed
+    const humanOwned = Boolean(
+      conv.assigned_agent_id || conv.ai_autoreply_disabled,
+    )
+    const handler = VERTICAL_HANDLERS[manifest.key]
+    if (humanOwned && !handler) return notConsumed
 
     const { data: sessionRow } = await db
       .from('booking_sessions')
@@ -94,7 +97,6 @@ export async function dispatchInboundToVertical(
         }
       : null
 
-    const handler = VERTICAL_HANDLERS[manifest.key]
     if (handler) {
       const result = await handler({
         accountId: args.accountId,
@@ -104,9 +106,14 @@ export async function dispatchInboundToVertical(
         inboundMessageId: args.inboundMessageId,
         db,
         session,
+        humanOwned,
       })
       if (result.consumed) return { consumed: true }
     }
+
+    // A human owns the thread: only what the handler explicitly took
+    // is consumed; an open session does not claim the rest.
+    if (humanOwned) return notConsumed
 
     // An active booking session means the vertical owns the thread even
     // between handler invocations — content automations stand down

@@ -85,4 +85,5 @@ export const barberiaInboundHandler: VerticalInboundHandler = (ctx) =>
     configOwnerUserId: ctx.configOwnerUserId,
     inboundMessageId: ctx.inboundMessageId,
     session: ctx.session,
+    humanOwned: ctx.humanOwned ?? false,
   })

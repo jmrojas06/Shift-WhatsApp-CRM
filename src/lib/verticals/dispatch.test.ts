@@ -197,7 +197,9 @@ describe('dispatchInboundToVertical', () => {
     })
   })
 
-  it('stays out — without calling the handler — when a human owns the thread', async () => {
+  // D1: a human-owned thread still reaches the handler, flagged, so it
+  // can answer reminder buttons (Confirmar / Cancelar / Reprogramar).
+  it('a human-owned thread reaches the handler with humanOwned: true', async () => {
     dbState.responses = {
       accounts: barberiaAccount,
       conversations: {
@@ -206,7 +208,65 @@ describe('dispatchInboundToVertical', () => {
       },
     }
     await dispatchInboundToVertical(baseArgs)
-    expect(dbState.handlerCalls).toHaveLength(0)
+    expect(dbState.handlerCalls).toHaveLength(1)
+    expect(dbState.handlerCalls[0].humanOwned).toBe(true)
+  })
+
+  it('a paused thread (ai_autoreply_disabled) is also flagged humanOwned', async () => {
+    dbState.responses = {
+      accounts: barberiaAccount,
+      conversations: {
+        data: { assigned_agent_id: null, ai_autoreply_disabled: true },
+        error: null,
+      },
+    }
+    await dispatchInboundToVertical(baseArgs)
+    expect(dbState.handlerCalls[0].humanOwned).toBe(true)
+  })
+
+  it('an open thread is flagged humanOwned: false', async () => {
+    dbState.responses = {
+      accounts: barberiaAccount,
+      conversations: openConversation,
+      booking_sessions: { data: null, error: null },
+    }
+    await dispatchInboundToVertical(baseArgs)
+    expect(dbState.handlerCalls[0].humanOwned).toBe(false)
+  })
+
+  it('on a human-owned thread an active session does NOT claim what the handler declined', async () => {
+    dbState.responses = {
+      accounts: barberiaAccount,
+      conversations: {
+        data: { assigned_agent_id: 'agent-9', ai_autoreply_disabled: false },
+        error: null,
+      },
+      booking_sessions: {
+        data: {
+          id: 'sess-1',
+          state: { step: 'pick_service' },
+          expires_at: '2099-01-01T00:00:00.000Z',
+        },
+        error: null,
+      },
+    }
+    await expect(dispatchInboundToVertical(baseArgs)).resolves.toEqual({
+      consumed: false,
+    })
+  })
+
+  it('on a human-owned thread a handler consume (reminder tap) is honored', async () => {
+    dbState.responses = {
+      accounts: barberiaAccount,
+      conversations: {
+        data: { assigned_agent_id: 'agent-9', ai_autoreply_disabled: false },
+        error: null,
+      },
+    }
+    dbState.handlerResult = { consumed: true }
+    await expect(dispatchInboundToVertical(baseArgs)).resolves.toEqual({
+      consumed: true,
+    })
   })
 
   it('never throws when the lookup fails', async () => {

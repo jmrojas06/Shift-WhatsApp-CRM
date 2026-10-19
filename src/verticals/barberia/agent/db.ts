@@ -728,6 +728,23 @@ export async function insertBookingEvent(
 // Handoff
 // ------------------------------------------------------------
 
+/** Agente asignado a la conversación (null si nadie la tiene). */
+export async function loadConversationAssignee(
+  db: SupabaseClient,
+  accountId: string,
+  conversationId: string,
+): Promise<string | null> {
+  const { data } = await db
+    .from('conversations')
+    .select('assigned_agent_id')
+    .eq('id', conversationId)
+    .eq('account_id', accountId)
+    .maybeSingle()
+  return ((data as Record<string, unknown> | null)?.assigned_agent_id as
+    | string
+    | null) ?? null
+}
+
 export async function loadHandoffAgentId(
   db: SupabaseClient,
   accountId: string,
