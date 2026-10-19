@@ -45,6 +45,15 @@ qué garantiza el servidor y cómo probarlo.
 - **Zona horaria**: **fija** `America/Bogota` (solo lectura). Todas las
   citas, horarios y bloqueos se guardan en UTC y se capturan/muestran
   en hora de Bogotá.
+  - **Limitación conocida:** el producto asume `America/Bogota` para
+    TODAS las cuentas (constante `BARBERIA_TZ` en
+    `src/verticals/barberia/agent/time.ts`: disponibilidad, menús del
+    bot, agenda y recordatorios). Una barbería en otra zona (España,
+    EE. UU.) vería las horas corridas. Soportar varias zonas horarias
+    (p. ej. una columna `timezone` en `booking_settings`) es un
+    **pendiente futuro**; hasta entonces, solo se activa el vertical
+    para negocios en la hora de Colombia (UTC-5, sin horario de
+    verano).
 
 ## Servicios
 
@@ -140,7 +149,15 @@ Todas las rutas exigen **admin+** y filtran por la cuenta del usuario:
 
 Códigos: **400** validación (mensaje en es-CO listo para mostrar),
 **403** rol insuficiente, **404** id inexistente o de otra cuenta,
-**409** nombre duplicado (`code: "duplicate_name"`).
+**409** nombre duplicado (`code: "duplicate_name"`), **500** si la base
+rechaza una escritura (la pantalla muestra el error, nunca «Guardado»).
+
+**Base de datos (RLS, migración 050):** la misma regla vale si alguien
+escribe directo a Supabase con su sesión. Servicios, barberos, relación
+barbero↔servicio, horarios, bloqueos y `booking_settings` (dirección,
+2 h, textos del bot): **lectura** para todos los roles, **escritura**
+solo owner/admin. Los agentes no crean bloqueos. Citas y sesiones del
+bot siguen abiertas a agentes (la agenda del día cambia estados).
 
 ## Idempotencia y efectos
 
