@@ -36,6 +36,7 @@ import {
 import {
   applyContactTag,
   cancelAppointment,
+  claimSession,
   closeSession,
   createSession,
   expireStaleSessions,
@@ -57,6 +58,7 @@ import {
   loadStaffName,
   markAppointmentConfirmed,
   markConversationHandoff,
+  releaseSession,
   updateSession,
   upsertBarberiaDeal,
   type AccountInfo,
@@ -735,6 +737,16 @@ async function confirmAppointment(
     return
   }
 
+  // Un solo ganador por sesión: si otro proceso (un doble tap de
+  // "Confirmar") ya la reclamó, ese es el que agenda y responde.
+  // Aquí no se inserta nada ni se manda un mensaje que contradiga.
+  const claimed = await claimSession(dialog.db, {
+    id: sessionId,
+    accountId: dialog.accountId,
+    updatedAtIso: dialog.nowIso,
+  })
+  if (!claimed) return
+
   const appointmentId = crypto.randomUUID()
   const { error } = await insertAppointment(dialog.db, {
     id: appointmentId,
@@ -752,6 +764,13 @@ async function confirmAppointment(
   })
 
   if (error) {
+    // La cita no existe: la sesión vuelve a estar activa para que el
+    // cliente pueda elegir otra hora o reintentar.
+    await releaseSession(dialog.db, {
+      id: sessionId,
+      accountId: dialog.accountId,
+      updatedAtIso: dialog.nowIso,
+    })
     if (error.code === '23P01') {
       // Choque con el EXCLUDE anti-doble-reserva: alguien ganó la carrera.
       await offerAlternatives(dialog, sessionId, state)
@@ -830,13 +849,7 @@ async function confirmAppointment(
     )
   }
 
-  await closeSession(dialog.db, {
-    id: sessionId,
-    accountId: dialog.accountId,
-    status: 'completed',
-    updatedAtIso: dialog.nowIso,
-  })
-
+  // La sesión ya quedó 'completed' al reclamarla (claimSession).
   const staffName = await loadStaffName(dialog.db, dialog.accountId, assigned!)
   const summary = buildSummary(dialog, service, staffName ?? '', start)
   await dialog.sender.sendText({

@@ -180,6 +180,49 @@ export async function updateSession(
     .eq('account_id', args.accountId)
 }
 
+/**
+ * Reclama la sesión para confirmar: UPDATE condicional active →
+ * completed. Solo un proceso gana; si dos taps de "Confirmar" llegan
+ * a la vez, el perdedor recibe false y no agenda nada (sin esto, con
+ * "Cualquiera" el segundo agendaba con otro barbero).
+ */
+export async function claimSession(
+  db: SupabaseClient,
+  args: { id: string; accountId: string; updatedAtIso: string },
+): Promise<boolean> {
+  const { data, error } = await db
+    .from('booking_sessions')
+    .update({ status: 'completed', updated_at: args.updatedAtIso })
+    .eq('id', args.id)
+    .eq('account_id', args.accountId)
+    .eq('status', 'active')
+    .select('id')
+  if (error) {
+    throw new Error(`No se pudo reclamar la sesión de reservas: ${error.message}`)
+  }
+  return ((data ?? []) as unknown[]).length > 0
+}
+
+/**
+ * Devuelve a 'active' una sesión reclamada cuando la cita no se pudo
+ * crear (hora ganada por otro, error de base): el cliente sigue en el
+ * flujo y su siguiente tap la encuentra.
+ */
+export async function releaseSession(
+  db: SupabaseClient,
+  args: { id: string; accountId: string; updatedAtIso: string },
+): Promise<void> {
+  const { error } = await db
+    .from('booking_sessions')
+    .update({ status: 'active', updated_at: args.updatedAtIso })
+    .eq('id', args.id)
+    .eq('account_id', args.accountId)
+    .eq('status', 'completed')
+  if (error) {
+    console.error('[barberia] no se pudo reabrir la sesión:', error.message)
+  }
+}
+
 export async function closeSession(
   db: SupabaseClient,
   args: {

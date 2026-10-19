@@ -819,6 +819,56 @@ describe('carreras por la misma hora', () => {
     expect(db._tables.booking_appointments[0].id).toBe('appt-race')
   })
 
+  it('dos "Confirmar" a la vez (doble tap con Cualquiera) dejan UNA sola cita', async () => {
+    const db = makeFakeDb(baseSeed())
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'hola' })
+    await send(db, rec, { replyId: svcId(SERVICE_CORTE) })
+    await send(db, rec, { replyId: staffId('any') })
+    await send(db, rec, { replyId: dayId(MONDAY) })
+    await send(db, rec, { replyId: slotId('2026-10-19T16:30:00.000Z') }) // ambos libres
+    const before = rec.calls.length
+
+    // Los dos webhooks leen la misma sesión antes de que cualquiera escriba.
+    const [a, b] = await Promise.all([
+      send(db, rec, { replyId: 'act:confirm' }),
+      send(db, rec, { replyId: 'act:confirm' }),
+    ])
+
+    expect(a.consumed).toBe(true)
+    expect(b.consumed).toBe(true)
+    expect(db._tables.booking_appointments).toHaveLength(1)
+    const sent = rec.calls.slice(before)
+    // Una confirmación y nada que la contradiga.
+    expect(sent).toHaveLength(1)
+    expect(sent[0].bodyText).toContain('quedó agendada')
+    expect(messagesWith(rec, 'ocupó')).toHaveLength(0)
+    expect(sessionRow(db)).toBeUndefined()
+  })
+
+  it('si la cita no se crea, la sesión reclamada vuelve a quedar activa', async () => {
+    const db = makeFakeDb(baseSeed())
+    const rec = makeRecorder()
+
+    await walkToDay(db, rec)
+    await send(db, rec, { replyId: dayId(MONDAY) })
+    await send(db, rec, { replyId: slotId('2026-10-19T14:00:00.000Z') })
+
+    db._failNext('insert', 'booking_appointments', { message: 'timeout' })
+    await send(db, rec, { replyId: 'act:confirm' })
+
+    expect(db._tables.booking_appointments).toHaveLength(0)
+    expect(last(rec).kind).toBe('buttons') // re-ofrece el resumen
+    expect((sessionRow(db)?.state as Record<string, unknown>).step).toBe(
+      'summary',
+    )
+
+    // El reintento funciona sobre la misma sesión.
+    await send(db, rec, { replyId: 'act:confirm' })
+    expect(db._tables.booking_appointments).toHaveLength(1)
+  })
+
   it('un choque a nivel de base de datos (EXCLUDE) se trata como hora ocupada', async () => {
     const db = makeFakeDb(baseSeed())
     const rec = makeRecorder()
