@@ -402,20 +402,30 @@ export async function runBarberiaReminders(
     errors: [],
   }
 
-  const { data: accountRows } = await args.db
+  // Un fallo de lectura LANZA: devolver "0 citas" hacía que el runner
+  // dejara de recordar sin que la ruta alertara (responde 500 + alerta).
+  const { data: accountRows, error: accountsError } = await args.db
     .from('accounts')
     .select('id, name, owner_user_id')
     .eq('vertical_key', 'barberia')
+  if (accountsError) {
+    throw new Error(`no se pudieron leer las cuentas: ${accountsError.message}`)
+  }
   const accounts = (accountRows ?? []) as AccountRow[]
   summary.accounts = accounts.length
   if (!accounts.length) return summary
   const accountsById = new Map(accounts.map((a) => [a.id, a]))
 
   // 2.ª señal por cuenta (fila ausente = desactivada).
-  const { data: settingsRows } = await args.db
+  const { data: settingsRows, error: settingsError } = await args.db
     .from('booking_settings')
     .select('account_id, reminders_2h_enabled')
     .in('account_id', [...accountsById.keys()])
+  if (settingsError) {
+    throw new Error(
+      `no se pudo leer la configuración de recordatorios: ${settingsError.message}`,
+    )
+  }
   const twoHourByAccount = new Map<string, boolean>()
   for (const row of (settingsRows ?? []) as Record<string, unknown>[]) {
     twoHourByAccount.set(row.account_id as string, row.reminders_2h_enabled === true)

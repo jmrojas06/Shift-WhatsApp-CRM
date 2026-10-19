@@ -189,6 +189,20 @@ describe('GET /api/verticals/barberia/reminders/run', () => {
     expect(h.state.alerts).toHaveLength(0)
   })
 
+  it('una lectura fallida de la base (runner lanza) alerta con la causa y responde 500', async () => {
+    h.state.runnerError = new Error(
+      'no se pudieron leer las cuentas: connection reset',
+    )
+
+    const res = (await GET(
+      req({ 'x-cron-secret': SECRET }),
+    )) as unknown as TestResponse
+
+    expect(res.status).toBe(500)
+    expect(h.state.alerts).toHaveLength(1)
+    expect(h.state.alerts[0]).toContain('no se pudieron leer las cuentas')
+  })
+
   it('avisa y responde 500 si el runner lanza', async () => {
     h.state.runnerError = new Error('boom')
 

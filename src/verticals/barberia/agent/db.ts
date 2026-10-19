@@ -122,13 +122,25 @@ export async function expireStaleSessions(
   contactId: string,
   nowIso: string,
 ): Promise<void> {
-  await db
+  const { error } = await db
     .from('booking_sessions')
     .update({ status: 'expired', updated_at: nowIso })
     .eq('account_id', accountId)
     .eq('contact_id', contactId)
     .eq('status', 'active')
     .lte('expires_at', nowIso)
+  // Si falla, createSession choca con el índice único y ESA lanza.
+  if (error) logWriteError('expirar sesiones vencidas', error)
+}
+
+/**
+ * Escrituras que ocurren DESPUÉS de mandarle el menú al cliente
+ * (refrescar / cerrar la sesión): lanzar ya no deshace el mensaje y
+ * solo haría que la IA o las automatizaciones respondieran encima.
+ * Se registran para que no fallen en silencio.
+ */
+function logWriteError(label: string, error: { message?: string }): void {
+  console.error(`[barberia] no se pudo ${label}:`, error.message ?? error)
 }
 
 /**
@@ -169,7 +181,7 @@ export async function updateSession(
     expiresAtIso: string
   },
 ): Promise<void> {
-  await db
+  const { error } = await db
     .from('booking_sessions')
     .update({
       state: args.state,
@@ -178,6 +190,7 @@ export async function updateSession(
     })
     .eq('id', args.id)
     .eq('account_id', args.accountId)
+  if (error) logWriteError('guardar el paso de la sesión', error)
 }
 
 /**
@@ -232,11 +245,12 @@ export async function closeSession(
     updatedAtIso: string
   },
 ): Promise<void> {
-  await db
+  const { error } = await db
     .from('booking_sessions')
     .update({ status: args.status, updated_at: args.updatedAtIso })
     .eq('id', args.id)
     .eq('account_id', args.accountId)
+  if (error) logWriteError('cerrar la sesión', error)
 }
 
 // ------------------------------------------------------------
@@ -527,7 +541,7 @@ export async function cancelAppointment(
     cancelledAtIso: string
   },
 ): Promise<void> {
-  await db
+  const { error } = await db
     .from('booking_appointments')
     .update({
       status: 'cancelled',
@@ -537,6 +551,8 @@ export async function cancelAppointment(
     })
     .eq('id', args.id)
     .eq('account_id', args.accountId)
+  // Crítica: el bot no puede decir "cancelada" si la cita sigue viva.
+  if (error) throw new Error(`No se pudo cancelar la cita: ${error.message}`)
 }
 
 /**
@@ -552,7 +568,7 @@ export async function markAppointmentConfirmed(
     confirmedAtIso: string
   },
 ): Promise<void> {
-  await db
+  const { error } = await db
     .from('booking_appointments')
     .update({
       status: 'confirmed',
@@ -561,6 +577,7 @@ export async function markAppointmentConfirmed(
     })
     .eq('id', args.id)
     .eq('account_id', args.accountId)
+  if (error) throw new Error(`No se pudo confirmar la cita: ${error.message}`)
 }
 
 // ------------------------------------------------------------
@@ -739,7 +756,7 @@ export async function markConversationHandoff(
     agentId: string | null
   },
 ): Promise<void> {
-  await db
+  const { error } = await db
     .from('conversations')
     .update({
       ai_autoreply_disabled: true,
@@ -748,6 +765,9 @@ export async function markConversationHandoff(
     })
     .eq('id', args.conversationId)
     .eq('account_id', args.accountId)
+  // Crítica: sin la pausa, prometerle un humano al cliente sería falso
+  // (el bot y la IA seguirían respondiendo).
+  if (error) throw new Error(`No se pudo pausar el bot: ${error.message}`)
 }
 
 export async function insertNotification(

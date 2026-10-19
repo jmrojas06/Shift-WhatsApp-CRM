@@ -760,6 +760,37 @@ describe('runBarberiaReminders', () => {
     expect(appointmentRow(db).reminder_sent_at).toBe(NOW.toISOString())
   })
 
+  it.each(['accounts', 'booking_settings', 'booking_appointments'])(
+    'si leer %s falla, el runner lanza (la ruta alerta y responde 500)',
+    async (brokenTable) => {
+      const db = makeFakeDb(baseSeed())
+      const failing = {
+        from(table: string) {
+          if (table !== brokenTable) return db.from(table)
+          const chain: Record<string, unknown> = {}
+          for (const m of ['select', 'eq', 'in', 'is', 'gt', 'lte', 'order', 'limit']) {
+            chain[m] = () => chain
+          }
+          chain.then = (resolve: (v: unknown) => unknown) =>
+            Promise.resolve(
+              resolve({ data: null, error: { message: 'connection reset' } }),
+            )
+          return chain
+        },
+      }
+      const rec = makeRecorder()
+
+      await expect(
+        runBarberiaReminders({
+          db: failing as unknown as SupabaseClient,
+          now: NOW,
+          send: rec.send,
+        }),
+      ).rejects.toThrow('connection reset')
+      expect(rec.deliveries).toHaveLength(0)
+    },
+  )
+
   it('sin conversación no adivina: salta la cita con error acotado', async () => {
     const seed = baseSeed()
     seed.booking_appointments = [

@@ -385,8 +385,9 @@ export const BARBERIA_AGENT_TEXTS = {
     'Aún no hay servicios configurados en la barbería. Escríbeme "asesor" y te ayudamos.',
   noStaffForService:
     'Por ahora no hay barberos disponibles para ese servicio. Elige otro, por favor:',
+  /** Falló una escritura crítica (agendar, confirmar o cancelar). */
   confirmError:
-    'Uy, no pude agendar tu cita en este momento 😅. Intenta de nuevo o escríbeme "asesor".',
+    'Uy, no pude completar ese cambio en tu cita en este momento 😅. Intenta de nuevo o escríbeme "asesor".',
 
   // ----------------------------------------------------------
   // Gestión de una cita existente

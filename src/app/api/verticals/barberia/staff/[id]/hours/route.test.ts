@@ -157,6 +157,34 @@ describe('PUT /api/verticals/barberia/staff/[id]/hours', () => {
     expect(res.body.error).toBe('El barbero no existe.')
   })
 
+  it('si insertar los bloques nuevos falla: 500 y el horario anterior intacto', async () => {
+    const db = boot()
+    db._failNext('insert', 'booking_working_hours', { message: 'insert failed' })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const res = await put('st-1', {
+      hours: [{ weekday: 3, start_time: '08:00', end_time: '16:00' }],
+    })
+
+    expect(res.status).toBe(500)
+    expect(res.body.count).toBeUndefined()
+    // No se borró el bloque viejo: el barbero no queda sin horario.
+    expect(hours(db).map((row) => row.id)).toEqual(['wh-1'])
+  })
+
+  it('si borrar los bloques viejos falla: 500, nunca "Guardado"', async () => {
+    const db = boot()
+    db._failNext('delete', 'booking_working_hours', { message: 'delete failed' })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const res = await put('st-1', {
+      hours: [{ weekday: 3, start_time: '08:00', end_time: '16:00' }],
+    })
+
+    expect(res.status).toBe(500)
+    expect(res.body.ok).toBeUndefined()
+  })
+
   it('rechaza a un agente con 403', async () => {
     const db = boot()
     h.state.role = 'agent'

@@ -293,12 +293,24 @@ export async function reorderServices(
   ids: string[],
 ): Promise<void> {
   for (const [index, id] of ids.entries()) {
-    await db
+    const { error } = await db
       .from('booking_services')
       .update({ position: index, updated_at: new Date().toISOString() })
       .eq('id', id)
       .eq('account_id', accountId)
+    assertWrite(error, 'reordenar los servicios')
   }
+}
+
+/**
+ * Una escritura de configuración que falla debe llegar a la UI como
+ * error (500 vía toErrorResponse), nunca como "Guardado".
+ */
+function assertWrite(
+  error: { message?: string } | null,
+  label: string,
+): void {
+  if (error) throw new Error(`No se pudo ${label}: ${error.message ?? 'error'}`)
 }
 
 // ------------------------------------------------------------
@@ -405,11 +417,12 @@ export async function reorderStaff(
   ids: string[],
 ): Promise<void> {
   for (const [index, id] of ids.entries()) {
-    await db
+    const { error } = await db
       .from('booking_staff')
       .update({ position: index, updated_at: new Date().toISOString() })
       .eq('id', id)
       .eq('account_id', accountId)
+    assertWrite(error, 'reordenar los barberos')
   }
 }
 
@@ -470,21 +483,23 @@ export async function setStaffServices(
   const toRemove = [...current].filter((id) => !wanted.has(id))
 
   if (toAdd.length) {
-    await db.from('booking_staff_services').insert(
+    const { error } = await db.from('booking_staff_services').insert(
       toAdd.map((serviceId) => ({
         account_id: accountId,
         staff_id: staffId,
         service_id: serviceId,
       })),
     )
+    assertWrite(error, 'asignar los servicios del barbero')
   }
   if (toRemove.length) {
-    await db
+    const { error } = await db
       .from('booking_staff_services')
       .delete()
       .eq('account_id', accountId)
       .eq('staff_id', staffId)
       .in('service_id', toRemove)
+    assertWrite(error, 'quitar servicios del barbero')
   }
 
   return serviceIds.length
@@ -534,15 +549,11 @@ export async function replaceWorkingHours(
     .filter(([key]) => !current.has(key))
     .map(([, block]) => block)
 
-  if (toRemoveIds.length) {
-    await db
-      .from('booking_working_hours')
-      .delete()
-      .eq('account_id', accountId)
-      .in('id', toRemoveIds)
-  }
+  // Primero se insertan los bloques nuevos y DESPUÉS se borran los
+  // viejos: si el insert falla, el barbero conserva su horario anterior
+  // en vez de quedar sin horario. Cualquier fallo sube como error.
   if (toAdd.length) {
-    await db.from('booking_working_hours').insert(
+    const { error } = await db.from('booking_working_hours').insert(
       toAdd.map((block) => ({
         id: randomUUID(),
         account_id: accountId,
@@ -552,6 +563,15 @@ export async function replaceWorkingHours(
         end_time: block.endTime,
       })),
     )
+    assertWrite(error, 'guardar el horario')
+  }
+  if (toRemoveIds.length) {
+    const { error } = await db
+      .from('booking_working_hours')
+      .delete()
+      .eq('account_id', accountId)
+      .in('id', toRemoveIds)
+    assertWrite(error, 'quitar los bloques viejos del horario')
   }
 
   return blocks.length

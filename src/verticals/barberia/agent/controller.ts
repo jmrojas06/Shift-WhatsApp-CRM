@@ -279,11 +279,17 @@ async function handleReminderTap(
   }
 
   if (action === 'confirm') {
-    await markAppointmentConfirmed(dialog.db, {
-      accountId: dialog.accountId,
-      id: appt.id,
-      confirmedAtIso: dialog.nowIso,
-    })
+    try {
+      await markAppointmentConfirmed(dialog.db, {
+        accountId: dialog.accountId,
+        id: appt.id,
+        confirmedAtIso: dialog.nowIso,
+      })
+    } catch (err) {
+      console.error('[barberia] confirmar desde el recordatorio falló:', err)
+      await dialog.sender.sendText({ text: BARBERIA_AGENT_TEXTS.confirmError })
+      return
+    }
     await bestEffort('evento confirmed (recordatorio)', () =>
       insertBookingEvent(dialog.db, {
         accountId: dialog.accountId,
@@ -624,12 +630,22 @@ async function handleChoice(
           })
           return
         }
-        await cancelAppointment(dialog.db, {
-          accountId: dialog.accountId,
-          id: appt.id,
-          reason: 'cliente',
-          cancelledAtIso: dialog.nowIso,
-        })
+        try {
+          await cancelAppointment(dialog.db, {
+            accountId: dialog.accountId,
+            id: appt.id,
+            reason: 'cliente',
+            cancelledAtIso: dialog.nowIso,
+          })
+        } catch (err) {
+          // La cita sigue viva: avisar y re-ofrecer la confirmación.
+          console.error('[barberia] cancelar la cita falló:', err)
+          await dialog.sender.sendText({
+            text: BARBERIA_AGENT_TEXTS.confirmError,
+          })
+          await conclude(dialog, sessionId, state)
+          return
+        }
         await bestEffort('etiqueta cita-cancelada', () =>
           applyContactTag(dialog.db, {
             accountId: dialog.accountId,
@@ -786,14 +802,34 @@ async function confirmAppointment(
   // Efectos de CRM — mejor esfuerzo: la cita ya existe y el cliente
   // no puede quedarse sin confirmación por un fallo del CRM.
   if (oldAppt) {
-    await bestEffort('cancelar la cita anterior', () =>
-      cancelAppointment(dialog.db, {
+    // Crítica: si la cita anterior no se cancela, el cliente quedaría
+    // con dos citas. Se deshace la nueva y se re-ofrece el resumen.
+    try {
+      await cancelAppointment(dialog.db, {
         accountId: dialog.accountId,
-        id: oldAppt!.id,
+        id: oldAppt.id,
         reason: 'reprogramada',
         cancelledAtIso: dialog.nowIso,
-      }),
-    )
+      })
+    } catch (err) {
+      console.error('[barberia] cancelar la cita anterior falló:', err)
+      await bestEffort('deshacer la cita nueva', () =>
+        cancelAppointment(dialog.db, {
+          accountId: dialog.accountId,
+          id: appointmentId,
+          reason: 'error_reprogramacion',
+          cancelledAtIso: dialog.nowIso,
+        }),
+      )
+      await releaseSession(dialog.db, {
+        id: sessionId,
+        accountId: dialog.accountId,
+        updatedAtIso: dialog.nowIso,
+      })
+      await dialog.sender.sendText({ text: BARBERIA_AGENT_TEXTS.confirmError })
+      await conclude(dialog, sessionId, state)
+      return
+    }
     await bestEffort('etiqueta cita-reprogramada', () =>
       applyContactTag(dialog.db, {
         accountId: dialog.accountId,

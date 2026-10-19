@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import type { VerticalSession } from '@/lib/verticals/types'
@@ -1082,6 +1082,85 @@ describe('gestión de una cita existente', () => {
     )
 
     expect(last(rec).bodyText).toContain('reprogramada')
+  })
+})
+
+describe('escrituras críticas que fallan', () => {
+  const silence = () => vi.spyOn(console, 'error').mockImplementation(() => {})
+
+  it('si cancelar falla, responde confirmError (no "cancelada") y re-ofrece la confirmación', async () => {
+    silence()
+    const seed = baseSeed()
+    seed.booking_appointments = [appointmentRow()]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'cita' })
+    await send(db, rec, { replyId: 'act:cancel' })
+    db._failNext('update', 'booking_appointments', { message: 'timeout' })
+    const res = await send(db, rec, { replyId: 'act:cancel_yes' })
+
+    expect(res.consumed).toBe(true)
+    expect(db._tables.booking_appointments[0].status).toBe('confirmed')
+    expect(messagesWith(rec, BARBERIA_AGENT_TEXTS.confirmError)).toHaveLength(1)
+    expect(messagesWith(rec, BARBERIA_AGENT_TEXTS.cancelDone)).toHaveLength(0)
+    expect(db._tables.booking_events).toHaveLength(0)
+    expect((sessionRow(db)?.state as Record<string, unknown>).step).toBe(
+      'manage_cancel_confirm',
+    )
+  })
+
+  it('si confirmar desde el recordatorio falla, responde confirmError (no "confirmada")', async () => {
+    silence()
+    const seed = baseSeed()
+    seed.booking_appointments = [
+      appointmentRow({ status: 'pending', confirmed_at: null }),
+    ]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    db._failNext('update', 'booking_appointments', { message: 'timeout' })
+    const res = await send(db, rec, { replyId: 'rem:confirm' })
+
+    expect(res.consumed).toBe(true)
+    expect(db._tables.booking_appointments[0].status).toBe('pending')
+    expect(last(rec).bodyText).toBe(BARBERIA_AGENT_TEXTS.confirmError)
+    expect(messagesWith(rec, 'queda confirmada')).toHaveLength(0)
+    expect(db._tables.booking_events).toHaveLength(0)
+  })
+
+  it('si al reprogramar no se puede cancelar la cita anterior, deshace la nueva', async () => {
+    silence()
+    const seed = baseSeed()
+    seed.booking_appointments = [appointmentRow()]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'cita' })
+    await send(db, rec, { replyId: 'act:reschedule' })
+    await send(db, rec, { replyId: dayId(MONDAY) })
+    await send(db, rec, { replyId: slotId('2026-10-19T16:00:00.000Z') })
+    db._failNext('update', 'booking_appointments', { message: 'timeout' })
+    await send(db, rec, { replyId: 'act:confirm' })
+
+    const active = db._tables.booking_appointments.filter(
+      (a) => a.status === 'confirmed' || a.status === 'pending',
+    )
+    // El cliente conserva SOLO su cita original.
+    expect(active.map((a) => a.id)).toEqual(['appt-old'])
+    expect(messagesWith(rec, BARBERIA_AGENT_TEXTS.confirmError)).toHaveLength(1)
+    expect(messagesWith(rec, 'reprogramada')).toHaveLength(0)
+    expect(sessionRow(db)).toBeDefined()
+  })
+
+  it('si pausar el bot falla en el handoff, el error sube y no se promete un humano', async () => {
+    const db = makeFakeDb(baseSeed())
+    const rec = makeRecorder()
+
+    db._failNext('update', 'conversations', { message: 'timeout' })
+
+    await expect(send(db, rec, { text: 'necesito un asesor' })).rejects.toThrow()
+    expect(messagesWith(rec, 'asesor humano')).toHaveLength(0)
   })
 })
 
