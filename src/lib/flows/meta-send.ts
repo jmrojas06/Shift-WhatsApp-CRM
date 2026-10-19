@@ -20,6 +20,22 @@ import { getT } from '@/lib/i18n/translate'
 
 const t = getT('LibErrors')
 
+/**
+ * Meta ACCEPTED the message, but saving its row in `messages` failed.
+ * Still an Error with the same text as before, so existing callers are
+ * unaffected; callers that retry on failure (the barbería reminder
+ * runner) check for this class so a send that already reached the
+ * customer is never sent a second time.
+ */
+export class MessagePersistAfterSendError extends Error {
+  readonly whatsappMessageId: string
+  constructor(message: string, whatsappMessageId: string) {
+    super(message)
+    this.name = 'MessagePersistAfterSendError'
+    this.whatsappMessageId = whatsappMessageId
+  }
+}
+
 // ------------------------------------------------------------
 // Flows-side Meta sender (interactive variants).
 //
@@ -165,7 +181,10 @@ export async function engineSendText(
     ai_generated: args.aiGenerated ?? false,
   })
   if (msgErr) {
-    throw new Error(t('send.dbInsertFailed', { message: msgErr.message }))
+    throw new MessagePersistAfterSendError(
+      t('send.dbInsertFailed', { message: msgErr.message }),
+      waMessageId,
+    )
   }
 
   await db
@@ -286,7 +305,10 @@ export async function engineSendMedia(
     status: 'sent',
   })
   if (msgErr) {
-    throw new Error(t('send.dbInsertFailed', { message: msgErr.message }))
+    throw new MessagePersistAfterSendError(
+      t('send.dbInsertFailed', { message: msgErr.message }),
+      waMessageId,
+    )
   }
 
   await db
@@ -483,7 +505,10 @@ async function sendInteractiveViaMeta(
     status: 'sent',
   })
   if (msgErr) {
-    throw new Error(t('send.dbInsertFailed', { message: msgErr.message }))
+    throw new MessagePersistAfterSendError(
+      t('send.dbInsertFailed', { message: msgErr.message }),
+      waMessageId,
+    )
   }
 
   await db

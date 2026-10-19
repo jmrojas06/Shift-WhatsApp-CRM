@@ -472,7 +472,8 @@ describe('runBarberiaReminders', () => {
     })
     expect(summary2.sent).toBe(0)
     expect(second.deliveries).toHaveLength(0)
-    expect(summary2.skipped).toBe(1)
+    // Ya recordada: ni siquiera vuelve a entrar en la consulta.
+    expect(summary2.due).toBe(0)
   })
 
   it('fuera de la ventana de 24 h usa plantilla; los mensajes del bot no cuentan', async () => {
@@ -660,6 +661,78 @@ describe('runBarberiaReminders', () => {
     const row = appointmentRow(db)
     expect(row.reminder_sent_at).toBe(NOW.toISOString())
     expect(row.reminder_2h_sent_at).toBe(NOW.toISOString())
+  })
+
+  it('con 60 citas en 24 h y 50 ya recordadas, las 10 pendientes salen en la misma corrida', async () => {
+    const seed = baseSeed()
+    const at = (minutesFromNow: number) =>
+      new Date(NOW.getTime() + minutesFromNow * 60_000).toISOString()
+    const row = (id: string, startsAt: string, sentAt: string | null): Row => ({
+      id,
+      account_id: ACCOUNT,
+      contact_id: CONTACT,
+      conversation_id: CONV,
+      service_id: SERVICE,
+      staff_id: STAFF,
+      starts_at: startsAt,
+      status: 'confirmed',
+      reminder_sent_at: sentAt,
+      reminder_2h_sent_at: null,
+    })
+    // 50 citas tempranas (1 h a ~11 h) ya recordadas ayer…
+    const reminded = Array.from({ length: 50 }, (_, i) =>
+      row(`ap-sent-${i}`, at(60 + i * 12), '2026-10-18T13:00:00.000Z'),
+    )
+    // …y 10 más tarde (20 h a ~22 h) todavía sin recordatorio.
+    const pending = Array.from({ length: 10 }, (_, i) =>
+      row(`ap-pending-${i}`, at(20 * 60 + i * 12), null),
+    )
+    seed.booking_appointments = [...reminded, ...pending]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    const summary = await runBarberiaReminders({
+      db: asClient(db),
+      now: NOW,
+      send: rec.send,
+    })
+
+    expect(summary.due).toBe(10)
+    expect(summary.sent).toBe(10)
+    expect(rec.deliveries.map((d) => d.appointmentId).sort()).toEqual(
+      pending.map((p) => p.id as string).sort(),
+    )
+    for (const p of pending) {
+      expect(appointmentRow(db, p.id as string).reminder_sent_at).toBe(
+        NOW.toISOString(),
+      )
+    }
+  })
+
+  it('la 2.ª señal solo consulta cuentas que la tienen activa', async () => {
+    const seed = baseSeed()
+    // Ya recordada a 24 h; empieza en 1 h → solo podría tocarle la de 2 h.
+    seed.booking_appointments[0].starts_at = '2026-10-19T14:00:00.000Z'
+    seed.booking_appointments[0].reminder_sent_at = '2026-10-18T14:00:00.000Z'
+
+    const off = makeFakeDb(seed)
+    const offSummary = await runBarberiaReminders({
+      db: asClient(off),
+      now: NOW,
+      send: makeRecorder().send,
+    })
+    expect(offSummary.due).toBe(0)
+
+    seed.booking_settings.push({ account_id: ACCOUNT, reminders_2h_enabled: true })
+    const on = makeFakeDb(seed)
+    const rec = makeRecorder()
+    const onSummary = await runBarberiaReminders({
+      db: asClient(on),
+      now: NOW,
+      send: rec.send,
+    })
+    expect(onSummary.due).toBe(1)
+    expect(rec.deliveries[0].kind).toBe('h2')
   })
 
   it('si el envío falla, revierte la marca y reintenta en la próxima corrida', async () => {
