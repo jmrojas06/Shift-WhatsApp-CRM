@@ -10,10 +10,10 @@ import { useState } from 'react'
 import {
   ArrowDown,
   ArrowUp,
+  ClipboardList,
   Loader2,
   Pencil,
   Plus,
-  Scissors,
 } from 'lucide-react'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -38,6 +38,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { useAuth } from '@/hooks/use-auth'
 import { formatCurrency } from '@/lib/currency'
+import type { AgendaLabels } from '@/verticals/agenda/labels'
 import { AGENDA_TEXTS as T } from '@/verticals/agenda/texts'
 
 import { agendaConfigApi } from './api'
@@ -64,12 +65,14 @@ const NEW_DRAFT: Draft = {
 
 interface ServicesSectionProps {
   services: ServiceRow[]
+  labels: AgendaLabels
   canEdit: boolean
   reload: () => Promise<void>
 }
 
 export function ServicesSection({
   services,
+  labels,
   canEdit,
   reload,
 }: ServicesSectionProps) {
@@ -170,35 +173,35 @@ export function ServicesSection({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{T.config.services.title}</CardTitle>
+        <CardTitle>{T.config.services.title(labels)}</CardTitle>
         <CardAction>
           <Button
             size="sm"
             onClick={openCreate}
             disabled={!canEdit || busyId !== null}
-            title={canEdit ? undefined : T.config.viewerGate}
+            title={canEdit ? undefined : T.readOnly(T.config.viewerGate)}
           >
             <Plus className="h-4 w-4" />
-            {T.config.services.add}
+            {T.config.services.add(labels)}
           </Button>
         </CardAction>
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-xs text-muted-foreground">
-          {T.config.services.activeHint}
+          {T.config.services.activeHint(labels)}
         </p>
 
         {listError && (
-          <Alert variant="destructive">
+          <Alert variant="destructive" role="alert">
             <AlertDescription>{listError}</AlertDescription>
           </Alert>
         )}
 
         {services.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-8 text-center">
-            <Scissors className="mb-2 h-8 w-8 text-muted-foreground" />
+            <ClipboardList className="mb-2 h-8 w-8 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">
-              {T.config.services.empty}
+              {T.config.services.empty(labels)}
             </p>
           </div>
         ) : (
@@ -208,7 +211,7 @@ export function ServicesSection({
                 key={service.id}
                 className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
               >
-                <div className="min-w-0">
+                <div className="min-w-0 break-words">
                   <p className="text-sm font-medium">
                     {service.name}
                     <Badge
@@ -295,8 +298,8 @@ export function ServicesSection({
           <DialogHeader>
             <DialogTitle>
               {draft?.id
-                ? T.config.services.editTitle
-                : T.config.services.createTitle}
+                ? T.config.services.editTitle(labels)
+                : T.config.services.createTitle(labels)}
             </DialogTitle>
           </DialogHeader>
 

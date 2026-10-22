@@ -106,6 +106,9 @@ describe('puntos de partida', () => {
     expect(text).not.toMatch(/Nequi|Daviplata|factura electrónica|10 minutos tarde|2 horas|acompañados/)
     // Sin respuestas rápidas con precios de relleno: un agente podría enviarlas tal cual al cliente.
     expect(quickReplies.find((q) => q.title === 'Lista de precios')).toBeUndefined()
+    // Ni con la dirección: ninguna respuesta rápida lleva texto de relleno entre corchetes.
+    expect(quickReplies.find((q) => q.title === 'Ubicación')).toBeUndefined()
+    for (const reply of quickReplies) expect(reply.content).not.toMatch(/\[[^\]]*\]/)
     const doc = (title: string) => knowledgeDocs.find((d) => d.title === title)?.content ?? ''
     expect(doc('Métodos de pago')).toContain('[Escribe aquí')
     expect(doc('Política de citas y cancelaciones')).toContain('[Escribe aquí')

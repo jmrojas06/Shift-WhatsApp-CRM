@@ -39,6 +39,7 @@ import { useAuth } from '@/hooks/use-auth'
 import { createClient } from '@/lib/supabase/client'
 import { isAgendaVerticalKey } from '@/lib/verticals/registry'
 import { capitalize, readLabels } from '@/verticals/agenda/labels'
+import { isMissingMigrationError } from '@/verticals/agenda/panel'
 import { readQuestion } from '@/verticals/agenda/questions'
 import { AGENDA_TEXTS as T } from '@/verticals/agenda/texts'
 import { togglesFromRow } from '@/verticals/agenda/toggles'
@@ -70,6 +71,7 @@ export default function AgendaConfiguracionPage() {
 
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
+  const [migrationMissing, setMigrationMissing] = useState(false)
   const [settings, setSettings] = useState<SettingsRow>(EMPTY_SETTINGS)
   const [services, setServices] = useState<ServiceRow[]>([])
   const [staff, setStaff] = useState<StaffRow[]>([])
@@ -141,9 +143,17 @@ export default function AgendaConfiguracionPage() {
       timeOffRes.error ||
       questionsRes.error
     ) {
+      // Columnas o tabla de la migración 051 que aún no existen: mensaje claro
+      // en vez del error genérico.
+      setMigrationMissing(
+        [settingsRes.error, questionsRes.error].some((error) =>
+          isMissingMigrationError(error),
+        ),
+      )
       setFailed(true)
       return
     }
+    setMigrationMissing(false)
 
     // La fila puede no existir (config idempotente: la primera
     // escritura la crea). bot_texts puede traer basura de versiones
@@ -264,7 +274,9 @@ export default function AgendaConfiguracionPage() {
       ) : failed ? (
         <div className="space-y-4">
           <Alert variant="destructive">
-            <AlertDescription>{T.config.loadFailed}</AlertDescription>
+            <AlertDescription>
+              {migrationMissing ? T.migrationMissing : T.config.loadFailed}
+            </AlertDescription>
           </Alert>
           <Button
             variant="outline"
@@ -324,6 +336,7 @@ export default function AgendaConfiguracionPage() {
           <TabsContent value="services">
             <ServicesSection
               services={services}
+              labels={settings.labels}
               canEdit={canEditSettings}
               reload={load}
             />

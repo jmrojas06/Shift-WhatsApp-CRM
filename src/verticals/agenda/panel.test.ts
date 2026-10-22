@@ -9,11 +9,16 @@ import {
   draftFromQuestion,
   EMPTY_QUESTION_DRAFT,
   formatAnswerLine,
+  hasAnswerEntries,
+  isAgendaInstalled,
+  isMissingMigrationError,
   labelDraftMessage,
   labelDrafts,
   parseOptionsText,
   presetConfirmCopy,
   questionsRemaining,
+  savedLabelDrafts,
+  suggestedAiPrompt,
 } from './panel'
 import { AGENDA_PRESETS } from './presets'
 import { MAX_QUESTIONS, validateQuestionCreate } from './questions'
@@ -72,6 +77,13 @@ describe('palabras del negocio', () => {
     if (!markup.ok) expect(labelDraftMessage(markup)).toContain('no permitidos')
   })
 
+  it('tras guardar, el borrador queda normalizado y las palabras por defecto vuelven a vacío', () => {
+    const empty = labelDrafts(DEFAULT_LABELS, DEFAULT_LABELS)
+    expect(
+      savedLabelDrafts({ ...empty, profesional: '  doctor   general ', cita: 'cita', citas: 'turnos' }),
+    ).toEqual({ ...empty, profesional: 'doctor general', cita: '', citas: 'turnos' })
+  })
+
   it('un emoji vale un carácter, igual que en el servidor', () => {
     const empty = labelDrafts(DEFAULT_LABELS, DEFAULT_LABELS)
     expect(checkLabelDrafts({ ...empty, cita: '💈'.repeat(LABEL_MAX) })).toEqual({ ok: true })
@@ -84,6 +96,7 @@ describe('presetConfirmCopy', () => {
     expect(copy.kind).toBe('switch')
     expect(copy.title).toContain(AGENDA_PRESETS.salud.name)
     expect(copy.body).toContain('Se aplican las palabras')
+    expect(copy.body).toContain('Tus citas, servicios, equipo y preguntas actuales se quedan activos')
     expect(copy.body).toContain('se quedan activos')
     expect(copy.body).toContain('La bienvenida solo cambia si no la personalizaste.')
   })
@@ -97,6 +110,50 @@ describe('presetConfirmCopy', () => {
 
   it('una cuenta sin tipo elegido trata cualquiera como un cambio', () => {
     expect(presetConfirmCopy(null, 'blanco').kind).toBe('switch')
+  })
+
+  it('el aviso nombra lo agendado con las palabras del negocio, no con "citas" fijo', () => {
+    const labels = resolveLabels({ cita: 'sesión', citas: 'sesiones' })
+    const copy = presetConfirmCopy('barberia', 'clases', labels)
+    expect(copy.body).toContain('Tus sesiones, servicios, equipo y preguntas actuales')
+    expect(copy.body).not.toContain('Tus citas')
+  })
+})
+
+describe('instalación', () => {
+  const none = { servicesCount: 0, staffCount: 0, hasReport: false, presetKey: null }
+
+  it('está instalada con servicios, con equipo, con un reporte recién hecho o en blanco', () => {
+    expect(isAgendaInstalled(none)).toBe(false)
+    expect(isAgendaInstalled({ ...none, servicesCount: 1 })).toBe(true)
+    expect(isAgendaInstalled({ ...none, staffCount: 2 })).toBe(true)
+    expect(isAgendaInstalled({ ...none, hasReport: true })).toBe(true)
+    expect(isAgendaInstalled({ ...none, presetKey: 'blanco' })).toBe(true)
+    // Una cuenta migrada con el tipo marcado pero sin nada aún se puede sembrar.
+    expect(isAgendaInstalled({ ...none, presetKey: 'barberia' })).toBe(false)
+  })
+
+  it('el prompt sugerido sale del punto de partida del reporte, solo sin configuración de IA', () => {
+    expect(suggestedAiPrompt({ aiPrompt: 'no_config', presetKey: 'salud' })).toBe(
+      AGENDA_PRESETS.salud.aiPrompt,
+    )
+    expect(suggestedAiPrompt({ aiPrompt: 'written', presetKey: 'salud' })).toBeNull()
+    expect(suggestedAiPrompt({ aiPrompt: 'already_set', presetKey: 'salud' })).toBeNull()
+  })
+
+  it('una clave desconocida no rompe: no hay bloque de prompt', () => {
+    expect(suggestedAiPrompt({ aiPrompt: 'no_config', presetKey: 'tienda' })).toBeNull()
+    expect(suggestedAiPrompt({ aiPrompt: 'no_config', presetKey: undefined })).toBeNull()
+    expect(suggestedAiPrompt({ aiPrompt: 'no_config', presetKey: 'constructor' })).toBeNull()
+  })
+
+  it('reconoce los errores de columna o tabla faltante (migración sin aplicar)', () => {
+    for (const code of ['42703', '42P01', 'PGRST204', 'PGRST205']) {
+      expect(isMissingMigrationError({ code })).toBe(true)
+    }
+    expect(isMissingMigrationError({ code: '42501' })).toBe(false)
+    expect(isMissingMigrationError({})).toBe(false)
+    expect(isMissingMigrationError(null)).toBe(false)
   })
 })
 
@@ -182,6 +239,18 @@ describe('respuestas en la agenda', () => {
 
   it('una respuesta sin etiqueta conocida se muestra solo con su valor', () => {
     expect(appointmentAnswerLines({ zzz: 'hola' }, questions)).toEqual(['hola'])
+  })
+
+  it('hasAnswerEntries: solo un objeto con claves justifica buscar las preguntas', () => {
+    expect(hasAnswerEntries({ a: 'x' })).toBe(true)
+    expect(hasAnswerEntries({})).toBe(false)
+    expect(hasAnswerEntries(null)).toBe(false)
+    expect(hasAnswerEntries([])).toBe(false)
+    expect(hasAnswerEntries('texto')).toBe(false)
+  })
+
+  it('un objeto vacío no da líneas', () => {
+    expect(appointmentAnswerLines({}, questions)).toEqual([])
   })
 
   it('basura o respuestas vacías no rompen ni se muestran', () => {

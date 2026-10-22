@@ -223,12 +223,22 @@ export const agendaConfigApi = {
 
   /**
    * Aplica un punto de partida (POST /setup). Sin clave reinstala el de la
-   * cuenta (o barbería si no tiene uno).
+   * cuenta (o barbería si no tiene uno). Una respuesta 200 sin reporte no
+   * cuenta como instalada.
    */
-  installPreset: (presetKey?: PresetKey) =>
-    request<{ report: AgendaInstallReport }>(
+  installPreset: async (
+    presetKey?: PresetKey,
+  ): Promise<ApiResult<{ report: AgendaInstallReport }>> => {
+    const res = await request<{ report?: AgendaInstallReport }>(
       '/api/verticals/agenda/setup',
       'POST',
       presetKey ? { preset_key: presetKey } : undefined,
-    ),
+    )
+    if (!res.ok) return res
+    const report = res.data.report
+    if (!report || typeof report !== 'object') {
+      return { ok: false, error: T.installFailed }
+    }
+    return { ok: true, data: { report } }
+  },
 }

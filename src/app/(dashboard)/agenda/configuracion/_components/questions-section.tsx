@@ -7,7 +7,7 @@
 // quitar solo desactiva (las citas guardan sus respuestas por id).
 // ============================================================
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Loader2, MessageCircleQuestion, Pencil, Plus, Trash2 } from 'lucide-react'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -78,7 +78,12 @@ export function QuestionsSection({
   const [saving, setSaving] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [listError, setListError] = useState<string | null>(null)
+  // El diálogo de quitar conserva la última pregunta al cerrarse (sin texto en blanco).
+  const [removeOpen, setRemoveOpen] = useState(false)
   const [removing, setRemoving] = useState<QuestionRow | null>(null)
+  const labelRef = useRef<HTMLInputElement>(null)
+  // Cada clic en "Editar" cuenta, aunque sea la misma pregunta.
+  const [editRequest, setEditRequest] = useState(0)
 
   const remaining = questionsRemaining(questions.length)
   const editing = draft.id !== null
@@ -86,9 +91,19 @@ export function QuestionsSection({
   const showForm = editing || remaining > 0
   const busy = saving || busyId !== null
 
+  // Al empezar a editar, el formulario queda a la vista y con el foco en la pregunta.
+  useEffect(() => {
+    if (editRequest === 0) return
+    const input = labelRef.current
+    if (!input) return
+    input.focus()
+    input.scrollIntoView({ block: 'nearest' })
+  }, [editRequest])
+
   function startEdit(question: QuestionRow) {
     setFormError(null)
     setDraft(draftFromQuestion(question))
+    setEditRequest((n) => n + 1)
   }
 
   function resetForm() {
@@ -122,7 +137,7 @@ export function QuestionsSection({
     setListError(null)
     const res = await agendaConfigApi.deleteQuestion(question.id)
     setBusyId(null)
-    setRemoving(null)
+    setRemoveOpen(false)
     if (!res.ok) {
       setListError(res.error)
       return
@@ -145,7 +160,7 @@ export function QuestionsSection({
         </CardHeader>
         <CardContent className="space-y-4">
           {listError && (
-            <Alert variant="destructive">
+            <Alert variant="destructive" role="alert">
               <AlertDescription>{listError}</AlertDescription>
             </Alert>
           )}
@@ -164,7 +179,7 @@ export function QuestionsSection({
                   key={question.id}
                   className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
                 >
-                  <div className="min-w-0">
+                  <div className="min-w-0 break-words">
                     <p className="text-sm font-medium">{question.label}</p>
                     <p className="text-xs text-muted-foreground">
                       {T.config.questions.kinds[question.kind]} ·{' '}
@@ -187,9 +202,12 @@ export function QuestionsSection({
                       <Pencil className="h-4 w-4" />
                     </Button>
                     <Button
-                      variant="outline"
+                      variant="destructive"
                       size="sm"
-                      onClick={() => setRemoving(question)}
+                      onClick={() => {
+                        setRemoving(question)
+                        setRemoveOpen(true)
+                      }}
                       disabled={!canEdit || busy}
                       aria-label={`${T.config.questions.remove}: ${question.label}`}
                       title={T.config.questions.remove}
@@ -228,6 +246,7 @@ export function QuestionsSection({
               </Label>
               <Input
                 id="question-label"
+                ref={labelRef}
                 value={draft.label}
                 placeholder={T.config.questions.labelPlaceholder}
                 // El tope real son QUESTION_LABEL_MAX caracteres (un emoji
@@ -288,9 +307,13 @@ export function QuestionsSection({
                     onCheckedChange={(next) =>
                       setDraft((prev) => ({ ...prev, required: next }))
                     }
+                    aria-describedby="question-required-hint"
                     disabled={!canEdit || busy}
                   />
-                  <span className="text-xs text-muted-foreground">
+                  <span
+                    id="question-required-hint"
+                    className="text-xs text-muted-foreground"
+                  >
                     {T.config.questions.requiredHint}
                   </span>
                 </div>
@@ -326,7 +349,7 @@ export function QuestionsSection({
             )}
 
             {formError && (
-              <Alert variant="destructive">
+              <Alert variant="destructive" role="alert">
                 <AlertDescription>{formError}</AlertDescription>
               </Alert>
             )}
@@ -364,15 +387,15 @@ export function QuestionsSection({
 
       {/* Confirmación para quitar: no hay botón para reactivar una pregunta. */}
       <Dialog
-        open={removing !== null}
+        open={removeOpen}
         onOpenChange={(open) => {
-          if (!open && busyId === null) setRemoving(null)
+          if (!open && busyId === null) setRemoveOpen(false)
         }}
       >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{T.config.questions.removeTitle}</DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="break-words">
               {removing &&
                 `"${removing.label}". ${T.config.questions.removeBody}`}
             </DialogDescription>
@@ -380,12 +403,13 @@ export function QuestionsSection({
           <DialogFooter>
             <Button
               variant="outline"
-              onClick={() => setRemoving(null)}
+              onClick={() => setRemoveOpen(false)}
               disabled={busyId !== null}
             >
               {T.config.questions.cancel}
             </Button>
             <Button
+              variant="destructive"
               onClick={() => removing && void remove(removing)}
               disabled={busyId !== null}
             >

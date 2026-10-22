@@ -102,6 +102,17 @@ describe('agendaConfigApi.installPreset', () => {
     expect(init.body).toBeUndefined()
   })
 
+  it('un 200 sin reporte no cuenta como instalado', async () => {
+    stubFetchSpy(200, {})
+    expect(await agendaConfigApi.installPreset('salud')).toEqual({
+      ok: false,
+      error: T.installFailed,
+    })
+
+    stubFetchSpy(200, { report: null })
+    expect(await agendaConfigApi.installPreset()).toEqual({ ok: false, error: T.installFailed })
+  })
+
   it('un error del servidor llega con su mensaje', async () => {
     stubFetchSpy(409, { error: 'El módulo de agenda no está habilitado para esta cuenta.' })
 

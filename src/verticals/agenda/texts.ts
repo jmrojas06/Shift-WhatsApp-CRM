@@ -40,6 +40,9 @@ export const AGENDA_TEXTS = {
     'El módulo de agenda no está activo para esta cuenta. Pídele a tu asesor de Shift Digital que lo active.',
   loadError:
     'No se pudo cargar la información. Recarga la página e inténtalo de nuevo.',
+  /** La base no tiene las columnas/tablas nuevas (migración 051 sin aplicar). */
+  migrationMissing:
+    'Falta actualizar la base de datos (migración 051). Avísale a Shift.',
 
   statusTitle: 'Estado de la plantilla',
   statusInstalled: 'Instalada',
@@ -62,6 +65,8 @@ export const AGENDA_TEXTS = {
     choose: 'Usar este tipo',
     installingNamed: (name: string) => `Preparando tu agenda de "${name}"…`,
     viewerGate: 'elegir el tipo de negocio',
+    readOnlyNote:
+      'Solo el dueño o un administrador puede elegir el tipo de negocio.',
     doneTitle: 'Tu agenda está lista',
     doneBody:
       'Revisa los servicios, el equipo y el horario de ejemplo en Configuración y ajústalos a tu negocio.',
@@ -102,11 +107,13 @@ export const AGENDA_TEXTS = {
   agendaStaffGone: 'Sin asignar',
   agendaContactFallback: 'Sin nombre',
   agendaStatusPending: 'Pendiente',
-  agendaStatusConfirmed: 'Confirmada',
-  agendaStatusCompleted: 'Completada',
+  // Formas sin género ("estado: confirmado"): no sabemos si la palabra del
+  // negocio es "cita", "turno" o "sesión".
+  agendaStatusConfirmed: 'Confirmado',
+  agendaStatusCompleted: 'Completado',
   agendaStatusNoShow: 'No asistió',
-  agendaStatusCancelled: 'Cancelada',
-  agendaActionComplete: 'Completada',
+  agendaStatusCancelled: 'Cancelado',
+  agendaActionComplete: 'Completado',
   agendaActionNoShow: 'No asistió',
   agendaActionCancel: 'Cancelar',
   agendaChangeFailed:
@@ -116,7 +123,7 @@ export const AGENDA_TEXTS = {
     `Estaba programado para el ${date} a las ${time} y ya pasó. ¿Seguro que quieres cambiar su estado?`,
   agendaPastConfirm: 'Sí, cambiar',
   agendaPastBack: 'Volver',
-  viewerGate: 'acciones sobre las citas',
+  viewerGate: (l: AgendaLabels) => `hacer acciones sobre ${l.citas}`,
 
   // ----------------------------------------------------------
   // Recordatorios (Fase 3)
@@ -142,9 +149,10 @@ export const AGENDA_TEXTS = {
     'No se pudieron cargar los recordatorios. Recarga la página e inténtalo de nuevo.',
 
   sections: {
-    services: 'Servicios',
-    staff: 'Equipo',
-    staffServices: 'Servicios de cada integrante',
+    services: (l: AgendaLabels) => capitalize(l.servicios),
+    staff: (l: AgendaLabels) => capitalize(l.profesionales),
+    staffServices: (l: AgendaLabels) =>
+      `${capitalize(l.servicios)} de cada ${l.profesional}`,
     workingHours: 'Bloques de horario',
     tags: 'Etiquetas',
     customFields: 'Campos personalizados',
@@ -216,7 +224,7 @@ export const AGENDA_TEXTS = {
       addressHint: 'Dirección del local (opcional).',
       timezone: 'Zona horaria',
       timezoneValue: 'America/Bogota (fija)',
-      timezoneHint: 'Todas las citas se agendan y se muestran en hora de Bogotá.',
+      timezoneHint: 'Todo se agenda y se muestra en hora de Bogotá.',
       currency: 'Moneda',
       currencyHint: 'Se usa para mostrar el precio de los servicios.',
       save: 'Guardar datos del negocio',
@@ -247,8 +255,8 @@ export const AGENDA_TEXTS = {
       wordInvalid: (word: string) =>
         `"${word}" tiene caracteres no permitidos (por ejemplo * _ ~ o comillas invertidas).`,
       confirmTitle: (name: string) => `¿Usar "${name}" como tipo de negocio?`,
-      confirmBody:
-        'Se aplican las palabras y cómo se muestran los servicios (quién atiende, precios, duración). Se agregan los servicios, el horario de ejemplo y las preguntas que aún no tengas. Tus citas, servicios, equipo y preguntas actuales se quedan activos: desactiva lo que no uses. La bienvenida solo cambia si no la personalizaste.',
+      confirmBody: (l: AgendaLabels) =>
+        `Se aplican las palabras y cómo se muestran los servicios (quién atiende, precios, duración). Se agregan los servicios, el horario de ejemplo y las preguntas que aún no tengas. Tus ${l.citas}, servicios, equipo y preguntas actuales se quedan activos: desactiva lo que no uses. La bienvenida solo cambia si no la personalizaste.`,
       sameTitle: (name: string) => `Ya usas "${name}"`,
       sameBody:
         'Ya usas este tipo de negocio. Volver a aplicarlo no cambia tus servicios ni tu equipo: solo rellena las etiquetas, el pipeline, las respuestas rápidas y los documentos que falten.',
@@ -301,7 +309,7 @@ export const AGENDA_TEXTS = {
     questions: {
       title: 'Preguntas extra',
       hint: (l: AgendaLabels) =>
-        `El bot las hace después de elegir la hora y antes de confirmar la ${l.cita}. Máximo ${MAX_QUESTIONS}.`,
+        `El bot las hace después de elegir la hora y antes de confirmar tu ${l.cita}. Máximo ${MAX_QUESTIONS}.`,
       count: (n: number) => `${n} de ${MAX_QUESTIONS}`,
       remaining: (n: number) =>
         n === 0
@@ -341,25 +349,27 @@ export const AGENDA_TEXTS = {
     },
 
     reminders: {
-      title: 'Recordatorios de citas',
+      title: (l: AgendaLabels) => `Recordatorios de ${l.citas}`,
       alwaysTitle: 'Recordatorio 24 h antes',
-      alwaysBody:
-        'Activo mientras la pieza Recordatorios esté prendida: cada cita recibe un recordatorio el día anterior.',
+      alwaysBody: (l: AgendaLabels) =>
+        `Activo mientras la pieza Recordatorios esté prendida: cada ${l.cita} recibe un recordatorio el día anterior.`,
       offBody:
         'Apagado: prende la pieza Recordatorios en la pestaña Piezas para que se envíen.',
       twoHourTitle: 'Segunda señal 2 h antes',
-      twoHourBody:
-        'Envía un recordatorio adicional dos horas antes de la cita.',
+      twoHourBody: (l: AgendaLabels) =>
+        `Envía un recordatorio adicional dos horas antes de cada ${l.cita}.`,
+      twoHourOffHint:
+        'Está en pausa porque la pieza Recordatorios está apagada (pestaña Piezas).',
       badgeOff: 'Apagado',
     },
 
     services: {
-      title: 'Servicios',
-      empty:
-        'Aún no hay servicios. Crea el primero para que el bot pueda ofrecerlo.',
-      add: 'Agregar servicio',
-      createTitle: 'Nuevo servicio',
-      editTitle: 'Editar servicio',
+      title: (l: AgendaLabels) => capitalize(l.servicios),
+      empty: (l: AgendaLabels) =>
+        `Aún no hay ${l.servicios}. Usa "Agregar ${l.servicio}" para que el bot tenga qué ofrecer.`,
+      add: (l: AgendaLabels) => `Agregar ${l.servicio}`,
+      createTitle: (l: AgendaLabels) => `Agregar ${l.servicio}`,
+      editTitle: (l: AgendaLabels) => `Editar ${l.servicio}`,
       name: 'Nombre',
       description: 'Descripción',
       descriptionPlaceholder: 'Qué incluye y para quién es',
@@ -367,11 +377,11 @@ export const AGENDA_TEXTS = {
       price: 'Precio',
       active: 'Activo',
       inactive: 'Inactivo',
-      activeHint:
-        'Los servicios inactivos dejan de ofrecerse en nuevas reservas; las citas existentes no se modifican.',
+      activeHint: (l: AgendaLabels) =>
+        `Lo inactivo deja de ofrecerse en nuevas reservas; lo que ya está agendado como ${l.cita} no se modifica.`,
       moveUp: 'Subir',
       moveDown: 'Bajar',
-      save: 'Guardar servicio',
+      save: 'Guardar',
     },
 
     staff: {
@@ -387,11 +397,11 @@ export const AGENDA_TEXTS = {
       bioHint: 'Descripción corta (opcional).',
       active: 'Activo',
       inactive: 'Inactivo',
-      servicesTitle: 'Servicios que atiende',
+      servicesTitle: (l: AgendaLabels) => `${capitalize(l.servicios)} que atiende`,
       servicesHint:
-        'Solo se ofrecerá para los servicios marcados. La opción "Cualquiera" asigna a quien esté disponible.',
+        'Solo se ofrecerá para lo que marques aquí. La opción "Cualquiera" asigna a quien esté disponible.',
       noServicesAvailable: (l: AgendaLabels) =>
-        `Todavía no hay servicios activos. Créalos en la pestaña ${capitalize(l.servicios)}.`,
+        `Todavía no hay ${l.servicios} para elegir. Agrega en la pestaña ${capitalize(l.servicios)}.`,
       save: 'Guardar',
     },
 
@@ -443,7 +453,7 @@ export const AGENDA_TEXTS = {
 
     bot: {
       title: 'Textos del bot',
-      hint: 'Personaliza los mensajes del flujo de reservas. Deja un campo vacío para usar el texto por defecto. Los mensajes con datos de la cita (resumen, confirmación, recordatorio) no se editan aquí.',
+      hint: 'Personaliza los mensajes del flujo de reservas. Deja un campo vacío para usar el texto por defecto. Los mensajes con datos de lo agendado (resumen, confirmación, recordatorio) no se editan aquí.',
       defaultLabel: 'Texto por defecto:',
       useDefault: 'Usar texto por defecto',
       save: 'Guardar textos',
@@ -455,14 +465,15 @@ export const AGENDA_TEXTS = {
         handoff: 'Pase a un asesor',
       } satisfies Record<EditableBotTextKey, string>,
       hints: {
-        welcome: 'Primer mensaje cuando el cliente escribe "hola" o "cita".',
-        retry:
+        welcome: (l: AgendaLabels) =>
+          `Primer mensaje cuando el cliente escribe "hola" o "${l.cita}".`,
+        retry: () =>
           'Cuando la respuesta no coincide con el menú (se reenvía el menú).',
-        noServices: 'Cuando el catálogo no tiene servicios activos.',
-        noDaysAvailable:
+        noServices: () => 'Cuando el catálogo no tiene servicios activos.',
+        noDaysAvailable: () =>
           'Cuando no hay horarios libres en los próximos días.',
-        handoff: 'Cuando el cliente pide hablar con una persona.',
-      } satisfies Record<EditableBotTextKey, string>,
+        handoff: () => 'Cuando el cliente pide hablar con una persona.',
+      } satisfies Record<EditableBotTextKey, (l: AgendaLabels) => string>,
     },
   },
 } as const

@@ -20,11 +20,17 @@ import { PresetCards } from './preset-cards'
 interface SetupWizardProps {
   /** Owner/admin: los demás ven las tarjetas deshabilitadas. */
   canEdit: boolean
+  /** Tipo de negocio que la cuenta ya trae marcado (p. ej. una cuenta migrada). */
+  currentKey?: string | null
   /** Se llama con el reporte cuando la instalación terminó bien. */
   onInstalled: (report: AgendaInstallReport) => void | Promise<void>
 }
 
-export function SetupWizard({ canEdit, onInstalled }: SetupWizardProps) {
+export function SetupWizard({
+  canEdit,
+  currentKey = null,
+  onInstalled,
+}: SetupWizardProps) {
   const [busyKey, setBusyKey] = useState<PresetKey | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -49,21 +55,30 @@ export function SetupWizard({ canEdit, onInstalled }: SetupWizardProps) {
       </div>
 
       <PresetCards
-        currentKey={null}
+        currentKey={currentKey}
         disabled={!canEdit || busyKey !== null}
         busyKey={busyKey}
         disabledReason={T.readOnly(T.wizard.viewerGate)}
         onSelect={(key) => void choose(key)}
       />
 
-      {busyKey && (
-        <p className="text-sm text-muted-foreground" role="status">
-          {T.wizard.installingNamed(AGENDA_PRESETS[busyKey].name)}
+      {!canEdit && (
+        <p className="text-xs text-muted-foreground">
+          {T.wizard.readOnlyNote}
         </p>
       )}
 
+      {/* La región en vivo queda montada: solo cambia su texto, así los
+          lectores de pantalla anuncian el avance. */}
+      <p
+        role="status"
+        className={busyKey ? 'text-sm text-muted-foreground' : 'sr-only'}
+      >
+        {busyKey ? T.wizard.installingNamed(AGENDA_PRESETS[busyKey].name) : ''}
+      </p>
+
       {error && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" role="alert">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}

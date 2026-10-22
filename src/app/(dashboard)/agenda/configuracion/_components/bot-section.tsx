@@ -110,7 +110,7 @@ export function BotSection({ settings, canEdit, reload }: BotSectionProps) {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>{T.config.reminders.title}</CardTitle>
+          <CardTitle>{T.config.reminders.title(settings.labels)}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-center justify-between gap-4 rounded-md border border-border p-3">
@@ -120,7 +120,7 @@ export function BotSection({ settings, canEdit, reload }: BotSectionProps) {
               </p>
               <p className="text-xs text-muted-foreground">
                 {settings.toggles.remindersEnabled
-                  ? T.config.reminders.alwaysBody
+                  ? T.config.reminders.alwaysBody(settings.labels)
                   : T.config.reminders.offBody}
               </p>
             </div>
@@ -138,8 +138,13 @@ export function BotSection({ settings, canEdit, reload }: BotSectionProps) {
               <p className="text-sm font-medium">
                 {T.config.reminders.twoHourTitle}
               </p>
-              <p className="text-xs text-muted-foreground">
-                {T.config.reminders.twoHourBody}
+              <p
+                id="reminders-2h-hint"
+                className="text-xs text-muted-foreground"
+              >
+                {T.config.reminders.twoHourBody(settings.labels)}
+                {!settings.toggles.remindersEnabled &&
+                  ` ${T.config.reminders.twoHourOffHint}`}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -149,13 +154,19 @@ export function BotSection({ settings, canEdit, reload }: BotSectionProps) {
               <Switch
                 checked={reminders2h}
                 onCheckedChange={(next) => void toggle2h(next)}
-                disabled={!canEdit || savingToggle}
+                disabled={
+                  !canEdit ||
+                  savingToggle ||
+                  !settings.toggles.remindersEnabled
+                }
+                aria-label={T.config.reminders.twoHourTitle}
+                aria-describedby="reminders-2h-hint"
               />
             </div>
           </div>
 
           {toggleError && (
-            <Alert variant="destructive">
+            <Alert variant="destructive" role="alert">
               <AlertDescription>{toggleError}</AlertDescription>
             </Alert>
           )}
@@ -172,14 +183,15 @@ export function BotSection({ settings, canEdit, reload }: BotSectionProps) {
             <div key={key} className="space-y-2">
               <Label htmlFor={`bot-${key}`}>{T.config.bot.labels[key]}</Label>
               <p className="text-xs text-muted-foreground">
-                {T.config.bot.hints[key]}
+                {T.config.bot.hints[key](settings.labels)}
               </p>
               <Textarea
                 id={`bot-${key}`}
                 value={texts[key]}
-                onChange={(e) =>
+                onChange={(e) => {
+                  setTextsSaved(false)
                   setTexts((prev) => ({ ...prev, [key]: e.target.value }))
-                }
+                }}
                 disabled={!canEdit || savingTexts}
                 maxLength={BOT_TEXT_MAX_LENGTH}
                 rows={3}
@@ -192,7 +204,10 @@ export function BotSection({ settings, canEdit, reload }: BotSectionProps) {
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => setTexts((prev) => ({ ...prev, [key]: '' }))}
+                  onClick={() => {
+                    setTextsSaved(false)
+                    setTexts((prev) => ({ ...prev, [key]: '' }))
+                  }}
                   disabled={!canEdit || savingTexts || !texts[key]}
                 >
                   {T.config.bot.useDefault}
@@ -202,12 +217,12 @@ export function BotSection({ settings, canEdit, reload }: BotSectionProps) {
           ))}
 
           {textsError && (
-            <Alert variant="destructive">
+            <Alert variant="destructive" role="alert">
               <AlertDescription>{textsError}</AlertDescription>
             </Alert>
           )}
           {textsSaved && !textsError && (
-            <Alert>
+            <Alert role="status">
               <AlertDescription>{T.config.saved}</AlertDescription>
             </Alert>
           )}

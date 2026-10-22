@@ -50,7 +50,13 @@ import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 
 import { DEFAULT_LABELS, readLabels, type AgendaLabels } from '@/verticals/agenda/labels'
-import { appointmentAnswerLines } from '@/verticals/agenda/panel'
+import {
+  appointmentAnswerLines,
+  hasAnswerEntries,
+  isAgendaInstalled,
+  isMissingMigrationError,
+  suggestedAiPrompt,
+} from '@/verticals/agenda/panel'
 import { AGENDA_TEXTS as T } from '@/verticals/agenda/texts'
 import type { AppointmentStatus } from '@/verticals/agenda/appointments'
 import { formatLongDate, formatTimeLabel } from '@/verticals/agenda/agent/format'
@@ -61,7 +67,7 @@ import {
   zonedDateKey,
   zonedParts,
 } from '@/verticals/agenda/agent/time'
-import { getPreset, isPresetKey } from '@/verticals/agenda/presets'
+import { isPresetKey } from '@/verticals/agenda/presets'
 import {
   type AgendaInstallReport,
   type InstallSectionCounts,
@@ -159,10 +165,14 @@ export default function AgendaPage() {
   const [staff, setStaff] = useState<BookingStaffRow[]>([])
   const [listsLoading, setListsLoading] = useState(true)
   const [loadFailed, setLoadFailed] = useState(false)
+  // La base no tiene aún las columnas/tablas de la migración 051.
+  const [migrationMissing, setMigrationMissing] = useState(false)
   const [labels, setLabels] = useState<AgendaLabels>({ ...DEFAULT_LABELS })
   const [presetKey, setPresetKey] = useState<string | null>(null)
   const [installing, setInstalling] = useState(false)
   const [report, setReport] = useState<AgendaInstallReport | null>(null)
+  // "Tu agenda está lista" solo tras elegir el tipo en el asistente, no al reinstalar.
+  const [reportFromWizard, setReportFromWizard] = useState(false)
   const [installError, setInstallError] = useState<string | null>(null)
 
   const [appointments, setAppointments] = useState<AgendaAppointment[]>([])
@@ -207,8 +217,10 @@ export default function AgendaPage() {
         .maybeSingle(),
     ])
     if (servicesRes.error || staffRes.error || settingsRes.error) {
+      setMigrationMissing(isMissingMigrationError(settingsRes.error))
       setLoadFailed(true)
     } else {
+      setMigrationMissing(false)
       setServices((servicesRes.data ?? []) as BookingServiceRow[])
       setStaff((staffRes.data ?? []) as BookingStaffRow[])
       const settingsRow = settingsRes.data as {
@@ -250,6 +262,7 @@ export default function AgendaPage() {
         .order('starts_at', { ascending: true })
 
       if (error) {
+        if (isMissingMigrationError(error)) setMigrationMissing(true)
         setAgendaFailed(true)
         return
       }
@@ -261,9 +274,8 @@ export default function AgendaPage() {
       const staffIds = ids(rows.map((r) => r.staff_id))
       const contactIds = ids(rows.map((r) => r.contact_id))
 
-      const hasAnswers = rows.some(
-        (row) => row.answers && typeof row.answers === 'object',
-      )
+      // Solo se buscan las preguntas si alguna cita trae respuestas (`{}` no cuenta).
+      const hasAnswers = rows.some((row) => hasAnswerEntries(row.answers))
 
       const [svcRows, staffRows, contactRows, questionRows] =
         await Promise.all([
@@ -389,6 +401,7 @@ export default function AgendaPage() {
           .maybeSingle(),
       ])
 
+      if (isMissingMigrationError(settingsRes.error)) setMigrationMissing(true)
       if (appointmentsRes.error) {
         setRemindersFailed(true)
         return
@@ -548,6 +561,7 @@ export default function AgendaPage() {
     setInstalling(true)
     setInstallError(null)
     setReport(null)
+    setReportFromWizard(false)
     const res = await agendaConfigApi.installPreset(
       isPresetKey(presetKey) ? presetKey : undefined,
     )
@@ -565,6 +579,7 @@ export default function AgendaPage() {
     async (installed: AgendaInstallReport) => {
       setInstallError(null)
       setReport(installed)
+      setReportFromWizard(true)
       await load()
     },
     [load],
@@ -599,18 +614,21 @@ export default function AgendaPage() {
 
   // "En blanco" no crea servicios ni equipo: se reconoce por el reporte de
   // la instalación recién hecha o por el tipo de negocio guardado.
-  const installed =
-    services.length > 0 ||
-    staff.length > 0 ||
-    report !== null ||
-    presetKey === 'blanco'
+  const installed = isAgendaInstalled({
+    servicesCount: services.length,
+    staffCount: staff.length,
+    hasReport: report !== null,
+    presetKey,
+  })
   const todayLabel = formatLongDate(zonedDateKey(new Date()))
+  const loadErrorText = migrationMissing ? T.migrationMissing : T.loadError
+  const promptSuggestion = report ? suggestedAiPrompt(report) : null
 
   const sectionLines: Array<[string, InstallSectionCounts]> = report
     ? [
-        [T.sections.services, report.services],
-        [T.sections.staff, report.staff],
-        [T.sections.staffServices, report.staffServices],
+        [T.sections.services(labels), report.services],
+        [T.sections.staff(labels), report.staff],
+        [T.sections.staffServices(labels), report.staffServices],
         [T.sections.workingHours, report.workingHours],
         [T.sections.tags, report.tags],
         [T.sections.customFields, report.customFields],
@@ -659,13 +677,13 @@ export default function AgendaPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           {agendaFailed && (
-            <Alert variant="destructive">
-              <AlertDescription>{T.loadError}</AlertDescription>
+            <Alert variant="destructive" role="alert">
+              <AlertDescription>{loadErrorText}</AlertDescription>
             </Alert>
           )}
 
           {agendaError && (
-            <Alert variant="destructive">
+            <Alert variant="destructive" role="alert">
               <AlertDescription>{agendaError}</AlertDescription>
             </Alert>
           )}
@@ -691,7 +709,7 @@ export default function AgendaPage() {
                     key={appointment.id}
                     className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
                   >
-                    <div className="min-w-0">
+                    <div className="min-w-0 break-words">
                       <p className="text-sm font-medium">
                         {formatTimeLabel(parts)} ·{' '}
                         {appointment.serviceName ?? T.agendaServiceGone}
@@ -780,13 +798,13 @@ export default function AgendaPage() {
           </div>
 
           {remindersFailed && (
-            <Alert variant="destructive">
+            <Alert variant="destructive" role="alert">
               <AlertDescription>{T.remindersLoadFailed}</AlertDescription>
             </Alert>
           )}
 
           {!remindersOn && !remindersLoading && !remindersFailed && (
-            <Alert>
+            <Alert role="status">
               <AlertDescription>{T.remindersOffNote}</AlertDescription>
             </Alert>
           )}
@@ -815,7 +833,7 @@ export default function AgendaPage() {
                           key={item.id}
                           className="flex flex-wrap items-center justify-between gap-3 py-3"
                         >
-                          <div className="min-w-0">
+                          <div className="min-w-0 break-words">
                             <p className="text-sm font-medium">
                               {formatLongDate(parts.dateKey)} ·{' '}
                               {formatTimeLabel(parts)} ·{' '}
@@ -857,7 +875,7 @@ export default function AgendaPage() {
                           key={item.id}
                           className="flex flex-wrap items-center justify-between gap-3 py-3"
                         >
-                          <div className="min-w-0">
+                          <div className="min-w-0 break-words">
                             <p className="text-sm font-medium">
                               {formatLongDate(parts.dateKey)} ·{' '}
                               {formatTimeLabel(parts)} ·{' '}
@@ -906,7 +924,7 @@ export default function AgendaPage() {
             {listsLoading
               ? T.loading
               : loadFailed
-                ? T.loadError
+                ? loadErrorText
                 : installed
                   ? T.statusInstalledBody
                   : T.statusNotInstalledBody}
@@ -924,6 +942,7 @@ export default function AgendaPage() {
           {!listsLoading && !loadFailed && !installed ? (
             <SetupWizard
               canEdit={canEditSettings}
+              currentKey={presetKey}
               onInstalled={handleWizardInstalled}
             />
           ) : (
@@ -949,36 +968,39 @@ export default function AgendaPage() {
           )}
 
           {installError && (
-            <Alert variant="destructive">
+            <Alert variant="destructive" role="alert">
               <AlertDescription>{installError}</AlertDescription>
             </Alert>
           )}
 
           {loadFailed && (
-            <Alert variant="destructive">
-              <AlertDescription>{T.loadError}</AlertDescription>
+            <Alert variant="destructive" role="alert">
+              <AlertDescription>{loadErrorText}</AlertDescription>
             </Alert>
           )}
 
           {/* Resultado de la última instalación */}
           {report && (
             <div className="space-y-3 rounded-lg border border-border p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-medium">{T.wizard.doneTitle}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {T.wizard.doneBody}
-                  </p>
+              {/* "Tu agenda está lista" solo tras el asistente; al reinstalar basta el reporte. */}
+              {reportFromWizard && (
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium">{T.wizard.doneTitle}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {T.wizard.doneBody}
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => router.push('/agenda/configuracion')}
+                  >
+                    <Settings2 className="h-4 w-4" />
+                    {T.wizard.goToConfig}
+                  </Button>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => router.push('/agenda/configuracion')}
-                >
-                  <Settings2 className="h-4 w-4" />
-                  {T.wizard.goToConfig}
-                </Button>
-              </div>
+              )}
               <p className="text-sm font-medium">{T.reportTitle}</p>
               <div className="grid gap-x-8 gap-y-1 sm:grid-cols-2">
                 {sectionLines.map(([label, counts]) => (
@@ -1016,7 +1038,7 @@ export default function AgendaPage() {
               </div>
 
               {report.warnings.length > 0 && (
-                <Alert>
+                <Alert role="status">
                   <AlertDescription>
                     <ul className="list-disc space-y-1 pl-4">
                       {report.warnings.map((warning) => (
@@ -1027,7 +1049,7 @@ export default function AgendaPage() {
                 </Alert>
               )}
 
-              {report.aiPrompt === 'no_config' && (
+              {promptSuggestion && (
                 <div className="space-y-1">
                   <p className="text-sm font-medium">
                     {T.promptSuggestionTitle}
@@ -1036,7 +1058,7 @@ export default function AgendaPage() {
                     {T.promptSuggestionHint}
                   </p>
                   <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-muted/50 p-3 text-xs">
-                    {getPreset(report.presetKey).aiPrompt}
+                    {promptSuggestion}
                   </pre>
                 </div>
               )}
@@ -1068,7 +1090,7 @@ export default function AgendaPage() {
                     key={service.id}
                     className="flex items-start justify-between gap-4 py-3 first:pt-0 last:pb-0"
                   >
-                    <div>
+                    <div className="min-w-0 break-words">
                       <p className="text-sm font-medium">
                         {service.name}
                         {!service.is_active && (
@@ -1119,7 +1141,7 @@ export default function AgendaPage() {
                     key={member.id}
                     className="flex items-start justify-between gap-4 py-3 first:pt-0 last:pb-0"
                   >
-                    <div>
+                    <div className="min-w-0 break-words">
                       <p className="text-sm font-medium">
                         {member.name}
                         {!member.is_active && (

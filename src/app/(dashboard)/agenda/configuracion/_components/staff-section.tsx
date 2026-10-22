@@ -195,7 +195,7 @@ export function StaffSection({
             size="sm"
             onClick={openCreate}
             disabled={!canEdit || busyId !== null}
-            title={canEdit ? undefined : T.config.viewerGate}
+            title={canEdit ? undefined : T.readOnly(T.config.viewerGate)}
           >
             <Plus className="h-4 w-4" />
             {T.config.staff.add(labels)}
@@ -204,7 +204,7 @@ export function StaffSection({
       </CardHeader>
       <CardContent className="space-y-4">
         {listError && (
-          <Alert variant="destructive">
+          <Alert variant="destructive" role="alert">
             <AlertDescription>{listError}</AlertDescription>
           </Alert>
         )}
@@ -223,7 +223,7 @@ export function StaffSection({
                 key={member.id}
                 className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
               >
-                <div className="min-w-0">
+                <div className="min-w-0 break-words">
                   <p className="text-sm font-medium">
                     {member.name}
                     <Badge
@@ -241,7 +241,7 @@ export function StaffSection({
                     </p>
                   )}
                   <p className="text-xs text-muted-foreground">
-                    {T.config.staff.servicesTitle}:{' '}
+                    {T.config.staff.servicesTitle(labels)}:{' '}
                     {(staffServices[member.id] ?? []).length}
                   </p>
                 </div>
@@ -343,7 +343,7 @@ export function StaffSection({
               </div>
 
               <div className="space-y-2">
-                <Label>{T.config.staff.servicesTitle}</Label>
+                <Label>{T.config.staff.servicesTitle(labels)}</Label>
                 <p className="text-xs text-muted-foreground">
                   {T.config.staff.servicesHint}
                 </p>

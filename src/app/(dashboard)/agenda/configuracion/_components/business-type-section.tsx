@@ -44,7 +44,9 @@ import {
   labelDraftMessage,
   labelDrafts,
   presetConfirmCopy,
+  savedLabelDrafts,
   type LabelDrafts,
+  type PresetConfirmCopy,
 } from '@/verticals/agenda/panel'
 import { AGENDA_PRESETS, type PresetKey } from '@/verticals/agenda/presets'
 import { AGENDA_TEXTS as T } from '@/verticals/agenda/texts'
@@ -67,7 +69,11 @@ export function BusinessTypeSection({
   const [drafts, setDrafts] = useState<LabelDrafts>(() =>
     labelDrafts(settings.labels, DEFAULT_LABELS),
   )
+  // El diálogo conserva el último tipo y su texto al cerrarse: así no se
+  // queda en blanco durante la animación de salida.
+  const [dialogOpen, setDialogOpen] = useState(false)
   const [pending, setPending] = useState<PresetKey | null>(null)
+  const [confirm, setConfirm] = useState<PresetConfirmCopy | null>(null)
   const [applying, setApplying] = useState(false)
   const [applyError, setApplyError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -76,14 +82,12 @@ export function BusinessTypeSection({
   const [wordsError, setWordsError] = useState<string | null>(null)
   const [wordsSaved, setWordsSaved] = useState(false)
 
-  const confirm = pending
-    ? presetConfirmCopy(settings.preset_key, pending)
-    : null
-
   function choose(key: PresetKey) {
     setApplyError(null)
     setNotice(null)
     setPending(key)
+    setConfirm(presetConfirmCopy(settings.preset_key, key, settings.labels))
+    setDialogOpen(true)
   }
 
   async function applyPreset(key: PresetKey) {
@@ -101,7 +105,7 @@ export function BusinessTypeSection({
       setWordsError(null)
       setWordsSaved(false)
     }
-    setPending(null)
+    setDialogOpen(false)
     setNotice(T.config.type.applied(AGENDA_PRESETS[key].name))
     await reload()
   }
@@ -123,6 +127,9 @@ export function BusinessTypeSection({
       setWordsError(res.error)
       return
     }
+    // El formulario muestra lo que quedó guardado (palabras normalizadas y
+    // las de por defecto otra vez vacías).
+    setDrafts(savedLabelDrafts(drafts))
     setWordsSaved(true)
     await reload()
   }
@@ -143,8 +150,13 @@ export function BusinessTypeSection({
             disabledReason={T.readOnly(T.config.type.viewerGate)}
             onSelect={choose}
           />
+          {!canEdit && (
+            <p className="text-xs text-muted-foreground">
+              {T.wizard.readOnlyNote}
+            </p>
+          )}
           {notice && (
-            <Alert>
+            <Alert role="status">
               <AlertDescription>{notice}</AlertDescription>
             </Alert>
           )}
@@ -172,21 +184,23 @@ export function BusinessTypeSection({
                   // el aviso de arriba hace cumplir el límite exacto.
                   maxLength={LABEL_MAX * 2}
                   disabled={!canEdit || busy}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    // Editar vuelve a dejar los cambios sin guardar.
+                    setWordsSaved(false)
                     setDrafts((prev) => ({ ...prev, [key]: e.target.value }))
-                  }
+                  }}
                 />
               </div>
             ))}
           </div>
 
           {wordsError && (
-            <Alert variant="destructive">
+            <Alert variant="destructive" role="alert">
               <AlertDescription>{wordsError}</AlertDescription>
             </Alert>
           )}
           {wordsSaved && !wordsError && (
-            <Alert>
+            <Alert role="status">
               <AlertDescription>{T.config.saved}</AlertDescription>
             </Alert>
           )}
@@ -205,9 +219,9 @@ export function BusinessTypeSection({
       </Card>
 
       <Dialog
-        open={pending !== null}
+        open={dialogOpen}
         onOpenChange={(open) => {
-          if (!open && !applying) setPending(null)
+          if (!open && !applying) setDialogOpen(false)
         }}
       >
         <DialogContent className="sm:max-w-md">
@@ -216,14 +230,14 @@ export function BusinessTypeSection({
             <DialogDescription>{confirm?.body}</DialogDescription>
           </DialogHeader>
           {applyError && (
-            <Alert variant="destructive">
+            <Alert variant="destructive" role="alert">
               <AlertDescription>{applyError}</AlertDescription>
             </Alert>
           )}
           <DialogFooter>
             <Button
               variant="outline"
-              onClick={() => setPending(null)}
+              onClick={() => setDialogOpen(false)}
               disabled={applying}
             >
               {T.config.type.cancel}

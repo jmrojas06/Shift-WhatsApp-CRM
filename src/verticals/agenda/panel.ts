@@ -4,8 +4,16 @@
 // con vitest: las páginas solo las llaman.
 // ============================================================
 
-import { LABEL_KEYS, LABEL_MAX, sanitizeLabels, type AgendaLabelKey, type AgendaLabels } from './labels'
-import { AGENDA_PRESETS, type PresetKey } from './presets'
+import {
+  DEFAULT_LABELS,
+  LABEL_KEYS,
+  LABEL_MAX,
+  resolveLabels,
+  sanitizeLabels,
+  type AgendaLabelKey,
+  type AgendaLabels,
+} from './labels'
+import { AGENDA_PRESETS, getPreset, isPresetKey, type PresetKey } from './presets'
 import {
   MAX_QUESTIONS,
   readAnswerMap,
@@ -59,6 +67,14 @@ export function checkLabelDrafts(drafts: LabelDrafts): LabelDraftCheck {
   return { ok: true }
 }
 
+/**
+ * Borrador tal como quedó guardado: las palabras normalizadas (sin espacios
+ * de más) y las iguales a la de por defecto otra vez vacías.
+ */
+export function savedLabelDrafts(drafts: LabelDrafts): LabelDrafts {
+  return labelDrafts(resolveLabels(buildLabelsPayload(drafts)), DEFAULT_LABELS)
+}
+
 /** Mensaje en es-CO para un fallo de `checkLabelDrafts`. */
 export function labelDraftMessage(check: Extract<LabelDraftCheck, { ok: false }>): string {
   const word = T.config.type.words[check.key]
@@ -82,7 +98,11 @@ export interface PresetConfirmCopy {
  * piezas de presentación y AGREGA lo que falte (nunca borra); volver a aplicar
  * el actual solo rellena etiquetas, pipeline, respuestas rápidas y documentos.
  */
-export function presetConfirmCopy(currentKey: string | null, targetKey: PresetKey): PresetConfirmCopy {
+export function presetConfirmCopy(
+  currentKey: string | null,
+  targetKey: PresetKey,
+  labels: AgendaLabels = DEFAULT_LABELS,
+): PresetConfirmCopy {
   const name = AGENDA_PRESETS[targetKey].name
   if (currentKey === targetKey) {
     return {
@@ -95,9 +115,48 @@ export function presetConfirmCopy(currentKey: string | null, targetKey: PresetKe
   return {
     kind: 'switch',
     title: T.config.type.confirmTitle(name),
-    body: T.config.type.confirmBody,
+    body: T.config.type.confirmBody(labels),
     confirmLabel: T.config.type.apply,
   }
+}
+
+// ------------------------------------------------------------
+// Instalación (asistente y reinstalar)
+// ------------------------------------------------------------
+
+/**
+ * ¿La cuenta ya tiene su plantilla? Hay servicios o equipo, o se acaba de
+ * instalar (reporte en pantalla), o eligió "En blanco", que no crea ninguno.
+ */
+export function isAgendaInstalled(input: {
+  servicesCount: number
+  staffCount: number
+  hasReport: boolean
+  presetKey: string | null
+}): boolean {
+  return (
+    input.servicesCount > 0 ||
+    input.staffCount > 0 ||
+    input.hasReport ||
+    input.presetKey === 'blanco'
+  )
+}
+
+/**
+ * Prompt sugerido del reporte de instalación. Solo cuando la cuenta aún no
+ * tiene configuración de IA y el punto de partida del reporte existe; con una
+ * clave desconocida no hay bloque (nunca se rompe la página).
+ */
+export function suggestedAiPrompt(report: { aiPrompt: string; presetKey: unknown }): string | null {
+  if (report.aiPrompt !== 'no_config') return null
+  if (!isPresetKey(report.presetKey)) return null
+  return getPreset(report.presetKey).aiPrompt
+}
+
+/** Error de PostgREST/Postgres por una columna o tabla de la migración 051 que aún no existe. */
+export function isMissingMigrationError(error: { code?: string | null } | null | undefined): boolean {
+  const code = error?.code
+  return code === '42703' || code === '42P01' || code === 'PGRST204' || code === 'PGRST205'
 }
 
 // ------------------------------------------------------------
@@ -167,6 +226,11 @@ export const questionLabelLength = (label: string): number => [...label.trim()].
 // ------------------------------------------------------------
 // Respuestas en la agenda del día
 // ------------------------------------------------------------
+
+/** ¿El jsonb de respuestas trae algo? `{}`, null o una lista no necesitan buscar las preguntas. */
+export function hasAnswerEntries(raw: unknown): boolean {
+  return !!raw && typeof raw === 'object' && !Array.isArray(raw) && Object.keys(raw).length > 0
+}
 
 /** Una respuesta lista para mostrar: "Motivo: Control" o "¿Motivo? Control". */
 export function formatAnswerLine(label: string, value: string): string {
