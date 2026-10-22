@@ -379,6 +379,20 @@ function baseSeed(): Record<string, Row[]> {
     booking_time_off: [],
     booking_appointments: [],
     booking_sessions: [],
+    // Vocabulario y piezas del punto de partida Barbería: así los tests
+    // existentes siguen esperando "barbero" aunque el default sea "profesional".
+    booking_settings: [
+      {
+        account_id: ACCOUNT,
+        bot_texts: {},
+        labels: { profesional: 'barbero', profesionales: 'barberos' },
+        choose_staff: true,
+        show_price: true,
+        show_duration: true,
+        reminders_enabled: true,
+        allow_reschedule: true,
+      },
+    ],
     tags: [
       { id: TAG_CONFIRMADA, account_id: ACCOUNT, name: 'cita-confirmada' },
       { id: TAG_CANCELADA, account_id: ACCOUNT, name: 'cita-cancelada' },
@@ -534,6 +548,11 @@ function sessionRow(db: FakeDb): Row | undefined {
 
 function messagesWith(rec: Recorder, needle: string): SenderCall[] {
   return rec.calls.filter((c) => c.bodyText.includes(needle))
+}
+
+/** Cambia la configuración del negocio (booking_settings) dentro de un test. */
+function setSettings(db: FakeDb, patch: Row) {
+  Object.assign(db._tables.booking_settings[0], patch)
 }
 
 /** Camino feliz hasta el menú de días (corte clásico con Andrés). */
@@ -765,7 +784,7 @@ describe('resumen y confirmación', () => {
     ).toBe(true)
 
     // Mensaje final.
-    expect(last(rec).bodyText).toContain('quedó agendada')
+    expect(last(rec).bodyText).toContain('Quedó agendado')
     expect(last(rec).bodyText).toContain('9:00 a. m.')
   })
 })
@@ -851,7 +870,7 @@ describe('carreras por la misma hora', () => {
     const sent = rec.calls.slice(before)
     // Una confirmación y nada que la contradiga.
     expect(sent).toHaveLength(1)
-    expect(sent[0].bodyText).toContain('quedó agendada')
+    expect(sent[0].bodyText).toContain('Quedó agendado')
     expect(messagesWith(rec, 'ocupó')).toHaveLength(0)
     expect(sessionRow(db)).toBeUndefined()
   })
@@ -1024,7 +1043,7 @@ describe('gestión de una cita existente', () => {
       actor: 'bot',
     })
 
-    expect(last(rec).bodyText).toContain('cancelada')
+    expect(last(rec).bodyText).toContain('quedó cancelado')
     expect(sessionRow(db)).toBeUndefined()
   })
 
@@ -1090,7 +1109,7 @@ describe('gestión de una cita existente', () => {
       'appt-old',
     )
 
-    expect(last(rec).bodyText).toContain('reprogramada')
+    expect(last(rec).bodyText).toContain('Quedó reprogramado')
   })
 })
 
@@ -1134,7 +1153,7 @@ describe('escrituras críticas que fallan', () => {
     expect(res.consumed).toBe(true)
     expect(db._tables.booking_appointments[0].status).toBe('pending')
     expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.confirmError)
-    expect(messagesWith(rec, 'queda confirmada')).toHaveLength(0)
+    expect(messagesWith(rec, 'Queda confirmado')).toHaveLength(0)
     expect(db._tables.booking_events).toHaveLength(0)
   })
 
@@ -1158,7 +1177,7 @@ describe('escrituras críticas que fallan', () => {
     // El cliente conserva SOLO su cita original.
     expect(active.map((a) => a.id)).toEqual(['appt-old'])
     expect(messagesWith(rec, AGENDA_AGENT_TEXTS.confirmError)).toHaveLength(1)
-    expect(messagesWith(rec, 'reprogramada')).toHaveLength(0)
+    expect(messagesWith(rec, 'Quedó reprogramado')).toHaveLength(0)
     expect(sessionRow(db)).toBeDefined()
   })
 
@@ -1252,7 +1271,7 @@ describe('handoff a un humano', () => {
       conversation_id: CONVERSATION,
       contact_id: CONTACT,
     })
-    expect(String(notification.title)).toContain('Barbería')
+    expect(String(notification.title)).toContain('Agenda')
     expect(String(notification.body)).toContain('Carlos')
 
     expect(last(rec).bodyText).toContain('asesor humano')
@@ -1335,7 +1354,7 @@ describe('botones del recordatorio (rem:*)', () => {
     expect(event).toMatchObject({ appointment_id: 'appt-old', actor: 'bot' })
     expect(db._tables.contact_tags ?? []).toHaveLength(0)
 
-    expect(last(rec).bodyText).toContain('queda confirmada')
+    expect(last(rec).bodyText).toContain('Queda confirmado')
     expect(last(rec).bodyText).toContain('Corte clásico')
     expect(last(rec).bodyText).toContain('Andrés')
     expect(sessionRow(db)).toBeUndefined()
@@ -1353,7 +1372,7 @@ describe('botones del recordatorio (rem:*)', () => {
     const appt = db._tables.booking_appointments[0]
     expect(appt.status).toBe('confirmed')
     expect(appt.confirmed_at).toBe('2026-10-19T13:00:00.000Z')
-    expect(last(rec).bodyText).toContain('queda confirmada')
+    expect(last(rec).bodyText).toContain('Queda confirmado')
   })
 
   it('sin cita próxima activa avisa que ya no está en vez de inventar', async () => {
@@ -1365,7 +1384,7 @@ describe('botones del recordatorio (rem:*)', () => {
     const res = await send(db, rec, { replyId: 'rem:confirm' })
 
     expect(res.consumed).toBe(true)
-    expect(last(rec).bodyText).toContain('ya no está activa')
+    expect(last(rec).bodyText).toContain('ya no está activo')
     expect(sessionRow(db)).toBeUndefined()
     expect(db._tables.booking_events).toHaveLength(0)
   })
@@ -1408,7 +1427,7 @@ describe('botones del recordatorio (rem:*)', () => {
     const appt = db._tables.booking_appointments[0]
     expect(appt.status).toBe('cancelled')
     expect(appt.cancel_reason).toBe('cliente')
-    expect(last(rec).bodyText).toContain('cancelada')
+    expect(last(rec).bodyText).toContain('quedó cancelado')
     expect(sessionRow(db)).toBeUndefined()
   })
 
@@ -1516,7 +1535,7 @@ describe('recordatorio con un humano a cargo del chat (D1)', () => {
 
     expect(res.consumed).toBe(true)
     expect(db._tables.booking_appointments[0].status).toBe('confirmed')
-    expect(last(rec).bodyText).toContain('queda confirmada')
+    expect(last(rec).bodyText).toContain('Queda confirmado')
     expect(sessionRow(db)).toBeUndefined()
   })
 
@@ -1531,7 +1550,7 @@ describe('recordatorio con un humano a cargo del chat (D1)', () => {
     const second = await sendHuman(db, rec, { replyId: 'act:cancel_yes' })
     expect(second.consumed).toBe(true)
     expect(db._tables.booking_appointments[0].status).toBe('cancelled')
-    expect(last(rec).bodyText).toContain('cancelada')
+    expect(last(rec).bodyText).toContain('quedó cancelado')
     expect(sessionRow(db)).toBeUndefined()
   })
 
@@ -1684,5 +1703,176 @@ describe('textos del bot personalizados (Fase 4)', () => {
     await send(db, rec, { text: 'hola' })
 
     expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.serviceMenuBody)
+  })
+})
+
+// ------------------------------------------------------------
+// Palabras y piezas del negocio (051)
+// ------------------------------------------------------------
+
+/** Cuatro servicios: el menú sale como lista y muestra descripción por fila. */
+function withFourServices(db: FakeDb) {
+  for (const n of [1, 2]) {
+    db._tables.booking_services.push({
+      id: `svc-extra-${n}`,
+      account_id: ACCOUNT,
+      name: `Extra ${n}`,
+      description: null,
+      duration_minutes: 45,
+      price: 40000,
+      is_active: true,
+      position: 1 + n,
+    })
+  }
+}
+
+function listDescriptions(call: SenderCall): (string | undefined)[] {
+  expect(call.kind).toBe('list')
+  return (call.sections ?? []).flatMap((s) => s.rows.map((r) => r.description))
+}
+
+describe('palabras y piezas del negocio', () => {
+  it('usa las palabras configuradas en el menú de profesionales', async () => {
+    const db = makeFakeDb(baseSeed())
+    setSettings(db, { labels: { profesional: 'estilista', profesionales: 'estilistas' } })
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'hola' })
+    await send(db, rec, { replyId: svcId(SERVICE_CORTE) })
+
+    expect(last(rec).bodyText).toBe('¿Con qué estilista quieres tu cita?')
+  })
+
+  it('sin fila de configuración usa las palabras y piezas por defecto', async () => {
+    const seed = baseSeed()
+    seed.booking_settings = []
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'hola' })
+    await send(db, rec, { replyId: svcId(SERVICE_CORTE) })
+
+    expect(last(rec).bodyText).toBe('¿Con qué profesional quieres tu cita?')
+  })
+
+  it('palabras corruptas en la base no rompen: caen al valor por defecto', async () => {
+    const db = makeFakeDb(baseSeed())
+    setSettings(db, { labels: { profesional: 42, profesionales: '*mal*', cita: '  ' } })
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'hola' })
+    await send(db, rec, { replyId: svcId(SERVICE_CORTE) })
+
+    expect(last(rec).bodyText).toBe('¿Con qué profesional quieres tu cita?')
+  })
+
+  it('choose_staff apagado: no pregunta con quién y asigna a cualquiera', async () => {
+    const db = makeFakeDb(baseSeed())
+    setSettings(db, { choose_staff: false })
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'hola' })
+    await send(db, rec, { replyId: svcId(SERVICE_CORTE) })
+
+    const state = sessionRow(db)?.state as Record<string, unknown>
+    expect(state.staffId).toBe('any')
+    expect(state.step).toBe('pick_day')
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.dayMenuBody)
+  })
+
+  it('choose_staff apagado: el resumen no tiene línea de profesional y la confirmación muestra el asignado', async () => {
+    const db = makeFakeDb(baseSeed())
+    setSettings(db, { choose_staff: false })
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'hola' })
+    await send(db, rec, { replyId: svcId(SERVICE_CORTE) })
+    await send(db, rec, { replyId: dayId(MONDAY) })
+    await send(db, rec, { replyId: slotId('2026-10-19T16:30:00.000Z') }) // ambos libres
+
+    expect(last(rec).bodyText).toContain('Corte clásico')
+    expect(last(rec).bodyText).not.toContain('👤')
+    expect(last(rec).bodyText).not.toContain('Cualquiera')
+
+    await send(db, rec, { replyId: 'act:confirm' })
+
+    expect(db._tables.booking_appointments[0].staff_id).toBe(STAFF_ANDRES)
+    expect(last(rec).bodyText).toContain('👤 Andrés')
+  })
+
+  it('show_price y show_duration prendidos: la fila del menú muestra duración y precio', async () => {
+    const db = makeFakeDb(baseSeed())
+    withFourServices(db)
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'hola' })
+
+    const descriptions = listDescriptions(last(rec))
+    expect(descriptions).toHaveLength(4)
+    expect(descriptions[0]).toContain('30 min')
+    expect(descriptions[0]).toContain('25.000')
+  })
+
+  it('show_price y show_duration apagados: la fila del menú no tiene descripción', async () => {
+    const db = makeFakeDb(baseSeed())
+    withFourServices(db)
+    setSettings(db, { show_price: false, show_duration: false })
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'hola' })
+
+    expect(listDescriptions(last(rec))).toEqual([undefined, undefined, undefined, undefined])
+  })
+
+  it('solo show_price apagado: la fila muestra solo la duración', async () => {
+    const db = makeFakeDb(baseSeed())
+    withFourServices(db)
+    setSettings(db, { show_price: false })
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'hola' })
+
+    expect(listDescriptions(last(rec))[0]).toBe('30 min')
+  })
+
+  it('show_price apagado: el resumen no muestra precio', async () => {
+    const db = makeFakeDb(baseSeed())
+    setSettings(db, { show_price: false })
+    const rec = makeRecorder()
+
+    await walkToDay(db, rec)
+    await send(db, rec, { replyId: optionIds(last(rec))[0] })
+    await send(db, rec, { replyId: optionIds(last(rec))[0] })
+
+    expect(last(rec).bodyText).toContain('Así queda tu cita')
+    expect(last(rec).bodyText).not.toContain('💵')
+  })
+
+  it('una palabra propia ("sesión") abre el flujo', async () => {
+    const db = makeFakeDb(baseSeed())
+    setSettings(db, { labels: { cita: 'sesión', citas: 'sesiones' } })
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, { text: 'quiero una sesión' })
+
+    expect(res.consumed).toBe(true)
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.serviceMenuBody)
+  })
+
+  it('una palabra propia con signos de regex no tumba el flujo', async () => {
+    const db = makeFakeDb(baseSeed())
+    setSettings(db, { labels: { cita: 'consulta (vip', citas: 'consultas [x' } })
+    const rec = makeRecorder()
+
+    await expect(send(db, rec, { text: 'buenas tardes' })).resolves.toEqual({ consumed: false })
+  })
+
+  it('sin la palabra propia, un mensaje ajeno no abre el flujo', async () => {
+    const db = makeFakeDb(baseSeed())
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, { text: 'quiero una sesión' })
+
+    expect(res.consumed).toBe(false)
   })
 })

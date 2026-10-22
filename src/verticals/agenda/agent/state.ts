@@ -153,9 +153,12 @@ const INTENT_WORDS = [
   'servicios',
 ] as const
 
+/** Escapa los metacaracteres de regex: las palabras propias vienen del dueño. */
+const escapeRegex = (word: string) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
 function containsWord(text: string, words: readonly string[]): boolean {
   const normalized = normalizeText(text)
-  return words.some((w) => new RegExp(`\\b${w}\\b`).test(normalized))
+  return words.some((w) => new RegExp(`\\b${escapeRegex(w)}\\b`).test(normalized))
 }
 
 /** ¿El cliente pidió hablar con una persona? (gana sobre todo lo demás). */
@@ -163,9 +166,13 @@ export function containsHandoffWord(text: string): boolean {
   return containsWord(text, HANDOFF_WORDS)
 }
 
-/** ¿El cliente quiere agendar? (arranca el flujo cuando no hay sesión). */
-export function containsIntentWord(text: string): boolean {
-  return containsWord(text, INTENT_WORDS)
+/**
+ * ¿El cliente quiere agendar? (arranca el flujo cuando no hay sesión).
+ * Acepta además las palabras propias del negocio ("consulta", "turno").
+ */
+export function containsIntentWord(text: string, extraWords: readonly string[] = []): boolean {
+  const extra = extraWords.map((w) => normalizeText(w)).filter(Boolean)
+  return containsWord(text, [...INTENT_WORDS, ...extra])
 }
 
 // ------------------------------------------------------------

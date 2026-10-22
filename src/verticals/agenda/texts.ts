@@ -313,153 +313,179 @@ export const AGENDA_TEXTS = {
 // errores y handoff. El controlador nunca redacta texto en línea;
 // así el copy se revisa en un solo archivo.
 //
+// El copy es una función de las palabras del negocio (labels):
+// "barbero", "doctor", "técnico"; "cita", "turno", "sesión".
 // Las plantillas que reciben datos lo hacen como funciones con
 // argumentos con nombre — nada de concatenaciones en el llamador.
 // ============================================================
 
+import { DEFAULT_LABELS, type AgendaLabels } from './labels'
+
 /** Datos de una cita usados en resumen y confirmaciones. */
 export interface AgendaAppointmentSummary {
   service: string
+  /** Vacío cuando el negocio no pregunta "¿con quién?" y aún no hay asignado. */
   staff: string
   /** 'martes 20 de octubre de 2026' (formatLongDate). */
   date: string
   /** '3:00 p. m.' (formatTimeLabel). */
   time: string
-  /** '$25.000'. */
-  price: string
+  /** '$25.000', o null si el negocio esconde precios. */
+  price: string | null
+  /** Respuestas a las preguntas extra, en orden. */
+  answers?: { label: string; value: string }[]
 }
 
-export const AGENDA_AGENT_TEXTS = {
-  // ----------------------------------------------------------
-  // Arranque: menú de servicios
-  // ----------------------------------------------------------
-  serviceMenuBody:
-    '¡Hola! 👋 Soy el asistente de la barbería. ¿Qué servicio quieres agendar?',
-  serviceMenuButton: 'Ver servicios',
-  /** Se agrega al pie cuando la lista se recortó a los primeros 10. */
-  optionsTruncated: 'Te muestro las primeras opciones.',
+/** Meta corta los títulos de botón y el botón de lista a 20 caracteres. */
+const BUTTON_MAX = 20
+const btn = (text: string) => {
+  const chars = [...text]
+  return chars.length <= BUTTON_MAX ? text : `${chars.slice(0, BUTTON_MAX - 1).join('')}…`
+}
 
-  // ----------------------------------------------------------
-  // Menú de barberos
-  // ----------------------------------------------------------
-  staffMenuBody: '¿Con cuál barbero quieres tu cita?',
-  staffMenuButton: 'Ver barberos',
-  staffAnyTitle: 'Cualquiera',
-  staffAnyDescription: 'Te asignamos al barbero que esté disponible',
+function summaryLines(a: AgendaAppointmentSummary, opts: { price?: boolean } = {}): string {
+  const lines = [`📌 ${a.service}`]
+  if (a.staff) lines.push(`👤 ${a.staff}`)
+  lines.push(`📅 ${a.date}`, `🕐 ${a.time}`)
+  if (opts.price !== false && a.price) lines.push(`💵 ${a.price}`)
+  for (const answer of a.answers ?? []) lines.push(`📝 ${answer.label}: ${answer.value}`)
+  return lines.join('\n')
+}
 
-  // ----------------------------------------------------------
-  // Días
-  // ----------------------------------------------------------
-  dayMenuBody: '¿Qué día te queda bien?',
-  dayMenuButton: 'Ver días',
-  dayToday: 'Hoy',
-  dayTomorrow: 'Mañana',
+/**
+ * Todo el copy del bot para las palabras de un negocio. El controlador
+ * nunca redacta texto en línea: lo toma de aquí (o de los overrides
+ * editables, ver bot-texts.ts). Frases neutras en género para que
+ * sirvan con "cita", "turno", "sesión" o "reserva".
+ */
+export function buildAgentTexts(l: AgendaLabels) {
+  return {
+    // ----------------------------------------------------------
+    // Arranque: menú de servicios
+    // ----------------------------------------------------------
+    serviceMenuBody: `¡Hola! 👋 Soy el asistente virtual. ¿Qué ${l.servicio} quieres agendar?`,
+    serviceMenuButton: btn(`Ver ${l.servicios}`),
+    /** Se agrega al pie cuando la lista se recortó a los primeros 10. */
+    optionsTruncated: 'Te muestro las primeras opciones.',
 
-  // ----------------------------------------------------------
-  // Horas
-  // ----------------------------------------------------------
-  slotMenuBody: (day: string) => `Horarios disponibles para ${day}:`,
-  slotMenuButton: 'Ver horarios',
+    // ----------------------------------------------------------
+    // Menú de profesionales
+    // ----------------------------------------------------------
+    staffMenuBody: `¿Con qué ${l.profesional} quieres tu ${l.cita}?`,
+    staffMenuButton: btn(`Ver ${l.profesionales}`),
+    staffAnyTitle: 'Cualquiera',
+    staffAnyDescription: 'Te asignamos a quien esté disponible',
 
-  // ----------------------------------------------------------
-  // Resumen y confirmación
-  // ----------------------------------------------------------
-  summaryBody: (a: AgendaAppointmentSummary) =>
-    `Así queda tu cita:\n\n💈 ${a.service}\n👤 ${a.staff}\n📅 ${a.date}\n🕐 ${a.time}\n💵 ${a.price}\n\n¿La confirmamos?`,
-  summaryConfirm: 'Confirmar ✅',
-  summaryReschedule: 'Reprogramar',
-  summaryCancel: 'Cancelar',
-  confirmed: (a: AgendaAppointmentSummary) =>
-    `¡Listo! Tu cita quedó agendada.\n\n💈 ${a.service}\n👤 ${a.staff}\n📅 ${a.date}\n🕐 ${a.time}\n\nTe esperamos ✂️. Si necesitas cambiarla, escríbeme "cita".`,
+    // ----------------------------------------------------------
+    // Días y horas
+    // ----------------------------------------------------------
+    dayMenuBody: '¿Qué día te queda bien?',
+    dayMenuButton: 'Ver días',
+    dayToday: 'Hoy',
+    dayTomorrow: 'Mañana',
 
-  // ----------------------------------------------------------
-  // Errores y recuperación
-  // ----------------------------------------------------------
-  retry: 'No entendí 😅. Por favor elige una de las opciones.',
-  slotTaken:
-    'Uy, ese horario se ocupó mientras elegías 😅. Te muestro otras opciones:',
-  dayTaken: 'Ese día se llenó mientras elegías 😅. Mira los días disponibles:',
-  noDaysAvailable:
-    'Por ahora no tengo horarios disponibles. Escríbeme "asesor" y un humano te ayuda a cuadrar tu cita.',
-  noServices:
-    'Aún no hay servicios configurados en la barbería. Escríbeme "asesor" y te ayudamos.',
-  noStaffForService:
-    'Por ahora no hay barberos disponibles para ese servicio. Elige otro, por favor:',
-  /** Falló una escritura crítica (agendar, confirmar o cancelar). */
-  confirmError:
-    'Uy, no pude completar ese cambio en tu cita en este momento 😅. Intenta de nuevo o escríbeme "asesor".',
+    slotMenuBody: (day: string) => `Horarios disponibles para ${day}:`,
+    slotMenuButton: 'Ver horarios',
 
-  // ----------------------------------------------------------
-  // Gestión de una cita existente
-  // ----------------------------------------------------------
-  manageMenuBody: (a: { service: string; date: string; time: string }) =>
-    `Vi que tienes una cita:\n\n💈 ${a.service}\n📅 ${a.date}\n🕐 ${a.time}\n\n¿Qué quieres hacer?`,
-  manageNew: 'Nueva cita',
-  manageReschedule: 'Reprogramar',
-  manageCancel: 'Cancelar cita',
-  rescheduleStart: 'Listo, elige el nuevo día para tu cita:',
-  cancelConfirmBody: (a: { date: string; time: string }) =>
-    `¿Seguro que quieres cancelar tu cita del ${a.date} a las ${a.time}?`,
-  cancelYes: 'Sí, cancelar',
-  cancelNo: 'No, volver',
-  cancelDone:
-    'Listo, tu cita quedó cancelada. Cuando quieras agendar otra, escríbeme "cita". 🙌',
-  cancelDeclined: 'Perfecto, dejo tu cita como está. ¡Te esperamos! ✂️',
-  rescheduleDone: (a: AgendaAppointmentSummary) =>
-    `¡Listo! Tu cita quedó reprogramada.\n\n💈 ${a.service}\n👤 ${a.staff}\n📅 ${a.date}\n🕐 ${a.time}\n\n¡Te esperamos! ✂️`,
-  /** La cita gestionada ya no existe o ya no está activa. */
-  managedAppointmentGone:
-    'Veo que esa cita ya no está activa. Escríbeme "cita" para agendar una nueva.',
-  /** Se abandonó un borrador de cita nueva desde el resumen. */
-  draftCancelled:
-    'Listo, no agendé nada. Cuando quieras agendar, escríbeme "cita". 🙌',
-  /** Catálogo cambiado: el servicio de la cita ya no existe. */
-  serviceFallback: 'tu servicio',
+    // ----------------------------------------------------------
+    // Preguntas extra
+    // ----------------------------------------------------------
+    answerMenuButton: 'Ver opciones',
+    answerInvalidNumber: 'Escríbeme solo números, por favor.',
+    answerTooLong: 'Esa respuesta es muy larga. Escríbela más corta, por favor.',
+    answerRequired: 'Necesito esa respuesta para agendar. Escríbela, por favor.',
 
-  // ----------------------------------------------------------
-  // Recordatorios (Fase 3)
-  //
-  // El mismo contenido se envía como mensaje libre (ventana de 24 h
-  // abierta) o como plantilla de Meta (ventana cerrada). Los botones
-  // son Confirmar / Reprogramar / Cancelar con ids estáticos rem:*.
-  // ----------------------------------------------------------
-  reminderBody: (a: {
-    business: string
-    service: string
-    staff: string
-    date: string
-    time: string
-  }) =>
-    `¡Hola! 👋 Te recordamos tu cita en ${a.business}:\n\n💈 ${a.service}\n👤 ${a.staff}\n📅 ${a.date}\n🕐 ${a.time}\n\n¿Nos confirmas?`,
-  reminderConfirm: 'Confirmar',
-  reminderReschedule: 'Reprogramar',
-  reminderCancel: 'Cancelar',
-  reminderConfirmed: (a: {
-    service: string
-    staff: string
-    date: string
-    time: string
-  }) =>
-    `¡Listo! Tu cita queda confirmada:\n\n💈 ${a.service}\n👤 ${a.staff}\n📅 ${a.date}\n🕐 ${a.time}\n\n¡Te esperamos! ✂️`,
+    // ----------------------------------------------------------
+    // Resumen y confirmación
+    // ----------------------------------------------------------
+    summaryBody: (a: AgendaAppointmentSummary) =>
+      `Así queda tu ${l.cita}:\n\n${summaryLines(a)}\n\n¿Confirmamos?`,
+    summaryConfirm: 'Confirmar ✅',
+    summaryReschedule: 'Reprogramar',
+    summaryCancel: 'Cancelar',
+    confirmed: (a: AgendaAppointmentSummary) =>
+      `¡Listo! Quedó agendado:\n\n${summaryLines(a, { price: false })}\n\nTe esperamos 🙌. Si necesitas cambiar algo, escríbeme "${l.cita}".`,
 
-  // ----------------------------------------------------------
-  // Handoff a un humano
-  // ----------------------------------------------------------
-  handoff:
-    'Entiendo. Dejo tu conversación con un asesor humano para que te ayude. En breve te contactan. 🙌',
-  handoffNote:
-    'El cliente pidió hablar con una persona desde el flujo de citas (agente de barbería en pausa).',
-  /** D1: "Reprogramar" del recordatorio con un humano a cargo del chat. */
-  rescheduleHandedToHuman:
-    'Listo, le avisé a un asesor para que te ayude a reprogramar. Te escribe por este chat; mientras tanto tu cita sigue igual. ✂️',
-  rescheduleRequestNotificationTitle: 'Cliente quiere reprogramar (Barbería)',
-  rescheduleRequestNotificationBody: (a: {
-    who: string
-    date: string
-    time: string
-  }) =>
-    `${a.who} tocó "Reprogramar" en el recordatorio de su cita del ${a.date} a las ${a.time}. Respóndele por este chat.`,
-  handoffNotificationTitle: 'Cliente pide un asesor (Barbería)',
-  handoffNotificationBody: (name: string) =>
-    `${name} pidió hablar con una persona desde el flujo de citas.`,
-} as const
+    // ----------------------------------------------------------
+    // Errores y recuperación
+    // ----------------------------------------------------------
+    retry: 'No entendí 😅. Por favor elige una de las opciones.',
+    slotTaken: 'Uy, ese horario se ocupó mientras elegías 😅. Te muestro otras opciones:',
+    dayTaken: 'Ese día se llenó mientras elegías 😅. Mira los días disponibles:',
+    noDaysAvailable:
+      'Por ahora no tengo horarios disponibles. Escríbeme "asesor" y un humano te ayuda a cuadrar.',
+    noServices: `Aún no tengo ${l.servicios} para agendar. Escríbeme "asesor" y te ayudamos.`,
+    noStaffForService: `Por ahora no hay ${l.profesionales} disponibles para eso. Elige otra opción, por favor:`,
+    /** Falló una escritura crítica (agendar, confirmar o cancelar). */
+    confirmError: `Uy, no pude completar ese cambio en tu ${l.cita} en este momento 😅. Intenta de nuevo o escríbeme "asesor".`,
+
+    // ----------------------------------------------------------
+    // Gestión de una cita existente
+    // ----------------------------------------------------------
+    manageMenuBody: (a: { service: string; date: string; time: string }) =>
+      `Vi que ya tienes algo agendado:\n\n📌 ${a.service}\n📅 ${a.date}\n🕐 ${a.time}\n\n¿Qué quieres hacer?`,
+    manageNew: btn(`Nueva ${l.cita}`),
+    manageReschedule: 'Reprogramar',
+    manageCancel: btn(`Cancelar ${l.cita}`),
+    rescheduleStart: 'Listo, elige el nuevo día:',
+    cancelConfirmBody: (a: { date: string; time: string }) =>
+      `¿Seguro que quieres cancelar tu ${l.cita} del ${a.date} a las ${a.time}?`,
+    cancelYes: 'Sí, cancelar',
+    cancelNo: 'No, volver',
+    cancelDone: `Listo, quedó cancelado. Cuando quieras agendar de nuevo, escríbeme "${l.cita}". 🙌`,
+    cancelDeclined: 'Perfecto, lo dejo como está. ¡Te esperamos! 🙌',
+    rescheduleDone: (a: AgendaAppointmentSummary) =>
+      `¡Listo! Quedó reprogramado.\n\n${summaryLines(a, { price: false })}\n\n¡Te esperamos! 🙌`,
+    /** La cita gestionada ya no existe o ya no está activa. */
+    managedAppointmentGone: `Veo que eso ya no está activo. Escríbeme "${l.cita}" para agendar de nuevo.`,
+    /** Se abandonó un borrador de cita nueva desde el resumen. */
+    draftCancelled: `Listo, no agendé nada. Cuando quieras, escríbeme "${l.cita}". 🙌`,
+    /** Catálogo cambiado: el servicio de la cita ya no existe. */
+    serviceFallback: `tu ${l.servicio}`,
+    /** Pieza "reprogramar/cancelar" apagada: lo atiende una persona. */
+    changesByHuman:
+      'Para cambiar o cancelar, te ayuda un asesor por este chat. Ya le avisé; mientras tanto todo sigue igual. 🙌',
+
+    // ----------------------------------------------------------
+    // Recordatorios (Fase 3)
+    //
+    // El mismo contenido se envía como mensaje libre (ventana de 24 h
+    // abierta) o como plantilla de Meta (ventana cerrada). Los botones
+    // son Confirmar / Reprogramar / Cancelar con ids estáticos rem:*.
+    // ----------------------------------------------------------
+    reminderBody: (a: {
+      business: string
+      service: string
+      staff: string
+      date: string
+      time: string
+    }) =>
+      `¡Hola! 👋 Te recordamos tu ${l.cita} en ${a.business}:\n\n📌 ${a.service}\n👤 ${a.staff}\n📅 ${a.date}\n🕐 ${a.time}\n\n¿Nos confirmas?`,
+    reminderConfirm: 'Confirmar',
+    reminderReschedule: 'Reprogramar',
+    reminderCancel: 'Cancelar',
+    reminderConfirmed: (a: { service: string; staff: string; date: string; time: string }) =>
+      `¡Listo! Queda confirmado:\n\n📌 ${a.service}\n👤 ${a.staff}\n📅 ${a.date}\n🕐 ${a.time}\n\n¡Te esperamos! 🙌`,
+
+    // ----------------------------------------------------------
+    // Handoff a un humano
+    // ----------------------------------------------------------
+    handoff:
+      'Entiendo. Dejo tu conversación con un asesor humano para que te ayude. En breve te contactan. 🙌',
+    handoffNote: 'El cliente pidió hablar con una persona desde el flujo de la agenda (bot en pausa).',
+    /** D1: "Reprogramar" del recordatorio con un humano a cargo del chat. */
+    rescheduleHandedToHuman:
+      'Listo, le avisé a un asesor para que te ayude a reprogramar. Te escribe por este chat; mientras tanto todo sigue igual. 🙌',
+    rescheduleRequestNotificationTitle: 'Cliente quiere reprogramar (Agenda)',
+    rescheduleRequestNotificationBody: (a: { who: string; date: string; time: string }) =>
+      `${a.who} tocó "Reprogramar" en el recordatorio de su ${l.cita} del ${a.date} a las ${a.time}. Respóndele por este chat.`,
+    handoffNotificationTitle: 'Cliente pide un asesor (Agenda)',
+    handoffNotificationBody: (name: string) =>
+      `${name} pidió hablar con una persona desde el flujo de ${l.citas}.`,
+  }
+}
+
+export type AgendaAgentTexts = ReturnType<typeof buildAgentTexts>
+
+/** Copy con las palabras por defecto (tests y lugares sin cuenta). */
+export const AGENDA_AGENT_TEXTS: AgendaAgentTexts = buildAgentTexts(DEFAULT_LABELS)

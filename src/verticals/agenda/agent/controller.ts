@@ -26,7 +26,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import type { VerticalDispatchResult, VerticalSession } from '@/lib/verticals/types'
 
-import { AGENDA_AGENT_TEXTS, type AgendaAppointmentSummary } from '../texts'
+import type { AgendaAppointmentSummary } from '../texts'
 import { mergeBotTexts, type AgendaAgentTextsMerged } from '../bot-texts'
 import {
   computeDaySlots,
@@ -51,7 +51,7 @@ import {
   listWorkBlocks,
   loadAccount,
   loadAppointment,
-  loadBotTexts,
+  loadBotSettings,
   loadContact,
   loadConversationAssignee,
   loadHandoffAgentId,
@@ -64,6 +64,7 @@ import {
   upsertAgendaDeal,
   type AccountInfo,
   type AppointmentInfo,
+  type BotSettings,
   type BusyRow,
   type ServiceInfo,
   type StaffInfo,
@@ -174,6 +175,7 @@ export async function handleAgendaInbound(
     return { consumed: false }
   }
 
+  const settings = await loadBotSettings(args.db, args.accountId)
   const dialog: Dialog = {
     db: args.db,
     sender: args.sender,
@@ -184,7 +186,8 @@ export async function handleAgendaInbound(
     contactId: args.contactId,
     configOwnerUserId: args.configOwnerUserId,
     account: await loadAccount(args.db, args.accountId),
-    texts: mergeBotTexts(await loadBotTexts(args.db, args.accountId)),
+    settings,
+    texts: mergeBotTexts(settings.botTexts, settings.labels),
   }
 
   // 0) Tap de un recordatorio (Confirmar / Reprogramar / Cancelar).
@@ -235,7 +238,10 @@ export async function handleAgendaInbound(
 
   // 4) ¿Quiere agendar? Se abre el diálogo (o la gestión si ya
   //    tiene una cita próxima).
-  if (!containsIntentWord(text)) return { consumed: false }
+  const { labels } = dialog.settings
+  if (!containsIntentWord(text, [labels.cita, labels.citas, labels.servicio, labels.servicios])) {
+    return { consumed: false }
+  }
 
   const existing = await findNextAppointment(
     args.db,
@@ -316,7 +322,7 @@ async function handleReminderTap(
   )
   if (!appt) {
     await dialog.sender.sendText({
-      text: AGENDA_AGENT_TEXTS.managedAppointmentGone,
+      text: dialog.texts.managedAppointmentGone,
     })
     return
   }
@@ -330,7 +336,7 @@ async function handleReminderTap(
       })
     } catch (err) {
       console.error('[agenda] confirmar desde el recordatorio falló:', err)
-      await dialog.sender.sendText({ text: AGENDA_AGENT_TEXTS.confirmError })
+      await dialog.sender.sendText({ text: dialog.texts.confirmError })
       return
     }
     await bestEffort('evento confirmed (recordatorio)', () =>
@@ -350,9 +356,9 @@ async function handleReminderTap(
       : null
     const parts = zonedParts(appt.startsAt)
     await dialog.sender.sendText({
-      text: AGENDA_AGENT_TEXTS.reminderConfirmed({
-        service: service?.name ?? AGENDA_AGENT_TEXTS.serviceFallback,
-        staff: staffName ?? AGENDA_AGENT_TEXTS.staffAnyTitle,
+      text: dialog.texts.reminderConfirmed({
+        service: service?.name ?? dialog.texts.serviceFallback,
+        staff: staffName ?? dialog.texts.staffAnyTitle,
         date: formatLongDate(parts.dateKey),
         time: formatTimeLabel(parts),
       }),
@@ -396,10 +402,11 @@ interface Dialog {
   contactId: string
   configOwnerUserId: string
   account: AccountInfo | null
+  /** Palabras, piezas y textos editables de la cuenta, leídos una vez por mensaje. */
+  settings: BotSettings
   /**
-   * Copy del controlador con los overrides de Configuración ya
-   * aplicados (Fase 4). Los textos con datos de la cita se leen
-   * directo de AGENDA_AGENT_TEXTS: no son editables.
+   * Copy del controlador con las palabras del negocio y los overrides
+   * de Configuración ya aplicados (Fase 4).
    */
   texts: AgendaAgentTextsMerged
 }
@@ -495,7 +502,7 @@ async function handleChoice(
       )
       if (!staff.length) {
         await dialog.sender.sendText({
-          text: AGENDA_AGENT_TEXTS.noStaffForService,
+          text: dialog.texts.noStaffForService,
         })
         await conclude(dialog, sessionId, {
           ...state,
@@ -505,11 +512,13 @@ async function handleChoice(
         })
         return
       }
-      if (staff.length === 1) {
+      if (staff.length === 1 || !dialog.settings.toggles.chooseStaff) {
         await conclude(dialog, sessionId, {
           ...state,
           serviceId: service.id,
-          staffId: staff[0].id,
+          // Con la pieza apagada se asigna al confirmar (resolveCandidates
+          // con 'any' prueba a todos los elegibles; el EXCLUDE manda).
+          staffId: staff.length === 1 ? staff[0].id : 'any',
           step: 'pick_day',
         })
         return
@@ -547,7 +556,7 @@ async function handleChoice(
       if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) break
       const slots = await mergedSlotsForDay(dialog, state, dateKey)
       if (!slots.length) {
-        await dialog.sender.sendText({ text: AGENDA_AGENT_TEXTS.dayTaken })
+        await dialog.sender.sendText({ text: dialog.texts.dayTaken })
         await conclude(dialog, sessionId, { ...state, step: 'pick_day' })
         return
       }
@@ -595,8 +604,8 @@ async function handleChoice(
       if (parsed.value === 'cancel') {
         const text =
           state.mode === 'reschedule'
-            ? AGENDA_AGENT_TEXTS.cancelDeclined
-            : AGENDA_AGENT_TEXTS.draftCancelled
+            ? dialog.texts.cancelDeclined
+            : dialog.texts.draftCancelled
         await dialog.sender.sendText({ text })
         await closeSession(dialog.db, {
           id: sessionId,
@@ -623,7 +632,7 @@ async function handleChoice(
         const appt = await loadManagedAppointment(dialog, state)
         if (!appt) {
           await dialog.sender.sendText({
-            text: AGENDA_AGENT_TEXTS.managedAppointmentGone,
+            text: dialog.texts.managedAppointmentGone,
           })
           await closeSession(dialog.db, {
             id: sessionId,
@@ -657,7 +666,7 @@ async function handleChoice(
       if (parsed?.kind !== 'act') break
       if (parsed.value === 'back') {
         await dialog.sender.sendText({
-          text: AGENDA_AGENT_TEXTS.cancelDeclined,
+          text: dialog.texts.cancelDeclined,
         })
         await closeSession(dialog.db, {
           id: sessionId,
@@ -671,7 +680,7 @@ async function handleChoice(
         const appt = await loadManagedAppointment(dialog, state)
         if (!appt) {
           await dialog.sender.sendText({
-            text: AGENDA_AGENT_TEXTS.managedAppointmentGone,
+            text: dialog.texts.managedAppointmentGone,
           })
           await closeSession(dialog.db, {
             id: sessionId,
@@ -692,7 +701,7 @@ async function handleChoice(
           // La cita sigue viva: avisar y re-ofrecer la confirmación.
           console.error('[agenda] cancelar la cita falló:', err)
           await dialog.sender.sendText({
-            text: AGENDA_AGENT_TEXTS.confirmError,
+            text: dialog.texts.confirmError,
           })
           await conclude(dialog, sessionId, state)
           return
@@ -714,7 +723,7 @@ async function handleChoice(
           }),
         )
         await dialog.sender.sendText({
-          text: AGENDA_AGENT_TEXTS.cancelDone,
+          text: dialog.texts.cancelDone,
         })
         await closeSession(dialog.db, {
           id: sessionId,
@@ -764,7 +773,7 @@ async function confirmAppointment(
     oldAppt = await loadManagedAppointment(dialog, state)
     if (!oldAppt) {
       await dialog.sender.sendText({
-        text: AGENDA_AGENT_TEXTS.managedAppointmentGone,
+        text: dialog.texts.managedAppointmentGone,
       })
       await closeSession(dialog.db, {
         id: sessionId,
@@ -844,7 +853,7 @@ async function confirmAppointment(
       return
     }
     await dialog.sender.sendText({
-      text: AGENDA_AGENT_TEXTS.confirmError,
+      text: dialog.texts.confirmError,
     })
     await conclude(dialog, sessionId, state)
     return
@@ -877,7 +886,7 @@ async function confirmAppointment(
         accountId: dialog.accountId,
         updatedAtIso: dialog.nowIso,
       })
-      await dialog.sender.sendText({ text: AGENDA_AGENT_TEXTS.confirmError })
+      await dialog.sender.sendText({ text: dialog.texts.confirmError })
       await conclude(dialog, sessionId, state)
       return
     }
@@ -941,8 +950,8 @@ async function confirmAppointment(
   const summary = buildSummary(dialog, service, staffName ?? '', start)
   await dialog.sender.sendText({
     text: oldAppt
-      ? AGENDA_AGENT_TEXTS.rescheduleDone(summary)
-      : AGENDA_AGENT_TEXTS.confirmed(summary),
+      ? dialog.texts.rescheduleDone(summary)
+      : dialog.texts.confirmed(summary),
   })
 }
 
@@ -952,7 +961,7 @@ async function offerAlternatives(
   sessionId: string,
   state: BookingState,
 ): Promise<void> {
-  await dialog.sender.sendText({ text: AGENDA_AGENT_TEXTS.slotTaken })
+  await dialog.sender.sendText({ text: dialog.texts.slotTaken })
   await conclude(dialog, sessionId, {
     ...state,
     slotStartsAt: undefined,
@@ -1008,7 +1017,7 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
       }))
       await sendOptions(dialog, {
         bodyText: dialog.texts.serviceMenuBody,
-        buttonLabel: AGENDA_AGENT_TEXTS.serviceMenuButton,
+        buttonLabel: dialog.texts.serviceMenuButton,
         options: options.map((o, i) => ({
           ...o,
           description: serviceDescription(dialog, services[i]),
@@ -1025,7 +1034,7 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
       )
       if (!staff.length) {
         await dialog.sender.sendText({
-          text: AGENDA_AGENT_TEXTS.noStaffForService,
+          text: dialog.texts.noStaffForService,
         })
         return renderStep(dialog, { ...state, step: 'pick_service' })
       }
@@ -1033,8 +1042,8 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
         ...staff.map((s) => ({ id: staffId(s.id), title: s.name })),
         {
           id: staffId('any'),
-          title: AGENDA_AGENT_TEXTS.staffAnyTitle,
-          description: AGENDA_AGENT_TEXTS.staffAnyDescription,
+          title: dialog.texts.staffAnyTitle,
+          description: dialog.texts.staffAnyDescription,
         },
       ]
       const options: OfferedOption[] = sent.map(({ id, title }) => ({
@@ -1042,8 +1051,8 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
         title,
       }))
       await sendOptions(dialog, {
-        bodyText: AGENDA_AGENT_TEXTS.staffMenuBody,
-        buttonLabel: AGENDA_AGENT_TEXTS.staffMenuButton,
+        bodyText: dialog.texts.staffMenuBody,
+        buttonLabel: dialog.texts.staffMenuButton,
         options: sent,
       })
       return { state: { ...state, options }, closed: false }
@@ -1064,9 +1073,9 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
       await sendOptions(dialog, {
         bodyText:
           state.mode === 'reschedule'
-            ? AGENDA_AGENT_TEXTS.rescheduleStart
-            : AGENDA_AGENT_TEXTS.dayMenuBody,
-        buttonLabel: AGENDA_AGENT_TEXTS.dayMenuButton,
+            ? dialog.texts.rescheduleStart
+            : dialog.texts.dayMenuBody,
+        buttonLabel: dialog.texts.dayMenuButton,
         options,
       })
       return { state: { ...state, options }, closed: false }
@@ -1077,7 +1086,7 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
       if (!dateKey) return renderStep(dialog, { ...state, step: 'pick_day' })
       const slots = await mergedSlotsForDay(dialog, state, dateKey)
       if (!slots.length) {
-        await dialog.sender.sendText({ text: AGENDA_AGENT_TEXTS.dayTaken })
+        await dialog.sender.sendText({ text: dialog.texts.dayTaken })
         return renderStep(dialog, {
           ...state,
           dateKey: undefined,
@@ -1091,12 +1100,12 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
         title: slot.label,
       }))
       await sendOptions(dialog, {
-        bodyText: AGENDA_AGENT_TEXTS.slotMenuBody(formatLongDate(dateKey)),
-        buttonLabel: AGENDA_AGENT_TEXTS.slotMenuButton,
+        bodyText: dialog.texts.slotMenuBody(formatLongDate(dateKey)),
+        buttonLabel: dialog.texts.slotMenuButton,
         options,
         footerText:
           slots.length > shown.length
-            ? AGENDA_AGENT_TEXTS.optionsTruncated
+            ? dialog.texts.optionsTruncated
             : undefined,
       })
       return { state: { ...state, options }, closed: false }
@@ -1108,15 +1117,15 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
         return renderStep(dialog, newBookingState('pick_service'))
       }
       const options: OfferedOption[] = [
-        { id: actId('confirm'), title: AGENDA_AGENT_TEXTS.summaryConfirm },
+        { id: actId('confirm'), title: dialog.texts.summaryConfirm },
         {
           id: actId('reschedule'),
-          title: AGENDA_AGENT_TEXTS.summaryReschedule,
+          title: dialog.texts.summaryReschedule,
         },
-        { id: actId('cancel'), title: AGENDA_AGENT_TEXTS.summaryCancel },
+        { id: actId('cancel'), title: dialog.texts.summaryCancel },
       ]
       await sendButtons(dialog, {
-        bodyText: AGENDA_AGENT_TEXTS.summaryBody(built),
+        bodyText: dialog.texts.summaryBody(built),
         options,
       })
       return { state: { ...state, options }, closed: false }
@@ -1126,7 +1135,7 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
       const appt = await loadManagedAppointment(dialog, state)
       if (!appt) {
         await dialog.sender.sendText({
-          text: AGENDA_AGENT_TEXTS.managedAppointmentGone,
+          text: dialog.texts.managedAppointmentGone,
         })
         return { state, closed: true }
       }
@@ -1135,16 +1144,16 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
         : null
       const parts = zonedParts(appt.startsAt)
       const options: OfferedOption[] = [
-        { id: actId('new'), title: AGENDA_AGENT_TEXTS.manageNew },
+        { id: actId('new'), title: dialog.texts.manageNew },
         {
           id: actId('reschedule'),
-          title: AGENDA_AGENT_TEXTS.manageReschedule,
+          title: dialog.texts.manageReschedule,
         },
-        { id: actId('cancel'), title: AGENDA_AGENT_TEXTS.manageCancel },
+        { id: actId('cancel'), title: dialog.texts.manageCancel },
       ]
       await sendButtons(dialog, {
-        bodyText: AGENDA_AGENT_TEXTS.manageMenuBody({
-          service: service?.name ?? 'tu servicio',
+        bodyText: dialog.texts.manageMenuBody({
+          service: service?.name ?? dialog.texts.serviceFallback,
           date: formatLongDate(parts.dateKey),
           time: formatTimeLabel(parts),
         }),
@@ -1157,17 +1166,17 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
       const appt = await loadManagedAppointment(dialog, state)
       if (!appt) {
         await dialog.sender.sendText({
-          text: AGENDA_AGENT_TEXTS.managedAppointmentGone,
+          text: dialog.texts.managedAppointmentGone,
         })
         return { state, closed: true }
       }
       const parts = zonedParts(appt.startsAt)
       const options: OfferedOption[] = [
-        { id: actId('cancel_yes'), title: AGENDA_AGENT_TEXTS.cancelYes },
-        { id: actId('back'), title: AGENDA_AGENT_TEXTS.cancelNo },
+        { id: actId('cancel_yes'), title: dialog.texts.cancelYes },
+        { id: actId('back'), title: dialog.texts.cancelNo },
       ]
       await sendButtons(dialog, {
-        bodyText: AGENDA_AGENT_TEXTS.cancelConfirmBody({
+        bodyText: dialog.texts.cancelConfirmBody({
           date: formatLongDate(parts.dateKey),
           time: formatTimeLabel(parts),
         }),
@@ -1281,9 +1290,9 @@ async function dayOptions(
     if (!slotsForDay(ctx, keys[i]).length) continue
     const label =
       i === 0
-        ? AGENDA_AGENT_TEXTS.dayToday
+        ? dialog.texts.dayToday
         : i === 1
-          ? AGENDA_AGENT_TEXTS.dayTomorrow
+          ? dialog.texts.dayTomorrow
           : formatDayLabel(keys[i])
     out.push({ key: keys[i], label })
   }
@@ -1331,7 +1340,9 @@ function buildSummary(
     staff: staffName,
     date: formatLongDate(parts.dateKey),
     time: formatTimeLabel(parts),
-    price: formatPrice(service.price, dialog.account?.defaultCurrency ?? 'COP'),
+    price: dialog.settings.toggles.showPrice
+      ? formatPrice(service.price, dialog.account?.defaultCurrency ?? 'COP')
+      : null,
   }
 }
 
@@ -1342,20 +1353,27 @@ async function buildSummaryForState(
   if (!state.slotStartsAt) return null
   const service = await findService(dialog, state.serviceId)
   if (!service) return null
+  // Sin la pieza "elegir profesional" y sin asignado aún: línea vacía
+  // (se omite en el resumen; el nombre real llega al confirmar).
   const staffName =
     state.staffId && state.staffId !== 'any'
       ? ((await loadStaffName(dialog.db, dialog.accountId, state.staffId)) ??
-        AGENDA_AGENT_TEXTS.staffAnyTitle)
-      : AGENDA_AGENT_TEXTS.staffAnyTitle
+        dialog.texts.staffAnyTitle)
+      : dialog.settings.toggles.chooseStaff
+        ? dialog.texts.staffAnyTitle
+        : ''
   return buildSummary(dialog, service, staffName, new Date(state.slotStartsAt))
 }
 
-function serviceDescription(dialog: Dialog, service: ServiceInfo): string {
-  const price = formatPrice(
-    service.price,
-    dialog.account?.defaultCurrency ?? 'COP',
-  )
-  return `${service.durationMinutes} min • ${price}`
+/** Descripción de la fila del menú según las piezas duración / precio. */
+function serviceDescription(dialog: Dialog, service: ServiceInfo): string | undefined {
+  const { showPrice, showDuration } = dialog.settings.toggles
+  const parts: string[] = []
+  if (showDuration) parts.push(`${service.durationMinutes} min`)
+  if (showPrice) {
+    parts.push(formatPrice(service.price, dialog.account?.defaultCurrency ?? 'COP'))
+  }
+  return parts.length ? parts.join(' • ') : undefined
 }
 
 // ------------------------------------------------------------
@@ -1401,7 +1419,7 @@ async function sendOptions(
     ],
     footerText:
       args.footerText ??
-      (truncated ? AGENDA_AGENT_TEXTS.optionsTruncated : undefined),
+      (truncated ? dialog.texts.optionsTruncated : undefined),
   })
 }
 
@@ -1437,7 +1455,7 @@ async function performHandoff(
   await markConversationHandoff(dialog.db, {
     accountId: dialog.accountId,
     conversationId: dialog.conversationId,
-    note: AGENDA_AGENT_TEXTS.handoffNote,
+    note: dialog.texts.handoffNote,
     agentId: await loadHandoffAgentId(dialog.db, dialog.accountId),
   })
 
@@ -1467,8 +1485,8 @@ async function performHandoff(
         userId: owner,
         conversationId: dialog.conversationId,
         contactId: dialog.contactId,
-        title: AGENDA_AGENT_TEXTS.handoffNotificationTitle,
-        body: AGENDA_AGENT_TEXTS.handoffNotificationBody(who),
+        title: dialog.texts.handoffNotificationTitle,
+        body: dialog.texts.handoffNotificationBody(who),
       }),
     )
   }
@@ -1518,8 +1536,8 @@ async function handoffRescheduleRequest(
         userId: notifyUserId,
         conversationId: dialog.conversationId,
         contactId: dialog.contactId,
-        title: AGENDA_AGENT_TEXTS.rescheduleRequestNotificationTitle,
-        body: AGENDA_AGENT_TEXTS.rescheduleRequestNotificationBody({
+        title: dialog.texts.rescheduleRequestNotificationTitle,
+        body: dialog.texts.rescheduleRequestNotificationBody({
           who,
           date,
           time,
@@ -1542,7 +1560,7 @@ async function handoffRescheduleRequest(
   )
 
   await dialog.sender.sendText({
-    text: AGENDA_AGENT_TEXTS.rescheduleHandedToHuman,
+    text: dialog.texts.rescheduleHandedToHuman,
   })
 }
 

@@ -14,7 +14,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { sanitizeBotTexts, type BotTextOverrides } from '../bot-texts'
+import { readLabels, type AgendaLabels } from '../labels'
 import { isAgendaPipelineName } from '../seed'
+import { togglesFromRow, type AgendaToggles } from '../toggles'
 import type { WorkBlock } from './availability'
 
 export interface AccountInfo {
@@ -812,23 +814,38 @@ export async function insertNotification(
   })
 }
 
+/** Todo lo que el bot necesita de booking_settings, en una lectura. */
+export interface BotSettings {
+  botTexts: BotTextOverrides
+  labels: AgendaLabels
+  toggles: AgendaToggles
+}
+
 /**
- * Overrides de copy del bot configurados desde la UI (Fase 4).
+ * Textos editables, palabras del negocio y piezas prendidas/apagadas
+ * (Fase 4 + 051).
  *
- * Tolera todo: fila ausente, columna vacía o jsonb con basura — ante
- * la duda devuelve `{}` y el controlador usa el copy por defecto. Un
- * error de configuración NUNCA puede tumbar la conversación.
+ * Tolera todo: fila ausente, columnas nulas o jsonb con basura — ante
+ * la duda usa los valores por defecto (todo prendido, palabras
+ * genéricas, copy base). Un error de configuración NUNCA puede tumbar
+ * la conversación.
  */
-export async function loadBotTexts(
+export async function loadBotSettings(
   db: SupabaseClient,
   accountId: string,
-): Promise<BotTextOverrides> {
+): Promise<BotSettings> {
   const { data } = await db
     .from('booking_settings')
-    .select('bot_texts')
+    .select(
+      'bot_texts, labels, choose_staff, show_price, show_duration, reminders_enabled, allow_reschedule',
+    )
     .eq('account_id', accountId)
     .maybeSingle()
-  const raw = (data as { bot_texts?: unknown } | null)?.bot_texts
-  const clean = sanitizeBotTexts(raw ?? {})
-  return clean.ok ? clean.value : {}
+  const row = (data as Record<string, unknown> | null) ?? null
+  const texts = sanitizeBotTexts(row?.bot_texts ?? {})
+  return {
+    botTexts: texts.ok ? texts.value : {},
+    labels: readLabels(row?.labels),
+    toggles: togglesFromRow(row),
+  }
 }

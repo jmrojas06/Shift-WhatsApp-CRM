@@ -55,6 +55,19 @@ describe('palabras clave', () => {
     expect(containsIntentWord('buenas tardes, todo bien?')).toBe(false)
     expect(containsIntentWord('gracias, hasta luego')).toBe(false)
   })
+
+  it('acepta las palabras propias del negocio, sin acentos ni mayúsculas', () => {
+    expect(containsIntentWord('quiero una sesión', ['sesión'])).toBe(true)
+    expect(containsIntentWord('Necesito CONSULTA', ['consulta'])).toBe(true)
+    expect(containsIntentWord('quiero una sesión')).toBe(false)
+    expect(containsIntentWord('quiero una sesiones', ['sesión'])).toBe(false)
+  })
+
+  it('las palabras propias con signos de regex no lanzan ni coinciden de más', () => {
+    expect(() => containsIntentWord('gracias', ['cita (vip', '[x', 'a.b', '+'])).not.toThrow()
+    expect(containsIntentWord('axb', ['a.b'])).toBe(false)
+    expect(containsIntentWord('a.b', ['a.b'])).toBe(true)
+  })
 })
 
 describe('ids de opción', () => {

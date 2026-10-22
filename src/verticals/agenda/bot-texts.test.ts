@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { resolveLabels } from './labels'
 import {
   AGENDA_AGENT_TEXTS,
 } from './texts'
@@ -97,6 +98,15 @@ describe('mergeBotTexts', () => {
       AGENDA_AGENT_TEXTS.serviceMenuButton,
     )
     expect(merged.summaryConfirm).toBe(AGENDA_AGENT_TEXTS.summaryConfirm)
+  })
+
+  it('mergeBotTexts aplica overrides sobre el copy de las palabras del negocio', () => {
+    const merged = mergeBotTexts(
+      { welcome: 'Hola desde el taller' },
+      resolveLabels({ profesional: 'técnico' }),
+    )
+    expect(merged.serviceMenuBody).toBe('Hola desde el taller')
+    expect(merged.staffMenuBody).toContain('técnico')
   })
 
   it('aplica las cinco claves editables a la vez', () => {

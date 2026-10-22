@@ -17,10 +17,13 @@
 // espejo en la plantilla de Meta, así que se quedan en código.
 // ============================================================
 
-import { AGENDA_AGENT_TEXTS, AGENDA_TEXTS, type EditableBotTextKey } from './texts'
-
-/** Todo el copy del controlador (constantes literales). */
-export type AgendaAgentTexts = typeof AGENDA_AGENT_TEXTS
+import { DEFAULT_LABELS, type AgendaLabels } from './labels'
+import {
+  AGENDA_TEXTS,
+  buildAgentTexts,
+  type AgendaAgentTexts,
+  type EditableBotTextKey,
+} from './texts'
 
 /** Orden canónico para la UI y para los mensajes de error. */
 export const EDITABLE_BOT_TEXT_KEYS: readonly EditableBotTextKey[] = [
@@ -59,8 +62,11 @@ export function isEditableBotTextKey(value: unknown): value is EditableBotTextKe
 }
 
 /** Texto por defecto de una clave (para la UI y los tests). */
-export function botTextDefault(key: EditableBotTextKey): string {
-  return AGENDA_AGENT_TEXTS[BASE_FIELD[key]]
+export function botTextDefault(
+  key: EditableBotTextKey,
+  labels: AgendaLabels = DEFAULT_LABELS,
+): string {
+  return buildAgentTexts(labels)[BASE_FIELD[key]]
 }
 
 export type SanitizeBotTextsResult =
@@ -105,32 +111,24 @@ export function sanitizeBotTexts(input: unknown): SanitizeBotTextsResult {
   return { ok: true, value: out }
 }
 
-/**
- * Set completo de copy del controlador con los overrides aplicados.
- * Las cinco claves editables se ensanchan a `string`; el resto
- * conserva su tipo literal.
- */
-export type AgendaAgentTextsMerged = Omit<
-  AgendaAgentTexts,
-  'serviceMenuBody' | 'retry' | 'noServices' | 'noDaysAvailable' | 'handoff'
-> & {
-  serviceMenuBody: string
-  retry: string
-  noServices: string
-  noDaysAvailable: string
-  handoff: string
-}
+/** Mantener el nombre usado por el controlador. */
+export type AgendaAgentTextsMerged = AgendaAgentTexts
 
+/**
+ * Set completo de copy del controlador con los overrides aplicados
+ * sobre el copy de las palabras del negocio.
+ */
 export function mergeBotTexts(
   overrides: BotTextOverrides,
+  labels: AgendaLabels = DEFAULT_LABELS,
 ): AgendaAgentTextsMerged {
+  const base = buildAgentTexts(labels)
   return {
-    ...AGENDA_AGENT_TEXTS,
-    serviceMenuBody: overrides.welcome ?? AGENDA_AGENT_TEXTS.serviceMenuBody,
-    retry: overrides.retry ?? AGENDA_AGENT_TEXTS.retry,
-    noServices: overrides.noServices ?? AGENDA_AGENT_TEXTS.noServices,
-    noDaysAvailable:
-      overrides.noDaysAvailable ?? AGENDA_AGENT_TEXTS.noDaysAvailable,
-    handoff: overrides.handoff ?? AGENDA_AGENT_TEXTS.handoff,
+    ...base,
+    serviceMenuBody: overrides.welcome ?? base.serviceMenuBody,
+    retry: overrides.retry ?? base.retry,
+    noServices: overrides.noServices ?? base.noServices,
+    noDaysAvailable: overrides.noDaysAvailable ?? base.noDaysAvailable,
+    handoff: overrides.handoff ?? base.handoff,
   }
 }
