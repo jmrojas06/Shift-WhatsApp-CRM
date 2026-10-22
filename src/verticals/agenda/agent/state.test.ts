@@ -63,10 +63,34 @@ describe('palabras clave', () => {
     expect(containsIntentWord('quiero una sesiones', ['sesión'])).toBe(false)
   })
 
-  it('las palabras propias con signos de regex no lanzan ni coinciden de más', () => {
-    expect(() => containsIntentWord('gracias', ['cita (vip', '[x', 'a.b', '+'])).not.toThrow()
-    expect(containsIntentWord('axb', ['a.b'])).toBe(false)
-    expect(containsIntentWord('a.b', ['a.b'])).toBe(true)
+  it('las palabras propias con signos de regex no lanzan', () => {
+    expect(() => containsIntentWord('gracias', ['cita (vip', '[x', 'a.b', '+', '\\'])).not.toThrow()
+    // los signos se quitan: "consulta (vip" queda como la frase "consulta vip"
+    expect(containsIntentWord('quiero consulta vip', ['consulta (vip'])).toBe(true)
+  })
+
+  it('palabras propias demasiado cortas o muy comunes no abren el flujo', () => {
+    // 2 y 3 letras: demasiado genéricas
+    expect(containsIntentWord('ya voy', ['ya'])).toBe(false)
+    expect(containsIntentWord('una vez', ['vez'])).toBe(false)
+    // lista de palabras comunes
+    for (const word of ['hora', 'horas', 'info', 'plan', 'día', 'dias', 'pregunta', 'precio', 'precios']) {
+      expect(containsIntentWord(`dame la ${word}`, [word])).toBe(false)
+    }
+    // una palabra propia real sigue funcionando
+    expect(containsIntentWord('quiero una sesión', ['sesión'])).toBe(true)
+  })
+
+  it('se queda con letras y números: "clase 🧘" cuenta como "clase"', () => {
+    expect(containsIntentWord('quiero una clase 🧘', ['clase 🧘'])).toBe(true)
+    expect(containsIntentWord('quiero una clase', ['clase 🧘'])).toBe(true)
+    expect(containsIntentWord('subclase', ['clase 🧘'])).toBe(false)
+  })
+
+  it('los límites de palabra entienden Unicode: letras no latinas pegadas no cuentan', () => {
+    expect(containsIntentWord('quiero cita🧘')).toBe(true)
+    expect(containsIntentWord('citaя')).toBe(false)
+    expect(containsIntentWord('яcita')).toBe(false)
   })
 })
 

@@ -156,9 +156,43 @@ const INTENT_WORDS = [
 /** Escapa los metacaracteres de regex: las palabras propias vienen del dueño. */
 const escapeRegex = (word: string) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
+/**
+ * Límites de palabra con Unicode: `\b` solo conoce ASCII, así que una
+ * letra no latina o una ñ pegada contaría como borde.
+ */
 function containsWord(text: string, words: readonly string[]): boolean {
   const normalized = normalizeText(text)
-  return words.some((w) => new RegExp(`\\b${escapeRegex(w)}\\b`).test(normalized))
+  return words.some((w) =>
+    new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegex(w)}(?![\\p{L}\\p{N}])`, 'u').test(normalized),
+  )
+}
+
+/** Palabras del dueño demasiado comunes para abrir el flujo por sí solas. */
+const EXTRA_INTENT_STOPLIST: ReadonlySet<string> = new Set([
+  'hora',
+  'horas',
+  'info',
+  'plan',
+  'dia',
+  'dias',
+  'vez',
+  'pregunta',
+  'precio',
+  'precios',
+])
+
+/** Mínimo de caracteres para que una palabra del dueño cuente como intención. */
+const EXTRA_INTENT_MIN = 4
+
+/**
+ * Palabras propias del negocio como palabras de intención: sin acentos,
+ * solo letras y números ("clase 🧘" → "clase"), sin las muy cortas ni
+ * las muy comunes.
+ */
+function cleanExtraIntentWords(words: readonly string[]): string[] {
+  return words
+    .map((w) => normalizeText(w).replace(/[^\p{L}\p{N}\s]/gu, '').replace(/\s+/g, ' ').trim())
+    .filter((w) => w.length >= EXTRA_INTENT_MIN && !EXTRA_INTENT_STOPLIST.has(w))
 }
 
 /** ¿El cliente pidió hablar con una persona? (gana sobre todo lo demás). */
@@ -171,8 +205,7 @@ export function containsHandoffWord(text: string): boolean {
  * Acepta además las palabras propias del negocio ("consulta", "turno").
  */
 export function containsIntentWord(text: string, extraWords: readonly string[] = []): boolean {
-  const extra = extraWords.map((w) => normalizeText(w)).filter(Boolean)
-  return containsWord(text, [...INTENT_WORDS, ...extra])
+  return containsWord(text, [...INTENT_WORDS, ...cleanExtraIntentWords(extraWords)])
 }
 
 // ------------------------------------------------------------

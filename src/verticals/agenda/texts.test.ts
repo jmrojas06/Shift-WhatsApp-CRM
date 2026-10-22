@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest'
 import { resolveLabels } from './labels'
 import { AGENDA_AGENT_TEXTS, buildAgentTexts } from './texts'
 
+/** Mitad de un par sustituto sin su compañera. */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+
 const summary = {
   service: 'Limpieza dental',
   staff: 'Dra. Ruiz',
@@ -50,6 +53,26 @@ describe('buildAgentTexts', () => {
     )
     expect(long.manageNew.length).toBeLessThanOrEqual(20)
     expect(long.manageCancel.length).toBeLessThanOrEqual(20)
+  })
+
+  it('los botones miden unidades UTF-16 (emoji = 2) y nunca parten un par sustituto', () => {
+    const t = buildAgentTexts(
+      resolveLabels({ profesionales: 'especialistas \u{1F485}\u{1F485}', cita: 'cita \u{1F485}\u{1F485}\u{1F485}\u{1F485}' }),
+    )
+    const buttons = [t.staffMenuButton, t.serviceMenuButton, t.manageNew, t.manageCancel]
+    for (const label of buttons) {
+      expect(label.length).toBeLessThanOrEqual(20)
+      expect(label).not.toMatch(LONE_SURROGATE)
+    }
+    expect(t.staffMenuButton).toBe('Ver especialistas…')
+  })
+
+  it('el botón de "otra cita" es neutro en género: no usa la palabra del negocio', () => {
+    for (const cita of ['turno', 'sesión', 'consulta', 'reserva']) {
+      const t = buildAgentTexts(resolveLabels({ cita, citas: `${cita}s` }))
+      expect(t.manageNew).toBe('Agendar otra vez')
+      expect(t.manageNew).not.toMatch(/nuev[oa]/i)
+    }
   })
 
   it('AGENDA_AGENT_TEXTS es el copy con palabras por defecto', () => {

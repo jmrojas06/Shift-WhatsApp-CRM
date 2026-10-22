@@ -28,6 +28,7 @@ import type { VerticalDispatchResult, VerticalSession } from '@/lib/verticals/ty
 
 import type { AgendaAppointmentSummary } from '../texts'
 import { mergeBotTexts, type AgendaAgentTextsMerged } from '../bot-texts'
+import { capitalize } from '../labels'
 import {
   computeDaySlots,
   mergeSlotsByStart,
@@ -175,7 +176,10 @@ export async function handleAgendaInbound(
     return { consumed: false }
   }
 
-  const settings = await loadBotSettings(args.db, args.accountId)
+  const [settings, account] = await Promise.all([
+    loadBotSettings(args.db, args.accountId),
+    loadAccount(args.db, args.accountId),
+  ])
   const dialog: Dialog = {
     db: args.db,
     sender: args.sender,
@@ -185,7 +189,7 @@ export async function handleAgendaInbound(
     conversationId: args.conversationId,
     contactId: args.contactId,
     configOwnerUserId: args.configOwnerUserId,
-    account: await loadAccount(args.db, args.accountId),
+    account,
     settings,
     texts: mergeBotTexts(settings.botTexts, settings.labels),
   }
@@ -380,7 +384,7 @@ async function handleReminderTap(
           mode: 'reschedule',
           appointmentId: appt.id,
           serviceId: appt.serviceId ?? undefined,
-          staffId: appt.staffId ?? 'any',
+          staffId: rescheduleStaffId(dialog, appt),
         })
       : newBookingState('manage_cancel_confirm', { appointmentId: appt.id })
 
@@ -409,6 +413,14 @@ interface Dialog {
    * de Configuración ya aplicados (Fase 4).
    */
   texts: AgendaAgentTextsMerged
+}
+
+/**
+ * Profesional con el que se busca la nueva hora al reprogramar: el de
+ * la cita, o cualquiera cuando el negocio no deja elegir (pieza apagada).
+ */
+function rescheduleStaffId(dialog: Dialog, appt: AppointmentInfo): string {
+  return dialog.settings.toggles.chooseStaff ? (appt.staffId ?? 'any') : 'any'
 }
 
 function expiryIso(dialog: Dialog): string {
@@ -647,7 +659,7 @@ async function handleChoice(
             mode: 'reschedule',
             appointmentId: appt.id,
             serviceId: appt.serviceId ?? undefined,
-            staffId: appt.staffId ?? 'any',
+            staffId: rescheduleStaffId(dialog, appt),
           }),
         })
         return
@@ -919,13 +931,13 @@ async function confirmAppointment(
         userId: dialog.configOwnerUserId,
       }),
     )
-    await bestEffort('negocio en el pipeline Barbería', () =>
+    await bestEffort('negocio en el pipeline Agenda', () =>
       upsertAgendaDeal(dialog.db, {
         accountId: dialog.accountId,
         userId: dialog.configOwnerUserId,
         contactId: dialog.contactId,
         conversationId: dialog.conversationId,
-        title: `Cita: ${service.name}`,
+        title: `${capitalize(dialog.settings.labels.cita)}: ${service.name}`,
         value: service.price,
         currency: dialog.account?.defaultCurrency ?? 'COP',
         nowIso: dialog.nowIso,
@@ -1353,15 +1365,16 @@ async function buildSummaryForState(
   if (!state.slotStartsAt) return null
   const service = await findService(dialog, state.serviceId)
   if (!service) return null
-  // Sin la pieza "elegir profesional" y sin asignado aún: línea vacía
-  // (se omite en el resumen; el nombre real llega al confirmar).
-  const staffName =
-    state.staffId && state.staffId !== 'any'
-      ? ((await loadStaffName(dialog.db, dialog.accountId, state.staffId)) ??
-        dialog.texts.staffAnyTitle)
-      : dialog.settings.toggles.chooseStaff
-        ? dialog.texts.staffAnyTitle
-        : ''
+  // Sin la pieza "elegir profesional" el resumen nunca muestra la línea
+  // (vacía = se omite): el nombre real llega al confirmar.
+  let staffName = ''
+  if (dialog.settings.toggles.chooseStaff) {
+    staffName =
+      state.staffId && state.staffId !== 'any'
+        ? ((await loadStaffName(dialog.db, dialog.accountId, state.staffId)) ??
+          dialog.texts.staffAnyTitle)
+        : dialog.texts.staffAnyTitle
+  }
   return buildSummary(dialog, service, staffName, new Date(state.slotStartsAt))
 }
 
@@ -1405,7 +1418,7 @@ async function sendOptions(
   const truncated = options.length > shown.length
   await dialog.sender.sendList({
     bodyText: args.bodyText,
-    buttonLabel: args.buttonLabel,
+    buttonLabel: truncate(args.buttonLabel, BUTTON_TITLE_MAX),
     sections: [
       {
         rows: shown.map((o) => ({

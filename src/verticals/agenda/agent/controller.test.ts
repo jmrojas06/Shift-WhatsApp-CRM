@@ -470,6 +470,7 @@ interface SenderCall {
   kind: 'text' | 'buttons' | 'list'
   bodyText: string
   buttons?: { id: string; title: string }[]
+  buttonLabel?: string
   sections?: { rows: { id: string; title: string; description?: string }[] }[]
   footerText?: string
 }
@@ -483,10 +484,11 @@ function makeRecorder() {
     sendButtons: async ({ bodyText, buttons, footerText }) => {
       calls.push({ kind: 'buttons', bodyText, buttons, footerText })
     },
-    sendList: async ({ bodyText, sections, footerText }) => {
+    sendList: async ({ bodyText, buttonLabel, sections, footerText }) => {
       calls.push({
         kind: 'list',
         bodyText,
+        buttonLabel,
         sections: sections.map((s) => ({ rows: s.rows })),
         footerText,
       })
@@ -1001,7 +1003,7 @@ describe('gestión de una cita existente', () => {
     const call = last(rec)
     expect(call.bodyText).toContain('Corte clásico')
     expect(optionTitles(call)).toEqual([
-      'Nueva cita',
+      'Agendar otra vez',
       'Reprogramar',
       'Cancelar cita',
     ])
@@ -1874,5 +1876,181 @@ describe('palabras y piezas del negocio', () => {
     const res = await send(db, rec, { text: 'quiero una sesión' })
 
     expect(res.consumed).toBe(false)
+  })
+})
+
+// ------------------------------------------------------------
+// Revisión: piezas, límites de Meta y títulos
+// ------------------------------------------------------------
+
+/** Mitad de un par sustituto sin su compañera. */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+
+/** Andrés ocupado a las 10:00 locales (15:00Z) con la cita de otro cliente. */
+function blockAndresAtTen(db: FakeDb) {
+  db._tables.booking_appointments.push(
+    appointmentRow({
+      id: 'appt-block',
+      contact_id: 'ct-otro',
+      staff_id: STAFF_ANDRES,
+      starts_at: '2026-10-19T15:00:00.000Z',
+      ends_at: '2026-10-19T15:30:00.000Z',
+    }),
+  )
+}
+
+const TEN_O_CLOCK = slotId('2026-10-19T15:00:00.000Z')
+
+describe('reprogramar con "elegir profesional" apagado', () => {
+  async function rescheduleSlots(chooseStaff: boolean, via: 'menu' | 'recordatorio') {
+    const seed = baseSeed()
+    seed.booking_appointments = [appointmentRow()] // cita de Andrés, el miércoles
+    const db = makeFakeDb(seed)
+    blockAndresAtTen(db)
+    setSettings(db, { choose_staff: chooseStaff })
+    const rec = makeRecorder()
+
+    if (via === 'menu') {
+      await send(db, rec, { text: 'cita' })
+      await send(db, rec, { replyId: 'act:reschedule' })
+    } else {
+      await send(db, rec, { replyId: 'rem:reschedule' })
+    }
+    await send(db, rec, { replyId: dayId(MONDAY) })
+    return optionIds(last(rec))
+  }
+
+  it('desde el menú de la cita: ofrece también las horas de los demás', async () => {
+    expect(await rescheduleSlots(false, 'menu')).toContain(TEN_O_CLOCK)
+  })
+
+  it('desde el recordatorio: ofrece también las horas de los demás', async () => {
+    expect(await rescheduleSlots(false, 'recordatorio')).toContain(TEN_O_CLOCK)
+  })
+
+  it('con la pieza prendida se queda con el profesional de la cita', async () => {
+    expect(await rescheduleSlots(true, 'menu')).not.toContain(TEN_O_CLOCK)
+    expect(await rescheduleSlots(true, 'recordatorio')).not.toContain(TEN_O_CLOCK)
+  })
+})
+
+describe('"elegir profesional" apagado: resumen y asignación', () => {
+  it('con un solo profesional elegible el resumen tampoco muestra 👤; la confirmación sí', async () => {
+    const db = makeFakeDb(baseSeed())
+    setSettings(db, { choose_staff: false })
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'hola' })
+    await send(db, rec, { replyId: svcId(SERVICE_BARBA) }) // solo Andrés la hace
+    await send(db, rec, { replyId: dayId(MONDAY) })
+    await send(db, rec, { replyId: optionIds(last(rec))[0] })
+
+    expect(last(rec).bodyText).toContain('Perfilado de barba')
+    expect(last(rec).bodyText).not.toContain('👤')
+    expect(last(rec).bodyText).not.toContain('Andrés')
+
+    await send(db, rec, { replyId: 'act:confirm' })
+
+    expect(db._tables.booking_appointments[0].staff_id).toBe(STAFF_ANDRES)
+    expect(last(rec).bodyText).toContain('👤 Andrés')
+  })
+
+  it('con la pieza prendida y un solo elegible, el resumen sí muestra al profesional', async () => {
+    const db = makeFakeDb(baseSeed())
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'hola' })
+    await send(db, rec, { replyId: svcId(SERVICE_BARBA) })
+    await send(db, rec, { replyId: dayId(MONDAY) })
+    await send(db, rec, { replyId: optionIds(last(rec))[0] })
+
+    expect(last(rec).bodyText).toContain('👤 Andrés')
+  })
+
+  it('si Andrés está ocupado a esa hora y Beto libre, asigna a Beto y lo muestra al confirmar', async () => {
+    const db = makeFakeDb(baseSeed())
+    blockAndresAtTen(db)
+    setSettings(db, { choose_staff: false })
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'hola' })
+    await send(db, rec, { replyId: svcId(SERVICE_CORTE) })
+    await send(db, rec, { replyId: dayId(MONDAY) })
+    await send(db, rec, { replyId: TEN_O_CLOCK })
+    expect(last(rec).bodyText).not.toContain('👤')
+
+    await send(db, rec, { replyId: 'act:confirm' })
+
+    const ours = db._tables.booking_appointments.find((a) => a.id !== 'appt-block')
+    expect(ours?.staff_id).toBe(STAFF_BETO)
+    expect(last(rec).bodyText).toContain('👤 Beto')
+  })
+})
+
+describe('título del negocio en el pipeline', () => {
+  it('usa la palabra de la cita del negocio, con mayúscula inicial', async () => {
+    const db = makeFakeDb(baseSeed())
+    setSettings(db, { choose_staff: false, labels: { cita: 'turno', citas: 'turnos' } })
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'turno' })
+    await send(db, rec, { replyId: svcId(SERVICE_CORTE) })
+    await send(db, rec, { replyId: dayId(MONDAY) })
+    await send(db, rec, { replyId: optionIds(last(rec))[0] })
+    await send(db, rec, { replyId: 'act:confirm' })
+
+    expect(db._tables.deals).toHaveLength(1)
+    expect(db._tables.deals[0].title).toBe('Turno: Corte clásico')
+  })
+})
+
+describe('límites de Meta en UTF-16', () => {
+  function addServices(db: FakeDb, names: string[]) {
+    names.forEach((name, i) => {
+      db._tables.booking_services.push({
+        id: `svc-long-${i}`,
+        account_id: ACCOUNT,
+        name,
+        description: null,
+        duration_minutes: 30,
+        price: 10000,
+        is_active: true,
+        position: 5 + i,
+      })
+    })
+  }
+
+  it('el botón de la lista y los títulos de fila no pasan el límite ni parten un emoji', async () => {
+    const db = makeFakeDb(baseSeed())
+    addServices(db, ['\u{1F485}'.repeat(20), 'Masaje \u{1F486}\u{1F486}\u{1F486}\u{1F486}\u{1F486}\u{1F486}\u{1F486}\u{1F486}\u{1F486}\u{1F486}\u{1F486}\u{1F486}'])
+    setSettings(db, { labels: { servicios: 'especialistas \u{1F485}\u{1F485}' } })
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'hola' })
+
+    const call = last(rec)
+    expect(call.kind).toBe('list')
+    expect(call.buttonLabel?.length).toBeLessThanOrEqual(20)
+    expect(call.buttonLabel).not.toMatch(LONE_SURROGATE)
+    for (const row of call.sections?.flatMap((s) => s.rows) ?? []) {
+      expect(row.title.length).toBeLessThanOrEqual(24)
+      expect(row.title).not.toMatch(LONE_SURROGATE)
+    }
+  })
+
+  it('los botones de respuesta no pasan 20 unidades aunque el nombre lleve emoji', async () => {
+    const db = makeFakeDb(baseSeed())
+    setSettings(db, { labels: { cita: 'cita \u{1F485}\u{1F485}\u{1F485}\u{1F485}\u{1F485}\u{1F485}' } })
+    db._tables.booking_appointments.push(appointmentRow())
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'hola' })
+
+    const call = last(rec)
+    expect(call.kind).toBe('buttons')
+    for (const button of call.buttons ?? []) {
+      expect(button.title.length).toBeLessThanOrEqual(20)
+      expect(button.title).not.toMatch(LONE_SURROGATE)
+    }
   })
 })

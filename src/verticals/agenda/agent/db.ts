@@ -834,13 +834,15 @@ export async function loadBotSettings(
   db: SupabaseClient,
   accountId: string,
 ): Promise<BotSettings> {
-  const { data } = await db
+  const { data, error } = await db
     .from('booking_settings')
     .select(
       'bot_texts, labels, choose_staff, show_price, show_duration, reminders_enabled, allow_reschedule',
     )
     .eq('account_id', accountId)
     .maybeSingle()
+  // Típico: una migración sin aplicar. Se avisa y el bot sigue con los defaults.
+  if (error) console.error('[agenda] loadBotSettings falló:', error.message)
   const row = (data as Record<string, unknown> | null) ?? null
   const texts = sanitizeBotTexts(row?.bot_texts ?? {})
   return {

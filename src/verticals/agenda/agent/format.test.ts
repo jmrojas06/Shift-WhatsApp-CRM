@@ -47,4 +47,13 @@ describe('formatPrice / truncate', () => {
     expect(truncate('Perfilado de barba premium', 20)).toBe('Perfilado de barba…')
     expect(truncate('1234567890', 10)).toBe('1234567890')
   })
+
+  it('truncate mide unidades UTF-16 y no parte un emoji por la mitad', () => {
+    const out = truncate('Corte \u{1F485}\u{1F485}\u{1F485}\u{1F485}', 10)
+    expect(out.length).toBeLessThanOrEqual(10)
+    expect(out).toBe('Corte \u{1F485}…')
+    expect(out).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/)
+    // un texto que ya cabe (en unidades UTF-16) no se toca
+    expect(truncate('\u{1F485}\u{1F485}', 4)).toBe('\u{1F485}\u{1F485}')
+  })
 })

@@ -90,8 +90,17 @@ export function formatPrice(value: number, currency: string): string {
   return `${amount < 0 ? '-' : ''}${symbol}${grouped}`
 }
 
-/** Recorta con '…' solo cuando excede el límite (títulos de Meta). */
+/**
+ * Recorta con '…' solo cuando excede el límite (títulos de Meta).
+ * Meta mide unidades UTF-16 (`.length`); se corta por puntos de código
+ * para no dejar medio emoji.
+ */
 export function truncate(text: string, max: number): string {
   if (text.length <= max) return text
-  return `${text.slice(0, max - 1).trimEnd()}…`
+  let out = ''
+  for (const ch of text) {
+    if (out.length + ch.length > max - 1) break
+    out += ch
+  }
+  return `${out.trimEnd()}…`
 }

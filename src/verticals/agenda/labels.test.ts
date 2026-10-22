@@ -74,7 +74,7 @@ describe('sanitizeLabels', () => {
 
   it('rechaza sustitutos sueltos y caracteres de uso privado', () => {
     expect(sanitizeLabels({ cita: 'ci\uD800ta' }).ok).toBe(false)
-    expect(sanitizeLabels({ cita: 'cita' }).ok).toBe(false)
+    expect(sanitizeLabels({ cita: 'ci\uE000ta' }).ok).toBe(false)
   })
 
   it('un texto muy largo se rechaza antes de contar puntos de código', () => {

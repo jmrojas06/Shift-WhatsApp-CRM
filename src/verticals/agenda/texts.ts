@@ -319,6 +319,7 @@ export const AGENDA_TEXTS = {
 // argumentos con nombre — nada de concatenaciones en el llamador.
 // ============================================================
 
+import { truncate } from './agent/format'
 import { DEFAULT_LABELS, type AgendaLabels } from './labels'
 
 /** Datos de una cita usados en resumen y confirmaciones. */
@@ -336,12 +337,13 @@ export interface AgendaAppointmentSummary {
   answers?: { label: string; value: string }[]
 }
 
-/** Meta corta los títulos de botón y el botón de lista a 20 caracteres. */
+/**
+ * Meta cuenta los títulos de botón y el botón de lista en unidades
+ * UTF-16 (un emoji vale 2) y los limita a 20. `truncate` no parte
+ * un par sustituto.
+ */
 const BUTTON_MAX = 20
-const btn = (text: string) => {
-  const chars = [...text]
-  return chars.length <= BUTTON_MAX ? text : `${chars.slice(0, BUTTON_MAX - 1).join('')}…`
-}
+const btn = (text: string) => truncate(text, BUTTON_MAX)
 
 function summaryLines(a: AgendaAppointmentSummary, opts: { price?: boolean } = {}): string {
   const lines = [`📌 ${a.service}`]
@@ -424,7 +426,8 @@ export function buildAgentTexts(l: AgendaLabels) {
     // ----------------------------------------------------------
     manageMenuBody: (a: { service: string; date: string; time: string }) =>
       `Vi que ya tienes algo agendado:\n\n📌 ${a.service}\n📅 ${a.date}\n🕐 ${a.time}\n\n¿Qué quieres hacer?`,
-    manageNew: btn(`Nueva ${l.cita}`),
+    // Fijo y neutro en género: "Nueva turno" / "Nuevo cita" no existen.
+    manageNew: 'Agendar otra vez',
     manageReschedule: 'Reprogramar',
     manageCancel: btn(`Cancelar ${l.cita}`),
     rescheduleStart: 'Listo, elige el nuevo día:',
