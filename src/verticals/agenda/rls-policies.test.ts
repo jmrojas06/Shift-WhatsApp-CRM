@@ -145,3 +145,44 @@ describe('guard de columnas protegidas de accounts (050 / D3)', () => {
     )
   })
 })
+
+describe('preguntas extra del bot (051 / booking_questions)', () => {
+  it('SELECT: cualquier miembro (viewer incluido)', () => {
+    const found = policiesFor('booking_questions', 'SELECT')
+    expect(found).toHaveLength(1)
+    expect(found[0].body).toMatch(/is_account_member\(account_id\)/)
+  })
+
+  for (const cmd of ['INSERT', 'UPDATE', 'DELETE']) {
+    it(`${cmd}: solo owner/admin`, () => {
+      const found = policiesFor('booking_questions', cmd)
+      expect(found).toHaveLength(1)
+      expect(found[0].body).toContain("'admin'")
+      expect(found[0].body).not.toContain("'agent'")
+    })
+  }
+
+  const code = readFileSync(
+    join(MIGRATIONS_DIR, '051_agenda_armable.sql'),
+    'utf8',
+  ).replace(/--[^\r\n]*/g, '')
+
+  it('la tabla tiene RLS activada', () => {
+    expect(code).toMatch(
+      /ALTER TABLE booking_questions ENABLE ROW LEVEL SECURITY/,
+    )
+  })
+
+  it('no es destructiva: ni DROP TABLE/COLUMN ni DELETE/TRUNCATE', () => {
+    expect(code).not.toMatch(/DROP\s+TABLE/i)
+    expect(code).not.toMatch(/DROP\s+COLUMN/i)
+    expect(code).not.toMatch(/\bDELETE\s+FROM\b/i)
+    expect(code).not.toMatch(/\bTRUNCATE\b/i)
+  })
+
+  it("reescribe la clave del vertical 'barberia' a 'agenda'", () => {
+    expect(code).toContain(
+      "UPDATE accounts SET vertical_key = 'agenda' WHERE vertical_key = 'barberia'",
+    )
+  })
+})

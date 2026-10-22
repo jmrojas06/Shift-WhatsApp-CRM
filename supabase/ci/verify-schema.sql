@@ -350,6 +350,110 @@ BEGIN
       'enforce_account_protected_columns trigger is missing on accounts — migration 050 did not apply';
   END IF;
 
+  -- 051: agenda armable. The new settings columns are read by the bot
+  -- on every message through a typed select, and `answers` is written
+  -- on every booking: a column that silently failed to add is a runtime
+  -- PostgREST error, not a migration error.
+  IF (
+    SELECT COUNT(*) FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'booking_settings'
+      AND (
+        (column_name = 'preset_key' AND data_type = 'text')
+        OR (column_name = 'labels' AND data_type = 'jsonb' AND is_nullable = 'NO')
+        OR (column_name IN (
+              'choose_staff', 'show_price', 'show_duration',
+              'reminders_enabled', 'allow_reschedule'
+            )
+            AND data_type = 'boolean' AND is_nullable = 'NO'
+            AND column_default = 'true')
+      )
+  ) <> 7 THEN
+    RAISE EXCEPTION
+      'booking_settings agenda columns are missing or have wrong defaults — migration 051 did not apply';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'booking_appointments'
+      AND column_name = 'answers'
+      AND data_type = 'jsonb'
+      AND is_nullable = 'NO'
+  ) THEN
+    RAISE EXCEPTION
+      'booking_appointments.answers is missing or nullable — migration 051 did not apply';
+  END IF;
+
+  IF (
+    SELECT COUNT(*) FROM pg_constraint
+    WHERE contype = 'c'
+      AND conname IN (
+        'booking_settings_labels_object_check',
+        'booking_settings_preset_key_check',
+        'booking_appointments_answers_object_check'
+      )
+  ) <> 3 THEN
+    RAISE EXCEPTION
+      'agenda CHECK constraints are missing — migration 051 did not apply';
+  END IF;
+
+  IF to_regclass('public.booking_questions') IS NULL THEN
+    RAISE EXCEPTION 'booking_questions is missing — migration 051 did not apply';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_class
+    WHERE oid = to_regclass('public.booking_questions')
+      AND relrowsecurity
+  ) THEN
+    RAISE EXCEPTION
+      'booking_questions RLS is not enabled — migration 051 did not apply';
+  END IF;
+
+  -- Same RLS shape as the 050 config tables: writes owner/admin only,
+  -- reads open to every member.
+  FOR v_cmd IN SELECT unnest(ARRAY['INSERT', 'UPDATE', 'DELETE']) LOOP
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_policies
+      WHERE schemaname = 'public'
+        AND tablename = 'booking_questions'
+        AND cmd = v_cmd
+        AND coalesce(qual, '') || coalesce(with_check, '') LIKE '%''admin''%'
+        AND coalesce(qual, '') || coalesce(with_check, '') NOT LIKE '%''agent''%'
+    ) THEN
+      RAISE EXCEPTION
+        'booking_questions % policy is missing or not admin-only — migration 051 did not apply',
+        v_cmd;
+    END IF;
+  END LOOP;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'booking_questions'
+      AND cmd = 'SELECT'
+      AND coalesce(qual, '') NOT LIKE '%''admin''%'
+      AND coalesce(qual, '') NOT LIKE '%''agent''%'
+  ) THEN
+    RAISE EXCEPTION
+      'booking_questions SELECT policy is missing or no longer open to every member — migration 051 did not apply';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid = 'public.booking_questions'::regclass
+      AND tgname = 'set_updated_at'
+      AND NOT tgisinternal
+  ) THEN
+    RAISE EXCEPTION
+      'booking_questions set_updated_at trigger is missing — migration 051 did not apply';
+  END IF;
+
+  -- The data rewrite: no account may keep the legacy key once 051 ran.
+  IF EXISTS (SELECT 1 FROM accounts WHERE vertical_key = 'barberia') THEN
+    RAISE EXCEPTION
+      'an account still has vertical_key = barberia — migration 051 did not apply';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
