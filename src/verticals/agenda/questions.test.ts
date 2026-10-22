@@ -243,6 +243,12 @@ describe('readQuestion: opciones estrictas', () => {
     expect(readQuestion({ ...base, options: ['x'.repeat(30) + 'a', 'x'.repeat(30) + 'b'] })).toBeNull()
   })
 
+  it('descarta la fila si alguna opción es solo números', () => {
+    expect(readQuestion({ ...base, options: ['1', 'Sur'] })).toBeNull()
+    expect(readQuestion({ ...base, options: ['Norte', ' 2 ', 'Sur', 'Este'] })).toBeNull()
+    expect(readQuestion({ ...base, options: ['Sede 1', 'Sede 2'] })).not.toBeNull()
+  })
+
   it('descarta la fila con opciones repetidas por mayúsculas o tildes', () => {
     expect(readQuestion({ ...base, options: ['Médico', 'MEDICO'] })).toBeNull()
   })

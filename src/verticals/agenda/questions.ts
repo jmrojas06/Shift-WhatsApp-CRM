@@ -151,6 +151,8 @@ export function readQuestion(row: unknown): AgendaQuestion | null {
     if (record.options.some((o) => typeof o !== 'string')) return null
     const cleaned = (record.options as string[]).map((o) => o.trim()).filter(Boolean)
     if (cleaned.some((o) => CONTROL_OR_FORMAT.test(o))) return null
+    // El bot leería un "2" como la posición en el menú, no como el texto de la opción.
+    if (cleaned.some((o) => ONLY_DIGITS.test(o))) return null
     if (cleaned.length < MIN_OPTIONS || cleaned.length > MAX_OPTIONS) return null
     // Con pocas opciones el bot las manda como botones (20); con más, como lista (24).
     const max = cleaned.length <= BUTTON_OPTIONS_MAX_COUNT ? BUTTON_TITLE_MAX : OPTION_MAX
