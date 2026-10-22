@@ -1642,8 +1642,8 @@ const CHANGE_REQUEST_DEDUPE_MS = 2 * 60 * 1000
  * Pieza "reprogramar/cancelar" apagada: el cliente pidió cambiar su
  * cita y eso lo atiende una persona.
  *
- *   - Idempotente: si ya hay un aviso de esta cita en los últimos 2
- *     minutos (doble tap), no avisa, no registra y no responde otra vez.
+ *   - Idempotente: si ya hay un aviso de la misma clase (reprogramar o
+ *     cancelar) para esta cita en los últimos 2 minutos (doble tap), no avisa, no registra y no responde otra vez.
  *   - Nunca le quita el hilo a un humano: solo pausa el bot (y asigna
  *     al agente de handoff, etiqueta y avisa) si nadie es dueño del chat.
  *   - Avisos como en performHandoff: al agente que asignamos lo avisa el
@@ -1672,7 +1672,7 @@ async function handoffChangeRequest(
   const alreadyAsked = await hasRecentBookingEvent(dialog.db, {
     accountId: dialog.accountId,
     appointmentId: appt.id,
-    events: ['reschedule_requested', 'cancel_requested'],
+    events: [kind === 'cancel' ? 'cancel_requested' : 'reschedule_requested'],
     sinceIso: new Date(dialog.now.getTime() - CHANGE_REQUEST_DEDUPE_MS).toISOString(),
   })
   if (alreadyAsked) {

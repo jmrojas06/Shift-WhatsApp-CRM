@@ -306,11 +306,13 @@ git commit -m "refactor(agenda): rename barberia vertical to agenda with legacy 
 -- Idempotente. Orden de despliegue: aplicar 051 → desplegar el código
 -- (acepta las dos claves) → volver a correr 051 (idempotente) → aplicar
 -- 052 (la reescritura de la clave del vertical vive en
--- 052_agenda_vertical_key.sql, que va DESPUÉS del despliegue).
+-- 052_agenda_vertical_key.sql, que va DESPUÉS del despliegue). La
+-- segunda corrida de 051 rellena palabras y punto de partida de
+-- barberías creadas con la clave vieja entre la 051 y la 052.
 -- ============================================================
 
--- 1) Clave del vertical ------------------------------------------------
-UPDATE accounts SET vertical_key = 'agenda' WHERE vertical_key = 'barberia';
+-- 1) Clave del vertical: NO se reescribe aquí. Vive en
+--    052_agenda_vertical_key.sql (después del despliegue).
 
 -- 2) Configuración -------------------------------------------------------
 ALTER TABLE booking_settings
@@ -3108,7 +3110,8 @@ git commit -m "docs(agenda): rename vertical docs and generic reminder template"
   (**aplicar 051** en el SQL Editor dentro de una transacción → **desplegar el código** —acepta
   `barberia` y `agenda`— → **volver a correr 051** (idempotente) → **aplicar 052**
   `052_agenda_vertical_key.sql`, la reescritura de `vertical_key` → correr
-  `supabase/ci/verify-schema.sql`) y pedir OK para el push y el PR.
+  `supabase/ci/verify-schema.sql`) y pedir OK para el push y el PR. La segunda corrida de 051
+  rellena palabras y punto de partida de barberías creadas con la clave vieja entre la 051 y la 052.
 
 ---
 

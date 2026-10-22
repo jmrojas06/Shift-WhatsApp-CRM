@@ -2207,6 +2207,24 @@ describe('pieza reprogramar/cancelar apagada', () => {
     expect(changeEvents(db)).toHaveLength(2)
   })
 
+  it('"Reprogramar" y luego "Cancelar" seguidos son pedidos distintos: dos eventos, dos mensajes', async () => {
+    const db = offDb()
+    const rec = makeRecorder()
+
+    await send(db, rec, { replyId: 'rem:reschedule' })
+    const notificationsAfterFirst = db._tables.notifications.length
+    await send(db, rec, { replyId: 'rem:cancel' })
+
+    expect(changeEvents(db).map((e) => e.event)).toEqual(['reschedule_requested', 'cancel_requested'])
+    expect(rec.calls).toHaveLength(2)
+    expect(db._tables.notifications.length).toBeGreaterThan(notificationsAfterFirst)
+
+    // Repetir el mismo tipo sigue deduplicado.
+    await send(db, rec, { replyId: 'rem:cancel' })
+    expect(changeEvents(db)).toHaveLength(2)
+    expect(rec.calls).toHaveLength(2)
+  })
+
   it('"Confirmar" del recordatorio sigue funcionando', async () => {
     const db = offDb()
     db._tables.booking_appointments[0].status = 'pending'
