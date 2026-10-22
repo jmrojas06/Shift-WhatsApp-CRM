@@ -114,7 +114,7 @@ describe('POST /api/verticals/agenda/staff', () => {
     )) as unknown as TestResponse
 
     expect(res.status).toBe(400)
-    expect(res.body.error).toBe('El nombre del barbero es obligatorio.')
+    expect(res.body.error).toBe('El nombre es obligatorio.')
   })
 
   it('409 si el nombre ya existe en la cuenta (case-insensitive)', async () => {
@@ -126,7 +126,7 @@ describe('POST /api/verticals/agenda/staff', () => {
 
     expect(res.status).toBe(409)
     expect(res.body.code).toBe('duplicate_name')
-    expect(res.body.error).toBe('Ya existe un barbero con ese nombre.')
+    expect(res.body.error).toBe('Ya existe alguien del equipo con ese nombre.')
   })
 })
 

@@ -154,7 +154,7 @@ describe('PUT /api/verticals/agenda/staff/[id]/hours', () => {
     const res = await put('st-other', { hours: [] })
 
     expect(res.status).toBe(404)
-    expect(res.body.error).toBe('El barbero no existe.')
+    expect(res.body.error).toBe('Esa persona del equipo no existe.')
   })
 
   it('si insertar los bloques nuevos falla: 500 y el horario anterior intacto', async () => {

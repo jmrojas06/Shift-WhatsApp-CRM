@@ -476,7 +476,7 @@ describe('escrituras fallidas de configuración', () => {
     db._failNext('update', 'booking_staff', { message: 'x' })
     await expect(
       reorderStaff(asClient(db), ACCOUNT, ['st-1']),
-    ).rejects.toThrow('No se pudo reordenar los barberos')
+    ).rejects.toThrow('No se pudo reordenar al equipo')
   })
 })
 

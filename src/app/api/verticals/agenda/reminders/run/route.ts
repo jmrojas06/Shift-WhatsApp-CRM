@@ -69,14 +69,14 @@ export async function GET(request: Request) {
     const errorCount = summary.errors?.length ?? 0
     if (failed > 0 || errorCount > 0) {
       await notifyAlert(
-        `Recordatorios barbería: ${failed} fallo(s) y ${errorCount} error(es) en la corrida. Revisa los logs.`,
+        `Recordatorios agenda: ${failed} fallo(s) y ${errorCount} error(es) en la corrida. Revisa los logs.`,
       )
     }
     return NextResponse.json(summary)
   } catch (err) {
     const message = err instanceof Error ? err.message : 'runner failed'
     console.error('[agenda reminders] runner failed:', message)
-    await notifyAlert(`Recordatorios barbería: el runner falló — ${message}`)
+    await notifyAlert(`Recordatorios agenda: el runner falló — ${message}`)
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }

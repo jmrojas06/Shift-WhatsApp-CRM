@@ -96,7 +96,7 @@ describe('POST /api/verticals/agenda/time-off', () => {
           starts_at: '2026-12-24T13:00:00.000Z',
           ends_at: '2026-12-26T22:00:00.000Z',
         },
-        'Elige el barbero del bloqueo.',
+        'Elige a quién aplica el bloqueo.',
       ],
       [
         {
@@ -130,7 +130,7 @@ describe('POST /api/verticals/agenda/time-off', () => {
     )) as unknown as TestResponse
 
     expect(res.status).toBe(404)
-    expect(res.body.error).toBe('El barbero no existe.')
+    expect(res.body.error).toBe('Esa persona del equipo no existe.')
     expect(db._tables.booking_time_off).toHaveLength(0)
   })
 

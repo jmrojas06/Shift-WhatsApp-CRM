@@ -109,7 +109,7 @@ describe('PATCH /api/verticals/agenda/staff/[id]', () => {
     const res = await patch('st-other', { is_active: false })
 
     expect(res.status).toBe(404)
-    expect(res.body.error).toBe('El barbero no existe.')
+    expect(res.body.error).toBe('Esa persona del equipo no existe.')
     expect(staff(db, 'st-other')?.is_active).toBe(true)
   })
 
@@ -117,7 +117,7 @@ describe('PATCH /api/verticals/agenda/staff/[id]', () => {
     boot()
     const res = await patch('st-1', {})
     expect(res.status).toBe(400)
-    expect(res.body.error).toBe('No hay cambios que guardar en el barbero.')
+    expect(res.body.error).toBe('No hay cambios que guardar.')
   })
 
   it('409 al renombrar a un nombre ya existente', async () => {

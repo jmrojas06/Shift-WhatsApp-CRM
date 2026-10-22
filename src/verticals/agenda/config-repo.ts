@@ -195,7 +195,7 @@ function assertNameFree(
 }
 
 const SERVICE_NAME_TAKEN = 'Ya existe un servicio con ese nombre.'
-const STAFF_NAME_TAKEN = 'Ya existe un barbero con ese nombre.'
+const STAFF_NAME_TAKEN = 'Ya existe alguien del equipo con ese nombre.'
 
 // ------------------------------------------------------------
 // Servicios
@@ -378,7 +378,7 @@ export async function createStaff(
     })
     .select(STAFF_COLS)
     .maybeSingle()
-  if (!data) throw new Error('No se pudo crear el barbero.')
+  if (!data) throw new Error('No se pudo crear a la persona del equipo.')
   return mapStaff(data as StaffRow)
 }
 
@@ -395,7 +395,7 @@ export async function updateStaff(
     .eq('account_id', accountId)
     .maybeSingle()
   if (!current) {
-    throw new ConfigError('not_found', 'El barbero no existe.')
+    throw new ConfigError('not_found', 'Esa persona del equipo no existe.')
   }
 
   if (patch.name !== undefined) {
@@ -426,7 +426,7 @@ export async function updateStaff(
     .select(STAFF_COLS)
     .maybeSingle()
   if (!data) {
-    throw new ConfigError('not_found', 'El barbero no existe.')
+    throw new ConfigError('not_found', 'Esa persona del equipo no existe.')
   }
   return mapStaff(data as StaffRow)
 }
@@ -442,7 +442,7 @@ export async function reorderStaff(
       .update({ position: index, updated_at: new Date().toISOString() })
       .eq('id', id)
       .eq('account_id', accountId)
-    assertWrite(error, 'reordenar los barberos')
+    assertWrite(error, 'reordenar al equipo')
   }
 }
 
@@ -462,7 +462,7 @@ async function assertStaffExists(
     .eq('account_id', accountId)
     .maybeSingle()
   if (!data) {
-    throw new ConfigError('not_found', 'El barbero no existe.')
+    throw new ConfigError('not_found', 'Esa persona del equipo no existe.')
   }
 }
 
@@ -510,7 +510,7 @@ export async function setStaffServices(
         service_id: serviceId,
       })),
     )
-    assertWrite(error, 'asignar los servicios del barbero')
+    assertWrite(error, 'asignar los servicios de la persona')
   }
   if (toRemove.length) {
     const { error } = await db
@@ -519,7 +519,7 @@ export async function setStaffServices(
       .eq('account_id', accountId)
       .eq('staff_id', staffId)
       .in('service_id', toRemove)
-    assertWrite(error, 'quitar servicios del barbero')
+    assertWrite(error, 'quitar servicios de la persona')
   }
 
   return serviceIds.length

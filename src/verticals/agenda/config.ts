@@ -295,14 +295,14 @@ export interface StaffUpdateInput {
 function validateBio(raw: unknown): Valid<string | null> {
   if (raw === null || raw === undefined) return { ok: true, value: null }
   if (typeof raw !== 'string') {
-    return { ok: false, message: 'La descripción del barbero debe ser texto.' }
+    return { ok: false, message: 'La descripción debe ser texto.' }
   }
   const text = raw.trim()
   if (!text) return { ok: true, value: null }
   if (text.length > BIO_MAX) {
     return {
       ok: false,
-      message: `La descripción del barbero no puede pasar de ${BIO_MAX} caracteres.`,
+      message: `La descripción no puede pasar de ${BIO_MAX} caracteres.`,
     }
   }
   return { ok: true, value: text }
@@ -311,17 +311,17 @@ function validateBio(raw: unknown): Valid<string | null> {
 export function validateStaffCreate(input: unknown): Valid<StaffCreateInput> {
   const record = asRecord(input)
   if (!record) {
-    return { ok: false, message: 'Los datos del barbero no son válidos.' }
+    return { ok: false, message: 'Los datos no son válidos.' }
   }
 
   if (typeof record.name !== 'string' || !record.name.trim()) {
-    return { ok: false, message: 'El nombre del barbero es obligatorio.' }
+    return { ok: false, message: 'El nombre es obligatorio.' }
   }
   const name = record.name.trim()
   if (name.length > STAFF_NAME_MAX) {
     return {
       ok: false,
-      message: `El nombre del barbero no puede pasar de ${STAFF_NAME_MAX} caracteres.`,
+      message: `El nombre no puede pasar de ${STAFF_NAME_MAX} caracteres.`,
     }
   }
 
@@ -334,7 +334,7 @@ export function validateStaffCreate(input: unknown): Valid<StaffCreateInput> {
 export function validateStaffUpdate(input: unknown): Valid<StaffUpdateInput> {
   const record = asRecord(input)
   if (!record) {
-    return { ok: false, message: 'Los datos del barbero no son válidos.' }
+    return { ok: false, message: 'Los datos no son válidos.' }
   }
 
   const out: StaffUpdateInput = {}
@@ -342,13 +342,13 @@ export function validateStaffUpdate(input: unknown): Valid<StaffUpdateInput> {
 
   if (has(record, 'name')) {
     if (typeof record.name !== 'string' || !record.name.trim()) {
-      return { ok: false, message: 'El nombre del barbero es obligatorio.' }
+      return { ok: false, message: 'El nombre es obligatorio.' }
     }
     const name = record.name.trim()
     if (name.length > STAFF_NAME_MAX) {
       return {
         ok: false,
-        message: `El nombre del barbero no puede pasar de ${STAFF_NAME_MAX} caracteres.`,
+        message: `El nombre no puede pasar de ${STAFF_NAME_MAX} caracteres.`,
       }
     }
     out.name = name
@@ -362,14 +362,14 @@ export function validateStaffUpdate(input: unknown): Valid<StaffUpdateInput> {
   }
   if (has(record, 'is_active')) {
     if (typeof record.is_active !== 'boolean') {
-      return { ok: false, message: 'El estado del barbero debe ser sí o no.' }
+      return { ok: false, message: 'El estado debe ser sí o no.' }
     }
     out.isActive = record.is_active
     any = true
   }
 
   if (!any) {
-    return { ok: false, message: 'No hay cambios que guardar en el barbero.' }
+    return { ok: false, message: 'No hay cambios que guardar.' }
   }
   return { ok: true, value: out }
 }
@@ -484,7 +484,7 @@ export function validateTimeOffCreate(input: unknown): Valid<TimeOffCreateInput>
   }
 
   if (typeof record.staff_id !== 'string' || !record.staff_id.trim()) {
-    return { ok: false, message: 'Elige el barbero del bloqueo.' }
+    return { ok: false, message: 'Elige a quién aplica el bloqueo.' }
   }
 
   if (typeof record.starts_at !== 'string' || typeof record.ends_at !== 'string') {

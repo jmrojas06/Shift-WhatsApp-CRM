@@ -166,7 +166,7 @@ describe('PUT /api/verticals/agenda/staff/[id]/services', () => {
     const res = await put('st-other', { service_ids: ['svc-1'] })
 
     expect(res.status).toBe(404)
-    expect(res.body.error).toBe('El barbero no existe.')
+    expect(res.body.error).toBe('Esa persona del equipo no existe.')
   })
 
   it('rechaza a un agente con 403', async () => {
