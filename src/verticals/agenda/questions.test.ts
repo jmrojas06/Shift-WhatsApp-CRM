@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  ANSWERS_MAX_BYTES,
+  clampAnswers,
   MAX_QUESTIONS,
   QUESTION_LABEL_MAX,
   readQuestion,
@@ -177,9 +179,29 @@ describe('validateQuestionCreate: opciones estrictas', () => {
   it('con más de 3 opciones (lista) admite hasta 24', () => {
     expect(opcion(four('x'.repeat(24))).ok).toBe(true)
     expect(opcion(four('x'.repeat(25))).ok).toBe(false)
-    expect(opcion(four('😀'.repeat(24))).ok).toBe(true)
-    expect(opcion(['😀'.repeat(20), 'b']).ok).toBe(true)
-    expect(opcion(['😀'.repeat(21), 'b']).ok).toBe(false)
+    // Meta mide en UTF-16: un emoji vale 2.
+    expect(opcion(four('😀'.repeat(12))).ok).toBe(true)
+    expect(opcion(four('😀'.repeat(13))).ok).toBe(false)
+    expect(opcion(['😀'.repeat(10), 'b']).ok).toBe(true)
+    expect(opcion(['😀'.repeat(11), 'b']).ok).toBe(false)
+  })
+
+  it('rechaza opciones que solo se distinguen por puntuación', () => {
+    const dup = { ok: false, message: 'Las opciones no se pueden repetir.' }
+    expect(opcion(['A+', 'A-'])).toEqual(dup)
+    expect(opcion(['Sí.', 'Si'])).toEqual(dup)
+    expect(opcion(['Sede - Norte', 'sede norte'])).toEqual(dup)
+    // Sin letras ni números no hay con qué comparar: se admiten.
+    expect(opcion(['👍', '👎']).ok).toBe(true)
+    expect(opcion(['👍', '👎', 'Tal vez']).ok).toBe(true)
+    expect(opcion(['👍', '👍🏽']).ok).toBe(true)
+  })
+
+  it('el bot lee "1." y "2)" como números del menú', () => {
+    const msg = { ok: false, message: 'Las opciones no pueden ser solo números.' }
+    expect(opcion(['1.', 'Sur'])).toEqual(msg)
+    expect(opcion(['Norte', '2)'])).toEqual(msg)
+    expect(opcion(['1.5', 'Sur']).ok).toBe(true)
   })
 
   it('rechaza opciones repetidas tras normalizar mayúsculas, tildes y espacios', () => {
@@ -257,6 +279,32 @@ describe('readQuestion: opciones estrictas', () => {
     const options = ['x'.repeat(22) + 'a', 'x'.repeat(22) + 'b', 'c', 'd']
     expect(readQuestion({ ...base, options })?.options).toEqual(options)
   })
+
+  it('recorta por unidades UTF-16 sin partir un emoji (botones 20, lista 24)', () => {
+    // 12 emojis = 24 unidades: con botones se recorta a 10 emojis (20 unidades).
+    expect(readQuestion({ ...base, options: ['😀'.repeat(12), 'b'] })?.options).toEqual([
+      '😀'.repeat(10),
+      'b',
+    ])
+    expect(readQuestion({ ...base, options: ['😀'.repeat(13), 'b', 'c', 'd'] })?.options).toEqual([
+      '😀'.repeat(12),
+      'b',
+      'c',
+      'd',
+    ])
+    const read = readQuestion({ ...base, options: ['ab'.repeat(15), 'x'] })
+    expect(read?.options.every((o) => o.length <= 20)).toBe(true)
+  })
+
+  it('descarta la fila si dos opciones solo difieren en puntuación', () => {
+    expect(readQuestion({ ...base, options: ['A+', 'A-'] })).toBeNull()
+    expect(readQuestion({ ...base, options: ['👍', '👎'] })).not.toBeNull()
+  })
+
+  it('descarta la fila si una opción es solo número tras recortar o con punto', () => {
+    expect(readQuestion({ ...base, options: ['1'.repeat(20) + 'abc', 'Sur'] })).toBeNull()
+    expect(readQuestion({ ...base, options: ['1.', 'Sur'] })).toBeNull()
+  })
 })
 
 describe('validateAnswer: limpieza', () => {
@@ -273,6 +321,12 @@ describe('validateAnswer: limpieza', () => {
     expect(validateAnswer(texto, 'ho​la')).toEqual({ ok: true, value: 'hola' })
     expect(validateAnswer(texto, 'ho\u0007la')).toEqual({ ok: true, value: 'hola' })
     expect(validateAnswer(texto, 'a ​ b')).toEqual({ ok: true, value: 'a b' })
+  })
+
+  it('quita sustitutos sueltos y conserva los emojis', () => {
+    expect(validateAnswer(texto, 'ho\uD800la')).toEqual({ ok: true, value: 'hola' })
+    expect(validateAnswer(texto, 'ho\uDC00la')).toEqual({ ok: true, value: 'hola' })
+    expect(validateAnswer(texto, 'hola 😀')).toEqual({ ok: true, value: 'hola 😀' })
   })
 
   it('aplica las reglas sobre el valor ya limpio', () => {
@@ -305,5 +359,43 @@ describe('validateAnswer', () => {
 
   it('respuestas largas se rechazan', () => {
     expect(validateAnswer(texto, 'x'.repeat(201))).toEqual({ ok: false, reason: 'too_long' })
+  })
+})
+
+describe('clampAnswers', () => {
+  const bytes = (answers: Record<string, string>) => new TextEncoder().encode(JSON.stringify(answers)).length
+
+  it('5 respuestas de 200 caracteres no se tocan', () => {
+    const answers = Object.fromEntries(
+      Array.from({ length: 5 }, (_, i) => [`11111111-1111-4111-8111-11111111111${i}`, '😀'.repeat(200)]),
+    )
+    expect(bytes(answers)).toBeLessThan(ANSWERS_MAX_BYTES)
+    expect(clampAnswers(answers)).toEqual(answers)
+  })
+
+  it('quita las respuestas vacías y lo que no es texto', () => {
+    expect(clampAnswers({ a: 'x', b: '', c: 3 as unknown as string })).toEqual({ a: 'x' })
+    expect(clampAnswers(undefined)).toEqual({})
+    expect(clampAnswers(null)).toEqual({})
+  })
+
+  it('si el JSON pasa del tope acorta los valores más largos hasta que quepa', () => {
+    const answers = { a: 'x'.repeat(6000), b: 'y'.repeat(6000), c: 'corta' }
+    const out = clampAnswers(answers)
+    expect(bytes(out)).toBeLessThanOrEqual(ANSWERS_MAX_BYTES)
+    expect(out.c).toBe('corta')
+    expect(out.a.length).toBeGreaterThan(0)
+    expect(out.b.length).toBeGreaterThan(0)
+    expect(out.a.startsWith('x')).toBe(true)
+  })
+
+  it('cuenta bytes UTF-8 y no parte un emoji', () => {
+    const out = clampAnswers({ a: '😀'.repeat(5000) }, 1000)
+    expect(bytes(out)).toBeLessThanOrEqual(1000)
+    expect([...out.a].every((ch) => ch === '😀')).toBe(true)
+  })
+
+  it('termina aunque el tope sea imposible', () => {
+    expect(clampAnswers({ a: 'x'.repeat(50) }, 3)).toEqual({})
   })
 })

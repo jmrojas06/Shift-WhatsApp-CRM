@@ -52,13 +52,28 @@ const codePointLength = (text: string): number => [...text].length
 const truncate = (text: string, max: number): string =>
   codePointLength(text) <= max ? text : [...text].slice(0, max).join('').trim()
 
+/**
+ * Recorta a `max` unidades UTF-16 (`.length`, como las cuenta Meta) sin partir
+ * un par sustituto y SIN puntos suspensivos: el título que se guarda en la
+ * respuesta tiene que ser el mismo que el cliente ve y que el bot compara.
+ */
+function truncateUtf16(text: string, max: number): string {
+  if (text.length <= max) return text
+  let out = ''
+  for (const ch of text) {
+    if (out.length + ch.length > max) break
+    out += ch
+  }
+  return out.trim()
+}
+
 /** Con este número de opciones o menos el bot las manda como botones. */
 const BUTTON_OPTIONS_MAX_COUNT = 3
 /** Título de botón de WhatsApp (el controller del bot corta ahí). */
 const BUTTON_TITLE_MAX = 20
 
-/** El bot lee un "2" como la posición en el menú, no como el texto de una opción. */
-const ONLY_DIGITS = /^\d+$/
+/** El bot lee "2", "2." y "2)" como la posición en el menú, no como el texto de una opción. */
+const ONLY_DIGITS = /^\d+[.)]?$/
 
 /** Para comparar: sin mayúsculas, sin tildes y con los espacios juntos. */
 const normalizeOption = (text: string): string =>
@@ -69,8 +84,19 @@ const normalizeOption = (text: string): string =>
     .replace(/\s+/gu, ' ')
     .trim()
 
-const hasDuplicates = (options: string[]): boolean =>
-  new Set(options.map(normalizeOption)).size !== options.length
+/**
+ * Como `normalizeOption` pero además sin puntuación ni símbolos: lo que el bot
+ * compara al leer una respuesta escrita. 'A+' y 'A-' quedan ambas en 'a'.
+ */
+const squashOption = (text: string): string =>
+  normalizeOption(text).replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/gu, ' ').trim()
+
+const hasDuplicates = (options: string[]): boolean => {
+  if (new Set(options.map(normalizeOption)).size !== options.length) return true
+  // Las que no tienen letras ni números (solo emojis) no se comparan por esta vía.
+  const squashed = options.map(squashOption).filter(Boolean)
+  return new Set(squashed).size !== squashed.length
+}
 
 export function validateQuestionCreate(input: unknown): Valid<QuestionInput> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
@@ -108,14 +134,16 @@ export function validateQuestionCreate(input: unknown): Valid<QuestionInput> {
     if (options.some((o) => ONLY_DIGITS.test(o))) {
       return { ok: false, message: 'Las opciones no pueden ser solo números.' }
     }
+    // Meta mide los títulos en UTF-16 (un emoji vale 2): es más estricto que el
+    // `char_length` de la base y coincide con lo que el bot manda.
     if (options.length <= BUTTON_OPTIONS_MAX_COUNT) {
-      if (options.some((o) => codePointLength(o) > BUTTON_TITLE_MAX)) {
+      if (options.some((o) => o.length > BUTTON_TITLE_MAX)) {
         return {
           ok: false,
           message: `Con ${BUTTON_OPTIONS_MAX_COUNT} opciones o menos, cada una puede tener hasta ${BUTTON_TITLE_MAX} caracteres.`,
         }
       }
-    } else if (options.some((o) => codePointLength(o) > OPTION_MAX)) {
+    } else if (options.some((o) => o.length > OPTION_MAX)) {
       return { ok: false, message: `Cada opción puede tener hasta ${OPTION_MAX} caracteres.` }
     }
     if (hasDuplicates(options)) {
@@ -156,8 +184,10 @@ export function readQuestion(row: unknown): AgendaQuestion | null {
     if (cleaned.length < MIN_OPTIONS || cleaned.length > MAX_OPTIONS) return null
     // Con pocas opciones el bot las manda como botones (20); con más, como lista (24).
     const max = cleaned.length <= BUTTON_OPTIONS_MAX_COUNT ? BUTTON_TITLE_MAX : OPTION_MAX
-    options = cleaned.map((o) => truncate(o, max))
-    // Si al recortar dos chocan, el cliente no podría distinguirlas.
+    options = cleaned.map((o) => truncateUtf16(o, max))
+    // Recortar puede dejar una opción vacía, en solo números (la leería como
+    // posición) o chocar con otra: el cliente no podría distinguirlas.
+    if (options.some((o) => !o || ONLY_DIGITS.test(o))) return null
     if (hasDuplicates(options)) return null
   }
 
@@ -180,11 +210,48 @@ export function validateAnswer(question: AgendaQuestion, raw: string): AnswerChe
   // zero-width) que se ven raros o disfrazan el texto en el CRM; y se vuelve a juntar.
   const value = raw
     .replace(/\s+/gu, ' ')
-    .replace(/[\p{Cc}\p{Cf}]/gu, '')
+    .replace(/[\p{Cc}\p{Cf}\p{Cs}]/gu, '')
     .replace(/\s+/gu, ' ')
     .trim()
   if (!value) return question.required ? { ok: false, reason: 'required' } : { ok: true, value: '' }
   if (codePointLength(value) > ANSWER_MAX) return { ok: false, reason: 'too_long' }
   if (question.kind === 'numero' && !/^\d+$/.test(value)) return { ok: false, reason: 'number' }
   return { ok: true, value }
+}
+
+/**
+ * Tope de bytes del JSON de respuestas de una cita. La base lo limita a 8192
+ * (`pg_column_size`, CHECK de 051); se deja margen porque el jsonb binario no
+ * pesa igual que el texto.
+ */
+export const ANSWERS_MAX_BYTES = 8000
+
+const encoder = new TextEncoder()
+
+/**
+ * Deja solo las respuestas con texto y, si aun así el JSON pasa de `maxBytes`,
+ * acorta los valores (siempre el más largo, a la mitad) hasta que quepa. Con 5
+ * preguntas de 200 caracteres nunca debería hacer falta; es una red para que una
+ * fila rara jamás haga fallar el insert de la cita.
+ */
+export function clampAnswers(
+  answers: Record<string, string> | null | undefined,
+  maxBytes: number = ANSWERS_MAX_BYTES,
+): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [id, value] of Object.entries(answers ?? {})) {
+    if (typeof value === 'string' && value) out[id] = value
+  }
+  const size = () => encoder.encode(JSON.stringify(out)).length
+  while (size() > maxBytes) {
+    let longest: string | null = null
+    for (const [id, value] of Object.entries(out)) {
+      if (longest === null || value.length > out[longest].length) longest = id
+    }
+    if (longest === null) break
+    const half = [...out[longest]].slice(0, Math.floor([...out[longest]].length / 2)).join('')
+    if (half) out[longest] = half
+    else delete out[longest]
+  }
+  return out
 }
