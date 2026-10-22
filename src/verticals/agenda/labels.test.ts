@@ -65,6 +65,23 @@ describe('sanitizeLabels', () => {
     expect(res).toEqual({ ok: false, message: '"cita" tiene caracteres no permitidos.' })
   })
 
+  it('rechaza a propósito los emoji compuestos con ZWJ (persona + símbolo)', () => {
+    const compuesto = '\u{1F468}‍⚕️'
+    expect(sanitizeLabels({ profesional: compuesto }).ok).toBe(false)
+    // un emoji simple sí entra
+    expect(sanitizeLabels({ profesional: '\u{1FA7A}' }).ok).toBe(true)
+  })
+
+  it('rechaza sustitutos sueltos y caracteres de uso privado', () => {
+    expect(sanitizeLabels({ cita: 'ci\uD800ta' }).ok).toBe(false)
+    expect(sanitizeLabels({ cita: 'cita' }).ok).toBe(false)
+  })
+
+  it('un texto muy largo se rechaza antes de contar puntos de código', () => {
+    const res = sanitizeLabels({ cita: 'x'.repeat(LABEL_MAX * 2 + 1) })
+    expect(res).toEqual({ ok: false, message: `"cita" no puede pasar de ${LABEL_MAX} caracteres.` })
+  })
+
   it('rechaza marcas de formato de WhatsApp: * _ ~ y backtick', () => {
     for (const bad of ['*cita*', '_cita_', '~cita~', '`cita`']) {
       expect(sanitizeLabels({ cita: bad }).ok).toBe(false)

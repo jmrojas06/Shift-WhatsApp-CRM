@@ -19,7 +19,6 @@ export interface AgendaToggles {
 
 export type AgendaToggleKey = keyof AgendaToggles
 
-/** Solo un `false` literal apaga una pieza: "false" o 0 cuentan como prendidas (columnas boolean). */
 export const DEFAULT_TOGGLES: Readonly<AgendaToggles> = Object.freeze({
   chooseStaff: true,
   showPrice: true,
@@ -38,6 +37,7 @@ export const TOGGLE_COLUMNS: Record<AgendaToggleKey, string> = {
 
 export const TOGGLE_KEYS = Object.keys(TOGGLE_COLUMNS) as AgendaToggleKey[]
 
+/** Solo un `false` literal apaga una pieza: "false" o 0 cuentan como prendidas (columnas boolean). */
 export function togglesFromRow(row: Record<string, unknown> | null | undefined): AgendaToggles {
   const out = { ...DEFAULT_TOGGLES }
   for (const key of TOGGLE_KEYS) {

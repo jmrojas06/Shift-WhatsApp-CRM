@@ -43,8 +43,12 @@ export const DEFAULT_LABELS: Readonly<AgendaLabels> = Object.freeze({
  */
 export const LABEL_MAX = 24
 
-/** Caracteres de control o formato (incluye zero-width space). */
-const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/u
+/**
+ * Caracteres de control, formato (zero-width space, ZWJ), sustitutos sueltos
+ * y de uso privado. Rechazar el ZWJ descarta a propósito los emoji compuestos
+ * (por ejemplo el médico: persona + ZWJ + símbolo): se prefiere un emoji simple.
+ */
+const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}]/u
 /** Marcas de formato de WhatsApp: se rompería el texto del bot. */
 const WHATSAPP_MARKUP = /[*_~`]/
 
@@ -65,6 +69,10 @@ export function sanitizeLabels(input: unknown): Valid<Partial<AgendaLabels>> {
     }
     const text = raw.trim().replace(/\s+/g, ' ')
     if (!text) continue
+    // Cada punto de código ocupa 1 o 2 unidades UTF-16: más del doble del tope ya no cabe.
+    if (text.length > LABEL_MAX * 2) {
+      return { ok: false, message: `"${key}" no puede pasar de ${LABEL_MAX} caracteres.` }
+    }
     if (CONTROL_OR_FORMAT.test(text) || WHATSAPP_MARKUP.test(text)) {
       return { ok: false, message: `"${key}" tiene caracteres no permitidos.` }
     }
@@ -76,7 +84,10 @@ export function sanitizeLabels(input: unknown): Valid<Partial<AgendaLabels>> {
   return { ok: true, value: out }
 }
 
-/** Mezcla con los defaults. Ignora valores que no son texto o están en blanco. */
+/**
+ * Mezcla con los defaults. Ignora valores que no son texto o están en blanco.
+ * Solo con datos ya saneados; para filas de la base usa `readLabels`.
+ */
 export function resolveLabels(partial: unknown): AgendaLabels {
   const out: AgendaLabels = { ...DEFAULT_LABELS }
   if (partial === null || typeof partial !== 'object' || Array.isArray(partial)) return out
