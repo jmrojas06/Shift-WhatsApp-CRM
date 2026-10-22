@@ -2,34 +2,42 @@
 -- 051_agenda_armable.sql — la agenda sirve a cualquier negocio
 -- ============================================================
 --
---   1. accounts.vertical_key 'barberia' → 'agenda' (el código acepta
+--   1. booking_settings: punto de partida, palabras y las 5 piezas.
+--   2. Backfill: las cuentas que TODAVÍA tienen vertical_key =
+--      'barberia' reciben el punto de partida 'barberia' y su
+--      vocabulario de siempre (barbero / barberos).
+--   3. accounts.vertical_key 'barberia' → 'agenda' (el código acepta
 --      ambas mientras convive; ver AGENDA_VERTICAL_KEYS).
---   2. booking_settings: punto de partida, palabras y las 5 piezas.
---      Las cuentas que ya eran barbería conservan su vocabulario.
---   3. booking_questions: preguntas extra del bot (RLS 050: miembros
+--   4. booking_questions: preguntas extra del bot (RLS 050: miembros
 --      leen, owner/admin escriben).
---   4. booking_appointments.answers: respuestas a esas preguntas.
+--   5. booking_appointments.answers: respuestas a esas preguntas.
 --
--- NO destructiva: no borra tablas, columnas ni filas. Solo reescribe
--- la clave del vertical y agrega columnas/tabla. Idempotente: se puede
--- correr de nuevo.
+-- ORDEN DENTRO DEL ARCHIVO (importa): el backfill del paso 2 se filtra
+-- por `vertical_key = 'barberia'`, y el rename del paso 3 va DESPUÉS.
+-- Así, volver a correr la migración encuentra 0 cuentas 'barberia' y no
+-- le pega vocabulario de barbería a cuentas 'agenda' de otros negocios
+-- (salón, taller…) creadas después.
+--
+-- NO destructiva: no borra tablas, columnas ni filas. Solo agrega
+-- columnas/tabla y reescribe la clave del vertical. Idempotente: se
+-- puede correr de nuevo.
 --
 -- Orden de despliegue: PRIMERO el código (acepta las dos claves),
 -- DESPUÉS esta migración.
 --
--- El UPDATE de accounts.vertical_key (paso 1) corre como postgres (SQL
+-- El UPDATE de accounts.vertical_key (paso 3) corre como postgres (SQL
 -- Editor / CLI), así que no lo frena el trigger de 050
 -- (enforce_account_protected_columns), que solo bloquea cuando
 -- current_user es `authenticated` o `anon`.
 -- ============================================================
 
--- ------------------------------------------------------------
--- 1) Clave del vertical
--- ------------------------------------------------------------
-UPDATE accounts SET vertical_key = 'agenda' WHERE vertical_key = 'barberia';
+-- Solo tiene efecto si el script corre dentro de una transacción (así
+-- lo aplicamos). Si vence el tiempo, hay una consulta larga sosteniendo
+-- el candado de la tabla: reintentar más tarde.
+SET LOCAL lock_timeout = '5s';
 
 -- ------------------------------------------------------------
--- 2) Configuración: punto de partida, palabras y piezas
+-- 1) booking_settings: punto de partida, palabras y piezas
 -- ------------------------------------------------------------
 ALTER TABLE booking_settings
   ADD COLUMN IF NOT EXISTS preset_key text,
@@ -52,12 +60,13 @@ ALTER TABLE booking_settings
   ADD CONSTRAINT booking_settings_preset_key_check
   CHECK (preset_key IS NULL OR preset_key ~ '^[a-z0-9_-]{1,40}$');
 
--- Cuentas de barbería existentes: mismo vocabulario de siempre. Se
--- asegura la fila de settings y solo se tocan las que aún no tienen
--- punto de partida (re-correr la migración no pisa lo que el negocio
--- cambió después).
+-- ------------------------------------------------------------
+-- 2) Backfill de las cuentas de barbería (aún con la clave vieja)
+-- ------------------------------------------------------------
+-- Se asegura la fila de settings y se les da su vocabulario de siempre.
+-- Filtra por 'barberia', NO por 'agenda': ver ORDEN DENTRO DEL ARCHIVO.
 INSERT INTO booking_settings (account_id)
-SELECT id FROM accounts WHERE vertical_key = 'agenda'
+SELECT id FROM accounts WHERE vertical_key = 'barberia'
 ON CONFLICT (account_id) DO NOTHING;
 
 UPDATE booking_settings bs
@@ -65,11 +74,16 @@ SET preset_key = 'barberia',
     labels = '{"profesional":"barbero","profesionales":"barberos"}'::jsonb
 FROM accounts a
 WHERE a.id = bs.account_id
-  AND a.vertical_key = 'agenda'
+  AND a.vertical_key = 'barberia'
   AND bs.preset_key IS NULL;
 
 -- ------------------------------------------------------------
--- 3) Preguntas extra del bot
+-- 3) Clave del vertical (DESPUÉS del backfill)
+-- ------------------------------------------------------------
+UPDATE accounts SET vertical_key = 'agenda' WHERE vertical_key = 'barberia';
+
+-- ------------------------------------------------------------
+-- 4) Preguntas extra del bot
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS booking_questions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -83,6 +97,26 @@ CREATE TABLE IF NOT EXISTS booking_questions (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Límites que la app también exige (2–10 opciones, posición >= 0).
+-- Con nombre y DROP + ADD para que sean idempotentes.
+ALTER TABLE booking_questions
+  DROP CONSTRAINT IF EXISTS booking_questions_position_check;
+ALTER TABLE booking_questions
+  ADD CONSTRAINT booking_questions_position_check
+  CHECK (position >= 0);
+
+ALTER TABLE booking_questions
+  DROP CONSTRAINT IF EXISTS booking_questions_options_max_check;
+ALTER TABLE booking_questions
+  ADD CONSTRAINT booking_questions_options_max_check
+  CHECK (jsonb_array_length(options) <= 10);
+
+ALTER TABLE booking_questions
+  DROP CONSTRAINT IF EXISTS booking_questions_opcion_options_check;
+ALTER TABLE booking_questions
+  ADD CONSTRAINT booking_questions_opcion_options_check
+  CHECK (kind <> 'opcion' OR jsonb_array_length(options) BETWEEN 2 AND 10);
 
 CREATE INDEX IF NOT EXISTS idx_booking_questions_account_position
   ON booking_questions (account_id, position);
@@ -112,7 +146,7 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON booking_questions
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- ------------------------------------------------------------
--- 4) Respuestas en la cita
+-- 5) Respuestas en la cita
 -- ------------------------------------------------------------
 ALTER TABLE booking_appointments
   ADD COLUMN IF NOT EXISTS answers jsonb NOT NULL DEFAULT '{}'::jsonb;
@@ -122,3 +156,11 @@ ALTER TABLE booking_appointments
 ALTER TABLE booking_appointments
   ADD CONSTRAINT booking_appointments_answers_object_check
   CHECK (jsonb_typeof(answers) = 'object');
+
+-- Tope de tamaño: las respuestas las escribe el bot con texto libre del
+-- cliente; sin tope, una fila podría crecer sin límite.
+ALTER TABLE booking_appointments
+  DROP CONSTRAINT IF EXISTS booking_appointments_answers_size_check;
+ALTER TABLE booking_appointments
+  ADD CONSTRAINT booking_appointments_answers_size_check
+  CHECK (pg_column_size(answers) <= 8192);

@@ -162,6 +162,13 @@ describe('preguntas extra del bot (051 / booking_questions)', () => {
     })
   }
 
+  it('UPDATE: la política tiene WITH CHECK admin (no se puede mover la fila a otra cuenta)', () => {
+    const [update] = policiesFor('booking_questions', 'UPDATE')
+    expect(update.body).toMatch(
+      /WITH CHECK\s*\(\s*is_account_member\(account_id,\s*'admin'\)\s*\)/,
+    )
+  })
+
   const code = readFileSync(
     join(MIGRATIONS_DIR, '051_agenda_armable.sql'),
     'utf8',
@@ -180,9 +187,22 @@ describe('preguntas extra del bot (051 / booking_questions)', () => {
     expect(code).not.toMatch(/\bTRUNCATE\b/i)
   })
 
+  const rewrite = /UPDATE\s+accounts\s+SET\s+vertical_key\s*=\s*'agenda'\s+WHERE\s+vertical_key\s*=\s*'barberia'/i
+  const backfillInsert = /INSERT\s+INTO\s+booking_settings[\s\S]*?WHERE\s+vertical_key\s*=\s*'barberia'/i
+  const backfillUpdate = /UPDATE\s+booking_settings[\s\S]*?a\.vertical_key\s*=\s*'barberia'/i
+
   it("reescribe la clave del vertical 'barberia' a 'agenda'", () => {
-    expect(code).toContain(
-      "UPDATE accounts SET vertical_key = 'agenda' WHERE vertical_key = 'barberia'",
-    )
+    expect(code).toMatch(rewrite)
+  })
+
+  it("el backfill filtra por 'barberia' y corre ANTES del rename (re-correr 051 no pisa cuentas 'agenda')", () => {
+    const renameAt = code.search(rewrite)
+    const insertAt = code.search(backfillInsert)
+    const updateAt = code.search(backfillUpdate)
+    expect(insertAt).toBeGreaterThanOrEqual(0)
+    expect(updateAt).toBeGreaterThanOrEqual(0)
+    expect(renameAt).toBeGreaterThanOrEqual(0)
+    expect(insertAt).toBeLessThan(renameAt)
+    expect(updateAt).toBeLessThan(renameAt)
   })
 })

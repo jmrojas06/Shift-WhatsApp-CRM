@@ -384,21 +384,42 @@ BEGIN
       'booking_appointments.answers is missing or nullable — migration 051 did not apply';
   END IF;
 
+  -- Each lookup is scoped to its table (conrelid) so a same-named
+  -- constraint elsewhere cannot satisfy it.
   IF (
     SELECT COUNT(*) FROM pg_constraint
     WHERE contype = 'c'
-      AND conname IN (
-        'booking_settings_labels_object_check',
-        'booking_settings_preset_key_check',
-        'booking_appointments_answers_object_check'
+      AND (
+        (conrelid = 'public.booking_settings'::regclass AND conname IN (
+          'booking_settings_labels_object_check',
+          'booking_settings_preset_key_check'
+        ))
+        OR (conrelid = 'public.booking_appointments'::regclass AND conname IN (
+          'booking_appointments_answers_object_check',
+          'booking_appointments_answers_size_check'
+        ))
       )
-  ) <> 3 THEN
+  ) <> 4 THEN
     RAISE EXCEPTION
-      'agenda CHECK constraints are missing — migration 051 did not apply';
+      'booking_settings/booking_appointments CHECK constraints are missing — migration 051 did not apply';
   END IF;
 
   IF to_regclass('public.booking_questions') IS NULL THEN
     RAISE EXCEPTION 'booking_questions is missing — migration 051 did not apply';
+  END IF;
+
+  IF (
+    SELECT COUNT(*) FROM pg_constraint
+    WHERE contype = 'c'
+      AND conrelid = 'public.booking_questions'::regclass
+      AND conname IN (
+        'booking_questions_position_check',
+        'booking_questions_options_max_check',
+        'booking_questions_opcion_options_check'
+      )
+  ) <> 3 THEN
+    RAISE EXCEPTION
+      'booking_questions CHECK constraints are missing — migration 051 did not apply';
   END IF;
 
   IF NOT EXISTS (
@@ -426,6 +447,19 @@ BEGIN
         v_cmd;
     END IF;
   END LOOP;
+  -- No write policy on booking_questions may mention 'agent' at all
+  -- (the loop above only proves one admin policy exists per command).
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'booking_questions'
+      AND cmd IN ('INSERT', 'UPDATE', 'DELETE')
+      AND coalesce(qual, '') || coalesce(with_check, '') LIKE '%''agent''%'
+  ) THEN
+    RAISE EXCEPTION
+      'a booking_questions write policy mentions agent — migration 051 did not apply';
+  END IF;
+
   IF NOT EXISTS (
     SELECT 1 FROM pg_policies
     WHERE schemaname = 'public'
@@ -449,6 +483,9 @@ BEGIN
   END IF;
 
   -- The data rewrite: no account may keep the legacy key once 051 ran.
+  -- Only meaningful when this file runs against PRODUCTION after 051 has
+  -- been applied: the CI database has no accounts, so there it passes
+  -- trivially.
   IF EXISTS (SELECT 1 FROM accounts WHERE vertical_key = 'barberia') THEN
     RAISE EXCEPTION
       'an account still has vertical_key = barberia — migration 051 did not apply';

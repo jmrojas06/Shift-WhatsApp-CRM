@@ -33,10 +33,12 @@ En Supabase → SQL Editor:
 
 ```sql
 update public.accounts
-set vertical_key = 'barberia',
+set vertical_key = 'agenda',
     default_currency = 'COP'
 where id = '<uuid-de-la-cuenta>';
 ```
+
+El tipo de negocio y su vocabulario se eligen después, en /agenda/configuracion.
 
 Para encontrar el id:
 
