@@ -291,7 +291,7 @@ export default function AgendaConfiguracionPage() {
       ) : (
         <Tabs defaultValue="business" className="space-y-4">
           {/* Con nueve pestañas la barra se desplaza en pantallas angostas. */}
-          <div className="max-w-full overflow-x-auto pb-1">
+          <div className="max-w-full overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <TabsList>
               <TabsTrigger value="business">
                 {T.config.tabs.business}
