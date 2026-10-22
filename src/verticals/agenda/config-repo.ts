@@ -43,6 +43,7 @@ import {
   type AgendaLabels,
 } from './labels'
 import type { PresetKey } from './presets'
+import { MAX_QUESTIONS, readQuestion, type AgendaQuestion, type QuestionInput } from './questions'
 import { togglesFromRow, togglesToRow, type AgendaToggles } from './toggles'
 
 // ------------------------------------------------------------
@@ -752,4 +753,124 @@ export async function updateAccountCurrency(
     .maybeSingle()
   if (!data) throw new Error('No se pudo guardar la moneda.')
   return (data as { default_currency: string }).default_currency
+}
+
+// ------------------------------------------------------------
+// Preguntas extra (booking_questions, 051)
+// ------------------------------------------------------------
+
+const QUESTION_COLS = 'id, label, kind, required, options, position'
+
+async function fetchActiveQuestionRows(
+  db: SupabaseClient,
+  accountId: string,
+): Promise<Record<string, unknown>[]> {
+  const { data, error } = await db
+    .from('booking_questions')
+    .select(QUESTION_COLS)
+    .eq('account_id', accountId)
+    .eq('is_active', true)
+    .order('position', { ascending: true })
+    .order('id', { ascending: true })
+  if (error) throw error
+  return (data ?? []) as Record<string, unknown>[]
+}
+
+/**
+ * Preguntas activas, en orden. Salta las filas que no son válidas (las lee
+ * `readQuestion`, que nunca lanza) y nunca devuelve más de MAX_QUESTIONS aunque
+ * un admin haya insertado más directo por PostgREST.
+ */
+export async function listQuestions(
+  db: SupabaseClient,
+  accountId: string,
+): Promise<AgendaQuestion[]> {
+  return questionsFromRows(await fetchActiveQuestionRows(db, accountId))
+}
+
+function questionsFromRows(rows: Record<string, unknown>[]): AgendaQuestion[] {
+  const out: AgendaQuestion[] = []
+  for (const row of rows) {
+    const question = readQuestion(row)
+    if (question) out.push(question)
+    if (out.length >= MAX_QUESTIONS) break
+  }
+  return out
+}
+
+export async function createQuestion(
+  db: SupabaseClient,
+  accountId: string,
+  input: QuestionInput,
+): Promise<AgendaQuestion> {
+  const rows = await fetchActiveQuestionRows(db, accountId)
+  if (questionsFromRows(rows).length >= MAX_QUESTIONS) {
+    throw new ConfigError('limit_reached', `Máximo ${MAX_QUESTIONS} preguntas extra.`)
+  }
+  // Al final del orden, aunque se hayan desactivado preguntas del medio.
+  const position = rows.reduce((max, row) => Math.max(max, Number(row.position) || 0), -1) + 1
+
+  const { data, error } = await db
+    .from('booking_questions')
+    .insert({
+      id: randomUUID(),
+      account_id: accountId,
+      label: input.label,
+      kind: input.kind,
+      required: input.required,
+      options: input.options,
+      position,
+    })
+    .select(QUESTION_COLS)
+    .maybeSingle()
+  if (error) throw error
+  const created = readQuestion(data)
+  if (!created) throw new Error('No se pudo crear la pregunta.')
+  return created
+}
+
+/** Reemplaza la definición (etiqueta, tipo, obligatoria, opciones). Solo preguntas activas de la cuenta. */
+export async function updateQuestion(
+  db: SupabaseClient,
+  accountId: string,
+  id: string,
+  input: QuestionInput,
+): Promise<AgendaQuestion> {
+  const { data, error } = await db
+    .from('booking_questions')
+    .update({
+      label: input.label,
+      kind: input.kind,
+      required: input.required,
+      options: input.options,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .eq('account_id', accountId)
+    .eq('is_active', true)
+    .select(QUESTION_COLS)
+    .maybeSingle()
+  if (error) throw error
+  if (!data) throw new ConfigError('not_found', 'Esa pregunta ya no existe.')
+  const updated = readQuestion(data)
+  if (!updated) throw new Error('No se pudo actualizar la pregunta.')
+  return updated
+}
+
+/** Se desactiva (no se borra): las citas guardan sus respuestas por id de pregunta. */
+export async function deleteQuestion(
+  db: SupabaseClient,
+  accountId: string,
+  id: string,
+): Promise<void> {
+  const { data, error } = await db
+    .from('booking_questions')
+    .update({ is_active: false, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .eq('account_id', accountId)
+    .eq('is_active', true)
+    .select('id')
+    .maybeSingle()
+  if (error) throw error
+  if (!data) throw new ConfigError('not_found', 'Esa pregunta ya no existe.')
 }

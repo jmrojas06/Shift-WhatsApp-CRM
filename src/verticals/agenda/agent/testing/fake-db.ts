@@ -118,12 +118,16 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
 
     const candidateRows = (): Row[] => {
       const out = ensure(table).filter(matches)
-      for (const { col, ascending } of orders) {
+      if (orders.length) {
+        // Como PostgREST: el primer `.order()` manda y los siguientes desempatan.
         out.sort((a, b) => {
-          const av = a[col] as never
-          const bv = b[col] as never
-          if (av === bv) return 0
-          return (av < bv ? -1 : 1) * (ascending ? 1 : -1)
+          for (const { col, ascending } of orders) {
+            const av = a[col] as never
+            const bv = b[col] as never
+            if (av === bv) continue
+            return (av < bv ? -1 : 1) * (ascending ? 1 : -1)
+          }
+          return 0
         })
       }
       return limitN === null ? out : out.slice(0, limitN)

@@ -22,7 +22,11 @@ import { TOGGLE_COLUMNS, TOGGLE_KEYS, type AgendaToggles } from './toggles'
 
 export type Valid<T> = { ok: true; value: T } | { ok: false; message: string }
 
-export type ConfigErrorCode = 'not_found' | 'duplicate_name' | 'invalid_order'
+export type ConfigErrorCode =
+  | 'not_found'
+  | 'duplicate_name'
+  | 'invalid_order'
+  | 'limit_reached'
 
 /**
  * Conflicto detectado al hablar con la base. Las rutas lo traducen a
@@ -42,6 +46,7 @@ export const CONFIG_ERROR_STATUS: Record<ConfigErrorCode, number> = {
   not_found: 404,
   duplicate_name: 409,
   invalid_order: 409,
+  limit_reached: 409,
 }
 
 // ------------------------------------------------------------
