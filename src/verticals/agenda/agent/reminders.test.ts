@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { DEFAULT_LABELS } from '../labels'
 import {
   AGENDA_REMINDER_TEMPLATE,
   H24_MS,
@@ -372,6 +373,7 @@ function delivery(over: Partial<ReminderDelivery> = {}): ReminderDelivery {
     startsAtIso: STARTS_IN_23H,
     dateLabel: 'martes 20 de octubre de 2026',
     timeLabel: '7:00 a. m.',
+    labels: DEFAULT_LABELS,
     ...over,
   }
 }
@@ -384,6 +386,15 @@ describe('builders del recordatorio', () => {
     expect(text).toContain('Andrés')
     expect(text).toContain('martes 20 de octubre de 2026')
     expect(text).toContain('7:00 a. m.')
+  })
+
+  it('el cuerpo usa las palabras del negocio', () => {
+    const text = buildReminderBody(
+      delivery({ labels: { ...DEFAULT_LABELS, cita: 'turno', servicio: 'tratamiento' }, serviceName: null }),
+    )
+    expect(text).toContain('tu turno')
+    expect(text).not.toContain('tu cita')
+    expect(text).toContain('tu tratamiento')
   })
 
   it('usa las variables de la plantilla en orden negocio→hora', () => {
@@ -612,6 +623,108 @@ describe('runAgendaReminders', () => {
     expect(summary.due).toBe(1)
     expect(rec.deliveries.map((d) => d.appointmentId)).toEqual([APPT])
     expect(appointmentRow(db, 'ap-other').reminder_sent_at).toBeNull()
+  })
+
+  describe('pieza de recordatorios y palabras del negocio', () => {
+    /** Segunda cuenta de agenda con su propia cita a 23 h. */
+    function twoAccountSeed(): Record<string, Row[]> {
+      const seed = baseSeed()
+      seed.accounts[1] = {
+        id: OTHER_ACCOUNT,
+        name: 'Otro negocio',
+        owner_user_id: 'u-2',
+        vertical_key: 'agenda',
+      }
+      seed.booking_appointments.push({
+        id: 'ap-2',
+        account_id: OTHER_ACCOUNT,
+        contact_id: CONTACT_2,
+        conversation_id: 'cv-2',
+        service_id: null,
+        staff_id: null,
+        starts_at: STARTS_IN_23H,
+        status: 'confirmed',
+        reminder_sent_at: null,
+        reminder_2h_sent_at: null,
+      })
+      seed.conversations.push({
+        id: 'cv-2',
+        account_id: OTHER_ACCOUNT,
+        contact_id: CONTACT_2,
+        created_at: '2026-10-18T00:00:00.000Z',
+      })
+      return seed
+    }
+
+    it('una cuenta con reminders_enabled apagado no recibe nada y otra sí', async () => {
+      const seed = twoAccountSeed()
+      seed.booking_settings.push({ account_id: ACCOUNT, reminders_enabled: false })
+      const db = makeFakeDb(seed)
+      const rec = makeRecorder()
+
+      const summary = await runAgendaReminders({ db: asClient(db), now: NOW, send: rec.send })
+
+      expect(rec.deliveries.map((d) => d.accountId)).toEqual([OTHER_ACCOUNT])
+      expect(summary.sent).toBe(1)
+      expect(appointmentRow(db, APPT).reminder_sent_at).toBeNull()
+    })
+
+    it('si todas las cuentas están apagadas no envía nada (ni lee citas)', async () => {
+      const seed = baseSeed()
+      seed.booking_settings.push({ account_id: ACCOUNT, reminders_enabled: false, reminders_2h_enabled: true })
+      const db = makeFakeDb(seed)
+      const rec = makeRecorder()
+
+      const summary = await runAgendaReminders({ db: asClient(db), now: NOW, send: rec.send })
+
+      expect(summary.sent).toBe(0)
+      expect(rec.deliveries).toHaveLength(0)
+    })
+
+    it('apagado también corta la señal de 2 h', async () => {
+      const seed = baseSeed()
+      seed.booking_settings.push({ account_id: ACCOUNT, reminders_enabled: false, reminders_2h_enabled: true })
+      const db = makeFakeDb(seed)
+      const rec = makeRecorder()
+
+      const summary = await runAgendaReminders({
+        db: asClient(db),
+        now: new Date('2026-10-20T10:30:00.000Z'),
+        send: rec.send,
+      })
+
+      expect(summary.sent).toBe(0)
+    })
+
+    it('una cuenta sin fila de configuración sigue recibiendo recordatorios', async () => {
+      const db = makeFakeDb(baseSeed())
+      const rec = makeRecorder()
+
+      const summary = await runAgendaReminders({ db: asClient(db), now: NOW, send: rec.send })
+
+      expect(summary.sent).toBe(1)
+      expect(rec.deliveries[0].labels).toEqual(DEFAULT_LABELS)
+    })
+
+    it('cada entrega lleva las palabras de su cuenta', async () => {
+      const seed = twoAccountSeed()
+      seed.booking_settings.push({
+        account_id: ACCOUNT,
+        reminders_enabled: true,
+        labels: { cita: 'turno', citas: 'turnos', profesional: '*mal*' },
+      })
+      const db = makeFakeDb(seed)
+      const rec = makeRecorder()
+
+      await runAgendaReminders({ db: asClient(db), now: NOW, send: rec.send })
+
+      const mine = rec.deliveries.find((d) => d.accountId === ACCOUNT)
+      const other = rec.deliveries.find((d) => d.accountId === OTHER_ACCOUNT)
+      expect(mine?.labels.cita).toBe('turno')
+      expect(mine?.labels.profesional).toBe(DEFAULT_LABELS.profesional)
+      expect(buildReminderBody(mine!)).toContain('tu turno')
+      expect(other?.labels).toEqual(DEFAULT_LABELS)
+    })
   })
 
   it('con la 2.ª señal activada envía 2 h antes sin repetir el de 24 h', async () => {

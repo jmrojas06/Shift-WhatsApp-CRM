@@ -485,6 +485,16 @@ export function buildAgentTexts(l: AgendaLabels) {
     handoffNotificationTitle: 'Cliente pide un asesor (Agenda)',
     handoffNotificationBody: (name: string) =>
       `${name} pidió hablar con una persona desde el flujo de ${l.citas}.`,
+    /** Pieza "reprogramar/cancelar" apagada: el cliente quiere cambiar su cita. */
+    changeRequestNote: `El cliente quiere cambiar o cancelar su ${l.cita} y esa opción está apagada (bot en pausa).`,
+    changeRequestNotificationTitle: 'Cliente quiere cambiar su cita (Agenda)',
+    changeRequestNotificationBody: (a: {
+      who: string
+      action: 'reschedule' | 'cancel'
+      date: string
+      time: string
+    }) =>
+      `${a.who} quiere ${a.action === 'cancel' ? 'cancelar' : 'reprogramar'} su ${l.cita} del ${a.date} a las ${a.time}. Respóndele por este chat.`,
   }
 }
 

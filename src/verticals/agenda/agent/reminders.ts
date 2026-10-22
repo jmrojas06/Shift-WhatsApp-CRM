@@ -27,7 +27,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { AGENDA_VERTICAL_KEYS } from '@/lib/verticals/types'
 
-import { AGENDA_AGENT_TEXTS } from '../texts'
+import { DEFAULT_LABELS, readLabels, type AgendaLabels } from '../labels'
+import { AGENDA_AGENT_TEXTS, buildAgentTexts } from '../texts'
 import { findContactConversationId, loadServiceName, loadStaffName } from './db'
 import { formatLongDate, formatTimeLabel } from './format'
 import { remId, type ReminderAction } from './state'
@@ -118,17 +119,23 @@ export interface ReminderDelivery {
   startsAtIso: string
   dateLabel: string
   timeLabel: string
+  /** Palabras del negocio (cita, servicio…) para el cuerpo del mensaje libre. */
+  labels: AgendaLabels
 }
 
 export type ReminderSender = (delivery: ReminderDelivery) => Promise<void>
 
 /** Nombre visible del servicio, tolerante a catálogo cambiado. */
-export const reminderServiceLabel = (name: string | null): string =>
-  name ?? AGENDA_AGENT_TEXTS.serviceFallback
+export const reminderServiceLabel = (
+  name: string | null,
+  texts: { serviceFallback: string } = AGENDA_AGENT_TEXTS,
+): string => name ?? texts.serviceFallback
 
-/** Nombre visible del barbero, tolerante a catálogo cambiado. */
-export const reminderStaffLabel = (name: string | null): string =>
-  name ?? AGENDA_AGENT_TEXTS.staffAnyTitle
+/** Nombre visible del profesional, tolerante a catálogo cambiado. */
+export const reminderStaffLabel = (
+  name: string | null,
+  texts: { staffAnyTitle: string } = AGENDA_AGENT_TEXTS,
+): string => name ?? texts.staffAnyTitle
 
 /** Botones Confirmar / Reprogramar / Cancelar (ids estáticos rem:*). */
 export function reminderButtons(): { id: string; title: string }[] {
@@ -142,10 +149,11 @@ export function reminderButtons(): { id: string; title: string }[] {
 
 /** Cuerpo del mensaje libre (la versión con botones del recordatorio). */
 export function buildReminderBody(d: ReminderDelivery): string {
-  return AGENDA_AGENT_TEXTS.reminderBody({
+  const texts = buildAgentTexts(d.labels)
+  return texts.reminderBody({
     business: d.businessName,
-    service: reminderServiceLabel(d.serviceName),
-    staff: reminderStaffLabel(d.staffName),
+    service: reminderServiceLabel(d.serviceName, texts),
+    staff: reminderStaffLabel(d.staffName, texts),
     date: d.dateLabel,
     time: d.timeLabel,
   })
@@ -418,10 +426,11 @@ export async function runAgendaReminders(
   if (!accounts.length) return summary
   const accountsById = new Map(accounts.map((a) => [a.id, a]))
 
-  // 2.ª señal por cuenta (fila ausente = desactivada).
+  // Piezas y palabras por cuenta. Fila ausente: 2.ª señal desactivada,
+  // recordatorios prendidos y palabras por defecto.
   const { data: settingsRows, error: settingsError } = await args.db
     .from('booking_settings')
-    .select('account_id, reminders_2h_enabled')
+    .select('account_id, reminders_2h_enabled, reminders_enabled, labels')
     .in('account_id', [...accountsById.keys()])
   if (settingsError) {
     throw new Error(
@@ -429,15 +438,25 @@ export async function runAgendaReminders(
     )
   }
   const twoHourByAccount = new Map<string, boolean>()
+  const labelsByAccount = new Map<string, AgendaLabels>()
+  const disabledAccounts = new Set<string>()
   for (const row of (settingsRows ?? []) as Record<string, unknown>[]) {
-    twoHourByAccount.set(row.account_id as string, row.reminders_2h_enabled === true)
+    const id = row.account_id as string
+    twoHourByAccount.set(id, row.reminders_2h_enabled === true)
+    labelsByAccount.set(id, readLabels(row.labels))
+    if (row.reminders_enabled === false) disabledAccounts.add(id)
   }
 
+  const activeAccountIds = [...accountsById.keys()].filter(
+    (id) => !disabledAccounts.has(id),
+  )
+  if (!activeAccountIds.length) return summary
+
   const due = await loadPendingAppointments(args.db, {
-    accountIds: [...accountsById.keys()],
-    twoHourAccountIds: [...twoHourByAccount.entries()]
-      .filter(([, enabled]) => enabled)
-      .map(([id]) => id),
+    accountIds: activeAccountIds,
+    twoHourAccountIds: activeAccountIds.filter(
+      (id) => twoHourByAccount.get(id) === true,
+    ),
     nowIso,
     horizonIso,
     h2HorizonIso: new Date(now.getTime() + H2_MS).toISOString(),
@@ -508,6 +527,7 @@ export async function runAgendaReminders(
       startsAtIso: appt.starts_at,
       dateLabel: formatLongDate(parts.dateKey),
       timeLabel: formatTimeLabel(parts),
+      labels: labelsByAccount.get(appt.account_id) ?? DEFAULT_LABELS,
     }
 
     const claim = await claimReminder(args.db, {

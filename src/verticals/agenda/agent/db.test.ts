@@ -25,7 +25,7 @@ describe('loadBotSettings', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
     const settings = await loadBotSettings(
-      stubClient({ data: null, error: { message: 'column booking_settings.labels does not exist' } }),
+      stubClient({ data: null, error: { code: '42703', message: 'column booking_settings.labels does not exist' } }),
       'acc-1',
     )
 
@@ -36,6 +36,7 @@ describe('loadBotSettings', () => {
     })
     expect(spy).toHaveBeenCalledWith(
       '[agenda] loadBotSettings falló:',
+      '42703',
       'column booking_settings.labels does not exist',
     )
   })

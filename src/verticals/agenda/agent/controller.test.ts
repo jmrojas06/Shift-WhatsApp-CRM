@@ -2054,3 +2054,108 @@ describe('límites de Meta en UTF-16', () => {
     }
   })
 })
+
+describe('pieza reprogramar/cancelar apagada', () => {
+  function offDb() {
+    const db = makeFakeDb(baseSeed())
+    setSettings(db, { allow_reschedule: false })
+    db._tables.booking_appointments.push(appointmentRow())
+    return db
+  }
+
+  it('el menú de gestión solo ofrece agendar otra vez', async () => {
+    const db = offDb()
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'hola' })
+
+    expect(optionIds(last(rec))).toEqual(['act:new'])
+  })
+
+  it('con la pieza prendida el menú sigue ofreciendo las tres opciones', async () => {
+    const db = makeFakeDb(baseSeed())
+    db._tables.booking_appointments.push(appointmentRow())
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'hola' })
+
+    expect(optionIds(last(rec))).toEqual(['act:new', 'act:reschedule', 'act:cancel'])
+  })
+
+  it.each(['rem:reschedule', 'rem:cancel'])(
+    'el tap %s pasa a un humano: un solo mensaje, bot en pausa, aviso y cita intacta',
+    async (replyId) => {
+      const db = offDb()
+      const rec = makeRecorder()
+
+      const res = await send(db, rec, { replyId })
+
+      expect(res.consumed).toBe(true)
+      expect(rec.calls).toHaveLength(1)
+      expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.changesByHuman)
+      expect(db._tables.booking_appointments[0].status).toBe('confirmed')
+      expect(db._tables.booking_sessions).toHaveLength(0)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.notifications.some((n) => n.user_id === HANDOFF_AGENT)).toBe(true)
+      expect(
+        db._tables.booking_events.some((e) => e.event === 'reschedule_requested' || e.event === 'cancel_requested'),
+      ).toBe(true)
+    },
+  )
+
+  it('con un humano a cargo también responde una sola vez con el texto de cambios', async () => {
+    const db = offDb()
+    db._tables.conversations[0].assigned_agent_id = HANDOFF_AGENT
+    const rec = makeRecorder()
+
+    await sendHuman(db, rec, { replyId: 'rem:reschedule' })
+
+    expect(rec.calls).toHaveLength(1)
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.changesByHuman)
+  })
+
+  it('"Confirmar" del recordatorio sigue funcionando', async () => {
+    const db = offDb()
+    const rec = makeRecorder()
+
+    await send(db, rec, { replyId: 'rem:confirm' })
+
+    expect(db._tables.booking_appointments[0].status).toBe('confirmed')
+    expect(last(rec).bodyText).toContain('Queda confirmado')
+  })
+
+  it.each(['act:reschedule', 'act:cancel'])(
+    'un menú viejo con %s no sirve de atajo: pasa a un humano',
+    async (replyId) => {
+      const db = makeFakeDb(baseSeed())
+      db._tables.booking_appointments.push(appointmentRow())
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'hola' }) // menú con las tres opciones
+      setSettings(db, { allow_reschedule: false })
+      rec.calls.length = 0
+
+      await send(db, rec, { replyId })
+
+      expect(rec.calls).toHaveLength(1)
+      expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.changesByHuman)
+      expect(db._tables.booking_appointments[0].status).toBe('confirmed')
+      expect(sessionRow(db)).toBeUndefined()
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    },
+  )
+
+  it('una confirmación de cancelación abierta antes de apagar la pieza no cancela', async () => {
+    const db = makeFakeDb(baseSeed())
+    db._tables.booking_appointments.push(appointmentRow())
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: 'rem:cancel' }) // pide "Sí, cancelar"
+    setSettings(db, { allow_reschedule: false })
+    rec.calls.length = 0
+
+    await send(db, rec, { replyId: 'act:cancel_yes' })
+
+    expect(db._tables.booking_appointments[0].status).toBe('confirmed')
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.changesByHuman)
+    expect(rec.calls).toHaveLength(1)
+  })
+})

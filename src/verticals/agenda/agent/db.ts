@@ -842,7 +842,7 @@ export async function loadBotSettings(
     .eq('account_id', accountId)
     .maybeSingle()
   // Típico: una migración sin aplicar. Se avisa y el bot sigue con los defaults.
-  if (error) console.error('[agenda] loadBotSettings falló:', error.message)
+  if (error) console.error('[agenda] loadBotSettings falló:', error.code, error.message)
   const row = (data as Record<string, unknown> | null) ?? null
   const texts = sanitizeBotTexts(row?.bot_texts ?? {})
   return {

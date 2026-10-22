@@ -71,6 +71,7 @@ vi.mock('./index', () => ({
 import { MessagePersistAfterSendError } from '@/lib/flows/meta-send'
 
 import { sendAgendaReminder } from './reminders-send'
+import { DEFAULT_LABELS } from '../labels'
 import type { ReminderDelivery } from './reminders'
 
 function delivery(channel: 'text' | 'template'): ReminderDelivery {
@@ -88,6 +89,7 @@ function delivery(channel: 'text' | 'template'): ReminderDelivery {
     startsAtIso: '2026-10-20T12:00:00.000Z',
     dateLabel: 'martes 20 de octubre de 2026',
     timeLabel: '7:00 a. m.',
+    labels: DEFAULT_LABELS,
   }
 }
 
