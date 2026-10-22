@@ -16,14 +16,17 @@ import { badRequest, configErrorResponse, readJsonBody } from '../_lib/http'
 // dirección, moneda, señal de 2 h, textos del bot, palabras del
 // negocio (`labels`), piezas prendidas/apagadas (`toggles`, claves
 // en snake_case de columna: choose_staff, show_price, ...). El punto
-// de partida (`preset_key`) NO se cambia aquí: solo POST /setup lo fija.
+// de partida (`preset_key`) NO se cambia aquí: solo POST /setup lo fija,
+// así que mandar `preset_key` en este cuerpo responde 400.
 //
 // `labels`: la UI manda siempre las seis palabras, pero el servidor
 // MEZCLA lo recibido con lo ya guardado (saveSettings), así que un
 // cuerpo parcial nunca borra el resto. Una palabra enviada como null o
 // en blanco vuelve a su valor por defecto (se quita de lo guardado).
-// Una clave de palabra desconocida, una pieza que no es true/false o
-// un tipo de negocio vacío son 400; nunca se ignoran en silencio.
+// Una clave de palabra desconocida y una pieza que no es true/false son
+// 400. En cambio, dentro de `toggles` una clave que no es de ninguna
+// pieza conocida se IGNORA; si no queda ninguna pieza conocida, el
+// objeto no cuenta como cambio.
 //
 // Guardas:
 //   - requireRole('admin'): solo owner/admin configuran. La RLS de

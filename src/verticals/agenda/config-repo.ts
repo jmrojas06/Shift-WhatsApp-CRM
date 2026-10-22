@@ -758,6 +758,11 @@ export async function updateAccountCurrency(
 
 const QUESTION_COLS = 'id, label, kind, required, options, position'
 
+const QUESTION_GONE = 'Esa pregunta ya no existe.'
+
+/** 22P02: Postgres rechazó el id por no ser un uuid. Para el cliente es una pregunta que no existe. */
+const isInvalidUuid = (error: { code?: string } | null): boolean => error?.code === '22P02'
+
 async function fetchActiveQuestionRows(
   db: SupabaseClient,
   accountId: string,
@@ -847,8 +852,9 @@ export async function updateQuestion(
     .eq('is_active', true)
     .select(QUESTION_COLS)
     .maybeSingle()
+  if (isInvalidUuid(error)) throw new ConfigError('not_found', QUESTION_GONE)
   if (error) throw error
-  if (!data) throw new ConfigError('not_found', 'Esa pregunta ya no existe.')
+  if (!data) throw new ConfigError('not_found', QUESTION_GONE)
   const updated = readQuestion(data)
   if (!updated) throw new Error('No se pudo actualizar la pregunta.')
   return updated
@@ -868,6 +874,7 @@ export async function deleteQuestion(
     .eq('is_active', true)
     .select('id')
     .maybeSingle()
+  if (isInvalidUuid(error)) throw new ConfigError('not_found', QUESTION_GONE)
   if (error) throw error
-  if (!data) throw new ConfigError('not_found', 'Esa pregunta ya no existe.')
+  if (!data) throw new ConfigError('not_found', QUESTION_GONE)
 }

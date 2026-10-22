@@ -118,6 +118,28 @@ describe('updateQuestion / deleteQuestion', () => {
     expect(db._tables.booking_questions.find((r) => r.id === 'off')?.label).toBe('Pregunta off')
   })
 
+  it('un id que no es uuid (22P02 de Postgres) se trata como inexistente, no como error 500', async () => {
+    const invalidUuid = { message: 'invalid input syntax for type uuid: "abc"', code: '22P02' }
+    const db = makeFakeDb({ booking_questions: [q('a', 0)] })
+    const client = asClient(db)
+
+    db._failNext('update', 'booking_questions', invalidUuid)
+    await expect(updateQuestion(client, ACCOUNT, 'abc', input)).rejects.toMatchObject({
+      name: 'ConfigError',
+      code: 'not_found',
+    })
+
+    db._failNext('update', 'booking_questions', invalidUuid)
+    await expect(deleteQuestion(client, ACCOUNT, 'abc')).rejects.toMatchObject({
+      name: 'ConfigError',
+      code: 'not_found',
+    })
+
+    // Otros errores de la base siguen subiendo tal cual.
+    db._failNext('update', 'booking_questions', { message: 'boom' })
+    await expect(updateQuestion(client, ACCOUNT, 'a', input)).rejects.toMatchObject({ message: 'boom' })
+  })
+
   it('actualizar devuelve la pregunta y desactivar la saca de la lista', async () => {
     const db = makeFakeDb({ booking_questions: [q('a', 0), q('b', 1)] })
     const client = asClient(db)
