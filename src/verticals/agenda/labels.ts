@@ -27,17 +27,26 @@ export const LABEL_KEYS: readonly AgendaLabelKey[] = [
   'citas',
 ]
 
-export const DEFAULT_LABELS: AgendaLabels = {
+export const DEFAULT_LABELS: Readonly<AgendaLabels> = Object.freeze({
   profesional: 'profesional',
   profesionales: 'profesionales',
   servicio: 'servicio',
   servicios: 'servicios',
   cita: 'cita',
   citas: 'citas',
-}
+})
 
-/** Tope por palabra: entra en un botón de WhatsApp junto a "Ver ". */
+/**
+ * Tope por palabra, en puntos de código (un emoji vale 1).
+ * 24 es el límite del título de una fila de lista de WhatsApp. Los
+ * títulos de botón se recortan a 20 donde se arman (copy del bot).
+ */
 export const LABEL_MAX = 24
+
+/** Caracteres de control o formato (incluye zero-width space). */
+const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/u
+/** Marcas de formato de WhatsApp: se rompería el texto del bot. */
+const WHATSAPP_MARKUP = /[*_~`]/
 
 const isLabelKey = (key: string): key is AgendaLabelKey =>
   (LABEL_KEYS as readonly string[]).includes(key)
@@ -54,9 +63,12 @@ export function sanitizeLabels(input: unknown): Valid<Partial<AgendaLabels>> {
     if (typeof raw !== 'string') {
       return { ok: false, message: `"${key}" debe ser texto.` }
     }
-    const text = raw.trim()
+    const text = raw.trim().replace(/\s+/g, ' ')
     if (!text) continue
-    if (text.length > LABEL_MAX) {
+    if (CONTROL_OR_FORMAT.test(text) || WHATSAPP_MARKUP.test(text)) {
+      return { ok: false, message: `"${key}" tiene caracteres no permitidos.` }
+    }
+    if ([...text].length > LABEL_MAX) {
       return { ok: false, message: `"${key}" no puede pasar de ${LABEL_MAX} caracteres.` }
     }
     out[key] = text
@@ -64,10 +76,26 @@ export function sanitizeLabels(input: unknown): Valid<Partial<AgendaLabels>> {
   return { ok: true, value: out }
 }
 
-export function resolveLabels(
-  partial: Partial<AgendaLabels> | null | undefined,
-): AgendaLabels {
-  return { ...DEFAULT_LABELS, ...(partial ?? {}) }
+/** Mezcla con los defaults. Ignora valores que no son texto o están en blanco. */
+export function resolveLabels(partial: unknown): AgendaLabels {
+  const out: AgendaLabels = { ...DEFAULT_LABELS }
+  if (partial === null || typeof partial !== 'object' || Array.isArray(partial)) return out
+  for (const key of LABEL_KEYS) {
+    const value = (partial as Record<string, unknown>)[key]
+    if (typeof value === 'string' && value.trim()) out[key] = value
+  }
+  return out
+}
+
+/** Lectura desde la base: nunca falla; una palabra inválida vuelve al valor por defecto. */
+export function readLabels(raw: unknown): AgendaLabels {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return resolveLabels(null)
+  const kept: Partial<AgendaLabels> = {}
+  for (const key of LABEL_KEYS) {
+    const res = sanitizeLabels({ [key]: (raw as Record<string, unknown>)[key] })
+    if (res.ok && res.value[key] !== undefined) kept[key] = res.value[key]
+  }
+  return resolveLabels(kept)
 }
 
 export function capitalize(word: string): string {

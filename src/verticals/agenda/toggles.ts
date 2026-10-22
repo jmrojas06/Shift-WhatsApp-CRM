@@ -19,13 +19,14 @@ export interface AgendaToggles {
 
 export type AgendaToggleKey = keyof AgendaToggles
 
-export const DEFAULT_TOGGLES: AgendaToggles = {
+/** Solo un `false` literal apaga una pieza: "false" o 0 cuentan como prendidas (columnas boolean). */
+export const DEFAULT_TOGGLES: Readonly<AgendaToggles> = Object.freeze({
   chooseStaff: true,
   showPrice: true,
   showDuration: true,
   remindersEnabled: true,
   allowReschedule: true,
-}
+})
 
 export const TOGGLE_COLUMNS: Record<AgendaToggleKey, string> = {
   chooseStaff: 'choose_staff',
