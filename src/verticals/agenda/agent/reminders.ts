@@ -44,7 +44,7 @@ const DEFAULT_LIMIT = 50
  * Plantilla aprobada en Meta para el recordatorio fuera de la
  * ventana de 24 h. El nombre y el idioma deben coincidir EXACTAMENTE
  * con los de la plantilla creada en WhatsApp Manager
- * (ver docs/barberia-recordatorios.md).
+ * (ver docs/agenda-recordatorios.md).
  */
 export const AGENDA_REMINDER_TEMPLATE = {
   name: 'recordatorio_cita',
