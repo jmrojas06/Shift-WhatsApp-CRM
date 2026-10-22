@@ -124,9 +124,11 @@ Si el webhook rechaza con 401: `META_APP_SECRET` equivocado
 Sigue la receta exacta de `docs/agenda-recordatorios.md` → *Plantilla
 de Meta (`recordatorio_cita`)*: nombre, categoría Utilidad, idioma `es`,
 cuerpo con 5 variables y los tres quick replies
-(Confirmar / Reprogramar / Cancelar). Si la cuenta ya tenía la
-plantilla de la versión de barbería (con 💈), hay que editarla y esperar
-a que Meta la apruebe de nuevo.
+(Confirmar / Reprogramar / Cancelar), con el cuerpo genérico (📌). Es
+una plantilla **nueva** en la WABA del negocio. No edites una
+`recordatorio_cita` que ya esté aprobada en otra WABA (por ejemplo, la
+de una barbería existente): una edición en revisión puede bloquear sus
+envíos.
 
 Sin esta plantilla, los recordatorios fuera de la ventana de 24 h no se
 pueden enviar (dentro de la ventana salen igual, como mensaje libre).

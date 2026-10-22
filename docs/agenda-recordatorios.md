@@ -40,15 +40,23 @@ payloads dinámicos. Por eso el bot resuelve la cita al tocarlos: es la
 
 ## Plantilla de Meta (`recordatorio_cita`)
 
-> **PASO MANUAL DEL USUARIO.** Con la agenda genérica cambia el cuerpo de
-> la plantilla (el 💈 de la versión de barbería pasa a 📌). Hay que
-> **editar la plantilla en WhatsApp Manager** y Meta la **vuelve a
-> revisar**. Hasta que se apruebe, las cuentas que no son barbería verán
-> el 💈 de la versión vieja, y solo cuando el recordatorio salga por
-> plantilla (fuera de la ventana de 24 h). Ningún despliegue de código
-> hace este paso por ti.
+> **PASO MANUAL DEL USUARIO, solo para negocios nuevos que no son
+> barbería.** **No edites** la plantilla `recordatorio_cita` que ya está
+> aprobada: una edición en revisión puede bloquear los envíos por
+> plantilla mientras Meta la revisa.
+>
+> - Las **WABA de barberías que ya existen** conservan su plantilla
+>   aprobada tal cual (con 💈, que para una barbería está bien). No hay
+>   que hacer nada.
+> - Un **negocio nuevo que no es barbería** crea su propia plantilla
+>   `recordatorio_cita` al hacer el onboarding, con el cuerpo genérico de
+>   abajo (📌 en lugar de 💈). Es una plantilla nueva en su propia WABA,
+>   no una edición de otra. Meta la revisa; mientras tanto el recordatorio
+>   solo sale como mensaje libre dentro de la ventana de 24 h.
+>
+> Ningún despliegue de código hace este paso por ti.
 
-Crear (o editar) en WhatsApp Manager → *Plantillas de mensaje* → **Crear plantilla**:
+Crear en WhatsApp Manager → *Plantillas de mensaje* → **Crear plantilla**:
 
 | Campo | Valor |
 | --- | --- |
@@ -73,7 +81,7 @@ Crear (o editar) en WhatsApp Manager → *Plantillas de mensaje* → **Crear pla
 | --- | --- |
 | `{{1}}` | Nombre del negocio |
 | `{{2}}` | Servicio |
-| `{{3}}` | Quien atiende (barbero, estilista, técnico… según el vocabulario del negocio) |
+| `{{3}}` | El **nombre** de quien atiende (por ejemplo «Andrés»); si la cita no tiene a nadie asignado, «Cualquiera» |
 | `{{4}}` | Fecha («martes 20 de octubre de 2026») |
 | `{{5}}` | Hora («7:00 a. m.») |
 
@@ -84,6 +92,10 @@ Crear (o editar) en WhatsApp Manager → *Plantillas de mensaje* → **Crear pla
 | `Confirmar` | `rem:confirm` |
 | `Reprogramar` | `rem:reschedule` |
 | `Cancelar` | `rem:cancel` |
+
+El cuerpo de la plantilla dice «cita» para todos los negocios: Meta no
+admite palabras que cambien por cuenta, así que un negocio de clases
+también verá «tu cita» aquí aunque su bot diga «sesión».
 
 **Los botones de la plantilla son fijos.** Meta no deja cambiarlos por
 cuenta, así que la plantilla siempre muestra los tres. Si una cuenta

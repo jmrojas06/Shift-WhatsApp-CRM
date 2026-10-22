@@ -22,7 +22,7 @@ palabras, piezas y preguntas extra. Incluye dos migraciones (**051** y
 | f | Correr `supabase/ci/verify-schema.sql` | SQL Editor | Usuario |
 | g | Probar con la cuenta smoke | `/agenda/configuracion` | Usuario |
 | h | Mover los crons externos a la URL nueva | Pinger / host | Usuario |
-| i | Editar la plantilla de Meta | WhatsApp Manager | Usuario |
+| i | Plantilla de Meta (solo negocios nuevos que no son barbería) | WhatsApp Manager | Usuario |
 
 El orden importa porque el código **viejo** solo entiende la clave
 `barberia` y el código **nuevo** entiende `agenda` **y** `barberia`:
@@ -84,7 +84,10 @@ despliega solo. Espera a que el deploy quede en **Ready** y revisa
 Qué cambia en la práctica:
 
 - `/barberia` y `/barberia/configuracion` redirigen a `/agenda` y
-  `/agenda/configuracion`.
+  `/agenda/configuracion`. La redirección es **temporal** (307, no
+  permanente) a propósito: el navegador no la guarda para siempre, así
+  que un rollback del código sigue siendo posible. Se pasará a
+  permanente cuando ya no haga falta volver atrás.
 - El código acepta cuentas con `vertical_key = 'barberia'` y `'agenda'`:
   **ninguna cuenta se rompe** aunque 052 todavía no esté aplicada.
 
@@ -169,15 +172,19 @@ cambias hoy. Cuando puedas:
 
 ## i) Plantilla de Meta (paso manual del usuario)
 
-Hay que editar la plantilla `recordatorio_cita` en **WhatsApp Manager**:
-el cuerpo genérico cambia el 💈 por 📌 (mismas 5 variables, mismos 3
-botones). Meta la **vuelve a revisar**. El texto exacto y los pasos están
-en `docs/agenda-recordatorios.md` → «Plantilla de Meta».
+**No edites la plantilla `recordatorio_cita` que ya está aprobada.** Una
+edición en revisión puede bloquear los envíos por plantilla mientras
+Meta la revisa.
 
-Hasta que Meta la apruebe, los recordatorios que salgan **por
-plantilla** (fuera de la ventana de 24 h) seguirán mostrando el 💈 de la
-versión vieja; los que salen como mensaje libre ya usan el texto nuevo.
-No bloquea el despliegue.
+- Las **WABA de barberías que ya existen** conservan su plantilla
+  aprobada tal cual. El 💈 está bien para una barbería. No hay nada que
+  hacer en este paso para ellas.
+- Un **negocio nuevo que no es barbería** crea su propia plantilla
+  `recordatorio_cita` al hacer el onboarding, con el cuerpo genérico
+  (📌, mismas 5 variables y mismos 3 botones). El texto exacto y los
+  pasos están en `docs/agenda-recordatorios.md` → «Plantilla de Meta».
+
+Este paso no bloquea el despliegue.
 
 ## j) Cómo volver atrás si algo falla
 
@@ -211,8 +218,12 @@ Según dónde estés:
   Pon solo los ids que estaban en esa lista: una cuenta de otro tipo de
   negocio creada ya como `agenda` no debe volver a `barberia`. Después
   haz el Instant Rollback del código.
-- **Plantilla de Meta:** si Meta la rechaza, la plantilla anterior sigue
-  aprobada y funcionando; no se pierde el envío por plantilla.
+- **Redirección `/barberia`:** es temporal (307) a propósito, para que
+  un rollback del código no choque con una redirección guardada en los
+  navegadores. Se pasará a permanente cuando ya no haga falta volver
+  atrás.
+- **Plantilla de Meta:** como no se edita la plantilla aprobada, un
+  rollback no la afecta.
 
 ## Temas a revisar y decisiones
 
