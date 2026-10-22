@@ -102,27 +102,34 @@ describe('insertAppointment: respuestas', () => {
     const { client, inserted } = recordingClient()
     await insertAppointment(client, base)
     await insertAppointment(client, { ...base, answers: {} })
-    await insertAppointment(client, { ...base, answers: { q1: '' } })
+    await insertAppointment(client, { ...base, answers: { q1: { label: 'Motivo', value: '' } } })
     expect(inserted).toHaveLength(3)
     for (const row of inserted) expect('answers' in row).toBe(false)
   })
 
   it('manda las respuestas con texto por id de pregunta', async () => {
     const { client, inserted } = recordingClient()
-    await insertAppointment(client, { ...base, answers: { q1: 'Control', q2: '' } })
-    expect(inserted[0].answers).toEqual({ q1: 'Control' })
+    await insertAppointment(client, {
+      ...base,
+      answers: { q1: { label: 'Motivo', value: 'Control' }, q2: { label: 'Sede', value: '' } },
+    })
+    expect(inserted[0].answers).toEqual({ q1: { label: 'Motivo', value: 'Control' } })
   })
 
   it('red de seguridad: si el JSON pasa de 8000 bytes acorta los valores antes de insertar', async () => {
     const { client, inserted } = recordingClient()
     await insertAppointment(client, {
       ...base,
-      answers: { q1: 'x'.repeat(6000), q2: 'y'.repeat(6000), q3: 'corta' },
+      answers: {
+        q1: { label: 'A', value: 'x'.repeat(6000) },
+        q2: { label: 'B', value: 'y'.repeat(6000) },
+        q3: { label: 'C', value: 'corta' },
+      },
     })
-    const sent = inserted[0].answers as Record<string, string>
+    const sent = inserted[0].answers as Record<string, { label: string; value: string }>
     expect(new TextEncoder().encode(JSON.stringify(sent)).length).toBeLessThanOrEqual(ANSWERS_MAX_BYTES)
-    expect(sent.q3).toBe('corta')
-    expect(sent.q1.length).toBeGreaterThan(0)
+    expect(sent.q3).toEqual({ label: 'C', value: 'corta' })
+    expect(sent.q1.value.length).toBeGreaterThan(0)
   })
 })
 
@@ -144,9 +151,19 @@ describe('loadAppointment: respuestas', () => {
     status: 'confirmed',
   }
 
-  it('lee las respuestas de la cita', async () => {
+  it('lee las respuestas de la cita con su etiqueta', async () => {
+    const appt = await loadAppointment(
+      clientWith({ ...row, answers: { q1: { label: 'Motivo', value: 'Control' } } }),
+      'acc',
+      'ct-1',
+      'a1',
+    )
+    expect(appt?.answers).toEqual({ q1: { label: 'Motivo', value: 'Control' } })
+  })
+
+  it('lee también el formato viejo (solo el valor)', async () => {
     const appt = await loadAppointment(clientWith({ ...row, answers: { q1: 'Control' } }), 'acc', 'ct-1', 'a1')
-    expect(appt?.answers).toEqual({ q1: 'Control' })
+    expect(appt?.answers).toEqual({ q1: { label: '', value: 'Control' } })
   })
 
   it('tolera null, arreglos y valores que no son texto', async () => {
@@ -154,6 +171,6 @@ describe('loadAppointment: respuestas', () => {
     expect((await loadAppointment(clientWith({ ...row, answers: ['x'] }), 'acc', 'ct-1', 'a1'))?.answers).toEqual({})
     expect(
       (await loadAppointment(clientWith({ ...row, answers: { a: 1, b: 'ok', c: '' } }), 'acc', 'ct-1', 'a1'))?.answers,
-    ).toEqual({ b: 'ok' })
+    ).toEqual({ b: { label: '', value: 'ok' } })
   })
 })

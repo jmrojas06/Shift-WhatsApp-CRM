@@ -30,7 +30,7 @@ import type { AgendaAppointmentSummary } from '../texts'
 import { mergeBotTexts, type AgendaAgentTextsMerged } from '../bot-texts'
 import { listQuestions } from '../config-repo'
 import { capitalize } from '../labels'
-import { validateAnswer, type AgendaQuestion } from '../questions'
+import { readAnswerMap, validateAnswer, type AgendaQuestion, type AnswerMap } from '../questions'
 import {
   computeDaySlots,
   mergeSlotsByStart,
@@ -78,8 +78,8 @@ import {
 import { formatDayLabel, formatLongDate, formatPrice, formatTimeLabel, truncate } from './format'
 import {
   actId,
-  ANS_SKIP_ID,
   ansId,
+  ansSkipId,
   containsHandoffWord,
   containsIntentWord,
   dayId,
@@ -88,6 +88,7 @@ import {
   matchAnswerOption,
   matchChoice,
   newBookingState,
+  parseAnswerId,
   parseOptionId,
   parseReminderId,
   slotId,
@@ -439,6 +440,11 @@ interface Dialog {
    * de Configuración ya aplicados (Fase 4).
    */
   texts: AgendaAgentTextsMerged
+  /**
+   * Preguntas extra, leídas una sola vez por mensaje del cliente y compartidas
+   * por todos los pasos (null = no se pudieron leer).
+   */
+  questions?: Promise<AgendaQuestion[] | null>
 }
 
 /**
@@ -477,18 +483,9 @@ function coerceState(raw: Record<string, unknown>): BookingState {
       : {}),
     ...(typeof raw.questionId === 'string' ? { questionId: raw.questionId } : {}),
     ...(raw.answers && typeof raw.answers === 'object' && !Array.isArray(raw.answers)
-      ? { answers: coerceAnswers(raw.answers as Record<string, unknown>) }
+      ? { answers: readAnswerMap(raw.answers, { keepEmpty: true }) }
       : {}),
   })
-}
-
-/** Respuestas guardadas en la sesión: solo textos ('' = opcional sin responder). */
-function coerceAnswers(raw: Record<string, unknown>): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const [id, value] of Object.entries(raw)) {
-    if (typeof value === 'string') out[id] = value
-  }
-  return out
 }
 
 // ------------------------------------------------------------
@@ -521,12 +518,14 @@ async function advanceSession(
 
 /**
  * Respuesta que no empareja con el menú: a la primera se re-pregunta,
- * a la segunda se escala a un humano.
+ * a la segunda se escala a un humano. `message` reemplaza el aviso por
+ * defecto (una pregunta escrita no tiene opciones que elegir).
  */
 async function registerFail(
   dialog: Dialog,
   sessionId: string,
   state: BookingState,
+  message: string = dialog.texts.retry,
 ): Promise<void> {
   const fails = state.fails + 1
   if (fails >= 2) {
@@ -534,7 +533,7 @@ async function registerFail(
     return
   }
   const next = { ...state, fails }
-  await dialog.sender.sendText({ text: dialog.texts.retry })
+  await dialog.sender.sendText({ text: message })
   await conclude(dialog, sessionId, next)
 }
 
@@ -548,25 +547,26 @@ async function registerFail(
 // ------------------------------------------------------------
 
 /**
- * Preguntas activas en orden. Si la base falla devuelve null: el que llama
- * sigue SIN preguntas (jamás se pierde una reserva por las preguntas extra).
+ * Preguntas activas en orden, leídas UNA vez por mensaje del cliente (se
+ * comparte entre responder, mostrar la siguiente, el resumen y el insert). Si
+ * la base falla devuelve null: el que llama sigue SIN preguntas (jamás se
+ * pierde una reserva por las preguntas extra).
  */
-async function loadQuestions(dialog: Dialog): Promise<AgendaQuestion[] | null> {
-  try {
-    return await listQuestions(dialog.db, dialog.accountId)
-  } catch (err) {
+function loadQuestions(dialog: Dialog): Promise<AgendaQuestion[] | null> {
+  dialog.questions ??= listQuestions(dialog.db, dialog.accountId).catch((err: unknown) => {
     console.error('[agenda] no se pudieron leer las preguntas extra:', err)
     return null
-  }
+  })
+  return dialog.questions
 }
 
-function hasAnswer(answers: Record<string, string> | undefined, id: string): boolean {
+function hasAnswer(answers: AnswerMap | undefined, id: string): boolean {
   return answers !== undefined && Object.hasOwn(answers, id)
 }
 
 function nextUnanswered(
   questions: AgendaQuestion[],
-  answers: Record<string, string> | undefined,
+  answers: AnswerMap | undefined,
 ): AgendaQuestion | null {
   return questions.find((q) => !hasAnswer(answers, q.id)) ?? null
 }
@@ -580,6 +580,20 @@ function stateAfterQuestions(
   return next
     ? { ...state, step: 'ask_question', questionId: next.id }
     : { ...state, step: 'summary', questionId: undefined }
+}
+
+/** Foto, audio, sticker o tipo no soportado: llega sin texto o como "[Unsupported message type: …]". */
+function isNonTextInbound(text: string): boolean {
+  return !text.trim() || text.startsWith('[Unsupported message type')
+}
+
+/** ¿La pregunta de opciones ofrece la fila/botón "Omitir"? Sólo si no convierte 3 botones en lista. */
+function offersSkipOption(question: AgendaQuestion): boolean {
+  return (
+    !question.required &&
+    question.options.length !== MAX_BUTTONS &&
+    question.options.length <= MAX_LIST_OPTIONS - 1
+  )
 }
 
 async function handleAnswer(
@@ -596,8 +610,8 @@ async function handleAnswer(
 
   const question = questions.find((q) => q.id === state.questionId)
   if (!question) {
-    // La desactivaron (o la borraron): este mensaje no era para ninguna
-    // pregunta vigente, así que no se consume. Sigue la próxima o el resumen.
+    // La desactivaron (o la borraron): lo que escribió era para ella, así que no
+    // se guarda como respuesta de otra pregunta. Sigue la próxima o el resumen.
     await conclude(dialog, sessionId, stateAfterQuestions({ ...state, fails: 0 }, questions))
     return
   }
@@ -611,13 +625,15 @@ async function handleAnswer(
 
   let value: string
   if (question.kind === 'opcion') {
+    // Un tap de otra pregunta (botón viejo) no está en state.options: no empareja.
     const choice = matchAnswerOption({
       text: input.text,
       replyId: input.replyId,
       options: state.options,
     })
     const offered = choice ? state.options.find((o) => o.id === choice) : undefined
-    if (offered?.id === ANS_SKIP_ID) {
+    const parsed = offered ? parseAnswerId(offered.id) : null
+    if (offered && parsed?.index === 'skip') {
       // "Omitir" solo vale si la pregunta sigue siendo opcional.
       if (question.required) {
         await conclude(dialog, sessionId, state)
@@ -641,7 +657,13 @@ async function handleAnswer(
   } else {
     // Un tap de un menú viejo no responde una pregunta escrita.
     if (input.replyId !== null) {
-      await registerFail(dialog, sessionId, state)
+      await registerFail(dialog, sessionId, state, dialog.texts.answerRetryText)
+      return
+    }
+    // Un sticker, una foto o un tipo no soportado no es una respuesta ni un
+    // "omitir": se repite la pregunta (con su aviso si es opcional), sin contar fallo.
+    if (isNonTextInbound(input.text)) {
+      await conclude(dialog, sessionId, state)
       return
     }
     const check =
@@ -655,16 +677,19 @@ async function handleAnswer(
           : check.reason === 'too_long'
             ? dialog.texts.answerTooLong
             : dialog.texts.answerRequired
-      await dialog.sender.sendText({ text: warning })
-      await conclude(dialog, sessionId, state)
+      // Una respuesta inválida cuenta como fallo: la segunda seguida pasa a un humano.
+      await registerFail(dialog, sessionId, state, warning)
       return
     }
     value = check.value
   }
 
-  // '' = pregunta opcional sin responder: queda marcada para no repetirla, pero
-  // ni el resumen ni la cita la guardan.
-  const answers = { ...state.answers, [question.id]: value }
+  // Valor '' = pregunta opcional sin responder: queda marcada para no repetirla,
+  // pero ni el resumen ni la cita la guardan. Se guarda con la etiqueta que vio.
+  const answers: AnswerMap = {
+    ...state.answers,
+    [question.id]: { label: question.label, value },
+  }
   await conclude(
     dialog,
     sessionId,
@@ -672,14 +697,20 @@ async function handleAnswer(
   )
 }
 
-/** Respuestas con texto, en el orden actual de las preguntas vigentes. */
+/**
+ * Respuestas con texto de las preguntas vigentes, en el orden actual. Muestra la
+ * etiqueta con que se hizo la pregunta (las guardadas sin etiqueta usan la actual).
+ */
 function visibleAnswers(
   questions: AgendaQuestion[],
-  answers: Record<string, string> | undefined,
+  answers: AnswerMap | undefined,
 ): { id: string; label: string; value: string }[] {
-  return questions
-    .filter((q) => hasAnswer(answers, q.id) && answers![q.id])
-    .map((q) => ({ id: q.id, label: q.label, value: answers![q.id] }))
+  const out: { id: string; label: string; value: string }[] = []
+  for (const q of questions) {
+    const entry = answers && Object.hasOwn(answers, q.id) ? answers[q.id] : undefined
+    if (entry?.value) out.push({ id: q.id, label: entry.label || q.label, value: entry.value })
+  }
+  return out
 }
 
 async function handleChoice(
@@ -837,11 +868,11 @@ async function handleChoice(
         return
       }
       if (parsed.value === 'reschedule') {
-        // Con otra hora se vuelve a empezar: nada de respuestas viejas.
+        // Solo cambia la hora: las respuestas se conservan (al elegir la nueva hora
+        // solo se pregunta lo que se agregó mientras tanto).
         await conclude(dialog, sessionId, {
           ...state,
           slotStartsAt: undefined,
-          answers: undefined,
           questionId: undefined,
           step: 'pick_day',
         })
@@ -1370,27 +1401,28 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
       if (!question) {
         return renderStep(dialog, { ...state, step: 'summary', questionId: undefined })
       }
-      // Una pregunta opcional avisa cómo saltarla.
-      const bodyText = question.required
-        ? question.label
-        : `${question.label}\n${dialog.texts.answerOptionalHint}`
       if (question.kind === 'opcion') {
         const options: OfferedOption[] = question.options.map((title, i) => ({
-          id: ansId(i),
+          id: ansId(question.id, i),
           title,
         }))
-        // Con hasta 9 opciones cabe una fila/botón "Omitir" (WhatsApp: 10 filas).
-        if (!question.required && options.length <= MAX_LIST_OPTIONS - 1) {
-          options.push({ id: ANS_SKIP_ID, title: dialog.texts.answerSkip })
-        }
+        // Opcional: fila/botón "Omitir" (hasta 9 opciones; con 3 se pasaría de
+        // botones a lista, ahí solo vale escribir "omitir").
+        const skip = offersSkipOption(question)
+        if (skip) options.push({ id: ansSkipId(question.id), title: dialog.texts.answerSkip })
+        const hint = skip ? dialog.texts.answerOptionalHintOptions : dialog.texts.answerOptionalHint
         await sendOptions(dialog, {
-          bodyText,
+          bodyText: question.required ? question.label : `${question.label}\n${hint}`,
           buttonLabel: dialog.texts.answerMenuButton,
           options,
         })
         return { state: { ...state, questionId: question.id, options }, closed: false }
       }
-      await dialog.sender.sendText({ text: bodyText })
+      await dialog.sender.sendText({
+        text: question.required
+          ? question.label
+          : `${question.label}\n${dialog.texts.answerOptionalHint}`,
+      })
       return { state: { ...state, questionId: question.id, options: [] }, closed: false }
     }
 
@@ -1658,26 +1690,72 @@ async function buildSummaryForState(
   if (state.mode === 'reschedule' || !state.answers) return summary
   const questions = await loadQuestions(dialog)
   const answers = questions ? visibleAnswers(questions, state.answers) : []
-  return answers.length
-    ? { ...summary, answers: answers.map(({ label, value }) => ({ label, value })) }
-    : summary
+  return answers.length ? fitSummaryAnswers(dialog, summary, answers) : summary
+}
+
+/** Meta limita el cuerpo de un mensaje interactivo a 1024 unidades UTF-16. */
+const SUMMARY_BODY_MAX = 1024
+/** Cada respuesta se acorta a esto en el resumen (la cita guarda la completa). */
+const SUMMARY_ANSWER_MAX = 70
+
+function shorten(text: string, max: number): string {
+  const chars = [...text]
+  return chars.length <= max ? text : `${chars.slice(0, max - 1).join('').trimEnd()}…`
+}
+
+/**
+ * Pone las respuestas en el resumen sin pasar del límite del cuerpo: valores
+ * acortados y, si aun así no caben, las que sobran se reemplazan por una línea
+ * "+N respuestas más". Se mide con el texto real del resumen, así que vale
+ * también con servicios o palabras largas del negocio.
+ */
+function fitSummaryAnswers(
+  dialog: Dialog,
+  summary: AgendaAppointmentSummary,
+  answers: { label: string; value: string }[],
+): AgendaAppointmentSummary {
+  const shown = answers.map((a) => ({ label: a.label, value: shorten(a.value, SUMMARY_ANSWER_MAX) }))
+  let candidate: AgendaAppointmentSummary = summary
+  for (let keep = shown.length; keep >= 0; keep -= 1) {
+    const more = shown.length - keep
+    candidate = {
+      ...summary,
+      ...(keep ? { answers: shown.slice(0, keep) } : {}),
+      ...(more ? { moreAnswers: more } : {}),
+    }
+    if (dialog.texts.summaryBody(candidate).length <= SUMMARY_BODY_MAX) return candidate
+  }
+  return candidate
 }
 
 /**
  * Respuestas que lleva la cita nueva. Reprogramar una cita existente copia las
- * de la anterior; una cita nueva guarda las del estado, acotadas a las
- * preguntas vigentes (si no se pueden leer, las que ya tenía).
+ * de la anterior (las guardadas sin etiqueta toman la de la pregunta actual); una
+ * cita nueva guarda las del estado, acotadas a las preguntas vigentes (si no se
+ * pueden leer, las que ya tenía).
  */
 async function answersForNewAppointment(
   dialog: Dialog,
   state: BookingState,
   oldAppt: AppointmentInfo | null,
-): Promise<Record<string, string>> {
-  if (oldAppt) return oldAppt.answers
+): Promise<AnswerMap> {
+  if (oldAppt) {
+    if (!Object.values(oldAppt.answers).some((a) => !a.label)) return oldAppt.answers
+    const questions = await loadQuestions(dialog)
+    const labels = new Map((questions ?? []).map((q) => [q.id, q.label]))
+    return Object.fromEntries(
+      Object.entries(oldAppt.answers).map(([id, a]) => [
+        id,
+        a.label ? a : { ...a, label: labels.get(id) ?? '' },
+      ]),
+    )
+  }
   if (!state.answers) return {}
   const questions = await loadQuestions(dialog)
   if (!questions) return state.answers
-  return Object.fromEntries(visibleAnswers(questions, state.answers).map((a) => [a.id, a.value]))
+  return Object.fromEntries(
+    visibleAnswers(questions, state.answers).map(({ id, label, value }) => [id, { label, value }]),
+  )
 }
 
 /** Descripción de la fila del menú según las piezas duración / precio. */

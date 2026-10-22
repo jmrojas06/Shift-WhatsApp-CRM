@@ -4,7 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { VerticalSession } from '@/lib/verticals/types'
 
 import { handleAgendaInbound, type AgendaSender } from './controller'
-import { dayId, slotId, staffId, svcId } from './state'
+import { ansId, ansSkipId, dayId, slotId, staffId, svcId } from './state'
 import { AGENDA_AGENT_TEXTS } from '../texts'
 
 // ============================================================
@@ -2438,6 +2438,14 @@ describe('preguntas extra', () => {
   }
 
   const state = (db: FakeDb) => sessionRow(db)?.state as Record<string, unknown>
+  /** Respuestas como { id: valor }, sin importar si traen la etiqueta guardada. */
+  const plain = (answers: unknown): Record<string, string> =>
+    Object.fromEntries(
+      Object.entries((answers ?? {}) as Record<string, string | { value: string }>).map(([id, v]) => [
+        id,
+        typeof v === 'string' ? v : v.value,
+      ]),
+    )
   const silence = () => vi.spyOn(console, 'error').mockImplementation(() => {})
   const SUMMARY_BUTTONS = ['Confirmar ✅', 'Reprogramar', 'Cancelar']
 
@@ -2456,14 +2464,14 @@ describe('preguntas extra', () => {
     expect(last(rec).kind).toBe('buttons')
     expect(last(rec).bodyText).toBe(SEDE)
     expect(optionTitles(last(rec))).toEqual(['Norte', 'Sur'])
-    expect(optionIds(last(rec))).toEqual(['ans:0', 'ans:1'])
+    expect(optionIds(last(rec))).toEqual([ansId('q-sede', 0), ansId('q-sede', 1)])
 
-    await send(db, rec, { replyId: 'ans:1' })
+    await send(db, rec, { replyId: ansId('q-sede', 1) })
     expect(optionTitles(last(rec))).toEqual(SUMMARY_BUTTONS)
-    expect(last(rec).bodyText).toContain('📝 ¿Motivo de la visita?: Control')
-    expect(last(rec).bodyText).toContain('📝 ¿En qué sede?: Sur')
+    expect(last(rec).bodyText).toContain('📝 ¿Motivo de la visita? Control')
+    expect(last(rec).bodyText).toContain('📝 ¿En qué sede? Sur')
     expect(state(db).step).toBe('summary')
-    expect(state(db).answers).toEqual({ 'q-motivo': 'Control', 'q-sede': 'Sur' })
+    expect(plain(state(db).answers)).toEqual({ 'q-motivo': 'Control', 'q-sede': 'Sur' })
   })
 
   it('al confirmar, la cita guarda las respuestas por id de pregunta (el mensaje final no las repite)', async () => {
@@ -2473,10 +2481,10 @@ describe('preguntas extra', () => {
 
     await walkToSlot(db, rec)
     await send(db, rec, { text: 'Control' })
-    await send(db, rec, { replyId: 'ans:0' })
+    await send(db, rec, { replyId: ansId('q-sede', 0) })
     await send(db, rec, { replyId: 'act:confirm' })
 
-    expect(db._tables.booking_appointments.at(-1)?.answers).toEqual({
+    expect(plain(db._tables.booking_appointments.at(-1)?.answers)).toEqual({
       'q-motivo': 'Control',
       'q-sede': 'Norte',
     })
@@ -2501,12 +2509,12 @@ describe('preguntas extra', () => {
     const rec = makeRecorder()
 
     await walkToSlot(db, rec)
-    await send(db, rec, { text: '   ' })
+    await send(db, rec, { text: '\u200b' })
 
     expect(messagesWith(rec, AGENDA_AGENT_TEXTS.answerRequired)).toHaveLength(1)
     expect(last(rec).bodyText).toBe(MOTIVO)
     expect(state(db).step).toBe('ask_question')
-    expect(state(db).answers ?? {}).toEqual({})
+    expect(plain(state(db).answers)).toEqual({})
   })
 
   it('una respuesta demasiado larga avisa y repite la pregunta', async () => {
@@ -2529,7 +2537,7 @@ describe('preguntas extra', () => {
     await walkToSlot(db, rec)
     await send(db, rec, { text: '  Con\ntrol​  ' })
 
-    expect(last(rec).bodyText).toContain('📝 ¿Motivo de la visita?: Con trol')
+    expect(last(rec).bodyText).toContain('📝 ¿Motivo de la visita? Con trol')
   })
 
   describe('pregunta de número', () => {
@@ -2547,7 +2555,7 @@ describe('preguntas extra', () => {
       expect(state(db).step).toBe('ask_question')
 
       await send(db, rec, { text: '4' })
-      expect(last(rec).bodyText).toContain('📝 ¿Cuántas personas?: 4')
+      expect(last(rec).bodyText).toContain('📝 ¿Cuántas personas? 4')
     })
   })
 
@@ -2562,38 +2570,38 @@ describe('preguntas extra', () => {
 
     it('un tap guarda el título ofrecido', async () => {
       const { db, rec } = await atSede()
-      await send(db, rec, { replyId: 'ans:1' })
-      expect(state(db).answers).toEqual({ 'q-sede': 'Sur' })
+      await send(db, rec, { replyId: ansId('q-sede', 1) })
+      expect(plain(state(db).answers)).toEqual({ 'q-sede': 'Sur' })
     })
 
     it('escribir el título entero (sin importar mayúsculas ni tildes) lo elige', async () => {
       const options = ['Norte', 'Sur', 'Sede Cañas', 'Médico']
       const first = await atSede(options)
       await send(first.db, first.rec, { text: 'SUR' })
-      expect(state(first.db).answers).toEqual({ 'q-sede': 'Sur' })
+      expect(plain(state(first.db).answers)).toEqual({ 'q-sede': 'Sur' })
 
       const second = await atSede(options)
       await send(second.db, second.rec, { text: 'medico' })
-      expect(state(second.db).answers).toEqual({ 'q-sede': 'Médico' })
+      expect(plain(state(second.db).answers)).toEqual({ 'q-sede': 'Médico' })
 
       const third = await atSede(options)
       await send(third.db, third.rec, { text: 'sede canas' })
-      expect(state(third.db).answers).toEqual({ 'q-sede': 'Sede Cañas' })
+      expect(plain(state(third.db).answers)).toEqual({ 'q-sede': 'Sede Cañas' })
     })
 
     it('escribir un número elige por posición cuando ningún título es ese número', async () => {
       const options = ['2 horas', 'Un día']
       const first = await atSede(options)
       await send(first.db, first.rec, { text: '2' })
-      expect(state(first.db).answers).toEqual({ 'q-sede': 'Un día' })
+      expect(plain(state(first.db).answers)).toEqual({ 'q-sede': 'Un día' })
 
       const second = await atSede(options)
       await send(second.db, second.rec, { text: '1.' })
-      expect(state(second.db).answers).toEqual({ 'q-sede': '2 horas' })
+      expect(plain(state(second.db).answers)).toEqual({ 'q-sede': '2 horas' })
 
       const third = await atSede(options)
       await send(third.db, third.rec, { text: '2 horas' })
-      expect(state(third.db).answers).toEqual({ 'q-sede': '2 horas' })
+      expect(plain(state(third.db).answers)).toEqual({ 'q-sede': '2 horas' })
     })
 
     it('una respuesta que no empareja cuenta como fallo y a la segunda pasa a un humano', async () => {
@@ -2610,9 +2618,9 @@ describe('preguntas extra', () => {
 
     it('un tap de un menú viejo no se acepta', async () => {
       const { db, rec } = await atSede()
-      await send(db, rec, { replyId: 'ans:7' })
+      await send(db, rec, { replyId: ansId('q-sede', 7) })
       expect(messagesWith(rec, AGENDA_AGENT_TEXTS.retry)).toHaveLength(1)
-      expect(state(db).answers ?? {}).toEqual({})
+      expect(plain(state(db).answers)).toEqual({})
     })
 
     it('tocar un botón viejo cuando se pregunta por texto no responde nada', async () => {
@@ -2622,9 +2630,10 @@ describe('preguntas extra', () => {
       await walkToSlot(db, rec)
 
       await send(db, rec, { replyId: 'act:confirm' })
-      expect(messagesWith(rec, AGENDA_AGENT_TEXTS.retry)).toHaveLength(1)
+      expect(messagesWith(rec, AGENDA_AGENT_TEXTS.answerRetryText)).toHaveLength(1)
+      expect(messagesWith(rec, AGENDA_AGENT_TEXTS.retry)).toHaveLength(0)
       expect(last(rec).bodyText).toBe(MOTIVO)
-      expect(state(db).answers ?? {}).toEqual({})
+      expect(plain(state(db).answers)).toEqual({})
     })
   })
 
@@ -2632,23 +2641,23 @@ describe('preguntas extra', () => {
     const qNota = () =>
       question({ id: 'q-nota', label: '¿Alguna nota?', kind: 'texto', required: false, position: 0 })
 
-    it('sin texto se salta: no se guarda ni se muestra, y sigue la próxima', async () => {
+    it('con "omitir" se salta: no se guarda ni se muestra, y sigue la próxima', async () => {
       const db = makeFakeDb(baseSeed())
       withQuestions(db, qNota(), qSede({ position: 1 }))
       const rec = makeRecorder()
 
       await walkToSlot(db, rec)
       expect(last(rec).bodyText).toBe(`¿Alguna nota?\n${AGENDA_AGENT_TEXTS.answerOptionalHint}`)
-      await send(db, rec, { text: '   ' })
+      await send(db, rec, { text: 'omitir' })
       expect(messagesWith(rec, AGENDA_AGENT_TEXTS.answerRequired)).toHaveLength(0)
-      expect(last(rec).bodyText).toBe(SEDE)
+      expect(last(rec).bodyText.startsWith(SEDE)).toBe(true)
 
-      await send(db, rec, { replyId: 'ans:0' })
-      expect(last(rec).bodyText).toContain('📝 ¿En qué sede?: Norte')
+      await send(db, rec, { replyId: ansId('q-sede', 0) })
+      expect(last(rec).bodyText).toContain('📝 ¿En qué sede? Norte')
       expect(last(rec).bodyText).not.toContain('¿Alguna nota?')
 
       await send(db, rec, { replyId: 'act:confirm' })
-      expect(db._tables.booking_appointments[0].answers).toEqual({ 'q-sede': 'Norte' })
+      expect(plain(db._tables.booking_appointments[0].answers)).toEqual({ 'q-sede': 'Norte' })
     })
 
     it('si solo hay una opcional y se salta, la cita no lleva answers', async () => {
@@ -2657,7 +2666,7 @@ describe('preguntas extra', () => {
       const rec = makeRecorder()
 
       await walkToSlot(db, rec)
-      await send(db, rec, { text: '' })
+      await send(db, rec, { text: 'omitir' })
       expect(optionTitles(last(rec))).toEqual(SUMMARY_BUTTONS)
       await send(db, rec, { replyId: 'act:confirm' })
       expect('answers' in db._tables.booking_appointments[0]).toBe(false)
@@ -2671,12 +2680,12 @@ describe('preguntas extra', () => {
       await walkToSlot(db, rec)
       await send(db, rec, { text: 'Llego 5 minutos tarde' })
       await send(db, rec, { replyId: 'act:confirm' })
-      expect(db._tables.booking_appointments[0].answers).toEqual({ 'q-nota': 'Llego 5 minutos tarde' })
+      expect(plain(db._tables.booking_appointments[0].answers)).toEqual({ 'q-nota': 'Llego 5 minutos tarde' })
     })
   })
 
   describe('la configuración cambia mientras el cliente responde', () => {
-    it('una pregunta desactivada se salta (sin consumir el mensaje) y sigue la próxima', async () => {
+    it('una pregunta desactivada se salta: lo escrito no se guarda como respuesta de la siguiente', async () => {
       const db = makeFakeDb(baseSeed())
       withQuestions(db)
       const rec = makeRecorder()
@@ -2688,11 +2697,11 @@ describe('preguntas extra', () => {
       await send(db, rec, { text: 'Control' })
       expect(last(rec).bodyText).toBe(SEDE)
       expect(state(db).questionId).toBe('q-sede')
-      expect(state(db).answers ?? {}).toEqual({})
+      expect(plain(state(db).answers)).toEqual({})
 
-      await send(db, rec, { replyId: 'ans:0' })
+      await send(db, rec, { replyId: ansId('q-sede', 0) })
       await send(db, rec, { replyId: 'act:confirm' })
-      expect(db._tables.booking_appointments[0].answers).toEqual({ 'q-sede': 'Norte' })
+      expect(plain(db._tables.booking_appointments[0].answers)).toEqual({ 'q-sede': 'Norte' })
     })
 
     it('si era la última pregunta, pasa al resumen con lo que ya respondió', async () => {
@@ -2704,9 +2713,9 @@ describe('preguntas extra', () => {
       await send(db, rec, { text: 'Control' })
       questionRow(db, 'q-sede').is_active = false
 
-      await send(db, rec, { replyId: 'ans:0' })
+      await send(db, rec, { replyId: ansId('q-sede', 0) })
       expect(optionTitles(last(rec))).toEqual(SUMMARY_BUTTONS)
-      expect(last(rec).bodyText).toContain('📝 ¿Motivo de la visita?: Control')
+      expect(last(rec).bodyText).toContain('📝 ¿Motivo de la visita? Control')
       expect(last(rec).bodyText).not.toContain('sede')
     })
 
@@ -2734,15 +2743,15 @@ describe('preguntas extra', () => {
       expect(optionTitles(last(rec))).toEqual(['Norte', 'Sur'])
       questionRow(db, 'q-sede').options = ['Norte', 'Centro']
 
-      await send(db, rec, { replyId: 'ans:1' }) // "Sur" ya no existe
+      await send(db, rec, { replyId: ansId('q-sede', 1) }) // "Sur" ya no existe
       expect(optionTitles(last(rec))).toEqual(['Norte', 'Centro'])
       expect(last(rec).bodyText).toBe(SEDE)
       expect(state(db).step).toBe('ask_question')
-      expect(state(db).answers ?? {}).toEqual({})
+      expect(plain(state(db).answers)).toEqual({})
       expect(messagesWith(rec, AGENDA_AGENT_TEXTS.retry)).toHaveLength(0)
 
-      await send(db, rec, { replyId: 'ans:1' })
-      expect(state(db).answers).toEqual({ 'q-sede': 'Centro' })
+      await send(db, rec, { replyId: ansId('q-sede', 1) })
+      expect(plain(state(db).answers)).toEqual({ 'q-sede': 'Centro' })
     })
 
     it('si cambian las opciones pero la elegida sigue, se acepta', async () => {
@@ -2753,8 +2762,8 @@ describe('preguntas extra', () => {
       await walkToSlot(db, rec)
       questionRow(db, 'q-sede').options = ['Norte', 'Sur', 'Centro']
 
-      await send(db, rec, { replyId: 'ans:1' })
-      expect(state(db).answers).toEqual({ 'q-sede': 'Sur' })
+      await send(db, rec, { replyId: ansId('q-sede', 1) })
+      expect(plain(state(db).answers)).toEqual({ 'q-sede': 'Sur' })
     })
 
     it('si una pregunta de opción pasa a texto, se repite como texto', async () => {
@@ -2765,13 +2774,13 @@ describe('preguntas extra', () => {
       await walkToSlot(db, rec)
       Object.assign(questionRow(db, 'q-sede'), { kind: 'texto', options: [] })
 
-      await send(db, rec, { replyId: 'ans:0' })
+      await send(db, rec, { replyId: ansId('q-sede', 0) })
       expect(last(rec).kind).toBe('text')
       expect(last(rec).bodyText).toBe(SEDE)
-      expect(state(db).answers ?? {}).toEqual({})
+      expect(plain(state(db).answers)).toEqual({})
 
       await send(db, rec, { text: 'La del centro' })
-      expect(state(db).answers).toEqual({ 'q-sede': 'La del centro' })
+      expect(plain(state(db).answers)).toEqual({ 'q-sede': 'La del centro' })
     })
 
     it('si una pregunta de texto pasa a opción, se repite con sus opciones', async () => {
@@ -2785,7 +2794,7 @@ describe('preguntas extra', () => {
       await send(db, rec, { text: 'Control' })
       expect(last(rec).kind).toBe('buttons')
       expect(optionTitles(last(rec))).toEqual(['Control', 'Primera vez'])
-      expect(state(db).answers ?? {}).toEqual({})
+      expect(plain(state(db).answers)).toEqual({})
     })
 
     it('si reordenan, pregunta la primera sin responder en el orden nuevo y el resumen sigue ese orden', async () => {
@@ -2800,10 +2809,10 @@ describe('preguntas extra', () => {
       await send(db, rec, { text: 'Control' })
       expect(last(rec).bodyText).toBe(SEDE)
 
-      await send(db, rec, { replyId: 'ans:1' })
+      await send(db, rec, { replyId: ansId('q-sede', 1) })
       const body = last(rec).bodyText
-      expect(body.indexOf('¿En qué sede?: Sur')).toBeGreaterThan(-1)
-      expect(body.indexOf('¿En qué sede?: Sur')).toBeLessThan(body.indexOf('¿Motivo de la visita?: Control'))
+      expect(body.indexOf('¿En qué sede? Sur')).toBeGreaterThan(-1)
+      expect(body.indexOf('¿En qué sede? Sur')).toBeLessThan(body.indexOf('¿Motivo de la visita? Control'))
     })
 
     it('si agregan una pregunta mientras responde, también se la hace', async () => {
@@ -2816,7 +2825,7 @@ describe('preguntas extra', () => {
         question({ id: 'q-extra', label: '¿Algo más?', kind: 'texto', position: 2 }),
       )
       await send(db, rec, { text: 'Control' })
-      await send(db, rec, { replyId: 'ans:0' })
+      await send(db, rec, { replyId: ansId('q-sede', 0) })
       expect(last(rec).bodyText).toBe('¿Algo más?')
     })
   })
@@ -2852,7 +2861,7 @@ describe('preguntas extra', () => {
       await walkToSlot(db, rec)
       await send(db, rec, { text: 'Control' })
       db._failNext('select', 'booking_questions', { message: 'boom' })
-      await send(db, rec, { replyId: 'ans:0' })
+      await send(db, rec, { replyId: ansId('q-sede', 0) })
 
       expect(optionTitles(last(rec))).toEqual(SUMMARY_BUTTONS)
       expect(spy).toHaveBeenCalled()
@@ -2869,12 +2878,12 @@ describe('preguntas extra', () => {
 
       await walkToSlot(db, rec)
       await send(db, rec, { text: 'Control' })
-      await send(db, rec, { replyId: 'ans:0' })
+      await send(db, rec, { replyId: ansId('q-sede', 0) })
       db._failNext('select', 'booking_questions', { message: 'boom' })
       await send(db, rec, { replyId: 'act:confirm' })
 
       expect(db._tables.booking_appointments).toHaveLength(1)
-      expect(db._tables.booking_appointments[0].answers).toEqual({
+      expect(plain(db._tables.booking_appointments[0].answers)).toEqual({
         'q-motivo': 'Control',
         'q-sede': 'Norte',
       })
@@ -2882,32 +2891,58 @@ describe('preguntas extra', () => {
   })
 
   describe('desde el resumen', () => {
-    it('"Reprogramar" borra las respuestas y vuelve a preguntar después de elegir otra hora', async () => {
+    it('"Reprogramar" conserva las respuestas: solo cambia la hora y no se vuelve a preguntar', async () => {
       const db = makeFakeDb(baseSeed())
       withQuestions(db)
       const rec = makeRecorder()
 
       await walkToSlot(db, rec)
       await send(db, rec, { text: 'Control' })
-      await send(db, rec, { replyId: 'ans:0' })
-      expect(state(db).answers).toEqual({ 'q-motivo': 'Control', 'q-sede': 'Norte' })
+      await send(db, rec, { replyId: ansId('q-sede', 0) })
 
       await send(db, rec, { replyId: 'act:reschedule' })
       expect(state(db).step).toBe('pick_day')
-      expect(state(db).answers).toBeUndefined()
-      expect(state(db).questionId).toBeUndefined()
       expect(state(db).slotStartsAt).toBeUndefined()
+      expect(state(db).questionId).toBeUndefined()
+      expect(plain(state(db).answers)).toEqual({ 'q-motivo': 'Control', 'q-sede': 'Norte' })
 
       await send(db, rec, { replyId: dayId(MONDAY) })
       await send(db, rec, { replyId: slotId(SLOT_2) })
-      expect(last(rec).bodyText).toBe(MOTIVO)
-      await send(db, rec, { text: 'Otra cosa' })
-      await send(db, rec, { replyId: 'ans:1' })
+      expect(optionTitles(last(rec))).toEqual(SUMMARY_BUTTONS)
+      expect(last(rec).bodyText).toContain('9:30 a. m.')
+      expect(last(rec).bodyText).toContain('📝 ¿Motivo de la visita? Control')
       await send(db, rec, { replyId: 'act:confirm' })
 
-      expect(db._tables.booking_appointments[0].answers).toEqual({
-        'q-motivo': 'Otra cosa',
-        'q-sede': 'Sur',
+      expect(plain(db._tables.booking_appointments[0].answers)).toEqual({
+        'q-motivo': 'Control',
+        'q-sede': 'Norte',
+      })
+    })
+
+    it('"Reprogramar" sí pregunta lo que se agregó mientras tanto y descarta lo desactivado', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db)
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      await send(db, rec, { text: 'Control' })
+      await send(db, rec, { replyId: ansId('q-sede', 0) })
+      await send(db, rec, { replyId: 'act:reschedule' })
+
+      questionRow(db, 'q-sede').is_active = false
+      db._tables.booking_questions.push(
+        question({ id: 'q-extra', label: '¿Algo más?', kind: 'texto', position: 2 }),
+      )
+      await send(db, rec, { replyId: dayId(MONDAY) })
+      await send(db, rec, { replyId: slotId(SLOT_2) })
+      expect(last(rec).bodyText).toBe('¿Algo más?')
+
+      await send(db, rec, { text: 'Nada' })
+      expect(last(rec).bodyText).not.toContain('sede')
+      await send(db, rec, { replyId: 'act:confirm' })
+      expect(plain(db._tables.booking_appointments[0].answers)).toEqual({
+        'q-motivo': 'Control',
+        'q-extra': 'Nada',
       })
     })
 
@@ -2918,7 +2953,7 @@ describe('preguntas extra', () => {
 
       await walkToSlot(db, rec)
       await send(db, rec, { text: 'Control' })
-      await send(db, rec, { replyId: 'ans:0' })
+      await send(db, rec, { replyId: ansId('q-sede', 0) })
 
       db._tables.booking_appointments.push(
         appointmentRow({
@@ -2934,11 +2969,11 @@ describe('preguntas extra', () => {
 
       await send(db, rec, { replyId: slotId(SLOT_2) })
       expect(optionTitles(last(rec))).toEqual(SUMMARY_BUTTONS)
-      expect(last(rec).bodyText).toContain('📝 ¿Motivo de la visita?: Control')
+      expect(last(rec).bodyText).toContain('📝 ¿Motivo de la visita? Control')
 
       await send(db, rec, { replyId: 'act:confirm' })
       const fresh = db._tables.booking_appointments.find((a) => a.id !== 'appt-race')
-      expect(fresh?.answers).toEqual({ 'q-motivo': 'Control', 'q-sede': 'Norte' })
+      expect(plain(fresh?.answers)).toEqual({ 'q-motivo': 'Control', 'q-sede': 'Norte' })
     })
   })
 
@@ -2964,7 +2999,7 @@ describe('preguntas extra', () => {
 
       await send(db, rec, { replyId: 'act:confirm' })
       const fresh = db._tables.booking_appointments.find((a) => a.id !== 'appt-old')
-      expect(fresh?.answers).toEqual({ 'q-motivo': 'Control', 'q-sede': 'Sur' })
+      expect(plain(fresh?.answers)).toEqual({ 'q-motivo': 'Control', 'q-sede': 'Sur' })
       expect(fresh?.rescheduled_from).toBe('appt-old')
       expect(last(rec).bodyText).toContain('Quedó reprogramado')
     })
@@ -3005,6 +3040,7 @@ describe('preguntas extra', () => {
 
   describe('saltar una pregunta opcional', () => {
     const HINT = AGENDA_AGENT_TEXTS.answerOptionalHint
+    const HINT_OPTIONS = AGENDA_AGENT_TEXTS.answerOptionalHintOptions
     const qNota = (o: Row = {}) =>
       question({ id: 'q-nota', label: '¿Alguna nota?', kind: 'texto', required: false, position: 0, ...o })
     const qOpt = (options: string[], o: Row = {}) =>
@@ -3031,7 +3067,7 @@ describe('preguntas extra', () => {
 
         await walkToSlot(db, rec)
         await send(db, rec, { text: word })
-        expect(state(db).answers).toEqual({ 'q-nota': '' })
+        expect(plain(state(db).answers)).toEqual({ 'q-nota': '' })
         expect(optionTitles(last(rec))).toEqual(SUMMARY_BUTTONS)
         expect(last(rec).bodyText).not.toContain('¿Alguna nota?')
         await send(db, rec, { replyId: 'act:confirm' })
@@ -3046,7 +3082,7 @@ describe('preguntas extra', () => {
 
       await walkToSlot(db, rec)
       await send(db, rec, { text: 'no tengo ninguna' })
-      expect(state(db).answers).toEqual({ 'q-nota': 'no tengo ninguna' })
+      expect(plain(state(db).answers)).toEqual({ 'q-nota': 'no tengo ninguna' })
     })
 
     it('en una pregunta obligatoria "no" y "omitir" son respuestas normales', async () => {
@@ -3057,7 +3093,7 @@ describe('preguntas extra', () => {
       await walkToSlot(db, rec)
       expect(last(rec).bodyText).toBe(MOTIVO)
       await send(db, rec, { text: 'no' })
-      expect(state(db).answers).toEqual({ 'q-motivo': 'no' })
+      expect(plain(state(db).answers)).toEqual({ 'q-motivo': 'no' })
     })
 
     it('opción opcional con pocas opciones suma el botón "Omitir" y el aviso', async () => {
@@ -3067,12 +3103,13 @@ describe('preguntas extra', () => {
 
       await walkToSlot(db, rec)
       expect(last(rec).kind).toBe('buttons')
-      expect(last(rec).bodyText).toBe(`¿Qué prefieres?\n${HINT}`)
+      expect(last(rec).bodyText).toBe(`¿Qué prefieres?\n${HINT_OPTIONS}`)
+      expect(HINT_OPTIONS).toContain('Omitir')
       expect(optionTitles(last(rec))).toEqual(['Norte', 'Sur', 'Omitir'])
-      expect(optionIds(last(rec))).toEqual(['ans:0', 'ans:1', 'ans:skip'])
+      expect(optionIds(last(rec))).toEqual([ansId('q-op', 0), ansId('q-op', 1), ansSkipId('q-op')])
 
-      await send(db, rec, { replyId: 'ans:skip' })
-      expect(state(db).answers).toEqual({ 'q-op': '' })
+      await send(db, rec, { replyId: ansSkipId('q-op') })
+      expect(plain(state(db).answers)).toEqual({ 'q-op': '' })
       expect(optionTitles(last(rec))).toEqual(SUMMARY_BUTTONS)
       expect(last(rec).bodyText).not.toContain('¿Qué prefieres?')
     })
@@ -3087,8 +3124,8 @@ describe('preguntas extra', () => {
       expect(last(rec).kind).toBe('list')
       expect(optionIds(last(rec))).toHaveLength(10)
       expect(optionTitles(last(rec)).at(-1)).toBe('Omitir')
-      await send(db, rec, { replyId: 'ans:skip' })
-      expect(state(db).answers).toEqual({ 'q-op': '' })
+      await send(db, rec, { replyId: ansSkipId('q-op') })
+      expect(plain(state(db).answers)).toEqual({ 'q-op': '' })
     })
 
     it('con 10 opciones no hay fila "Omitir", pero se puede escribir', async () => {
@@ -3099,9 +3136,23 @@ describe('preguntas extra', () => {
 
       await walkToSlot(db, rec)
       expect(optionIds(last(rec))).toHaveLength(10)
-      expect(optionIds(last(rec))).not.toContain('ans:skip')
+      expect(optionIds(last(rec))).not.toContain(ansSkipId('q-op'))
+      expect(last(rec).bodyText).toBe(`¿Qué prefieres?\n${HINT}`)
       await send(db, rec, { text: 'ninguno' })
-      expect(state(db).answers).toEqual({ 'q-op': '' })
+      expect(plain(state(db).answers)).toEqual({ 'q-op': '' })
+    })
+
+    it('con 3 opciones no se suma "Omitir" (pasaría de botones a lista), pero se puede escribir', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qOpt(['Norte', 'Sur', 'Centro']))
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      expect(last(rec).kind).toBe('buttons')
+      expect(optionTitles(last(rec))).toEqual(['Norte', 'Sur', 'Centro'])
+      expect(last(rec).bodyText).toBe(`¿Qué prefieres?\n${HINT}`)
+      await send(db, rec, { text: 'omitir' })
+      expect(plain(state(db).answers)).toEqual({ 'q-op': '' })
     })
 
     it.each(['omitir', 'no aplica', 'N/A'])('escribir "%s" también salta una opción opcional', async (word) => {
@@ -3111,7 +3162,7 @@ describe('preguntas extra', () => {
 
       await walkToSlot(db, rec)
       await send(db, rec, { text: word })
-      expect(state(db).answers).toEqual({ 'q-op': '' })
+      expect(plain(state(db).answers)).toEqual({ 'q-op': '' })
     })
 
     it('si una opción se llama "No", escribir "no" elige esa opción y no salta', async () => {
@@ -3121,7 +3172,7 @@ describe('preguntas extra', () => {
 
       await walkToSlot(db, rec)
       await send(db, rec, { text: 'no' })
-      expect(state(db).answers).toEqual({ 'q-op': 'No' })
+      expect(plain(state(db).answers)).toEqual({ 'q-op': 'No' })
     })
 
     it('una opción obligatoria no ofrece "Omitir" ni lo acepta', async () => {
@@ -3135,7 +3186,7 @@ describe('preguntas extra', () => {
 
       await send(db, rec, { text: 'omitir' })
       expect(messagesWith(rec, AGENDA_AGENT_TEXTS.retry)).toHaveLength(1)
-      expect(state(db).answers ?? {}).toEqual({})
+      expect(plain(state(db).answers)).toEqual({})
     })
 
     it('si la pregunta pasa a obligatoria mientras tanto, un "Omitir" viejo se repite', async () => {
@@ -3145,8 +3196,8 @@ describe('preguntas extra', () => {
 
       await walkToSlot(db, rec)
       questionRow(db, 'q-op').required = true
-      await send(db, rec, { replyId: 'ans:skip' })
-      expect(state(db).answers ?? {}).toEqual({})
+      await send(db, rec, { replyId: ansSkipId('q-op') })
+      expect(plain(state(db).answers)).toEqual({})
       expect(optionTitles(last(rec))).toEqual(['Norte', 'Sur'])
     })
   })
@@ -3161,7 +3212,7 @@ describe('preguntas extra', () => {
       await send(db, rec, { text: 'Es para una persona mayor' })
 
       expect(messagesWith(rec, AGENDA_AGENT_TEXTS.handoff)).toHaveLength(0)
-      expect(state(db).answers).toEqual({ 'q-motivo': 'Es para una persona mayor' })
+      expect(plain(state(db).answers)).toEqual({ 'q-motivo': 'Es para una persona mayor' })
     })
 
     it.each(['asesor', 'Humano', 'persona.', 'humana'])(
@@ -3211,6 +3262,298 @@ describe('preguntas extra', () => {
       await send(db, rec, { text: 'hola' })
       await send(db, rec, { text: 'mejor una persona' })
       expect(messagesWith(rec, AGENDA_AGENT_TEXTS.handoff)).toHaveLength(1)
+    })
+  })
+
+  describe('taps de otra pregunta', () => {
+    const qA = () => question({ id: 'q-a', label: '¿Sede?', kind: 'opcion', options: ['Norte', 'Sur'], position: 0 })
+    const qB = () => question({ id: 'q-b', label: '¿Turno?', kind: 'opcion', options: ['Mañana', 'Tarde'], position: 1 })
+
+    it('el id del botón lleva la pregunta: ans:<pregunta>:<n>', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qA(), qB())
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      expect(optionIds(last(rec))).toEqual(['ans:q-a:0', 'ans:q-a:1'])
+      await send(db, rec, { replyId: 'ans:q-a:1' })
+      expect(optionIds(last(rec))).toEqual(['ans:q-b:0', 'ans:q-b:1'])
+    })
+
+    it('tocar una opción vieja de la pregunta anterior no responde la actual', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qA(), qB())
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      await send(db, rec, { replyId: 'ans:q-a:0' })
+      expect(state(db).questionId).toBe('q-b')
+
+      await send(db, rec, { replyId: 'ans:q-a:1' }) // botón viejo de la sede
+      expect(plain(state(db).answers)).toEqual({ 'q-a': 'Norte' })
+      expect(state(db).questionId).toBe('q-b')
+      expect(last(rec).bodyText).toBe('¿Turno?')
+      expect(messagesWith(rec, AGENDA_AGENT_TEXTS.retry)).toHaveLength(1)
+    })
+
+    it('un "Omitir" viejo de otra pregunta tampoco responde', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qA(), qB())
+      questionRow(db, 'q-a').required = false
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      await send(db, rec, { replyId: 'ans:q-a:0' })
+      await send(db, rec, { replyId: 'ans:q-a:skip' })
+      expect(plain(state(db).answers)).toEqual({ 'q-a': 'Norte' })
+      expect(state(db).questionId).toBe('q-b')
+    })
+  })
+
+  describe('respuestas inválidas seguidas', () => {
+    it('dos respuestas inválidas seguidas pasan a un humano', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, question({ id: 'q-num', label: '¿Cuántas personas?', kind: 'numero' }))
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      await send(db, rec, { text: 'cuatro' })
+      expect(messagesWith(rec, AGENDA_AGENT_TEXTS.answerInvalidNumber)).toHaveLength(1)
+      expect(messagesWith(rec, AGENDA_AGENT_TEXTS.handoff)).toHaveLength(0)
+
+      await send(db, rec, { text: 'varias' })
+      expect(messagesWith(rec, AGENDA_AGENT_TEXTS.handoff)).toHaveLength(1)
+      expect(sessionRow(db)).toBeUndefined()
+    })
+
+    it('una respuesta válida en medio reinicia la cuenta', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(
+        db,
+        question({ id: 'q-num', label: '¿Cuántas personas?', kind: 'numero', position: 0 }),
+        qMotivo({ position: 1 }),
+      )
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      await send(db, rec, { text: 'cuatro' })
+      await send(db, rec, { text: '4' })
+      await send(db, rec, { text: '\u200b' }) // inválida (1 de nuevo, no 2)
+      expect(messagesWith(rec, AGENDA_AGENT_TEXTS.handoff)).toHaveLength(0)
+      expect(state(db).step).toBe('ask_question')
+    })
+
+    it('demasiado larga dos veces también pasa a un humano', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qMotivo())
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      await send(db, rec, { text: 'x'.repeat(201) })
+      await send(db, rec, { text: 'y'.repeat(201) })
+      expect(messagesWith(rec, AGENDA_AGENT_TEXTS.handoff)).toHaveLength(1)
+    })
+  })
+
+  describe('pregunta de número: formatos', () => {
+    async function answerNumber(text: string) {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, question({ id: 'q-num', label: '¿Cuántos?', kind: 'numero' }))
+      const rec = makeRecorder()
+      await walkToSlot(db, rec)
+      await send(db, rec, { text })
+      return { db, rec }
+    }
+
+    it.each([
+      ['1.234.567', '1234567'],
+      ['1,234', '1234'],
+      ['1 234 567', '1234567'],
+      ['somos 4', '4'],
+      ['Somos 4 personas.', '4'],
+      ['son 1.500 pesos', '1500'],
+    ])('"%s" se guarda como %s', async (text, stored) => {
+      const { db } = await answerNumber(text)
+      expect(plain(state(db).answers)).toEqual({ 'q-num': stored })
+    })
+
+    it.each(['4 y 2', 'cuatro', '1.5', 'somos 4 o 5'])('"%s" no es un número', async (text) => {
+      const { db, rec } = await answerNumber(text)
+      expect(messagesWith(rec, AGENDA_AGENT_TEXTS.answerInvalidNumber)).toHaveLength(1)
+      expect(state(db).answers ?? {}).toEqual({})
+    })
+  })
+
+  describe('mensajes sin texto en una pregunta escrita', () => {
+    it.each(['', '   ', '[Unsupported message type: image]'])(
+      'un mensaje vacío o no soportado (%j) repite la pregunta sin guardar ni contar fallo',
+      async (text) => {
+        const db = makeFakeDb(baseSeed())
+        withQuestions(db, qMotivo())
+        const rec = makeRecorder()
+
+        await walkToSlot(db, rec)
+        const before = rec.calls.length
+        await send(db, rec, { text })
+        await send(db, rec, { text })
+        await send(db, rec, { text })
+
+        expect(rec.calls.slice(before).map((c) => c.bodyText)).toEqual([MOTIVO, MOTIVO, MOTIVO])
+        expect(state(db).step).toBe('ask_question')
+        expect(state(db).fails).toBe(0)
+        expect(state(db).answers ?? {}).toEqual({})
+        expect(messagesWith(rec, AGENDA_AGENT_TEXTS.handoff)).toHaveLength(0)
+      },
+    )
+
+    it('en una pregunta opcional no salta: repite con el aviso; solo "omitir" salta', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, question({ id: 'q-nota', label: '¿Alguna nota?', required: false }))
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      await send(db, rec, { text: '[Unsupported message type: sticker]' })
+      expect(last(rec).bodyText).toBe(`¿Alguna nota?\n${AGENDA_AGENT_TEXTS.answerOptionalHint}`)
+      expect(state(db).answers ?? {}).toEqual({})
+
+      await send(db, rec, { text: 'omitir' })
+      expect(plain(state(db).answers)).toEqual({ 'q-nota': '' })
+    })
+  })
+
+  describe('texto de reintento en preguntas escritas', () => {
+    it('un tap viejo en una pregunta escrita usa el texto propio, no "elige una opción"', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qMotivo())
+      const rec = makeRecorder()
+      await walkToSlot(db, rec)
+
+      await send(db, rec, { replyId: 'act:confirm' })
+      expect(AGENDA_AGENT_TEXTS.answerRetryText).toContain('Escríbela')
+      expect(messagesWith(rec, AGENDA_AGENT_TEXTS.answerRetryText)).toHaveLength(1)
+    })
+  })
+
+  describe('resumen largo', () => {
+    it('5 preguntas de 80 caracteres con respuestas de 200 caben en 1024', async () => {
+      const db = makeFakeDb(baseSeed())
+      const label = (i: number) => `${i}`.repeat(1) + 'P'.repeat(78) + '?'
+      withQuestions(
+        db,
+        ...Array.from({ length: 5 }, (_, i) =>
+          question({ id: `q-${i}`, label: label(i), kind: 'texto', position: i }),
+        ),
+      )
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      for (let i = 0; i < 5; i += 1) await send(db, rec, { text: `${i}`.repeat(200) })
+
+      const body = last(rec).bodyText
+      expect(optionTitles(last(rec))).toEqual(SUMMARY_BUTTONS)
+      expect(body.length).toBeLessThanOrEqual(1024)
+      // Cada respuesta se acorta con "…".
+      expect(body).toContain('…')
+      expect(body).toContain('Corte clásico')
+      expect(body).toContain('¿Confirmamos?')
+
+      // La cita guarda las respuestas completas.
+      await send(db, rec, { replyId: 'act:confirm' })
+      const stored = db._tables.booking_appointments[0].answers as Record<string, { label: string; value: string }>
+      expect(stored['q-0'].value).toBe('0'.repeat(200))
+    })
+
+    it('si ni acortadas caben, muestra cuántas respuestas faltan', async () => {
+      const db = makeFakeDb(baseSeed())
+      const seed = db._tables.booking_services[0]
+      seed.name = 'S'.repeat(500)
+      withQuestions(
+        db,
+        ...Array.from({ length: 5 }, (_, i) =>
+          question({ id: `q-${i}`, label: `${i}` + 'P'.repeat(78) + '?', kind: 'texto', position: i }),
+        ),
+      )
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      for (let i = 0; i < 5; i += 1) await send(db, rec, { text: `${i}`.repeat(200) })
+
+      const body = last(rec).bodyText
+      expect(body.length).toBeLessThanOrEqual(1024)
+      expect(body).toMatch(/📝 \+\d respuestas? más/)
+      expect(body).toContain('¿Confirmamos?')
+    })
+  })
+
+  describe('respuestas guardadas con su pregunta', () => {
+    it('la cita guarda { etiqueta, valor } por id y una edición posterior de la etiqueta no la cambia', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db)
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      await send(db, rec, { text: 'Control' })
+      await send(db, rec, { replyId: ansId('q-sede', 1) })
+      questionRow(db, 'q-motivo').label = '¿Por qué vienes?'
+      await send(db, rec, { replyId: 'act:confirm' })
+
+      expect(db._tables.booking_appointments[0].answers).toEqual({
+        'q-motivo': { label: MOTIVO, value: 'Control' },
+        'q-sede': { label: SEDE, value: 'Sur' },
+      })
+    })
+
+    it('reprogramar copia las respuestas de la cita anterior, en formato nuevo o viejo', async () => {
+      const seed = baseSeed()
+      seed.booking_appointments = [
+        appointmentRow({
+          answers: {
+            'q-motivo': { label: 'Motivo (antes)', value: 'Control' },
+            'q-sede': 'Sur', // formato viejo: solo el valor
+          },
+        }),
+      ]
+      const db = makeFakeDb(seed)
+      withQuestions(db)
+      const rec = makeRecorder()
+
+      await send(db, rec, { text: 'cita' })
+      await send(db, rec, { replyId: 'act:reschedule' })
+      await send(db, rec, { replyId: dayId(MONDAY) })
+      await send(db, rec, { replyId: slotId('2026-10-19T16:00:00.000Z') })
+      await send(db, rec, { replyId: 'act:confirm' })
+
+      const fresh = db._tables.booking_appointments.find((a) => a.id !== 'appt-old')
+      expect(fresh?.answers).toEqual({
+        'q-motivo': { label: 'Motivo (antes)', value: 'Control' },
+        'q-sede': { label: SEDE, value: 'Sur' },
+      })
+    })
+  })
+
+  describe('lectura de preguntas', () => {
+    it('las preguntas se leen una sola vez por mensaje del cliente', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db)
+      const rec = makeRecorder()
+      await walkToSlot(db, rec)
+
+      const original = db.from.bind(db)
+      let reads = 0
+      db.from = (table: string) => {
+        if (table === 'booking_questions') reads += 1
+        return original(table)
+      }
+      await send(db, rec, { text: 'Control' }) // responde, muestra la siguiente
+      expect(reads).toBe(1)
+
+      reads = 0
+      await send(db, rec, { replyId: ansId('q-sede', 0) }) // responde y arma el resumen
+      expect(reads).toBe(1)
+
+      reads = 0
+      await send(db, rec, { replyId: 'act:confirm' })
+      expect(reads).toBe(1)
     })
   })
 })

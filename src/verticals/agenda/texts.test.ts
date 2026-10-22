@@ -29,7 +29,25 @@ describe('buildAgentTexts', () => {
     const t = buildAgentTexts(resolveLabels(null))
     expect(t.summaryBody(summary)).toContain('💵 $80.000')
     expect(t.summaryBody(summary)).toContain('📝 Motivo: Control')
+    // Si la pregunta ya termina en "?", no lleva dos puntos.
+    const withQuestion = { ...summary, answers: [{ label: '¿Motivo?', value: 'Control' }] }
+    expect(t.summaryBody(withQuestion)).toContain('📝 ¿Motivo? Control')
+    expect(t.summaryBody(withQuestion)).not.toContain('¿Motivo?: ')
     expect(t.summaryBody({ ...summary, price: null })).not.toContain('💵')
+  })
+
+  it('el resumen avisa cuántas respuestas no caben', () => {
+    const t = buildAgentTexts(resolveLabels(null))
+    expect(t.summaryBody({ ...summary, moreAnswers: 3 })).toContain('📝 +3 respuestas más')
+    expect(t.summaryBody({ ...summary, moreAnswers: 1 })).toContain('📝 +1 respuesta más')
+    expect(t.summaryBody(summary)).not.toContain('respuestas más')
+  })
+
+  it('las preguntas opcionales traen sus avisos', () => {
+    expect(AGENDA_AGENT_TEXTS.answerOptionalHint).toContain('omitir')
+    expect(AGENDA_AGENT_TEXTS.answerOptionalHintOptions).toContain('Omitir')
+    expect(AGENDA_AGENT_TEXTS.answerSkip.length).toBeLessThanOrEqual(20)
+    expect(AGENDA_AGENT_TEXTS.answerRetryText).not.toContain('opciones')
   })
 
   it('sin profesional asignado no hay línea de 👤', () => {

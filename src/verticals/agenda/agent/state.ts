@@ -14,6 +14,8 @@
 //   4. Sinónimos de acción ('sí', 'cancelar', 'cualquiera'…).
 // ============================================================
 
+import type { AnswerMap } from '../questions'
+
 export type BookingStep =
   | 'pick_service'
   | 'pick_staff'
@@ -56,11 +58,11 @@ export interface BookingState {
    */
   questionId?: string
   /**
-   * Respuestas por id de pregunta. Una pregunta opcional que el cliente no
-   * respondió queda con '' (así no se vuelve a preguntar); esas no se muestran
-   * ni se guardan en la cita.
+   * Respuestas por id de pregunta, con la etiqueta que vio el cliente. Una
+   * pregunta opcional que no respondió queda con valor '' (así no se vuelve a
+   * preguntar); esas no se muestran ni se guardan en la cita.
    */
-  answers?: Record<string, string>
+  answers?: AnswerMap
 }
 
 export function newBookingState(
@@ -79,10 +81,28 @@ export const staffId = (id: string): string => `staff:${id}`
 export const dayId = (key: string): string => `day:${key}`
 export const slotId = (iso: string): string => `slot:${iso}`
 export const actId = (action: string): string => `act:${action}`
-/** Opción `index` (base 0) de la pregunta extra en curso. */
-export const ansId = (index: number): string => `ans:${index}`
+/**
+ * Opción `index` (base 0) de una pregunta extra. Lleva el id de la pregunta: un
+ * botón viejo de otra pregunta no puede contestar la que está abierta. Cabe en
+ * los 200 caracteres de Meta (id de pregunta uuid = 36).
+ */
+export const ansId = (questionId: string, index: number): string => `ans:${questionId}:${index}`
 /** Opción "Omitir" de una pregunta extra opcional. */
-export const ANS_SKIP_ID = 'ans:skip'
+export const ansSkipId = (questionId: string): string => `ans:${questionId}:skip`
+
+/** 'ans:<pregunta>:<n|skip>' → sus partes; todo lo demás → null. */
+export function parseAnswerId(
+  id: string,
+): { questionId: string; index: number | 'skip' } | null {
+  if (!id.startsWith('ans:')) return null
+  const rest = id.slice('ans:'.length)
+  const cut = rest.lastIndexOf(':')
+  if (cut <= 0) return null
+  const questionId = rest.slice(0, cut)
+  const tail = rest.slice(cut + 1)
+  if (tail === 'skip') return { questionId, index: 'skip' }
+  return /^\d+$/.test(tail) ? { questionId, index: Number(tail) } : null
+}
 
 // ------------------------------------------------------------
 // Ids del recordatorio (Fase 3)

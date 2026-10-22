@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ANSWERS_MAX_BYTES,
   clampAnswers,
+  readAnswerMap,
   MAX_QUESTIONS,
   QUESTION_LABEL_MAX,
   readQuestion,
@@ -347,6 +348,19 @@ describe('validateAnswer', () => {
   const numero = { id: 'q1', label: 'Personas', kind: 'numero' as const, required: true, options: [] }
   const texto = { id: 'q2', label: 'Motivo', kind: 'texto' as const, required: false, options: [] }
 
+  it('número: acepta separadores de miles y un único entero dentro de una frase', () => {
+    expect(validateAnswer(numero, '1.234.567')).toEqual({ ok: true, value: '1234567' })
+    expect(validateAnswer(numero, '1,234')).toEqual({ ok: true, value: '1234' })
+    expect(validateAnswer(numero, '1 234 567')).toEqual({ ok: true, value: '1234567' })
+    expect(validateAnswer(numero, 'somos 4')).toEqual({ ok: true, value: '4' })
+    expect(validateAnswer(numero, 'Somos 4 personas.')).toEqual({ ok: true, value: '4' })
+    expect(validateAnswer(numero, 'son 1.500 pesos')).toEqual({ ok: true, value: '1500' })
+    expect(validateAnswer(numero, '4 y 2')).toEqual({ ok: false, reason: 'number' })
+    expect(validateAnswer(numero, 'somos 4 o 5')).toEqual({ ok: false, reason: 'number' })
+    expect(validateAnswer(numero, '1.5')).toEqual({ ok: false, reason: 'number' })
+    expect(validateAnswer(numero, 'cuatro')).toEqual({ ok: false, reason: 'number' })
+  })
+
   it('número: solo dígitos', () => {
     expect(validateAnswer(numero, ' 4 ')).toEqual({ ok: true, value: '4' })
     expect(validateAnswer(numero, 'cuatro')).toEqual({ ok: false, reason: 'number' })
@@ -362,40 +376,98 @@ describe('validateAnswer', () => {
   })
 })
 
-describe('clampAnswers', () => {
-  const bytes = (answers: Record<string, string>) => new TextEncoder().encode(JSON.stringify(answers)).length
+describe('readAnswerMap', () => {
+  it('lee el formato nuevo { etiqueta, valor }', () => {
+    expect(readAnswerMap({ q1: { label: 'Motivo', value: 'Control' } })).toEqual({
+      q1: { label: 'Motivo', value: 'Control' },
+    })
+  })
 
-  it('5 respuestas de 200 caracteres no se tocan', () => {
+  it('lee también el formato viejo de texto plano (sin etiqueta)', () => {
+    expect(readAnswerMap({ q1: 'Control' })).toEqual({ q1: { label: '', value: 'Control' } })
+    expect(readAnswerMap({ q1: 'Control', q2: { label: 'Sede', value: 'Sur' } })).toEqual({
+      q1: { label: '', value: 'Control' },
+      q2: { label: 'Sede', value: 'Sur' },
+    })
+  })
+
+  it('descarta lo que no sirve y las respuestas vacías (salvo keepEmpty)', () => {
+    const raw = { a: 3, b: null, c: { value: 7 }, d: { label: 'L', value: '' }, e: '', f: ['x'], g: { label: 'ok', value: 'v' } }
+    expect(readAnswerMap(raw)).toEqual({ g: { label: 'ok', value: 'v' } })
+    expect(readAnswerMap(raw, { keepEmpty: true })).toEqual({
+      d: { label: 'L', value: '' },
+      e: { label: '', value: '' },
+      g: { label: 'ok', value: 'v' },
+    })
+    for (const bad of [null, undefined, 'x', 3, ['a']]) expect(readAnswerMap(bad)).toEqual({})
+  })
+
+  it('una etiqueta que no es texto queda vacía y una larga se recorta a 80', () => {
+    expect(readAnswerMap({ q: { label: 5, value: 'v' } })).toEqual({ q: { label: '', value: 'v' } })
+    const out = readAnswerMap({ q: { label: 'x'.repeat(200), value: 'v' } })
+    expect([...out.q.label]).toHaveLength(QUESTION_LABEL_MAX)
+  })
+
+  it('una clave __proto__ no toca el prototipo', () => {
+    const raw = JSON.parse('{"__proto__": {"label": "L", "value": "v"}}')
+    const out = readAnswerMap(raw)
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
+    expect(Object.keys(out)).toEqual(['__proto__'])
+  })
+})
+
+describe('clampAnswers', () => {
+  const entry = (value: string, label = 'Etiqueta') => ({ label, value })
+  const bytes = (answers: object) => new TextEncoder().encode(JSON.stringify(answers)).length
+
+  it('5 respuestas de 200 caracteres con etiqueta de 80 no se tocan', () => {
     const answers = Object.fromEntries(
-      Array.from({ length: 5 }, (_, i) => [`11111111-1111-4111-8111-11111111111${i}`, '😀'.repeat(200)]),
+      Array.from({ length: 5 }, (_, i) => [
+        `11111111-1111-4111-8111-11111111111${i}`,
+        entry('\u{1F600}'.repeat(200), 'e'.repeat(80)),
+      ]),
     )
     expect(bytes(answers)).toBeLessThan(ANSWERS_MAX_BYTES)
     expect(clampAnswers(answers)).toEqual(answers)
   })
 
   it('quita las respuestas vacías y lo que no es texto', () => {
-    expect(clampAnswers({ a: 'x', b: '', c: 3 as unknown as string })).toEqual({ a: 'x' })
+    expect(clampAnswers({ a: entry('x'), b: entry(''), c: 3 as never })).toEqual({ a: entry('x') })
     expect(clampAnswers(undefined)).toEqual({})
     expect(clampAnswers(null)).toEqual({})
   })
 
+  it('acepta el formato viejo de texto plano', () => {
+    expect(clampAnswers({ a: 'x' })).toEqual({ a: { label: '', value: 'x' } })
+  })
+
   it('si el JSON pasa del tope acorta los valores más largos hasta que quepa', () => {
-    const answers = { a: 'x'.repeat(6000), b: 'y'.repeat(6000), c: 'corta' }
+    const answers = { a: entry('x'.repeat(6000)), b: entry('y'.repeat(6000)), c: entry('corta') }
     const out = clampAnswers(answers)
     expect(bytes(out)).toBeLessThanOrEqual(ANSWERS_MAX_BYTES)
-    expect(out.c).toBe('corta')
-    expect(out.a.length).toBeGreaterThan(0)
-    expect(out.b.length).toBeGreaterThan(0)
-    expect(out.a.startsWith('x')).toBe(true)
+    expect(out.c.value).toBe('corta')
+    expect(out.a.value.length).toBeGreaterThan(0)
+    expect(out.b.value.length).toBeGreaterThan(0)
+    expect(out.a.value.startsWith('x')).toBe(true)
+    expect(out.a.label).toBe('Etiqueta')
+  })
+
+  it('las etiquetas también cuentan en el tope', () => {
+    const answers = Object.fromEntries(
+      Array.from({ length: 5 }, (_, i) => [`q${i}`, entry('v'.repeat(900), 'L'.repeat(80))]),
+    )
+    const out = clampAnswers(answers, 3000)
+    expect(bytes(out)).toBeLessThanOrEqual(3000)
+    expect(Object.values(out).every((e) => e.label === 'L'.repeat(80))).toBe(true)
   })
 
   it('cuenta bytes UTF-8 y no parte un emoji', () => {
-    const out = clampAnswers({ a: '😀'.repeat(5000) }, 1000)
+    const out = clampAnswers({ a: entry('\u{1F600}'.repeat(5000)) }, 1000)
     expect(bytes(out)).toBeLessThanOrEqual(1000)
-    expect([...out.a].every((ch) => ch === '😀')).toBe(true)
+    expect([...out.a.value].every((ch) => ch === '\u{1F600}')).toBe(true)
   })
 
   it('termina aunque el tope sea imposible', () => {
-    expect(clampAnswers({ a: 'x'.repeat(50) }, 3)).toEqual({})
+    expect(clampAnswers({ a: entry('x'.repeat(50)) }, 3)).toEqual({})
   })
 })

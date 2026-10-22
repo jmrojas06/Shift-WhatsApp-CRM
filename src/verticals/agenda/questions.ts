@@ -215,8 +215,67 @@ export function validateAnswer(question: AgendaQuestion, raw: string): AnswerChe
     .trim()
   if (!value) return question.required ? { ok: false, reason: 'required' } : { ok: true, value: '' }
   if (codePointLength(value) > ANSWER_MAX) return { ok: false, reason: 'too_long' }
-  if (question.kind === 'numero' && !/^\d+$/.test(value)) return { ok: false, reason: 'number' }
+  if (question.kind === 'numero') {
+    const number = parseNumber(value)
+    return number === null ? { ok: false, reason: 'number' } : { ok: true, value: number }
+  }
   return { ok: true, value }
+}
+
+/** "1.234" o "1,234" o "1 234" con puntos/comas/espacios como miles. */
+const THOUSANDS = /^\d{1,3}(?:[.,\s]\d{3})+$/
+const NUMBER_TOKEN = /\d{1,3}(?:[.,\s]\d{3})+|\d+/gu
+
+/**
+ * El número que escribió el cliente, solo dígitos: "4", "1.234.567" o un único
+ * entero dentro de una frase ("somos 4"). Con dos números ("4 y 2") o ninguno, null.
+ */
+function parseNumber(value: string): string | null {
+  if (/^\d+$/.test(value)) return value
+  if (THOUSANDS.test(value)) return value.replace(/[.,\s]/g, '')
+  const tokens = value.match(NUMBER_TOKEN) ?? []
+  return tokens.length === 1 ? tokens[0].replace(/[.,\s]/g, '') : null
+}
+
+/**
+ * Una respuesta guardada con la pregunta tal como se la hicieron al cliente:
+ * si el dueño edita la etiqueta después, la respuesta vieja no cambia de sentido.
+ */
+export interface AnswerEntry {
+  label: string
+  value: string
+}
+
+/** Respuestas por id de pregunta (jsonb de la cita y estado de la sesión). */
+export type AnswerMap = Record<string, AnswerEntry>
+
+/**
+ * Lee respuestas de un jsonb. Acepta el formato nuevo `{ label, value }` y el
+ * viejo de texto plano (`"id": "valor"`, sin etiqueta); descarta lo demás.
+ * `keepEmpty` conserva las vacías (en la sesión marcan "opcional sin responder").
+ * Nunca lanza.
+ */
+export function readAnswerMap(raw: unknown, opts: { keepEmpty?: boolean } = {}): AnswerMap {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const entries: [string, AnswerEntry][] = []
+  for (const [id, item] of Object.entries(raw as Record<string, unknown>)) {
+    let label = ''
+    let value: string
+    if (typeof item === 'string') {
+      value = item
+    } else if (item && typeof item === 'object' && !Array.isArray(item)) {
+      const record = item as Record<string, unknown>
+      if (typeof record.value !== 'string') continue
+      value = record.value
+      if (typeof record.label === 'string') label = truncate(record.label.trim(), QUESTION_LABEL_MAX)
+    } else {
+      continue
+    }
+    if (!value && !opts.keepEmpty) continue
+    entries.push([id, { label, value }])
+  }
+  // fromEntries define propiedades propias: una clave "__proto__" no toca el prototipo.
+  return Object.fromEntries(entries)
 }
 
 /**
@@ -229,29 +288,24 @@ export const ANSWERS_MAX_BYTES = 8000
 const encoder = new TextEncoder()
 
 /**
- * Deja solo las respuestas con texto y, si aun así el JSON pasa de `maxBytes`,
- * acorta los valores (siempre el más largo, a la mitad) hasta que quepa. Con 5
- * preguntas de 200 caracteres nunca debería hacer falta; es una red para que una
- * fila rara jamás haga fallar el insert de la cita.
+ * Deja solo las respuestas con texto y, si aun así el JSON (etiquetas incluidas)
+ * pasa de `maxBytes`, acorta los valores (siempre el más largo, a la mitad) hasta
+ * que quepa. Con 5 preguntas de 80 caracteres y respuestas de 200 nunca debería
+ * hacer falta; es una red para que una fila rara jamás haga fallar el insert.
  */
-export function clampAnswers(
-  answers: Record<string, string> | null | undefined,
-  maxBytes: number = ANSWERS_MAX_BYTES,
-): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const [id, value] of Object.entries(answers ?? {})) {
-    if (typeof value === 'string' && value) out[id] = value
-  }
-  const size = () => encoder.encode(JSON.stringify(out)).length
+export function clampAnswers(answers: unknown, maxBytes: number = ANSWERS_MAX_BYTES): AnswerMap {
+  const map = new Map(Object.entries(readAnswerMap(answers)))
+  const size = () => encoder.encode(JSON.stringify(Object.fromEntries(map))).length
   while (size() > maxBytes) {
     let longest: string | null = null
-    for (const [id, value] of Object.entries(out)) {
-      if (longest === null || value.length > out[longest].length) longest = id
+    for (const [id, entry] of map) {
+      if (longest === null || entry.value.length > (map.get(longest)?.value.length ?? 0)) longest = id
     }
     if (longest === null) break
-    const half = [...out[longest]].slice(0, Math.floor([...out[longest]].length / 2)).join('')
-    if (half) out[longest] = half
-    else delete out[longest]
+    const entry = map.get(longest)!
+    const half = [...entry.value].slice(0, Math.floor([...entry.value].length / 2)).join('')
+    if (half) map.set(longest, { ...entry, value: half })
+    else map.delete(longest)
   }
-  return out
+  return Object.fromEntries(map)
 }

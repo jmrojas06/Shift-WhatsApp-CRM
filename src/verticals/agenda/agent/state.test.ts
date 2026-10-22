@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   actId,
   ansId,
+  ansSkipId,
+  parseAnswerId,
   containsHandoffWord,
   containsIntentWord,
   isHandoffOnly,
@@ -115,9 +117,22 @@ describe('ids de opción', () => {
     expect(parseOptionId('')).toBeNull()
   })
 
-  it('las opciones de las preguntas extra viajan como ans:<índice>', () => {
-    expect(ansId(0)).toBe('ans:0')
-    expect(parseOptionId(ansId(2))).toEqual({ kind: 'ans', value: '2' })
+  it('las opciones de las preguntas extra viajan como ans:<pregunta>:<n>', () => {
+    expect(ansId('q-1', 0)).toBe('ans:q-1:0')
+    expect(ansSkipId('q-1')).toBe('ans:q-1:skip')
+    expect(parseOptionId(ansId('q-1', 2))).toEqual({ kind: 'ans', value: 'q-1:2' })
+    expect(parseAnswerId('ans:q-1:2')).toEqual({ questionId: 'q-1', index: 2 })
+    expect(parseAnswerId('ans:q-1:skip')).toEqual({ questionId: 'q-1', index: 'skip' })
+    const uuid = '0b3c9d7e-1a2b-4c3d-8e4f-5a6b7c8d9e0f'
+    expect(parseAnswerId(ansId(uuid, 1))).toEqual({ questionId: uuid, index: 1 })
+    // El id más largo posible cabe en el límite de Meta (200 en listas).
+    expect(ansId(uuid, 9).length).toBeLessThan(200)
+  })
+
+  it('un id de respuesta mal formado no se interpreta', () => {
+    for (const id of ['ans:', 'ans:1', 'ans::1', 'ans:q-1:x', 'svc:q-1:1', 'ans:q-1:']) {
+      expect(parseAnswerId(id)).toBeNull()
+    }
   })
 })
 
@@ -223,46 +238,46 @@ describe('ids del recordatorio', () => {
 
 describe('matchAnswerOption', () => {
   const sedes: OfferedOption[] = [
-    { id: ansId(0), title: 'Norte' },
-    { id: ansId(1), title: 'Sur' },
-    { id: ansId(2), title: 'Sede Cañas' },
+    { id: ansId('q', 0), title: 'Norte' },
+    { id: ansId('q', 1), title: 'Sur' },
+    { id: ansId('q', 2), title: 'Sede Cañas' },
   ]
 
   it('el tap manda por id y un id que no se ofreció no empareja', () => {
-    expect(matchAnswerOption({ text: '', replyId: 'ans:1', options: sedes })).toBe('ans:1')
-    expect(matchAnswerOption({ text: '', replyId: 'ans:9', options: sedes })).toBeNull()
+    expect(matchAnswerOption({ text: '', replyId: ansId('q', 1), options: sedes })).toBe(ansId('q', 1))
+    expect(matchAnswerOption({ text: '', replyId: ansId('q', 9), options: sedes })).toBeNull()
   })
 
   it('el título entero gana, sin importar mayúsculas ni tildes', () => {
-    expect(matchAnswerOption({ text: 'SUR', options: sedes })).toBe('ans:1')
-    expect(matchAnswerOption({ text: ' sede  canas ', options: sedes })).toBe('ans:2')
+    expect(matchAnswerOption({ text: 'SUR', options: sedes })).toBe(ansId('q', 1))
+    expect(matchAnswerOption({ text: ' sede  canas ', options: sedes })).toBe(ansId('q', 2))
   })
 
   it('un título que es un número gana sobre la posición', () => {
     const legacy: OfferedOption[] = [
-      { id: ansId(0), title: '2' },
-      { id: ansId(1), title: 'Norte' },
+      { id: ansId('q', 0), title: '2' },
+      { id: ansId('q', 1), title: 'Norte' },
     ]
-    expect(matchAnswerOption({ text: '2', options: legacy })).toBe('ans:0')
+    expect(matchAnswerOption({ text: '2', options: legacy })).toBe(ansId('q', 0))
   })
 
   it('si ningún título es el número, es la posición', () => {
-    expect(matchAnswerOption({ text: '2', options: sedes })).toBe('ans:1')
-    expect(matchAnswerOption({ text: '3.', options: sedes })).toBe('ans:2')
+    expect(matchAnswerOption({ text: '2', options: sedes })).toBe(ansId('q', 1))
+    expect(matchAnswerOption({ text: '3.', options: sedes })).toBe(ansId('q', 2))
     expect(matchAnswerOption({ text: '4', options: sedes })).toBeNull()
   })
 
   it('un título que empieza con número no se confunde con la posición', () => {
     const options: OfferedOption[] = [
-      { id: ansId(0), title: '2 horas' },
-      { id: ansId(1), title: 'Un día' },
+      { id: ansId('q', 0), title: '2 horas' },
+      { id: ansId('q', 1), title: 'Un día' },
     ]
-    expect(matchAnswerOption({ text: '2 horas', options })).toBe('ans:0')
-    expect(matchAnswerOption({ text: '2', options })).toBe('ans:1')
+    expect(matchAnswerOption({ text: '2 horas', options })).toBe(ansId('q', 0))
+    expect(matchAnswerOption({ text: '2', options })).toBe(ansId('q', 1))
   })
 
   it('sin coincidencia exacta cae a lo que ya hace matchChoice', () => {
-    expect(matchAnswerOption({ text: 'la sur por favor', options: sedes })).toBe('ans:1')
+    expect(matchAnswerOption({ text: 'la sur por favor', options: sedes })).toBe(ansId('q', 1))
     expect(matchAnswerOption({ text: 'ni idea', options: sedes })).toBeNull()
     expect(matchAnswerOption({ text: '', options: sedes })).toBeNull()
   })

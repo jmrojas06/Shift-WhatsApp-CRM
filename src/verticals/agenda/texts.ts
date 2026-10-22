@@ -335,6 +335,8 @@ export interface AgendaAppointmentSummary {
   price: string | null
   /** Respuestas a las preguntas extra, en orden. */
   answers?: { label: string; value: string }[]
+  /** Cuántas respuestas no caben en el mensaje (se avisa con una línea). */
+  moreAnswers?: number
 }
 
 /**
@@ -350,7 +352,14 @@ function summaryLines(a: AgendaAppointmentSummary, opts: { price?: boolean } = {
   if (a.staff) lines.push(`👤 ${a.staff}`)
   lines.push(`📅 ${a.date}`, `🕐 ${a.time}`)
   if (opts.price !== false && a.price) lines.push(`💵 ${a.price}`)
-  for (const answer of a.answers ?? []) lines.push(`📝 ${answer.label}: ${answer.value}`)
+  for (const answer of a.answers ?? []) {
+    // Una pregunta que ya termina en "?" no lleva dos puntos.
+    const sep = answer.label.endsWith('?') ? ' ' : ': '
+    lines.push(`📝 ${answer.label}${sep}${answer.value}`)
+  }
+  if (a.moreAnswers) {
+    lines.push(`📝 +${a.moreAnswers} ${a.moreAnswers === 1 ? 'respuesta más' : 'respuestas más'}`)
+  }
   return lines.join('\n')
 }
 
@@ -393,8 +402,12 @@ export function buildAgentTexts(l: AgendaLabels) {
     // Preguntas extra
     // ----------------------------------------------------------
     answerMenuButton: 'Ver opciones',
-    /** Línea que se agrega a una pregunta NO obligatoria. */
+    /** Línea que se agrega a una pregunta NO obligatoria que se responde escribiendo. */
     answerOptionalHint: '(Opcional: si no aplica, escribe "omitir".)',
+    /** Ídem, cuando la pregunta de opciones trae el botón/fila "Omitir". */
+    answerOptionalHintOptions: '(Opcional: toca "Omitir" o escríbelo.)',
+    /** Reintento cuando se esperaba una respuesta escrita (no hay opciones que elegir). */
+    answerRetryText: 'No entendí tu respuesta 😅. Escríbela, por favor.',
     /** Opción extra de una pregunta de opciones NO obligatoria (cabe en un botón). */
     answerSkip: 'Omitir',
     answerInvalidNumber: 'Escríbeme solo números, por favor.',
