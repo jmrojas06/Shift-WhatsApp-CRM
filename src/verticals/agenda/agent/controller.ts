@@ -78,10 +78,13 @@ import {
 import { formatDayLabel, formatLongDate, formatPrice, formatTimeLabel, truncate } from './format'
 import {
   actId,
+  ANS_SKIP_ID,
   ansId,
   containsHandoffWord,
   containsIntentWord,
   dayId,
+  isHandoffOnly,
+  isSkipAnswer,
   matchAnswerOption,
   matchChoice,
   newBookingState,
@@ -223,8 +226,15 @@ export async function handleAgendaInbound(
     return { consumed: true }
   }
 
-  // 1) Pedir un humano gana sobre cualquier paso del flujo.
-  if (replyId === null && containsHandoffWord(text)) {
+  // 1) Pedir un humano gana sobre cualquier paso del flujo. Excepción: mientras
+  //    el cliente escribe la respuesta a una pregunta extra de texto, solo cuenta
+  //    el mensaje que ES la palabra ("es para una persona mayor" es la respuesta).
+  const asking = args.session ? coerceState(args.session.state) : null
+  const writingAnswer = asking?.step === 'ask_question' && asking.options.length === 0
+  if (
+    replyId === null &&
+    (writingAnswer ? isHandoffOnly(text) : containsHandoffWord(text))
+  ) {
     await performHandoff(dialog, args.session?.id ?? null)
     return { consumed: true }
   }
@@ -607,23 +617,37 @@ async function handleAnswer(
       options: state.options,
     })
     const offered = choice ? state.options.find((o) => o.id === choice) : undefined
-    if (!offered) {
+    if (offered?.id === ANS_SKIP_ID) {
+      // "Omitir" solo vale si la pregunta sigue siendo opcional.
+      if (question.required) {
+        await conclude(dialog, sessionId, state)
+        return
+      }
+      value = ''
+    } else if (offered) {
+      // Se guarda el título que se ofreció; si el dueño ya lo quitó, se repite.
+      if (!question.options.includes(offered.title)) {
+        await conclude(dialog, sessionId, state)
+        return
+      }
+      value = offered.title
+    } else if (!question.required && input.replyId === null && isSkipAnswer(input.text)) {
+      // Una opción llamada "No" gana (arriba); si no, "no"/"ninguno"/... salta.
+      value = ''
+    } else {
       await registerFail(dialog, sessionId, state)
       return
     }
-    // Se guarda el título que se ofreció; si el dueño ya lo quitó, se repite.
-    if (!question.options.includes(offered.title)) {
-      await conclude(dialog, sessionId, state)
-      return
-    }
-    value = offered.title
   } else {
     // Un tap de un menú viejo no responde una pregunta escrita.
     if (input.replyId !== null) {
       await registerFail(dialog, sessionId, state)
       return
     }
-    const check = validateAnswer(question, input.text)
+    const check =
+      !question.required && isSkipAnswer(input.text)
+        ? ({ ok: true, value: '' } as const)
+        : validateAnswer(question, input.text)
     if (!check.ok) {
       const warning =
         check.reason === 'number'
@@ -1346,19 +1370,27 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
       if (!question) {
         return renderStep(dialog, { ...state, step: 'summary', questionId: undefined })
       }
+      // Una pregunta opcional avisa cómo saltarla.
+      const bodyText = question.required
+        ? question.label
+        : `${question.label}\n${dialog.texts.answerOptionalHint}`
       if (question.kind === 'opcion') {
         const options: OfferedOption[] = question.options.map((title, i) => ({
           id: ansId(i),
           title,
         }))
+        // Con hasta 9 opciones cabe una fila/botón "Omitir" (WhatsApp: 10 filas).
+        if (!question.required && options.length <= MAX_LIST_OPTIONS - 1) {
+          options.push({ id: ANS_SKIP_ID, title: dialog.texts.answerSkip })
+        }
         await sendOptions(dialog, {
-          bodyText: question.label,
+          bodyText,
           buttonLabel: dialog.texts.answerMenuButton,
           options,
         })
         return { state: { ...state, questionId: question.id, options }, closed: false }
       }
-      await dialog.sender.sendText({ text: question.label })
+      await dialog.sender.sendText({ text: bodyText })
       return { state: { ...state, questionId: question.id, options: [] }, closed: false }
     }
 

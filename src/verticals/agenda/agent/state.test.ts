@@ -5,6 +5,8 @@ import {
   ansId,
   containsHandoffWord,
   containsIntentWord,
+  isHandoffOnly,
+  isSkipAnswer,
   dayId,
   matchAnswerOption,
   matchChoice,
@@ -263,5 +265,28 @@ describe('matchAnswerOption', () => {
     expect(matchAnswerOption({ text: 'la sur por favor', options: sedes })).toBe('ans:1')
     expect(matchAnswerOption({ text: 'ni idea', options: sedes })).toBeNull()
     expect(matchAnswerOption({ text: '', options: sedes })).toBeNull()
+  })
+})
+
+describe('isSkipAnswer', () => {
+  it('acepta las palabras de salto como mensaje completo', () => {
+    for (const w of ['omitir', 'Omitir.', 'NO', 'no', 'ninguno', 'Ninguna', 'no aplica', 'N/A', 'n.a.', ' No  aplica ']) {
+      expect(isSkipAnswer(w)).toBe(true)
+    }
+  })
+
+  it('una frase con la palabra no cuenta', () => {
+    for (const w of ['no tengo', 'ninguna de las dos', 'omitir esto', 'nada', '']) {
+      expect(isSkipAnswer(w)).toBe(false)
+    }
+  })
+})
+
+describe('isHandoffOnly', () => {
+  it('solo cuando todo el mensaje es la palabra', () => {
+    for (const w of ['asesor', 'Humano', 'humana', 'persona.', ' PERSONA ']) expect(isHandoffOnly(w)).toBe(true)
+    for (const w of ['un asesor', 'es para una persona mayor', 'asesor por favor', '']) {
+      expect(isHandoffOnly(w)).toBe(false)
+    }
   })
 })

@@ -81,6 +81,8 @@ export const slotId = (iso: string): string => `slot:${iso}`
 export const actId = (action: string): string => `act:${action}`
 /** Opción `index` (base 0) de la pregunta extra en curso. */
 export const ansId = (index: number): string => `ans:${index}`
+/** Opción "Omitir" de una pregunta extra opcional. */
+export const ANS_SKIP_ID = 'ans:skip'
 
 // ------------------------------------------------------------
 // Ids del recordatorio (Fase 3)
@@ -207,6 +209,23 @@ function cleanExtraIntentWords(words: readonly string[]): string[] {
   return words
     .map((w) => normalizeText(w).replace(/[^\p{L}\p{N}\s]/gu, '').replace(/\s+/g, ' ').trim())
     .filter((w) => w.length >= EXTRA_INTENT_MIN && !EXTRA_INTENT_STOPLIST.has(w))
+}
+
+/**
+ * ¿TODO el mensaje es una palabra de pedir un humano? Es la regla estricta
+ * mientras el cliente escribe la respuesta a una pregunta de texto: "es para
+ * una persona mayor" es la respuesta, no un pedido de asesor.
+ */
+export function isHandoffOnly(text: string): boolean {
+  return (HANDOFF_WORDS as readonly string[]).includes(squash(text))
+}
+
+/** Palabras que, como mensaje completo, saltan una pregunta extra opcional ("n/a" queda como "n a"). */
+const SKIP_WORDS: readonly string[] = ['omitir', 'no', 'ninguno', 'ninguna', 'no aplica', 'na', 'n a']
+
+/** ¿Todo el mensaje (sin mayúsculas, tildes ni puntuación) es una palabra de salto? */
+export function isSkipAnswer(text: string): boolean {
+  return SKIP_WORDS.includes(squash(text))
 }
 
 /** ¿El cliente pidió hablar con una persona? (gana sobre todo lo demás). */

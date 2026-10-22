@@ -393,6 +393,10 @@ export function buildAgentTexts(l: AgendaLabels) {
     // Preguntas extra
     // ----------------------------------------------------------
     answerMenuButton: 'Ver opciones',
+    /** Línea que se agrega a una pregunta NO obligatoria. */
+    answerOptionalHint: '(Opcional: si no aplica, escribe "omitir".)',
+    /** Opción extra de una pregunta de opciones NO obligatoria (cabe en un botón). */
+    answerSkip: 'Omitir',
     answerInvalidNumber: 'Escríbeme solo números, por favor.',
     answerTooLong: 'Esa respuesta es muy larga. Escríbela más corta, por favor.',
     answerRequired: 'Necesito esa respuesta para agendar. Escríbela, por favor.',

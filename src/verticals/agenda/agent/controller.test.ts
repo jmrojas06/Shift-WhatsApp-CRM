@@ -2638,7 +2638,7 @@ describe('preguntas extra', () => {
       const rec = makeRecorder()
 
       await walkToSlot(db, rec)
-      expect(last(rec).bodyText).toBe('¿Alguna nota?')
+      expect(last(rec).bodyText).toBe(`¿Alguna nota?\n${AGENDA_AGENT_TEXTS.answerOptionalHint}`)
       await send(db, rec, { text: '   ' })
       expect(messagesWith(rec, AGENDA_AGENT_TEXTS.answerRequired)).toHaveLength(0)
       expect(last(rec).bodyText).toBe(SEDE)
@@ -3000,6 +3000,217 @@ describe('preguntas extra', () => {
       await send(db, rec, { replyId: dayId(MONDAY) })
       await send(db, rec, { replyId: slotId(SLOT) })
       expect(last(rec).bodyText).toBe(MOTIVO)
+    })
+  })
+
+  describe('saltar una pregunta opcional', () => {
+    const HINT = AGENDA_AGENT_TEXTS.answerOptionalHint
+    const qNota = (o: Row = {}) =>
+      question({ id: 'q-nota', label: '¿Alguna nota?', kind: 'texto', required: false, position: 0, ...o })
+    const qOpt = (options: string[], o: Row = {}) =>
+      question({ id: 'q-op', label: '¿Qué prefieres?', kind: 'opcion', required: false, options, position: 0, ...o })
+
+    it('la pregunta opcional lleva el aviso; la obligatoria no', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qNota(), qMotivo({ position: 1 }))
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      expect(last(rec).bodyText).toBe(`¿Alguna nota?\n${HINT}`)
+      expect(HINT).toContain('omitir')
+      await send(db, rec, { text: 'Nada especial' })
+      expect(last(rec).bodyText).toBe(MOTIVO)
+    })
+
+    it.each(['omitir', 'Omitir.', 'no', 'NO', 'ninguno', 'Ninguna', 'no aplica', 'N/A', 'n.a.'])(
+      '"%s" salta la pregunta opcional de texto',
+      async (word) => {
+        const db = makeFakeDb(baseSeed())
+        withQuestions(db, qNota())
+        const rec = makeRecorder()
+
+        await walkToSlot(db, rec)
+        await send(db, rec, { text: word })
+        expect(state(db).answers).toEqual({ 'q-nota': '' })
+        expect(optionTitles(last(rec))).toEqual(SUMMARY_BUTTONS)
+        expect(last(rec).bodyText).not.toContain('¿Alguna nota?')
+        await send(db, rec, { replyId: 'act:confirm' })
+        expect('answers' in db._tables.booking_appointments[0]).toBe(false)
+      },
+    )
+
+    it('una frase que solo contiene la palabra es una respuesta, no un salto', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qNota())
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      await send(db, rec, { text: 'no tengo ninguna' })
+      expect(state(db).answers).toEqual({ 'q-nota': 'no tengo ninguna' })
+    })
+
+    it('en una pregunta obligatoria "no" y "omitir" son respuestas normales', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qMotivo())
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      expect(last(rec).bodyText).toBe(MOTIVO)
+      await send(db, rec, { text: 'no' })
+      expect(state(db).answers).toEqual({ 'q-motivo': 'no' })
+    })
+
+    it('opción opcional con pocas opciones suma el botón "Omitir" y el aviso', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qOpt(['Norte', 'Sur']))
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      expect(last(rec).kind).toBe('buttons')
+      expect(last(rec).bodyText).toBe(`¿Qué prefieres?\n${HINT}`)
+      expect(optionTitles(last(rec))).toEqual(['Norte', 'Sur', 'Omitir'])
+      expect(optionIds(last(rec))).toEqual(['ans:0', 'ans:1', 'ans:skip'])
+
+      await send(db, rec, { replyId: 'ans:skip' })
+      expect(state(db).answers).toEqual({ 'q-op': '' })
+      expect(optionTitles(last(rec))).toEqual(SUMMARY_BUTTONS)
+      expect(last(rec).bodyText).not.toContain('¿Qué prefieres?')
+    })
+
+    it('con 4 a 9 opciones el "Omitir" va como fila de la lista', async () => {
+      const db = makeFakeDb(baseSeed())
+      const options = ['A1', 'B2', 'C3', 'D4', 'E5', 'F6', 'G7', 'H8', 'I9']
+      withQuestions(db, qOpt(options))
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      expect(last(rec).kind).toBe('list')
+      expect(optionIds(last(rec))).toHaveLength(10)
+      expect(optionTitles(last(rec)).at(-1)).toBe('Omitir')
+      await send(db, rec, { replyId: 'ans:skip' })
+      expect(state(db).answers).toEqual({ 'q-op': '' })
+    })
+
+    it('con 10 opciones no hay fila "Omitir", pero se puede escribir', async () => {
+      const db = makeFakeDb(baseSeed())
+      const options = ['A1', 'B2', 'C3', 'D4', 'E5', 'F6', 'G7', 'H8', 'I9', 'J10']
+      withQuestions(db, qOpt(options))
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      expect(optionIds(last(rec))).toHaveLength(10)
+      expect(optionIds(last(rec))).not.toContain('ans:skip')
+      await send(db, rec, { text: 'ninguno' })
+      expect(state(db).answers).toEqual({ 'q-op': '' })
+    })
+
+    it.each(['omitir', 'no aplica', 'N/A'])('escribir "%s" también salta una opción opcional', async (word) => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qOpt(['Norte', 'Sur']))
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      await send(db, rec, { text: word })
+      expect(state(db).answers).toEqual({ 'q-op': '' })
+    })
+
+    it('si una opción se llama "No", escribir "no" elige esa opción y no salta', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qOpt(['Sí', 'No']))
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      await send(db, rec, { text: 'no' })
+      expect(state(db).answers).toEqual({ 'q-op': 'No' })
+    })
+
+    it('una opción obligatoria no ofrece "Omitir" ni lo acepta', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qOpt(['Norte', 'Sur'], { required: true }))
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      expect(last(rec).bodyText).toBe('¿Qué prefieres?')
+      expect(optionTitles(last(rec))).toEqual(['Norte', 'Sur'])
+
+      await send(db, rec, { text: 'omitir' })
+      expect(messagesWith(rec, AGENDA_AGENT_TEXTS.retry)).toHaveLength(1)
+      expect(state(db).answers ?? {}).toEqual({})
+    })
+
+    it('si la pregunta pasa a obligatoria mientras tanto, un "Omitir" viejo se repite', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qOpt(['Norte', 'Sur']))
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      questionRow(db, 'q-op').required = true
+      await send(db, rec, { replyId: 'ans:skip' })
+      expect(state(db).answers ?? {}).toEqual({})
+      expect(optionTitles(last(rec))).toEqual(['Norte', 'Sur'])
+    })
+  })
+
+  describe('pedir un humano mientras se responde', () => {
+    it('en una pregunta escrita, una frase que contiene "persona" es la respuesta', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qMotivo())
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      await send(db, rec, { text: 'Es para una persona mayor' })
+
+      expect(messagesWith(rec, AGENDA_AGENT_TEXTS.handoff)).toHaveLength(0)
+      expect(state(db).answers).toEqual({ 'q-motivo': 'Es para una persona mayor' })
+    })
+
+    it.each(['asesor', 'Humano', 'persona.', 'humana'])(
+      'pero el mensaje que es solo "%s" sí pasa a un humano',
+      async (word) => {
+        const db = makeFakeDb(baseSeed())
+        withQuestions(db, qMotivo())
+        const rec = makeRecorder()
+
+        await walkToSlot(db, rec)
+        await send(db, rec, { text: word })
+
+        expect(messagesWith(rec, AGENDA_AGENT_TEXTS.handoff)).toHaveLength(1)
+        expect(sessionRow(db)).toBeUndefined()
+      },
+    )
+
+    it('lo mismo en preguntas de número y de dirección', async () => {
+      for (const kind of ['numero', 'direccion']) {
+        const db = makeFakeDb(baseSeed())
+        withQuestions(db, question({ id: 'q-x', label: '¿Dato?', kind }))
+        const rec = makeRecorder()
+
+        await walkToSlot(db, rec)
+        await send(db, rec, { text: 'quiero hablar con un asesor' })
+        expect(messagesWith(rec, AGENDA_AGENT_TEXTS.handoff)).toHaveLength(0)
+        await send(db, rec, { text: 'asesor' })
+        expect(messagesWith(rec, AGENDA_AGENT_TEXTS.handoff)).toHaveLength(1)
+      }
+    })
+
+    it('en una pregunta de opciones sigue la regla de siempre: la palabra en cualquier parte', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qSede({ position: 0 }))
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      await send(db, rec, { text: 'quiero hablar con un asesor' })
+      expect(messagesWith(rec, AGENDA_AGENT_TEXTS.handoff)).toHaveLength(1)
+    })
+
+    it('fuera de las preguntas escritas, la palabra en cualquier parte sigue pasando a un humano', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qMotivo())
+      const rec = makeRecorder()
+
+      await send(db, rec, { text: 'hola' })
+      await send(db, rec, { text: 'mejor una persona' })
+      expect(messagesWith(rec, AGENDA_AGENT_TEXTS.handoff)).toHaveLength(1)
     })
   })
 })
