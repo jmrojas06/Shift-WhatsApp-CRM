@@ -24,7 +24,7 @@ export function normalizeVerticalKey(
 ): VerticalKey | null {
   if (!key) return null
   if ((AGENDA_VERTICAL_KEYS as readonly string[]).includes(key)) return 'agenda'
-  return key in MANIFESTS ? (key as VerticalKey) : null
+  return Object.hasOwn(MANIFESTS, key) ? (key as VerticalKey) : null
 }
 
 export function isAgendaVerticalKey(key: string | null | undefined): boolean {

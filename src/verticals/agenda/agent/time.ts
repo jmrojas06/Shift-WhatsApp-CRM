@@ -1,5 +1,5 @@
 // ============================================================
-// Helpers de zona horaria para el controlador de barbería.
+// Helpers de zona horaria para el controlador de la agenda.
 //
 // Toda la lógica es pura y recibe las fechas como `Date` (UTC):
 //   - Las horas de la conversación se calculan y muestran en

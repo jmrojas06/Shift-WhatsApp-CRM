@@ -1,5 +1,5 @@
 // ============================================================
-// Recordatorios de citas — Fase 3 del vertical de barbería.
+// Recordatorios de citas — Fase 3 del vertical de la agenda.
 //
 // Dos señales por cita, idempotentes por construcción:
 //   - 24 h antes (siempre; `reminder_sent_at`),

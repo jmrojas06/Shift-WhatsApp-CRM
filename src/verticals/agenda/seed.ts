@@ -90,6 +90,16 @@ export interface AgendaSeed {
   knowledgeDocs: AgendaSeedDoc[]
 }
 
+/** "Agenda" desde 051; "Barbería" en cuentas instaladas antes. */
+export const AGENDA_PIPELINE_NAMES = ['agenda', 'barbería'] as const
+
+/** ¿Es el nombre (sin importar mayúsculas ni espacios) del pipeline de la agenda? */
+export function isAgendaPipelineName(name: unknown): boolean {
+  return (AGENDA_PIPELINE_NAMES as readonly string[]).includes(
+    String(name).trim().toLowerCase(),
+  )
+}
+
 export const AGENDA_SEED: AgendaSeed = {
   services: [
     {

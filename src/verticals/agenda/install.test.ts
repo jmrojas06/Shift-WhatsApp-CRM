@@ -294,6 +294,21 @@ describe('installAgendaTemplate', () => {
     ).toBe(true)
   })
 
+  it.each(['Agenda', '  barbería '])(
+    'trata un pipeline existente llamado %j como el de la agenda',
+    async (name) => {
+      const db = fakeDb({
+        pipelines: [{ id: 'pipe-1', account_id: ACCOUNT, name }],
+      })
+
+      const report = await install(db)
+
+      expect(report.pipeline).toEqual({ created: false, stagesCreated: 0 })
+      expect(db._tables.pipelines).toHaveLength(1)
+      expect(db._tables.pipeline_stages ?? []).toHaveLength(0)
+    },
+  )
+
   it('no toca datos de otras cuentas', async () => {
     const db = fakeDb({
       booking_services: [

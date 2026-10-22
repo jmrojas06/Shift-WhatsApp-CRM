@@ -46,6 +46,8 @@ describe('alias de la agenda', () => {
 
   it('claves desconocidas o vacías no son agenda', () => {
     expect(normalizeVerticalKey('tienda')).toBeNull()
+    expect(normalizeVerticalKey('constructor')).toBeNull()
+    expect(normalizeVerticalKey('__proto__')).toBeNull()
     expect(isAgendaVerticalKey(null)).toBe(false)
     expect(isAgendaVerticalKey('')).toBe(false)
   })

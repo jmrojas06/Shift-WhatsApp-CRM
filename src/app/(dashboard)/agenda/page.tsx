@@ -4,9 +4,9 @@
 // /agenda — página del vertical de la agenda (citas).
 //
 // Solo visible para cuentas de la agenda (`vertical_key` 'agenda' o la
-// clave anterior 'barberia') (el
-// sidebar ya la oculta para el resto; aquí además se bloquea el
-// contenido por si alguien entra por URL directa).
+// clave anterior 'barberia'); el sidebar ya la oculta para el resto y
+// aquí además se bloquea el contenido por si alguien entra por URL
+// directa.
 //
 // Lee servicios y barberos con el cliente del usuario (RLS: los
 // miembros leen) e instala la plantilla contra la API server-only

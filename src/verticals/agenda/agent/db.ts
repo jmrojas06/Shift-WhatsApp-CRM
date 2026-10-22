@@ -14,6 +14,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { sanitizeBotTexts, type BotTextOverrides } from '../bot-texts'
+import { isAgendaPipelineName } from '../seed'
 import type { WorkBlock } from './availability'
 
 export interface AccountInfo {
@@ -620,9 +621,6 @@ export async function applyContactTag(
     )
 }
 
-/** "Agenda" desde 051; "Barbería" en cuentas instaladas antes. */
-const AGENDA_PIPELINE_NAMES = ['agenda', 'barbería']
-
 /**
  * Crea o actualiza el negocio del contacto en el pipeline de la
  * agenda ("Agenda" o el anterior "Barbería", etapa "Cita agendada").
@@ -647,8 +645,7 @@ export async function upsertAgendaDeal(
     .select('id, name')
     .eq('account_id', args.accountId)
   const pipeline = ((pipelines ?? []) as Record<string, unknown>[]).find(
-    (row) =>
-      AGENDA_PIPELINE_NAMES.includes(String(row.name).trim().toLowerCase()),
+    (row) => isAgendaPipelineName(row.name),
   )
   if (!pipeline) return false
 

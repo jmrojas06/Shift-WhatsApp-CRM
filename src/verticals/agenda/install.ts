@@ -28,6 +28,7 @@ import { chunkText } from '@/lib/ai/chunk'
 import {
   AGENDA_AI_PROMPT,
   AGENDA_SEED,
+  isAgendaPipelineName,
   type AiPromptOutcome,
   type AgendaInstallReport,
   type InstallSectionCounts,
@@ -335,7 +336,7 @@ export async function installAgendaTemplate(
   await insertRows(db, 'custom_fields', newFields)
 
   // ----------------------------------------------------------
-  // 7. Pipeline "Barbería" con sus etapas
+  // 7. Pipeline de la agenda ("Agenda" o el anterior "Barbería") con sus etapas
   // ----------------------------------------------------------
   const pipelineRows = await selectRows<IdNameRow>(
     db,
@@ -343,10 +344,8 @@ export async function installAgendaTemplate(
     'id, name',
     accountId,
   )
-  const existingPipeline = pipelineRows.find(
-    (row) =>
-      row.name.trim().toLowerCase() ===
-      AGENDA_SEED.pipeline.name.toLowerCase(),
+  const existingPipeline = pipelineRows.find((row) =>
+    isAgendaPipelineName(row.name),
   )
   if (existingPipeline) {
     // Ya existe: sus etapas son del dueño, no las tocamos.

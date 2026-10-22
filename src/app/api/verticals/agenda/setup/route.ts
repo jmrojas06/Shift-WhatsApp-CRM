@@ -7,7 +7,7 @@ import { installAgendaTemplate } from '@/verticals/agenda/install'
 
 // ============================================================
 // POST /api/verticals/agenda/setup — instala la plantilla de
-// barbería (servicios, barbero, horario, etiquetas, pipeline,
+// la agenda (servicios, barbero, horario, etiquetas, pipeline,
 // respuestas rápidas, base de conocimiento y prompt del agente).
 //
 // Guardas:

@@ -1,5 +1,5 @@
 // ============================================================
-// Handler del vertical barbería — pegamento de producción.
+// Handler del vertical agenda — pegamento de producción.
 //
 // Une el controlador (controller.ts, lógica y copy) con:
 //   - el envío real por WhatsApp (engineSend* de flows/meta-send,

@@ -1,6 +1,6 @@
 // ============================================================
 // Utilidades compartidas por los tests de las rutas de
-// configuración del vertical de barbería.
+// configuración del vertical de la agenda.
 //
 // Los `vi.mock` de cada archivo de test quedan diminutos: aquí
 // viven el mock de `next/server` (NextResponse.json → objeto plano

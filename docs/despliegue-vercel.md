@@ -114,7 +114,7 @@ curl -s -H "x-cron-secret: $AUTOMATION_CRON_SECRET" \
   503 = algo falla. Sin auth y **sin detalles sensibles**.
 - Monitor externo (UptimeRobot u otro) cada 2–5 min sobre
   `/api/health`, con alerta por correo o Slack.
-- Logs: Project → **Logs** (runtime). Busca `[barberia reminders]`,
+- Logs: Project → **Logs** (runtime). Busca `[agenda reminders]`,
   `[ops alert]`, `Error processing webhook`. El resumen del runner
   (incluye `errors`) también queda en el log de la función del cron.
 - Webhook rechazando con 401: firma HMAC — normalmente

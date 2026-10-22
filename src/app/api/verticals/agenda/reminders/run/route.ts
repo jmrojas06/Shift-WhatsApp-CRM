@@ -7,7 +7,7 @@ import { runAgendaReminders } from '@/verticals/agenda/agent/reminders'
 import { sendAgendaReminder } from '@/verticals/agenda/agent/reminders-send'
 
 /**
- * Runner de recordatorios del vertical de barbería (Fase 3).
+ * Runner de recordatorios del vertical de la agenda (Fase 3).
  *
  * Pensado para golpearse cada 10–15 min. Acepta el secreto por
  * `x-cron-secret` (pinger externo, cron del host) o por

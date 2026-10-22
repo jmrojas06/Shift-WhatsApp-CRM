@@ -1,5 +1,5 @@
 // ============================================================
-// Controlador de reservas por WhatsApp — barbería.
+// Controlador de reservas por WhatsApp — agenda.
 //
 //   hola/cita → sesión (booking_sessions) → servicios → barbero
 //   (o "Cualquiera") → días con cupo → horas → resumen →

@@ -130,13 +130,6 @@ const nextConfig: NextConfig = {
    * they apply to every response regardless of which cache rule
    * matched.
    */
-  async redirects() {
-    return [
-      { source: "/barberia", destination: "/agenda", permanent: true },
-      { source: "/barberia/:path*", destination: "/agenda/:path*", permanent: true },
-    ];
-  },
-
   async headers() {
     return [
       {
@@ -159,6 +152,16 @@ const nextConfig: NextConfig = {
         source: "/:path*",
         headers: [...SECURITY_HEADERS],
       },
+    ];
+  },
+
+  /**
+   * The agenda vertical used to live at /barberia. `:path*` also matches
+   * the bare /barberia (zero or more segments).
+   */
+  async redirects() {
+    return [
+      { source: "/barberia/:path*", destination: "/agenda/:path*", permanent: true },
     ];
   },
 };
