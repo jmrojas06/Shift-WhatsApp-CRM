@@ -98,6 +98,31 @@ describe('POST /api/verticals/agenda/questions', () => {
     expect(db._tables.booking_questions.at(-1)?.position).toBe(3)
   })
 
+  it('ignora id, account_id, position e is_active que mande el cuerpo', async () => {
+    const db = boot()
+
+    const res = (await POST(
+      jsonRequest({
+        label: 'Placa',
+        kind: 'texto',
+        id: 'evil',
+        account_id: 'acc-2',
+        position: 99,
+        is_active: false,
+      }),
+    )) as unknown as TestResponse
+
+    expect(res.status).toBe(200)
+    expect((res.body.question as { id: string }).id).not.toBe('evil')
+    expect(db._tables.booking_questions).toHaveLength(1)
+    expect(db._tables.booking_questions[0]).toMatchObject({
+      account_id: TEST_ACCOUNT,
+      position: 0,
+      is_active: true,
+    })
+    expect(db._tables.booking_questions[0].id).not.toBe('evil')
+  })
+
   it('admin también puede (límite exacto del rol)', async () => {
     boot()
     h.state.role = 'admin'

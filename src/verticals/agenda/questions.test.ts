@@ -124,7 +124,14 @@ describe('readQuestion', () => {
     expect(readQuestion({ ...base, options: [] })).toBeNull()
     expect(readQuestion({ ...base, options: null })).toBeNull()
     expect(readQuestion({ ...base, options: [' Norte ', ' Sur ', ''] })?.options).toEqual(['Norte', 'Sur'])
-    expect(readQuestion({ ...base, options: ['x'.repeat(40), 'Sur'] })?.options).toEqual(['x'.repeat(24), 'Sur'])
+    // Con 3 opciones o menos van como botones (20); con más, como lista (24).
+    expect(readQuestion({ ...base, options: ['x'.repeat(40), 'Sur'] })?.options).toEqual(['x'.repeat(20), 'Sur'])
+    expect(readQuestion({ ...base, options: ['x'.repeat(40), 'b', 'c', 'd'] })?.options).toEqual([
+      'x'.repeat(24),
+      'b',
+      'c',
+      'd',
+    ])
     const eleven = Array.from({ length: 11 }, (_, i) => `Op ${i}`)
     expect(readQuestion({ ...base, options: eleven })).toBeNull()
   })
@@ -151,6 +158,128 @@ describe('readQuestion', () => {
     }
     expect(() => readQuestion(hostile)).not.toThrow()
     expect(readQuestion(hostile)).toBeNull()
+  })
+})
+
+describe('validateQuestionCreate: opciones estrictas', () => {
+  const opcion = (options: unknown[]) => validateQuestionCreate({ label: 'Sede', kind: 'opcion', options })
+  const four = (first: string) => [first, 'b', 'c', 'd']
+
+  it('con 3 opciones o menos (botones) cada una admite hasta 20', () => {
+    expect(opcion(['x'.repeat(20), 'Sur']).ok).toBe(true)
+    expect(opcion(['x'.repeat(21), 'Sur'])).toEqual({
+      ok: false,
+      message: 'Con 3 opciones o menos, cada una puede tener hasta 20 caracteres.',
+    })
+    expect(opcion(['a', 'b', 'x'.repeat(21)]).ok).toBe(false)
+  })
+
+  it('con más de 3 opciones (lista) admite hasta 24', () => {
+    expect(opcion(four('x'.repeat(24))).ok).toBe(true)
+    expect(opcion(four('x'.repeat(25))).ok).toBe(false)
+    expect(opcion(four('😀'.repeat(24))).ok).toBe(true)
+    expect(opcion(['😀'.repeat(20), 'b']).ok).toBe(true)
+    expect(opcion(['😀'.repeat(21), 'b']).ok).toBe(false)
+  })
+
+  it('rechaza opciones repetidas tras normalizar mayúsculas, tildes y espacios', () => {
+    const dup = { ok: false, message: 'Las opciones no se pueden repetir.' }
+    expect(opcion(['Norte', 'norte'])).toEqual(dup)
+    expect(opcion(['Médico', 'medico'])).toEqual(dup)
+    expect(opcion(['Sede  Norte', ' sede norte '])).toEqual(dup)
+    expect(opcion(['Norte', 'Sur', 'NORTE'])).toEqual(dup)
+    expect(opcion(['Norte', 'Sur']).ok).toBe(true)
+  })
+
+  it('rechaza opciones que son solo números', () => {
+    const msg = { ok: false, message: 'Las opciones no pueden ser solo números.' }
+    expect(opcion(['1', 'Sur'])).toEqual(msg)
+    expect(opcion(['Norte', ' 2 '])).toEqual(msg)
+    expect(opcion(['Sede 1', 'Sede 2']).ok).toBe(true)
+  })
+
+  it('rechaza surrogates sueltos y deja pasar VS16 y modificadores de tono de piel', () => {
+    expect(validateQuestionCreate({ label: 'a\uD800b', kind: 'texto' }).ok).toBe(false)
+    expect(validateQuestionCreate({ label: '', kind: 'texto' }).ok).toBe(false)
+    expect(opcion(['No\uD800rte', 'Sur']).ok).toBe(false)
+    expect(opcion(['', 'Sur']).ok).toBe(false)
+    expect(validateQuestionCreate({ label: '¿Te gusta ❤️?', kind: 'texto' }).ok).toBe(true)
+    expect(validateQuestionCreate({ label: 'Mano 👍🏽', kind: 'texto' }).ok).toBe(true)
+    expect(opcion(['❤️ Sí', '👍🏽 No']).ok).toBe(true)
+  })
+
+  it('conserva el espacio interno de una opción y recorta los bordes', () => {
+    expect(opcion(['  Sede Norte  ', 'Sede Sur'])).toMatchObject({
+      ok: true,
+      value: { options: ['Sede Norte', 'Sede Sur'] },
+    })
+  })
+
+  it('el largo de la etiqueta se cuenta en puntos de código', () => {
+    expect(validateQuestionCreate({ label: 'x'.repeat(79) + '😀', kind: 'texto' }).ok).toBe(true)
+    expect(validateQuestionCreate({ label: '😀'.repeat(81), kind: 'texto' }).ok).toBe(false)
+    expect(validateQuestionCreate({ label: '😀'.repeat(80), kind: 'texto' }).ok).toBe(true)
+  })
+
+  it('ignora campos que no son de la pregunta (id, account_id, position, is_active)', () => {
+    expect(
+      validateQuestionCreate({
+        label: 'Placa',
+        kind: 'texto',
+        id: 'evil',
+        account_id: 'acc-2',
+        position: 99,
+        is_active: false,
+      }),
+    ).toEqual({ ok: true, value: { label: 'Placa', kind: 'texto', required: true, options: [] } })
+  })
+})
+
+describe('readQuestion: opciones estrictas', () => {
+  const base = { id: 'q1', label: 'Sede', kind: 'opcion', required: true }
+
+  it('descarta la fila si dos opciones chocan tras recortar a 20', () => {
+    expect(readQuestion({ ...base, options: ['x'.repeat(30), 'x'.repeat(25)] })).toBeNull()
+    expect(readQuestion({ ...base, options: ['x'.repeat(30) + 'a', 'x'.repeat(30) + 'b'] })).toBeNull()
+  })
+
+  it('descarta la fila con opciones repetidas por mayúsculas o tildes', () => {
+    expect(readQuestion({ ...base, options: ['Médico', 'MEDICO'] })).toBeNull()
+  })
+
+  it('no descarta si con más de 3 opciones solo chocarían a 20 (recorta a 24)', () => {
+    const options = ['x'.repeat(22) + 'a', 'x'.repeat(22) + 'b', 'c', 'd']
+    expect(readQuestion({ ...base, options })?.options).toEqual(options)
+  })
+})
+
+describe('validateAnswer: limpieza', () => {
+  const texto = { id: 'q', label: 'Motivo', kind: 'texto' as const, required: true, options: [] }
+  const numero = { ...texto, kind: 'numero' as const }
+
+  it('junta los espacios y saltos de línea en un solo espacio', () => {
+    expect(validateAnswer(texto, 'a\nb')).toEqual({ ok: true, value: 'a b' })
+    expect(validateAnswer(texto, '  a \t\r\n  b  ')).toEqual({ ok: true, value: 'a b' })
+  })
+
+  it('quita caracteres de control y de formato (RLO, zero-width)', () => {
+    expect(validateAnswer(texto, 'ho‮la')).toEqual({ ok: true, value: 'hola' })
+    expect(validateAnswer(texto, 'ho​la')).toEqual({ ok: true, value: 'hola' })
+    expect(validateAnswer(texto, 'ho\u0007la')).toEqual({ ok: true, value: 'hola' })
+    expect(validateAnswer(texto, 'a ​ b')).toEqual({ ok: true, value: 'a b' })
+  })
+
+  it('aplica las reglas sobre el valor ya limpio', () => {
+    expect(validateAnswer(texto, '​ \n')).toEqual({ ok: false, reason: 'required' })
+    expect(validateAnswer({ ...texto, required: false }, '​')).toEqual({ ok: true, value: '' })
+    expect(validateAnswer(numero, '4​2')).toEqual({ ok: true, value: '42' })
+    expect(validateAnswer(numero, '4 2')).toEqual({ ok: false, reason: 'number' })
+  })
+
+  it('el tope de 200 cuenta puntos de código', () => {
+    expect(validateAnswer(texto, '😀'.repeat(200))).toMatchObject({ ok: true })
+    expect(validateAnswer(texto, '😀'.repeat(201))).toEqual({ ok: false, reason: 'too_long' })
+    expect(validateAnswer(texto, 'x'.repeat(200))).toMatchObject({ ok: true })
   })
 })
 

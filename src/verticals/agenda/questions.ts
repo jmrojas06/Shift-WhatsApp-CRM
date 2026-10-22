@@ -52,6 +52,26 @@ const codePointLength = (text: string): number => [...text].length
 const truncate = (text: string, max: number): string =>
   codePointLength(text) <= max ? text : [...text].slice(0, max).join('').trim()
 
+/** Con este número de opciones o menos el bot las manda como botones. */
+const BUTTON_OPTIONS_MAX_COUNT = 3
+/** Título de botón de WhatsApp (el controller del bot corta ahí). */
+const BUTTON_TITLE_MAX = 20
+
+/** El bot lee un "2" como la posición en el menú, no como el texto de una opción. */
+const ONLY_DIGITS = /^\d+$/
+
+/** Para comparar: sin mayúsculas, sin tildes y con los espacios juntos. */
+const normalizeOption = (text: string): string =>
+  text
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/\s+/gu, ' ')
+    .trim()
+
+const hasDuplicates = (options: string[]): boolean =>
+  new Set(options.map(normalizeOption)).size !== options.length
+
 export function validateQuestionCreate(input: unknown): Valid<QuestionInput> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     return { ok: false, message: 'La pregunta no es válida.' }
@@ -82,11 +102,24 @@ export function validateQuestionCreate(input: unknown): Valid<QuestionInput> {
     if (options.length < MIN_OPTIONS || options.length > MAX_OPTIONS) {
       return { ok: false, message: `Pon entre ${MIN_OPTIONS} y ${MAX_OPTIONS} opciones.` }
     }
-    if (options.some((o) => codePointLength(o) > OPTION_MAX)) {
-      return { ok: false, message: `Cada opción puede tener hasta ${OPTION_MAX} caracteres.` }
-    }
     if (options.some((o) => CONTROL_OR_FORMAT.test(o))) {
       return { ok: false, message: 'Las opciones tienen caracteres no permitidos.' }
+    }
+    if (options.some((o) => ONLY_DIGITS.test(o))) {
+      return { ok: false, message: 'Las opciones no pueden ser solo números.' }
+    }
+    if (options.length <= BUTTON_OPTIONS_MAX_COUNT) {
+      if (options.some((o) => codePointLength(o) > BUTTON_TITLE_MAX)) {
+        return {
+          ok: false,
+          message: `Con ${BUTTON_OPTIONS_MAX_COUNT} opciones o menos, cada una puede tener hasta ${BUTTON_TITLE_MAX} caracteres.`,
+        }
+      }
+    } else if (options.some((o) => codePointLength(o) > OPTION_MAX)) {
+      return { ok: false, message: `Cada opción puede tener hasta ${OPTION_MAX} caracteres.` }
+    }
+    if (hasDuplicates(options)) {
+      return { ok: false, message: 'Las opciones no se pueden repetir.' }
     }
   }
 
@@ -118,8 +151,12 @@ export function readQuestion(row: unknown): AgendaQuestion | null {
     if (record.options.some((o) => typeof o !== 'string')) return null
     const cleaned = (record.options as string[]).map((o) => o.trim()).filter(Boolean)
     if (cleaned.some((o) => CONTROL_OR_FORMAT.test(o))) return null
-    options = cleaned.map((o) => truncate(o, OPTION_MAX))
-    if (options.length < MIN_OPTIONS || options.length > MAX_OPTIONS) return null
+    if (cleaned.length < MIN_OPTIONS || cleaned.length > MAX_OPTIONS) return null
+    // Con pocas opciones el bot las manda como botones (20); con más, como lista (24).
+    const max = cleaned.length <= BUTTON_OPTIONS_MAX_COUNT ? BUTTON_TITLE_MAX : OPTION_MAX
+    options = cleaned.map((o) => truncate(o, max))
+    // Si al recortar dos chocan, el cliente no podría distinguirlas.
+    if (hasDuplicates(options)) return null
   }
 
   return {
@@ -137,7 +174,13 @@ export type AnswerCheck =
 
 /** Valida una respuesta escrita (las de opción llegan por id de lista). */
 export function validateAnswer(question: AgendaQuestion, raw: string): AnswerCheck {
-  const value = raw.trim()
+  // Espacios y saltos de línea → un espacio; se quitan control y formato (RLO,
+  // zero-width) que se ven raros o disfrazan el texto en el CRM; y se vuelve a juntar.
+  const value = raw
+    .replace(/\s+/gu, ' ')
+    .replace(/[\p{Cc}\p{Cf}]/gu, '')
+    .replace(/\s+/gu, ' ')
+    .trim()
   if (!value) return question.required ? { ok: false, reason: 'required' } : { ok: true, value: '' }
   if (codePointLength(value) > ANSWER_MAX) return { ok: false, reason: 'too_long' }
   if (question.kind === 'numero' && !/^\d+$/.test(value)) return { ok: false, reason: 'number' }

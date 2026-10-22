@@ -113,6 +113,30 @@ describe('PATCH /api/verticals/agenda/questions/[id]', () => {
     expect(row(db, 'q-1')).toMatchObject({ label: 'Sede', kind: 'opcion', position: 0, is_active: true })
   })
 
+  it('ignora id, account_id, position e is_active que mande el cuerpo', async () => {
+    const db = boot()
+
+    const res = await patch('q-1', {
+      label: 'Nueva',
+      kind: 'texto',
+      id: 'evil',
+      account_id: 'acc-2',
+      position: 99,
+      is_active: false,
+    })
+
+    expect(res.status).toBe(200)
+    expect(res.body.question).toMatchObject({ id: 'q-1', label: 'Nueva' })
+    expect(row(db, 'q-1')).toMatchObject({
+      id: 'q-1',
+      account_id: TEST_ACCOUNT,
+      position: 0,
+      is_active: true,
+      label: 'Nueva',
+    })
+    expect(row(db, 'evil')).toBeUndefined()
+  })
+
   it('un id de otra cuenta responde 404 y no toca la fila ajena', async () => {
     const db = boot()
 

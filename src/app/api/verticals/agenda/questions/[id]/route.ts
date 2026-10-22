@@ -7,7 +7,11 @@ import { validateQuestionCreate } from '@/verticals/agenda/questions'
 import { badRequest, configErrorResponse, readJsonBody } from '../../_lib/http'
 
 // ============================================================
-// PATCH  /api/verticals/agenda/questions/[id] — reemplaza la definición.
+// PATCH  /api/verticals/agenda/questions/[id] — reemplaza la definición
+// COMPLETA (etiqueta, tipo, obligatoria y opciones): no es un parche
+// parcial, así que la interfaz debe mandar todos los campos. Lo que
+// falte toma el valor por defecto (p. ej. `required` vuelve a true).
+// El orden, la cuenta y el estado activo nunca se cambian por aquí.
 // DELETE /api/verticals/agenda/questions/[id] — la desactiva (no se
 // borra: las citas guardan sus respuestas por id de pregunta).
 //
