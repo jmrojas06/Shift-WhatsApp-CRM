@@ -188,7 +188,7 @@ export function ServicesSection({
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-xs text-muted-foreground">
-          {T.config.services.activeHint(labels)}
+          {T.config.services.activeHint}
         </p>
 
         {listError && (

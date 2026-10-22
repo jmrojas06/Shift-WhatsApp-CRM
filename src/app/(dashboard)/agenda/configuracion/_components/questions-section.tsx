@@ -202,8 +202,9 @@ export function QuestionsSection({
                       <Pencil className="h-4 w-4" />
                     </Button>
                     <Button
-                      variant="destructive"
+                      variant="outline"
                       size="sm"
+                      className="hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
                       onClick={() => {
                         setRemoving(question)
                         setRemoveOpen(true)

@@ -123,7 +123,6 @@ export const AGENDA_TEXTS = {
     `Estaba programado para el ${date} a las ${time} y ya pasó. ¿Seguro que quieres cambiar su estado?`,
   agendaPastConfirm: 'Sí, cambiar',
   agendaPastBack: 'Volver',
-  viewerGate: (l: AgendaLabels) => `hacer acciones sobre ${l.citas}`,
 
   // ----------------------------------------------------------
   // Recordatorios (Fase 3)
@@ -377,8 +376,8 @@ export const AGENDA_TEXTS = {
       price: 'Precio',
       active: 'Activo',
       inactive: 'Inactivo',
-      activeHint: (l: AgendaLabels) =>
-        `Lo inactivo deja de ofrecerse en nuevas reservas; lo que ya está agendado como ${l.cita} no se modifica.`,
+      activeHint:
+        'Lo inactivo deja de ofrecerse en nuevas reservas; lo ya agendado no se modifica.',
       moveUp: 'Subir',
       moveDown: 'Bajar',
       save: 'Guardar',
