@@ -2,33 +2,31 @@
 -- 051_agenda_armable.sql — la agenda sirve a cualquier negocio
 -- ============================================================
 --
+-- Aplicar ANTES de desplegar el código de la agenda.
+--
+-- Parte ADITIVA del cambio (la reescritura de la clave del vertical va
+-- aparte, en 052, y se aplica DESPUÉS del despliegue):
+--
 --   1. booking_settings: punto de partida, palabras y las 5 piezas.
 --   2. Backfill: las cuentas que TODAVÍA tienen vertical_key =
 --      'barberia' reciben el punto de partida 'barberia' y su
 --      vocabulario de siempre (barbero / barberos).
---   3. accounts.vertical_key 'barberia' → 'agenda' (el código acepta
---      ambas mientras convive; ver AGENDA_VERTICAL_KEYS).
---   4. booking_questions: preguntas extra del bot (RLS 050: miembros
+--   3. booking_questions: preguntas extra del bot (RLS 050: miembros
 --      leen, owner/admin escriben).
---   5. booking_appointments.answers: respuestas a esas preguntas.
+--   4. booking_appointments.answers: respuestas a esas preguntas.
 --
--- ORDEN DENTRO DEL ARCHIVO (importa): el backfill del paso 2 se filtra
--- por `vertical_key = 'barberia'`, y el rename del paso 3 va DESPUÉS.
--- Así, volver a correr la migración encuentra 0 cuentas 'barberia' y no
--- le pega vocabulario de barbería a cuentas 'agenda' de otros negocios
--- (salón, taller…) creadas después.
+-- Es segura con el código viejo en producción: el código viejo no lee
+-- estas columnas ni la tabla nueva, y no cambia ninguna clave de
+-- vertical (accounts no se toca). El código nuevo SÍ las lee, por eso
+-- esta migración va primero.
+--
+-- El backfill se filtra por `vertical_key = 'barberia'` (cuentas que
+-- aún tienen la clave vieja). Como 052 reescribe esa clave después,
+-- volver a correr 051 más tarde no le pega vocabulario de barbería a
+-- cuentas 'agenda' de otros negocios (salón, taller…).
 --
 -- NO destructiva: no borra tablas, columnas ni filas. Solo agrega
--- columnas/tabla y reescribe la clave del vertical. Idempotente: se
--- puede correr de nuevo.
---
--- Orden de despliegue: PRIMERO el código (acepta las dos claves),
--- DESPUÉS esta migración.
---
--- El UPDATE de accounts.vertical_key (paso 3) corre como postgres (SQL
--- Editor / CLI), así que no lo frena el trigger de 050
--- (enforce_account_protected_columns), que solo bloquea cuando
--- current_user es `authenticated` o `anon`.
+-- columnas/tabla. Idempotente: se puede correr de nuevo.
 -- ============================================================
 
 -- Solo tiene efecto si el script corre dentro de una transacción (así
@@ -64,7 +62,7 @@ ALTER TABLE booking_settings
 -- 2) Backfill de las cuentas de barbería (aún con la clave vieja)
 -- ------------------------------------------------------------
 -- Se asegura la fila de settings y se les da su vocabulario de siempre.
--- Filtra por 'barberia', NO por 'agenda': ver ORDEN DENTRO DEL ARCHIVO.
+-- Filtra por 'barberia', NO por 'agenda': ver el encabezado.
 INSERT INTO booking_settings (account_id)
 SELECT id FROM accounts WHERE vertical_key = 'barberia'
 ON CONFLICT (account_id) DO NOTHING;
@@ -78,12 +76,7 @@ WHERE a.id = bs.account_id
   AND bs.preset_key IS NULL;
 
 -- ------------------------------------------------------------
--- 3) Clave del vertical (DESPUÉS del backfill)
--- ------------------------------------------------------------
-UPDATE accounts SET vertical_key = 'agenda' WHERE vertical_key = 'barberia';
-
--- ------------------------------------------------------------
--- 4) Preguntas extra del bot
+-- 3) Preguntas extra del bot
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS booking_questions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -146,7 +139,7 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON booking_questions
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- ------------------------------------------------------------
--- 5) Respuestas en la cita
+-- 4) Respuestas en la cita
 -- ------------------------------------------------------------
 ALTER TABLE booking_appointments
   ADD COLUMN IF NOT EXISTS answers jsonb NOT NULL DEFAULT '{}'::jsonb;

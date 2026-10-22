@@ -191,18 +191,34 @@ describe('preguntas extra del bot (051 / booking_questions)', () => {
   const backfillInsert = /INSERT\s+INTO\s+booking_settings[^;]*?WHERE\s+vertical_key\s*=\s*'barberia'/i
   const backfillUpdate = /UPDATE\s+booking_settings[^;]*?a\.vertical_key\s*=\s*'barberia'/i
 
-  it("reescribe la clave del vertical 'barberia' a 'agenda'", () => {
-    expect(code).toMatch(rewrite)
+  it("051 (aditiva): el backfill filtra por 'barberia' (re-correrla no pisa cuentas 'agenda')", () => {
+    expect(code).toMatch(backfillInsert)
+    expect(code).toMatch(backfillUpdate)
   })
 
-  it("el backfill filtra por 'barberia' y corre ANTES del rename (re-correr 051 no pisa cuentas 'agenda')", () => {
-    const renameAt = code.search(rewrite)
-    const insertAt = code.search(backfillInsert)
-    const updateAt = code.search(backfillUpdate)
-    expect(insertAt).toBeGreaterThanOrEqual(0)
-    expect(updateAt).toBeGreaterThanOrEqual(0)
-    expect(renameAt).toBeGreaterThanOrEqual(0)
-    expect(insertAt).toBeLessThan(renameAt)
-    expect(updateAt).toBeLessThan(renameAt)
+  it('051 (aditiva): no toca accounts (segura con el código viejo en producción)', () => {
+    expect(code).not.toMatch(/UPDATE\s+accounts\b/i)
+    expect(code).not.toMatch(/ALTER\s+TABLE\s+accounts\b/i)
+    expect(code).not.toMatch(rewrite)
+  })
+
+  describe('052 (reescritura de la clave del vertical)', () => {
+    const code052 = readFileSync(
+      join(MIGRATIONS_DIR, '052_agenda_vertical_key.sql'),
+      'utf8',
+    ).replace(/--[^\r\n]*/g, '')
+
+    it("reescribe 'barberia' a 'agenda'", () => {
+      expect(code052).toMatch(rewrite)
+    })
+
+    it('es lo único que hace: un solo UPDATE, sin DDL ni borrados', () => {
+      expect(code052.match(/\bUPDATE\b/gi)).toHaveLength(1)
+      expect(code052).not.toMatch(/\b(CREATE|ALTER|DROP|DELETE|TRUNCATE|INSERT)\b/i)
+    })
+
+    it('lleva lock_timeout', () => {
+      expect(code052).toMatch(/SET\s+LOCAL\s+lock_timeout/i)
+    })
   })
 })

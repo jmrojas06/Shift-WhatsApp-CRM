@@ -482,13 +482,13 @@ BEGIN
       'booking_questions set_updated_at trigger is missing — migration 051 did not apply';
   END IF;
 
-  -- The data rewrite: no account may keep the legacy key once 051 ran.
-  -- Only meaningful when this file runs against PRODUCTION after 051 has
-  -- been applied: the CI database has no accounts, so there it passes
-  -- trivially.
+  -- 052: the data rewrite — no account may keep the legacy key once
+  -- 052 ran. Only meaningful when this file runs against PRODUCTION
+  -- after 052 has been applied (and after the code deploy): the CI
+  -- database has no accounts, so there it passes trivially.
   IF EXISTS (SELECT 1 FROM accounts WHERE vertical_key = 'barberia') THEN
     RAISE EXCEPTION
-      'an account still has vertical_key = barberia — migration 051 did not apply';
+      'an account still has vertical_key = barberia — migration 052 did not apply';
   END IF;
 
   RAISE NOTICE 'schema verification passed';
