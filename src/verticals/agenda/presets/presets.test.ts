@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { sanitizeBotTexts } from '../bot-texts'
 import { sanitizeLabels } from '../labels'
 import { MAX_QUESTIONS, validateQuestionCreate } from '../questions'
+import { buildAgentTexts } from '../texts'
 import { AGENDA_PRESETS, getPreset, isPresetKey, PRESET_KEYS } from './index'
 
 describe('puntos de partida', () => {
@@ -83,6 +84,38 @@ describe('puntos de partida', () => {
     expect(seed.staff).toEqual([])
     expect(seed.weeklySchedule).toEqual([])
     expect(questions).toEqual([])
+  })
+
+  it.each(PRESET_KEYS)('%s: nombres de servicios y del equipo caben en una fila de lista (24)', (key) => {
+    const { seed } = AGENDA_PRESETS[key]
+    for (const s of seed.services) expect([...s.name].length).toBeLessThanOrEqual(24)
+    for (const m of seed.staff) expect([...m.name].length).toBeLessThanOrEqual(24)
+  })
+
+  it('ningún prompt de IA afirma país, precios ni pagos', () => {
+    for (const key of PRESET_KEYS) {
+      const prompt = AGENDA_PRESETS[key].aiPrompt.toLowerCase()
+      expect(prompt).not.toMatch(/colombia|nequi|daviplata/)
+      expect(prompt).not.toContain('$')
+    }
+  })
+
+  it('la barbería no presenta como hechos los pagos, la política de citas ni los precios al público', () => {
+    const { knowledgeDocs, quickReplies } = AGENDA_PRESETS.barberia.seed
+    const text = JSON.stringify([knowledgeDocs, quickReplies])
+    expect(text).not.toMatch(/Nequi|Daviplata|factura electrónica|10 minutos tarde|2 horas|acompañados/)
+    expect(quickReplies.find((q) => q.title === 'Lista de precios')?.content).toBe('[escribe tus precios]')
+    const doc = (title: string) => knowledgeDocs.find((d) => d.title === title)?.content ?? ''
+    expect(doc('Métodos de pago')).toContain('[Escribe aquí')
+    expect(doc('Política de citas y cancelaciones')).toContain('[Escribe aquí')
+  })
+
+  it('la bienvenida de en blanco es la que el bot ya usa por defecto', () => {
+    expect(AGENDA_PRESETS.blanco.welcome).toBe(buildAgentTexts(AGENDA_PRESETS.blanco.labels).serviceMenuBody)
+    for (const key of PRESET_KEYS.filter((k) => k !== 'blanco')) {
+      const p = AGENDA_PRESETS[key]
+      expect(p.welcome).not.toBe(buildAgentTexts(p.labels).serviceMenuBody)
+    }
   })
 
   it('isPresetKey solo acepta las claves conocidas', () => {

@@ -5,25 +5,27 @@
 // ============================================================
 
 import { DEFAULT_TOGGLES } from '../toggles'
-import { AGENDA_AI_PROMPT } from '../seed'
+import type { AgendaLabels } from '../labels'
 import type { AgendaPreset } from './index'
-import { BASE_PIPELINE, BASE_TAGS, weekdays } from './shared'
+import { BASE_PIPELINE, BASE_TAGS, genericAiPrompt, weekdays } from './shared'
+
+const labels: AgendaLabels = {
+  profesional: 'barbero',
+  profesionales: 'barberos',
+  servicio: 'servicio',
+  servicios: 'servicios',
+  cita: 'cita',
+  citas: 'citas',
+}
 
 export const BARBERIA_PRESET: AgendaPreset = {
   key: 'barberia',
   name: 'Barbería',
   description: 'Barberías y peluquerías de hombre: cortes, barba y perfilado.',
-  labels: {
-    profesional: 'barbero',
-    profesionales: 'barberos',
-    servicio: 'servicio',
-    servicios: 'servicios',
-    cita: 'cita',
-    citas: 'citas',
-  },
+  labels,
   toggles: { ...DEFAULT_TOGGLES },
   welcome: '¡Hola! 👋 Soy el asistente de la barbería. ¿Qué servicio quieres agendar?',
-  aiPrompt: AGENDA_AI_PROMPT,
+  aiPrompt: genericAiPrompt(labels),
   questions: [],
   seed: {
     services: [
@@ -80,8 +82,7 @@ export const BARBERIA_PRESET: AgendaPreset = {
       },
       {
         title: 'Lista de precios',
-        content:
-          'Corte clásico: $25.000\nCorte + barba: $40.000\nPerfilado de barba: $15.000\n¿Cuál te gustaría agendar?',
+        content: '[escribe tus precios]',
       },
       {
         title: 'Ubicación',
@@ -93,30 +94,24 @@ export const BARBERIA_PRESET: AgendaPreset = {
       {
         title: 'Horarios de atención',
         content:
-          'Atendemos de lunes a sábado, de 9:00 a.m. a 1:00 p.m. y de 2:00 p.m. a 7:00 p.m. Los domingos y festivos permanecemos cerrados.\n\n' +
-          'Puedes agendar tu cita por WhatsApp en cualquier momento. El equipo responde dentro del horario de atención.\n\n' +
-          'Si necesitas una cita fuera del horario habitual, escríbenos y revisamos la disponibilidad.',
+          'Atendemos de lunes a sábado, de 9:00 a.m. a 1:00 p.m. y de 2:00 p.m. a 7:00 p.m.\n\n' +
+          '[Escribe aquí si abres domingos o festivos y cómo atiendes fuera de horario.]',
       },
       {
         title: 'Servicios y precios',
         content:
           'Servicios disponibles: corte clásico (30 minutos) por $25.000; corte + barba (45 minutos) por $40.000; perfilado de barba (20 minutos) por $15.000.\n\n' +
-          'El precio final puede variar según el largo y el estado del cabello. El barbero confirma el valor antes de empezar.\n\n' +
-          'También atendemos a niños, siempre que vengan acompañados por un adulto.',
+          '[Escribe aquí si el precio puede variar, si atiendes niños y otras condiciones de tus servicios.]',
       },
       {
         title: 'Política de citas y cancelaciones',
         content:
-          'Puedes cancelar o reprogramar tu cita por este mismo WhatsApp. Te pedimos hacerlo con al menos 2 horas de anticipación para dejar el cupo disponible.\n\n' +
-          'Si llegas más de 10 minutos tarde, puede que debamos atender a otro cliente o reprogramar tu cita.\n\n' +
-          'Si no puedes asistir, avísanos: así liberamos el espacio para alguien más.',
+          '[Escribe aquí tu política: con cuánta anticipación se puede cancelar o reprogramar una cita y qué pasa si el cliente llega tarde.]',
       },
       {
         title: 'Métodos de pago',
         content:
-          'Recibimos efectivo, Nequi, Daviplata y tarjetas débito y crédito.\n\n' +
-          'Al pagar con tarjeta o por transferencia te entregamos el comprobante al finalizar el servicio.\n\n' +
-          'Si necesitas factura electrónica, pídesela al barbero antes de pagar.',
+          '[Escribe aquí los métodos de pago que recibes (efectivo, transferencias, tarjetas...) y si entregas factura.]',
       },
       {
         title: 'Ubicación y contacto',

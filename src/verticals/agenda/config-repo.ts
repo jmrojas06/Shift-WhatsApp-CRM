@@ -42,7 +42,6 @@ import {
   type AgendaLabelKey,
   type AgendaLabels,
 } from './labels'
-import type { PresetKey } from './presets'
 import { MAX_QUESTIONS, readQuestion, type AgendaQuestion, type QuestionInput } from './questions'
 import { togglesFromRow, togglesToRow, type AgendaToggles } from './toggles'
 
@@ -664,7 +663,6 @@ export async function saveSettings(
     /** Palabras a quitar de lo guardado: vuelven a su valor por defecto. */
     labelsReset?: readonly AgendaLabelKey[]
     toggles?: Partial<AgendaToggles>
-    presetKey?: PresetKey
   },
 ): Promise<SettingsRecord> {
   const row: Record<string, unknown> = { account_id: accountId }
@@ -684,7 +682,6 @@ export async function saveSettings(
     for (const key of reset) delete stored[key]
     row.labels = { ...stored, ...patch.labels }
   }
-  if (patch.presetKey !== undefined) row.preset_key = patch.presetKey
   if (patch.toggles !== undefined) Object.assign(row, togglesToRow(patch.toggles))
 
   const { data } = await db

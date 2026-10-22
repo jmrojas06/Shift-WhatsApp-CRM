@@ -6,7 +6,7 @@ import { isAgendaVerticalKey } from '@/lib/verticals/registry'
 import { installAgendaTemplate } from '@/verticals/agenda/install'
 import { isPresetKey, type PresetKey } from '@/verticals/agenda/presets'
 
-import { badRequest, readJsonBody } from '../_lib/http'
+import { badRequest } from '../_lib/http'
 
 // ============================================================
 // POST /api/verticals/agenda/setup — instala la plantilla de
@@ -34,17 +34,27 @@ import { badRequest, readJsonBody } from '../_lib/http'
 const NOT_ENABLED = 'El módulo de agenda no está habilitado para esta cuenta.'
 
 const INVALID_PRESET = 'Ese punto de partida no existe.'
+const INVALID_BODY = 'El cuerpo no es JSON válido.'
 
 export async function POST(request: Request) {
   try {
     const ctx = await requireRole('admin')
 
-    // Cuerpo vacío o ilegible = sin preferencia (el botón de siempre sigue
-    // funcionando). Con cuerpo, solo se acepta un objeto con una clave válida.
-    const body = await readJsonBody(request)
+    // Cuerpo vacío = sin preferencia (el botón de siempre sigue funcionando).
+    // Con cuerpo, tiene que ser un objeto JSON; un JSON roto es 400, no "usa
+    // el valor por defecto". La clave, si viene, tiene que existir.
+    const raw = await request.text()
     let presetKey: PresetKey | undefined
-    if (body !== null) {
-      if (typeof body !== 'object' || Array.isArray(body)) return badRequest(INVALID_PRESET)
+    if (raw.trim() !== '') {
+      let body: unknown
+      try {
+        body = JSON.parse(raw)
+      } catch {
+        return badRequest(INVALID_BODY)
+      }
+      if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+        return badRequest(INVALID_BODY)
+      }
       const requested = (body as Record<string, unknown>).preset_key
       if (requested !== undefined && requested !== null) {
         if (!isPresetKey(requested)) return badRequest(INVALID_PRESET)

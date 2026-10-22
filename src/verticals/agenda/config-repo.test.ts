@@ -612,13 +612,18 @@ describe('saveSettings — agenda armable', () => {
     const db = makeFakeDb({
       ...baseSeed(),
       booking_settings: [
-        { account_id: ACCOUNT, address: 'Calle 1', bot_texts: {}, reminders_2h_enabled: true },
+        {
+          account_id: ACCOUNT,
+          address: 'Calle 1',
+          bot_texts: {},
+          reminders_2h_enabled: true,
+          preset_key: 'taller',
+        },
       ],
     })
     const saved = await saveSettings(asClient(db), ACCOUNT, {
       labels: { profesional: 'técnico' },
       toggles: { chooseStaff: false },
-      presetKey: 'taller',
     })
     expect(saved.address).toBe('Calle 1')
     expect(saved.reminders2hEnabled).toBe(true)
@@ -630,11 +635,13 @@ describe('saveSettings — agenda armable', () => {
   })
 
   it('guardar otras cosas no borra palabras, piezas ni punto de partida', async () => {
-    const db = makeFakeDb(baseSeed())
+    const db = makeFakeDb({
+      ...baseSeed(),
+      booking_settings: [{ account_id: ACCOUNT, preset_key: 'taller' }],
+    })
     await saveSettings(asClient(db), ACCOUNT, {
       labels: { profesional: 'técnico' },
       toggles: { allowReschedule: false },
-      presetKey: 'taller',
     })
     const after = await saveSettings(asClient(db), ACCOUNT, { address: 'Calle 9' })
     expect(after.labels.profesional).toBe('técnico')

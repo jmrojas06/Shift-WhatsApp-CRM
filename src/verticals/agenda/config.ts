@@ -13,7 +13,6 @@
 
 import { sanitizeBotTexts, type BotTextOverrides } from './bot-texts'
 import { LABEL_KEYS, sanitizeLabels, type AgendaLabelKey, type AgendaLabels } from './labels'
-import { isPresetKey, type PresetKey } from './presets'
 import { TOGGLE_COLUMNS, TOGGLE_KEYS, type AgendaToggles } from './toggles'
 
 // ------------------------------------------------------------
@@ -588,7 +587,6 @@ export interface ConfigPatch {
   /** Palabras que el dueño vació (null o en blanco): vuelven a su valor por defecto. */
   labelsReset?: AgendaLabelKey[]
   toggles?: Partial<AgendaToggles>
-  presetKey?: PresetKey
 }
 
 export function validateConfigPatch(input: unknown): Valid<ConfigPatch> {
@@ -711,15 +709,12 @@ export function validateConfigPatch(input: unknown): Valid<ConfigPatch> {
   }
 
   if (has(record, 'preset_key')) {
-    // El tipo de negocio se cambia, no se quita: no hay "sin tipo" al que volver.
-    if (record.preset_key === null) {
-      return { ok: false, message: 'Elige un tipo de negocio.' }
+    // El tipo de negocio lo fija solo el asistente (POST /setup): cambiarlo
+    // aquí dejaría palabras y piezas de un tipo con el nombre de otro.
+    return {
+      ok: false,
+      message: 'Para cambiar el tipo de negocio usa el asistente de configuración.',
     }
-    if (!isPresetKey(record.preset_key)) {
-      return { ok: false, message: 'Ese tipo de negocio no existe.' }
-    }
-    out.presetKey = record.preset_key
-    any = true
   }
 
   if (!any) {

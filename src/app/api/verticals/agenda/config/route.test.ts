@@ -231,12 +231,11 @@ describe('PATCH /api/verticals/agenda/config', () => {
     expect(db._tables.booking_settings).toHaveLength(0)
   })
 
-  it('400 para piezas que no son sí/no, palabras con marcas y tipos de negocio desconocidos', async () => {
+  it('400 para piezas que no son sí/no y palabras con marcas', async () => {
     const db = boot()
     const bodies: Record<string, unknown>[] = [
       { toggles: { show_price: 'no' } },
       { labels: { cita: '*x*' } },
-      { preset_key: 'tienda' },
     ]
     for (const body of bodies) {
       const res = (await PATCH(jsonRequest(body))) as unknown as TestResponse
@@ -245,7 +244,7 @@ describe('PATCH /api/verticals/agenda/config', () => {
     expect(db._tables.booking_settings).toHaveLength(0)
   })
 
-  it('400 con mensaje para palabras que no son objeto, claves de palabra desconocidas, piezas desconocidas y tipo de negocio vacío', async () => {
+  it('400 con mensaje para palabras que no son objeto, claves de palabra desconocidas y piezas desconocidas', async () => {
     const db = boot()
     const cases: [Record<string, unknown>, string][] = [
       [{ labels: [] }, 'Las palabras deben ser un objeto de clave a texto.'],
@@ -253,7 +252,6 @@ describe('PATCH /api/verticals/agenda/config', () => {
       [{ labels: null }, 'Las palabras deben ser un objeto de clave a texto.'],
       [{ labels: { turno: 'x' } }, '"turno" no es una palabra válida.'],
       [{ toggles: { otra: true } }, 'No hay cambios que guardar.'],
-      [{ preset_key: null }, 'Elige un tipo de negocio.'],
     ]
     for (const [body, message] of cases) {
       const res = (await PATCH(jsonRequest(body))) as unknown as TestResponse
@@ -283,7 +281,30 @@ describe('PATCH /api/verticals/agenda/config', () => {
     })
   })
 
-  it('guarda palabras y tipo de negocio sin borrar dirección, textos ni piezas', async () => {
+  it.each(['salud', 'tienda', null])(
+    'preset_key (%j) en el PATCH es 400: el tipo de negocio solo lo cambia /setup',
+    async (preset_key) => {
+      const db = boot({
+        ...baseSeed(),
+        booking_settings: [{ account_id: TEST_ACCOUNT, preset_key: 'barberia' }],
+      })
+
+      const res = (await PATCH(
+        jsonRequest({ labels: { profesional: 'doctor' }, preset_key }),
+      )) as unknown as TestResponse
+
+      expect(res.status).toBe(400)
+      expect(res.body.error).toBe(
+        'Para cambiar el tipo de negocio usa el asistente de configuración.',
+      )
+      expect(db._tables.booking_settings[0]).toEqual({
+        account_id: TEST_ACCOUNT,
+        preset_key: 'barberia',
+      })
+    },
+  )
+
+  it('guarda palabras sin borrar dirección, textos ni piezas, y no toca el tipo de negocio', async () => {
     const db = boot({
       ...baseSeed(),
       booking_settings: [
@@ -293,12 +314,13 @@ describe('PATCH /api/verticals/agenda/config', () => {
           reminders_2h_enabled: false,
           bot_texts: { welcome: 'Hola' },
           choose_staff: false,
+          preset_key: 'taller',
         },
       ],
     })
 
     const res = (await PATCH(
-      jsonRequest({ labels: { profesional: 'doctor' }, preset_key: 'salud' }),
+      jsonRequest({ labels: { profesional: 'doctor' } }),
     )) as unknown as TestResponse
 
     expect(res.status).toBe(200)
@@ -307,7 +329,7 @@ describe('PATCH /api/verticals/agenda/config', () => {
       botTexts: { welcome: 'Hola' },
       labels: { ...DEFAULT_LABELS, profesional: 'doctor' },
       toggles: { ...DEFAULT_TOGGLES, chooseStaff: false },
-      presetKey: 'salud',
+      presetKey: 'taller',
     })
     expect(db._tables.booking_settings).toHaveLength(1)
   })

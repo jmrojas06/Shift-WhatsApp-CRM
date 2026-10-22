@@ -4,7 +4,6 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { installAgendaTemplate } from './install'
 import { AGENDA_PRESETS, type PresetKey } from './presets'
 import { BARBERIA_PRESET } from './presets/barberia'
-import { AGENDA_AI_PROMPT } from './seed'
 
 const AGENDA_SEED = BARBERIA_PRESET.seed
 
@@ -31,13 +30,19 @@ interface QueryApi {
   order(col?: string): QueryApi
   maybeSingle(): Promise<{ data: Row | null; error: null }>
   then(
-    resolve: (v: { data: Row[] | null; error: null }) => unknown,
+    resolve: (v: { data: Row[] | null; error: unknown }) => unknown,
   ): Promise<unknown>
 }
+
+type Op = 'select' | 'insert' | 'update' | 'upsert' | 'delete'
 
 interface FakeDb {
   from(table: string): QueryApi
   _tables: Record<string, Row[]>
+  /** Hace fallar la PRÓXIMA operación `op` sobre `table` (devuelve un error de PostgREST). */
+  _failNext(op: Op, table: string): void
+  /** Corre antes de cada operación (simula una escritura concurrente de otra sesión). */
+  _beforeOp: ((op: Op, table: string) => void) | null
 }
 
 function fakeDb(seed: Record<string, Row[]> = {}): FakeDb {
@@ -46,12 +51,17 @@ function fakeDb(seed: Record<string, Row[]> = {}): FakeDb {
     tables[name] = rows.map((r) => ({ ...r }))
   }
   const ensure = (t: string): Row[] => (tables[t] ??= [])
+  const failures: [Op, string][] = []
 
-  return {
+  const db: FakeDb = {
     _tables: tables,
+    _beforeOp: null,
+    _failNext(op, table) {
+      failures.push([op, table])
+    },
     from(table: string): QueryApi {
       const state: {
-        op: 'select' | 'insert' | 'update' | 'upsert' | 'delete'
+        op: Op
         payload?: unknown
         onConflict?: string
         filters: [string, unknown][]
@@ -91,6 +101,12 @@ function fakeDb(seed: Record<string, Row[]> = {}): FakeDb {
         order: () => api,
         maybeSingle: async () => ({ data: rows()[0] ?? null, error: null }),
         then: (resolve) => {
+          db._beforeOp?.(state.op, table)
+          const failAt = failures.findIndex(([op, t]) => op === state.op && t === table)
+          if (failAt >= 0) {
+            failures.splice(failAt, 1)
+            return Promise.resolve({ data: null, error: { message: 'falló a propósito' } }).then(resolve)
+          }
           let data: Row[] | null = null
           if (state.op === 'select') {
             data = rows()
@@ -120,6 +136,7 @@ function fakeDb(seed: Record<string, Row[]> = {}): FakeDb {
       return api
     },
   }
+  return db
 }
 
 const ACCOUNT = 'acc-1'
@@ -219,7 +236,7 @@ describe('installAgendaTemplate', () => {
     ).toBe(true)
 
     // El prompt del agente se escribió porque estaba vacío.
-    expect(db._tables.ai_configs[0].system_prompt).toBe(AGENDA_AI_PROMPT)
+    expect(db._tables.ai_configs[0].system_prompt).toBe(BARBERIA_PRESET.aiPrompt)
   })
 
   it('es idempotente: reinstalar no duplica ni reescribe nada', async () => {
@@ -322,11 +339,28 @@ describe('installAgendaTemplate', () => {
 
       const report = await install(db)
 
-      expect(report.pipeline).toEqual({ created: false, stagesCreated: 0 })
+      // Existía pero sin etapas (una instalación cortada): se siembran en ese pipeline.
+      expect(report.pipeline).toEqual({ created: false, stagesCreated: 5 })
       expect(db._tables.pipelines).toHaveLength(1)
-      expect(db._tables.pipeline_stages ?? []).toHaveLength(0)
+      expect(db._tables.pipeline_stages).toHaveLength(5)
+      expect(db._tables.pipeline_stages.every((s) => s.pipeline_id === 'pipe-1')).toBe(true)
+      expect(db._tables.pipeline_stages.map((s) => s.name)).toContain('Cita agendada')
     },
   )
+
+  it('no toca las etapas de un pipeline que ya las tiene', async () => {
+    const db = fakeDb({
+      pipelines: [{ id: 'pipe-1', account_id: ACCOUNT, name: 'Barbería' }],
+      pipeline_stages: [{ id: 'st-1', pipeline_id: 'pipe-1', name: 'Mi etapa' }],
+    })
+
+    const report = await install(db)
+
+    expect(report.pipeline).toEqual({ created: false, stagesCreated: 0 })
+    expect(db._tables.pipeline_stages).toEqual([
+      { id: 'st-1', pipeline_id: 'pipe-1', name: 'Mi etapa' },
+    ])
+  })
 
   it('no toca datos de otras cuentas', async () => {
     const db = fakeDb({
@@ -547,43 +581,206 @@ describe('installAgendaTemplate con punto de partida', () => {
     expect(settingsOf(db).labels).toEqual(AGENDA_PRESETS.salud.labels)
   })
 
-  it('no duplica las preguntas al reinstalar, ni agrega las de otro punto de partida', async () => {
+  it('no duplica las preguntas al reinstalar; otro punto de partida suma solo las que faltan', async () => {
     const db = fakeDb()
     await installPreset(db, 'taller')
     expect(db._tables.booking_questions).toHaveLength(1)
 
     const same = await installPreset(db, 'taller')
     expect(same.questions).toEqual({ created: 0, skipped: 1 })
+    expect(db._tables.booking_questions).toHaveLength(1)
 
     const other = await installPreset(db, 'salud')
-    expect(other.questions).toEqual({ created: 0, skipped: 1 })
-    expect(db._tables.booking_questions).toHaveLength(1)
-    expect(db._tables.booking_questions[0].label).toBe('Placa del vehículo')
+    expect(other.questions).toEqual({ created: 1, skipped: 0 })
+    expect(db._tables.booking_questions.map((q) => [q.label, q.position])).toEqual([
+      ['Placa del vehículo', 0],
+      ['¿Cuál es el motivo de la consulta?', 1],
+    ])
+
+    // Volver a salud ya no agrega nada, ni vuelve a taller.
+    await installPreset(db, 'salud')
+    await installPreset(db, 'taller')
+    expect(db._tables.booking_questions).toHaveLength(2)
   })
 
-  it('las preguntas desactivadas no cuentan: se instalan las del punto de partida', async () => {
+  it('una pregunta con la misma etiqueta no se repite, aunque esté desactivada o cambie la mayúscula', async () => {
     const db = fakeDb({
       booking_questions: [
-        { id: 'q-vieja', account_id: ACCOUNT, label: 'Vieja', is_active: false },
-        { id: 'q-ajena', account_id: 'acc-2', label: 'Ajena', is_active: true },
+        {
+          id: 'q-vieja',
+          account_id: ACCOUNT,
+          label: '¿CUÁL ES EL MOTIVO DE LA CONSULTA?',
+          is_active: false,
+          position: 4,
+        },
+        // De otra cuenta: no cuenta.
+        { id: 'q-ajena', account_id: 'acc-2', label: 'Ajena', is_active: true, position: 0 },
       ],
     })
 
     const report = await installPreset(db, 'salud')
 
-    expect(report.questions).toEqual({ created: 1, skipped: 0 })
-    expect(db._tables.booking_questions).toHaveLength(3)
+    expect(report.questions).toEqual({ created: 0, skipped: 1 })
+    expect(db._tables.booking_questions).toHaveLength(2)
   })
 
-  it('si la cuenta ya tiene preguntas activas no agrega ninguna', async () => {
+  it('agrega la pregunta del punto de partida después de las que ya tiene la cuenta', async () => {
     const db = fakeDb({
-      booking_questions: [{ id: 'q-1', account_id: ACCOUNT, label: 'Propia', is_active: true }],
+      booking_questions: [
+        { id: 'q-1', account_id: ACCOUNT, label: 'Propia', is_active: true, position: 0 },
+      ],
+    })
+
+    const report = await installPreset(db, 'taller')
+
+    expect(report.questions).toEqual({ created: 1, skipped: 0 })
+    expect(db._tables.booking_questions.map((q) => [q.label, q.position])).toEqual([
+      ['Propia', 0],
+      ['Placa del vehículo', 1],
+    ])
+  })
+
+  it('no pasa del tope de preguntas activas', async () => {
+    const db = fakeDb({
+      booking_questions: Array.from({ length: 5 }, (_, i) => ({
+        id: `q-${i}`,
+        account_id: ACCOUNT,
+        label: `Propia ${i}`,
+        is_active: true,
+        position: i,
+      })),
     })
 
     const report = await installPreset(db, 'taller')
 
     expect(report.questions).toEqual({ created: 0, skipped: 1 })
+    expect(db._tables.booking_questions).toHaveLength(5)
+  })
+
+  it('reaplicar el mismo punto de partida no revive lo que el dueño renombró o quitó', async () => {
+    const db = fakeDb()
+    await installPreset(db, 'salud')
+    const hoursBefore = db._tables.booking_working_hours.length
+    const pairsBefore = db._tables.booking_staff_services.length
+
+    // El dueño renombra a la especialista y un servicio, y borra la pregunta.
+    db._tables.booking_staff[0].name = 'Dra. Pérez'
+    db._tables.booking_services.find((r) => r.name === 'Control')!.name = 'Control mensual'
+    db._tables.booking_questions.length = 0
+
+    const report = await installPreset(db, 'salud')
+
+    expect(report.services).toEqual({ created: 0, skipped: 3 })
+    expect(report.staff).toEqual({ created: 0, skipped: 1 })
+    expect(report.staffServices).toEqual({ created: 0, skipped: 3 })
+    expect(report.workingHours).toEqual({ created: 0, skipped: 10 })
+    expect(report.questions).toEqual({ created: 0, skipped: 1 })
+    expect(db._tables.booking_staff.map((r) => r.name)).toEqual(['Dra. Pérez'])
+    expect(db._tables.booking_services.map((r) => r.name).sort()).toEqual([
+      'Consulta general',
+      'Control mensual',
+      'Procedimiento',
+    ])
+    expect(db._tables.booking_working_hours).toHaveLength(hoursBefore)
+    expect(db._tables.booking_staff_services).toHaveLength(pairsBefore)
+    expect(db._tables.booking_questions).toHaveLength(0)
+  })
+
+  it('una cuenta con el punto de partida marcado pero vacía (barbería migrada) sí se siembra', async () => {
+    const db = fakeDb({
+      booking_settings: [{ account_id: ACCOUNT, preset_key: 'barberia' }],
+    })
+
+    const report = await installPreset(db)
+
+    expect(report.services).toEqual({ created: 3, skipped: 0 })
+    expect(report.staff).toEqual({ created: 1, skipped: 0 })
+    expect(report.workingHours).toEqual({ created: 12, skipped: 0 })
+  })
+
+  it('al cambiar de punto de partida solo escribe las piezas de presentación', async () => {
+    const db = fakeDb({
+      booking_settings: [
+        {
+          account_id: ACCOUNT,
+          preset_key: 'salud',
+          reminders_enabled: false,
+          allow_reschedule: false,
+          show_price: true,
+          show_duration: true,
+        },
+      ],
+    })
+
+    await installPreset(db, 'taller')
+
+    const settings = settingsOf(db)
+    expect(settings.preset_key).toBe('taller')
+    expect(settings.choose_staff).toBe(false)
+    expect(settings.show_price).toBe(true)
+    expect(settings.show_duration).toBe(true)
+    // Decisiones del dueño: nunca se tocan.
+    expect(settings.reminders_enabled).toBe(false)
+    expect(settings.allow_reschedule).toBe(false)
+  })
+
+  it('en blanco no guarda una bienvenida propia (usa la de siempre)', async () => {
+    const db = fakeDb()
+    await installPreset(db, 'blanco')
+    expect(settingsOf(db).bot_texts).toEqual({})
+
+    // Venir de otro punto de partida quita la bienvenida que ese dejó, no la del dueño.
+    const db2 = fakeDb()
+    await installPreset(db2, 'salud')
+    await installPreset(db2, 'blanco')
+    expect(settingsOf(db2).bot_texts).toEqual({})
+
+    const db3 = fakeDb({
+      booking_settings: [{ account_id: ACCOUNT, bot_texts: { welcome: 'Mi bienvenida' } }],
+    })
+    await installPreset(db3, 'blanco')
+    expect(settingsOf(db3).bot_texts).toEqual({ welcome: 'Mi bienvenida' })
+  })
+
+  it('no pierde una bienvenida que el dueño guardó mientras corría la instalación', async () => {
+    const db = fakeDb({
+      booking_settings: [{ account_id: ACCOUNT, preset_key: null, bot_texts: {} }],
+    })
+    let wrote = false
+    db._beforeOp = (op, table) => {
+      // A mitad de la instalación otra sesión guarda su bienvenida.
+      if (op === 'insert' && table === 'tags' && !wrote) {
+        wrote = true
+        settingsOf(db).bot_texts = { welcome: 'Escrita durante la instalación' }
+      }
+    }
+
+    await installPreset(db, 'salud')
+
+    expect(wrote).toBe(true)
+    expect((settingsOf(db).bot_texts as { welcome: string }).welcome).toBe(
+      'Escrita durante la instalación',
+    )
+  })
+
+  it('si falla el guardado de ajustes, volver a correrla aplica las palabras sin duplicar nada', async () => {
+    const db = fakeDb()
+    db._failNext('upsert', 'booking_settings')
+
+    await expect(installPreset(db, 'salud')).rejects.toMatchObject({ message: 'falló a propósito' })
+    // El catálogo quedó sembrado, pero las palabras y el punto de partida no.
+    expect(db._tables.booking_services).toHaveLength(3)
+    expect(db._tables.booking_settings ?? []).toHaveLength(0)
+
+    const report = await installPreset(db, 'salud')
+
+    expect(report.services).toEqual({ created: 0, skipped: 3 })
+    expect(report.staff).toEqual({ created: 0, skipped: 1 })
+    expect(db._tables.booking_services).toHaveLength(3)
+    expect(db._tables.booking_staff).toHaveLength(1)
     expect(db._tables.booking_questions).toHaveLength(1)
+    expect(settingsOf(db).preset_key).toBe('salud')
+    expect(settingsOf(db).labels).toEqual(AGENDA_PRESETS.salud.labels)
   })
 
   it('no pisa una bienvenida que el dueño ya escribió', async () => {
@@ -646,8 +843,9 @@ describe('installAgendaTemplate con punto de partida', () => {
     await installPreset(db, 'taller')
 
     const prompt = String(db._tables.ai_configs[0].system_prompt)
-    expect(prompt).not.toBe(AGENDA_AI_PROMPT)
+    expect(prompt).toBe(AGENDA_PRESETS.taller.aiPrompt)
     expect(prompt.toLowerCase()).not.toContain('barber')
+    expect(prompt.toLowerCase()).not.toContain('colombia')
   })
 
   it('no toca los ajustes de otras cuentas', async () => {

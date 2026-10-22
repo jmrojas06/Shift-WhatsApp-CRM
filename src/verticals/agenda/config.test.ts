@@ -373,39 +373,40 @@ describe('ConfigError', () => {
 })
 
 describe('validateConfigPatch — agenda armable', () => {
-  it('acepta palabras, piezas y punto de partida', () => {
+  it('acepta palabras y piezas', () => {
     const res = validateConfigPatch({
       labels: { profesional: 'doctor' },
       toggles: { choose_staff: false, show_price: true },
-      preset_key: 'salud',
     })
     expect(res).toEqual({
       ok: true,
       value: {
         labels: { profesional: 'doctor' },
         toggles: { chooseStaff: false, showPrice: true },
-        presetKey: 'salud',
       },
     })
   })
 
-  it('rechaza piezas que no son sí/no y puntos de partida desconocidos', () => {
+  it('rechaza piezas que no son sí/no', () => {
     expect(validateConfigPatch({ toggles: { choose_staff: 'no' } }).ok).toBe(false)
     expect(validateConfigPatch({ toggles: { show_price: 0 } }).ok).toBe(false)
     expect(validateConfigPatch({ toggles: null }).ok).toBe(false)
     expect(validateConfigPatch({ toggles: [] }).ok).toBe(false)
-    expect(validateConfigPatch({ preset_key: 'tienda' })).toEqual({
-      ok: false,
-      message: 'Ese tipo de negocio no existe.',
-    })
   })
 
-  it('el tipo de negocio no se puede quitar', () => {
-    expect(validateConfigPatch({ preset_key: null })).toEqual({
-      ok: false,
-      message: 'Elige un tipo de negocio.',
-    })
-  })
+  it.each(['salud', 'tienda', null, 3])(
+    'el tipo de negocio (%j) no se cambia por aquí: solo el asistente',
+    (preset_key) => {
+      expect(validateConfigPatch({ preset_key })).toEqual({
+        ok: false,
+        message: 'Para cambiar el tipo de negocio usa el asistente de configuración.',
+      })
+      expect(validateConfigPatch({ address: 'Calle 1', preset_key })).toEqual({
+        ok: false,
+        message: 'Para cambiar el tipo de negocio usa el asistente de configuración.',
+      })
+    },
+  )
 
   it('rechaza palabras con marcas de WhatsApp', () => {
     expect(validateConfigPatch({ labels: { cita: '*x*' } }).ok).toBe(false)

@@ -15,8 +15,8 @@ import { badRequest, configErrorResponse, readJsonBody } from '../_lib/http'
 // Ajustes del negocio y del bot desde /agenda/configuracion:
 // dirección, moneda, señal de 2 h, textos del bot, palabras del
 // negocio (`labels`), piezas prendidas/apagadas (`toggles`, claves
-// en snake_case de columna: choose_staff, show_price, ...) y el
-// punto de partida (`preset_key`).
+// en snake_case de columna: choose_staff, show_price, ...). El punto
+// de partida (`preset_key`) NO se cambia aquí: solo POST /setup lo fija.
 //
 // `labels`: la UI manda siempre las seis palabras, pero el servidor
 // MEZCLA lo recibido con lo ya guardado (saveSettings), así que un
@@ -50,8 +50,7 @@ export async function PATCH(request: Request) {
       patch.botTexts !== undefined ||
       patch.labels !== undefined ||
       patch.labelsReset !== undefined ||
-      patch.toggles !== undefined ||
-      patch.presetKey !== undefined
+      patch.toggles !== undefined
     ) {
       settings = await saveSettings(ctx.supabase, ctx.accountId, {
         address: patch.address,
@@ -60,7 +59,6 @@ export async function PATCH(request: Request) {
         labels: patch.labels,
         labelsReset: patch.labelsReset,
         toggles: patch.toggles,
-        presetKey: patch.presetKey,
       })
     }
 

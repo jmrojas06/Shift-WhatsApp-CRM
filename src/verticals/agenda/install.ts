@@ -17,12 +17,17 @@
 //     no tiene ninguna fila de horario.
 //   - `ai_configs.system_prompt` solo se escribe si está vacío; si ya
 //     hay uno, se devuelve 'already_set' con advertencia.
-//   - Las preguntas extra del punto de partida solo se insertan si la
-//     cuenta no tiene NINGUNA pregunta activa.
-//   - Palabras y piezas (labels/toggles) se fijan solo cuando el punto
-//     de partida cambia (cuenta sin punto de partida o uno distinto):
-//     reinstalar el mismo no pisa lo que el dueño editó. La bienvenida
-//     solo se fija si el dueño no escribió una propia (una bienvenida
+//   - Reaplicar el MISMO punto de partida a una cuenta que ya tiene
+//     catálogo o equipo no siembra servicios, equipo, relaciones,
+//     horario ni preguntas (el dueño pudo renombrar o borrar los de
+//     ejemplo); solo rellena etiquetas, pipeline, respuestas rápidas y
+//     documentos que falten.
+//   - Las preguntas extra del punto de partida se agregan solo si no
+//     existe ya una con la misma etiqueta (activa o no).
+//   - Palabras y piezas de presentación (labels y choose_staff,
+//     show_price, show_duration) se fijan solo cuando el punto de partida
+//     cambia; recordatorios y reprogramación nunca se tocan. La
+//     bienvenida solo se fija si el dueño no escribió una propia (una
 //     que es la de algún punto de partida cuenta como no escrita).
 //   - Nunca se borra nada.
 //   - `accounts.default_currency` solo se ajusta (USD→COP) mientras
@@ -37,12 +42,14 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { chunkText } from '@/lib/ai/chunk'
 import { AGENDA_PRESETS, getPreset, isPresetKey, type PresetKey } from './presets'
+import { MAX_QUESTIONS } from './questions'
 import {
   isAgendaPipelineName,
   type AiPromptOutcome,
   type AgendaInstallReport,
   type InstallSectionCounts,
 } from './seed'
+import { buildAgentTexts } from './texts'
 import { togglesToRow } from './toggles'
 
 export interface InstallAgendaArgs {
@@ -112,20 +119,16 @@ export async function installAgendaTemplate(
 ): Promise<AgendaInstallReport> {
   const { db, accountId, userId } = args
 
-  // Ajustes actuales: dan el punto de partida por defecto y dicen si el
-  // dueño ya tiene bienvenida propia. Si la lectura falla, se aborta antes
-  // de escribir nada.
+  // Punto de partida actual de la cuenta: es el valor por defecto y decide
+  // si esto es una reaplicación. Si la lectura falla, se aborta antes de
+  // escribir nada.
   const { data: settingsRow, error: settingsReadError } = await db
     .from('booking_settings')
-    .select('bot_texts, preset_key')
+    .select('preset_key')
     .eq('account_id', accountId)
     .maybeSingle()
   if (settingsReadError) throw settingsReadError
-  const currentSettings = settingsRow as {
-    bot_texts?: Record<string, unknown> | null
-    preset_key?: string | null
-  } | null
-  const currentPresetKey = currentSettings?.preset_key ?? null
+  const currentPresetKey = (settingsRow as { preset_key?: string | null } | null)?.preset_key ?? null
 
   const preset = getPreset(
     args.presetKey ?? (isPresetKey(currentPresetKey) ? currentPresetKey : DEFAULT_PRESET_KEY),
@@ -190,10 +193,26 @@ export async function installAgendaTemplate(
   )) {
     existingServices.set(row.name.toLowerCase(), row.id)
   }
+  const existingStaff = new Map<string, string>()
+  for (const row of await selectRows<IdNameRow>(
+    db,
+    'booking_staff',
+    'id, name',
+    accountId,
+  )) {
+    existingStaff.set(row.name.toLowerCase(), row.id)
+  }
+
+  // Volver a aplicar EL MISMO punto de partida a una cuenta que ya tiene
+  // catálogo o equipo no vuelve a sembrar servicios, equipo, relaciones,
+  // horario ni preguntas: el dueño pudo renombrar o borrar los de ejemplo y
+  // se recrearían. (Una cuenta con el punto de partida marcado pero sin nada
+  // —p. ej. barbería migrada que nunca instaló— sí se siembra.)
+  const reapply = currentPresetKey === preset.key && (existingServices.size > 0 || existingStaff.size > 0)
 
   const serviceIdByName = new Map<string, string>()
   const newServices: InsertRow[] = []
-  for (const seed of template.services) {
+  for (const seed of reapply ? [] : template.services) {
     const existingId = existingServices.get(seed.name.toLowerCase())
     if (existingId) {
       serviceIdByName.set(seed.name, existingId)
@@ -215,24 +234,15 @@ export async function installAgendaTemplate(
     })
     report.services.created += 1
   }
+  if (reapply) report.services.skipped = template.services.length
   await insertRows(db, 'booking_services', newServices)
 
   // ----------------------------------------------------------
   // 2. Barbero de ejemplo
   // ----------------------------------------------------------
-  const existingStaff = new Map<string, string>()
-  for (const row of await selectRows<IdNameRow>(
-    db,
-    'booking_staff',
-    'id, name',
-    accountId,
-  )) {
-    existingStaff.set(row.name.toLowerCase(), row.id)
-  }
-
   const staffIdByName = new Map<string, string>()
   const newStaff: InsertRow[] = []
-  for (const seed of template.staff) {
+  for (const seed of reapply ? [] : template.staff) {
     const existingId = existingStaff.get(seed.name.toLowerCase())
     if (existingId) {
       staffIdByName.set(seed.name, existingId)
@@ -252,11 +262,12 @@ export async function installAgendaTemplate(
     })
     report.staff.created += 1
   }
+  if (reapply) report.staff.skipped = template.staff.length
   await insertRows(db, 'booking_staff', newStaff)
 
   // "En blanco" no trae profesional de ejemplo: sin él no hay relaciones ni horario.
   const exampleSeedStaff = template.staff[0]
-  const exampleStaffId = exampleSeedStaff
+  const exampleStaffId = exampleSeedStaff && !reapply
     ? (staffIdByName.get(exampleSeedStaff.name) ??
       existingStaff.get(exampleSeedStaff.name.toLowerCase()) ??
       null)
@@ -276,7 +287,9 @@ export async function installAgendaTemplate(
   }
 
   const newPairs: InsertRow[] = []
-  if (exampleStaffId) {
+  if (reapply) {
+    report.staffServices.skipped = template.staff.length > 0 ? template.services.length : 0
+  } else if (exampleStaffId) {
     for (const seed of template.services) {
       const serviceId = serviceIdByName.get(seed.name)
       if (!serviceId) continue
@@ -306,7 +319,7 @@ export async function installAgendaTemplate(
   const exampleStaffHours = hourRows.filter(
     (row) => row.staff_id === exampleStaffId,
   )
-  if (exampleStaffHours.length > 0) {
+  if (reapply || exampleStaffHours.length > 0) {
     report.workingHours.skipped = template.weeklySchedule.length
   } else if (exampleStaffId) {
     await insertRows(
@@ -388,9 +401,30 @@ export async function installAgendaTemplate(
   const existingPipeline = pipelineRows.find((row) =>
     isAgendaPipelineName(row.name),
   )
+  const stageRowsFor = (pipelineId: string): InsertRow[] =>
+    template.pipeline.stages.map((stage, index) => ({
+      id: crypto.randomUUID(),
+      pipeline_id: pipelineId,
+      name: stage.name,
+      position: index,
+      color: stage.color,
+    }))
   if (existingPipeline) {
-    // Ya existe: sus etapas son del dueño, no las tocamos.
-    report.pipeline = { created: false, stagesCreated: 0 }
+    // Ya existe: sus etapas son del dueño, no las tocamos. Solo si quedó
+    // sin ninguna (una instalación anterior se cortó entre el pipeline y sus
+    // etapas) se siembran, porque el bot necesita "Cita agendada".
+    const { data: stages, error: stagesError } = await db
+      .from('pipeline_stages')
+      .select('id')
+      .eq('pipeline_id', existingPipeline.id)
+    if (stagesError) throw stagesError
+    if (((stages ?? []) as { id: string }[]).length === 0) {
+      const stageRows = stageRowsFor(existingPipeline.id)
+      await insertRows(db, 'pipeline_stages', stageRows)
+      report.pipeline = { created: false, stagesCreated: stageRows.length }
+    } else {
+      report.pipeline = { created: false, stagesCreated: 0 }
+    }
   } else {
     const pipelineId = crypto.randomUUID()
     await insertRows(db, 'pipelines', [
@@ -401,13 +435,7 @@ export async function installAgendaTemplate(
         name: template.pipeline.name,
       },
     ])
-    const stageRows = template.pipeline.stages.map((stage, index) => ({
-      id: crypto.randomUUID(),
-      pipeline_id: pipelineId,
-      name: stage.name,
-      position: index,
-      color: stage.color,
-    }))
+    const stageRows = stageRowsFor(pipelineId)
     await insertRows(db, 'pipeline_stages', stageRows)
     report.pipeline = { created: true, stagesCreated: stageRows.length }
   }
@@ -526,32 +554,51 @@ export async function installAgendaTemplate(
   }
 
   // ----------------------------------------------------------
-  // 11. Preguntas extra del bot — solo si la cuenta no tiene
-  //     NINGUNA activa (nunca se duplican ni se mezclan con las del dueño)
+  // 11. Preguntas extra del bot
+  //
+  // Se agrega cada pregunta del punto de partida que la cuenta no tenga
+  // ya (misma etiqueta sin importar mayúsculas, activa o no), sin pasar
+  // del tope de preguntas activas. Reaplicar el mismo punto de partida
+  // no vuelve a sembrarlas: el dueño pudo quitar o renombrar las suyas.
   // ----------------------------------------------------------
-  const { data: activeQuestions, error: questionsError } = await db
-    .from('booking_questions')
-    .select('id')
-    .eq('account_id', accountId)
-    .eq('is_active', true)
-  if (questionsError) throw questionsError
-  if (((activeQuestions ?? []) as { id: string }[]).length > 0) {
+  if (reapply) {
     report.questions.skipped = preset.questions.length
   } else if (preset.questions.length > 0) {
-    await insertRows(
-      db,
-      'booking_questions',
-      preset.questions.map((q, position) => ({
+    const { data: questionRows, error: questionsError } = await db
+      .from('booking_questions')
+      .select('label, is_active, position')
+      .eq('account_id', accountId)
+    if (questionsError) throw questionsError
+    const existingQuestions = (questionRows ?? []) as {
+      label: string
+      is_active: boolean | null
+      position: number | null
+    }[]
+    const knownLabels = new Set(existingQuestions.map((q) => String(q.label).trim().toLowerCase()))
+    let activeCount = existingQuestions.filter((q) => q.is_active !== false).length
+    let nextPosition = existingQuestions.reduce((max, q) => Math.max(max, (q.position ?? -1) + 1), 0)
+
+    const newQuestions: InsertRow[] = []
+    for (const q of preset.questions) {
+      if (knownLabels.has(q.label.trim().toLowerCase()) || activeCount >= MAX_QUESTIONS) {
+        report.questions.skipped += 1
+        continue
+      }
+      newQuestions.push({
         account_id: accountId,
         label: q.label,
         kind: q.kind,
         required: q.required,
         options: q.options,
-        position,
+        position: nextPosition,
         is_active: true,
-      })),
-    )
-    report.questions.created = preset.questions.length
+      })
+      knownLabels.add(q.label.trim().toLowerCase())
+      activeCount += 1
+      nextPosition += 1
+    }
+    await insertRows(db, 'booking_questions', newQuestions)
+    report.questions.created = newQuestions.length
   }
 
   // ----------------------------------------------------------
@@ -559,15 +606,34 @@ export async function installAgendaTemplate(
   //
   // Palabras y piezas solo se fijan cuando el punto de partida cambia
   // (la cuenta no tenía uno, o era otro): así reinstalar el mismo no
-  // pisa lo que el dueño ajustó después. La bienvenida solo se fija si
-  // el dueño no escribió una propia; una que es la de algún punto de
-  // partida (la dejó un asistente anterior) no cuenta como propia.
+  // pisa lo que el dueño ajustó después. De las piezas solo se escriben
+  // las de presentación (elegir profesional, precio, duración): los
+  // recordatorios y la reprogramación son decisión del dueño.
+  //
+  // La bienvenida solo se fija si el dueño no escribió una propia; una
+  // que es la de algún punto de partida (la dejó un asistente anterior)
+  // no cuenta como propia. Si la del punto de partida es la que el bot ya
+  // usa por defecto, no se guarda como override (y se quita la anterior).
+  //
+  // Los textos se vuelven a leer justo antes de escribir, para no perder
+  // una bienvenida que el dueño guardó mientras corría la instalación.
   // ----------------------------------------------------------
-  const botTexts: Record<string, unknown> = { ...(currentSettings?.bot_texts ?? {}) }
+  const { data: freshRow, error: freshError } = await db
+    .from('booking_settings')
+    .select('bot_texts')
+    .eq('account_id', accountId)
+    .maybeSingle()
+  if (freshError) throw freshError
+  const botTexts: Record<string, unknown> = {
+    ...((freshRow as { bot_texts?: Record<string, unknown> | null } | null)?.bot_texts ?? {}),
+  }
   const currentWelcome = typeof botTexts.welcome === 'string' ? botTexts.welcome.trim() : ''
   const presetWelcomes = new Set(Object.values(AGENDA_PRESETS).map((p) => p.welcome))
   const ownerWroteWelcome = currentWelcome !== '' && !presetWelcomes.has(currentWelcome)
-  if (!ownerWroteWelcome) botTexts.welcome = preset.welcome
+  if (!ownerWroteWelcome) {
+    if (preset.welcome === buildAgentTexts(preset.labels).serviceMenuBody) delete botTexts.welcome
+    else botTexts.welcome = preset.welcome
+  }
 
   const settingsPatch: Record<string, unknown> = {
     account_id: accountId,
@@ -576,7 +642,8 @@ export async function installAgendaTemplate(
   }
   if (currentPresetKey !== preset.key) {
     settingsPatch.labels = preset.labels
-    Object.assign(settingsPatch, togglesToRow(preset.toggles))
+    const { choose_staff, show_price, show_duration } = togglesToRow(preset.toggles)
+    Object.assign(settingsPatch, { choose_staff, show_price, show_duration })
   }
   const { error: settingsError } = await db
     .from('booking_settings')

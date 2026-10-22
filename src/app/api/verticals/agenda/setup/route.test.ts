@@ -181,11 +181,33 @@ describe('POST /api/verticals/agenda/setup', () => {
     },
   )
 
-  it.each(['[]', '"salud"', '42'])('rechaza un cuerpo que no es un objeto (%s)', async (raw) => {
-    const res = (await POST(post(raw))) as unknown as TestResponse
+  it.each(['[]', '"salud"', '42', 'null'])(
+    'rechaza un cuerpo que no es un objeto (%s)',
+    async (raw) => {
+      const res = (await POST(post(raw))) as unknown as TestResponse
 
-    expect(res.status).toBe(400)
-    expect(h.state.installCalls).toHaveLength(0)
+      expect(res.status).toBe(400)
+      expect(res.body.error).toBe('El cuerpo no es JSON válido.')
+      expect(h.state.installCalls).toHaveLength(0)
+    },
+  )
+
+  it.each(['{"preset_key":', 'salud', '{preset_key: "salud"}'])(
+    'un JSON roto (%s) es 400, no el punto de partida por defecto',
+    async (raw) => {
+      const res = (await POST(post(raw))) as unknown as TestResponse
+
+      expect(res.status).toBe(400)
+      expect(res.body.error).toBe('El cuerpo no es JSON válido.')
+      expect(h.state.installCalls).toHaveLength(0)
+    },
+  )
+
+  it('un cuerpo en blanco cuenta como vacío: usa el de la cuenta', async () => {
+    const res = (await POST(post('  \n '))) as unknown as TestResponse
+
+    expect(res.status).toBe(200)
+    expect(h.state.installCalls[0].presetKey).toBeUndefined()
   })
 
   it('con un punto de partida inválido, un viewer sigue recibiendo 403', async () => {
