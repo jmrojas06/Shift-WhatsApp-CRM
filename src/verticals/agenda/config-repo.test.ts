@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
 import { ConfigError } from './config'
+import { DEFAULT_LABELS } from './labels'
+import { DEFAULT_TOGGLES } from './toggles'
 import {
   createService,
   createStaff,
@@ -530,6 +532,9 @@ describe('saveSettings', () => {
       address: 'Cra. 7 # 45-12',
       reminders2hEnabled: false,
       botTexts: {},
+      labels: DEFAULT_LABELS,
+      toggles: DEFAULT_TOGGLES,
+      presetKey: null,
     })
 
     const toggled = await saveSettings(asClient(db), ACCOUNT, {
@@ -599,5 +604,62 @@ describe('ConfigError', () => {
       expect(err).toBeInstanceOf(ConfigError)
       expect((err as ConfigError).message).toBe('El servicio no existe.')
     }
+  })
+})
+
+describe('saveSettings — agenda armable', () => {
+  it('guarda palabras y piezas sin pisar lo demás', async () => {
+    const db = makeFakeDb({
+      ...baseSeed(),
+      booking_settings: [
+        { account_id: ACCOUNT, address: 'Calle 1', bot_texts: {}, reminders_2h_enabled: true },
+      ],
+    })
+    const saved = await saveSettings(asClient(db), ACCOUNT, {
+      labels: { profesional: 'técnico' },
+      toggles: { chooseStaff: false },
+      presetKey: 'taller',
+    })
+    expect(saved.address).toBe('Calle 1')
+    expect(saved.reminders2hEnabled).toBe(true)
+    expect(saved.labels.profesional).toBe('técnico')
+    expect(saved.labels.cita).toBe(DEFAULT_LABELS.cita)
+    expect(saved.toggles.chooseStaff).toBe(false)
+    expect(saved.toggles.showPrice).toBe(true)
+    expect(saved.presetKey).toBe('taller')
+  })
+
+  it('guardar otras cosas no borra palabras, piezas ni punto de partida', async () => {
+    const db = makeFakeDb(baseSeed())
+    await saveSettings(asClient(db), ACCOUNT, {
+      labels: { profesional: 'técnico' },
+      toggles: { allowReschedule: false },
+      presetKey: 'taller',
+    })
+    const after = await saveSettings(asClient(db), ACCOUNT, { address: 'Calle 9' })
+    expect(after.labels.profesional).toBe('técnico')
+    expect(after.toggles.allowReschedule).toBe(false)
+    expect(after.presetKey).toBe('taller')
+  })
+
+  it('mezcla las palabras: mandar una no borra las ya guardadas', async () => {
+    const db = makeFakeDb(baseSeed())
+    await saveSettings(asClient(db), ACCOUNT, { labels: { profesional: 'doctor', cita: 'consulta' } })
+    const saved = await saveSettings(asClient(db), ACCOUNT, { labels: { profesional: 'médico' } })
+    expect(saved.labels.profesional).toBe('médico')
+    expect(saved.labels.cita).toBe('consulta')
+    expect(rowsOf(db, 'booking_settings')[0].labels).toEqual({ profesional: 'médico', cita: 'consulta' })
+  })
+
+  it('una fila con datos viejos o dañados nunca rompe la lectura', async () => {
+    const db = makeFakeDb({
+      ...baseSeed(),
+      booking_settings: [
+        { account_id: ACCOUNT, labels: { cita: '*x*', profesional: 'doctor', basura: 1 } },
+      ],
+    })
+    const saved = await saveSettings(asClient(db), ACCOUNT, { toggles: { showPrice: false } })
+    expect(saved.labels.cita).toBe(DEFAULT_LABELS.cita)
+    expect(saved.labels.profesional).toBe('doctor')
   })
 })

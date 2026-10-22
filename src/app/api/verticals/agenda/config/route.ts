@@ -13,7 +13,15 @@ import { badRequest, configErrorResponse, readJsonBody } from '../_lib/http'
 // PATCH /api/verticals/agenda/config
 //
 // Ajustes del negocio y del bot desde /agenda/configuracion:
-// dirección, moneda, señal de 2 h y textos del bot.
+// dirección, moneda, señal de 2 h, textos del bot, palabras del
+// negocio (`labels`), piezas prendidas/apagadas (`toggles`, claves
+// en snake_case de columna: choose_staff, show_price, ...) y el
+// punto de partida (`preset_key`).
+//
+// `labels`: la UI manda siempre las seis palabras, pero el servidor
+// MEZCLA lo recibido con lo ya guardado (saveSettings), así que un
+// cuerpo parcial nunca borra el resto. Una pieza que no es true/false
+// es 400; nunca se ignora en silencio.
 //
 // Guardas:
 //   - requireRole('admin'): solo owner/admin configuran. La RLS de
@@ -37,12 +45,18 @@ export async function PATCH(request: Request) {
     if (
       patch.address !== undefined ||
       patch.reminders2hEnabled !== undefined ||
-      patch.botTexts !== undefined
+      patch.botTexts !== undefined ||
+      patch.labels !== undefined ||
+      patch.toggles !== undefined ||
+      patch.presetKey !== undefined
     ) {
       settings = await saveSettings(ctx.supabase, ctx.accountId, {
         address: patch.address,
         reminders2hEnabled: patch.reminders2hEnabled,
         botTexts: patch.botTexts,
+        labels: patch.labels,
+        toggles: patch.toggles,
+        presetKey: patch.presetKey,
       })
     }
 

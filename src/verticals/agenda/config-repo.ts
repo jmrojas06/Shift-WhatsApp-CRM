@@ -35,6 +35,8 @@ import {
   type TimeOffCreateInput,
   type WorkBlockInput,
 } from './config'
+import { LABEL_KEYS, readLabels, type AgendaLabels } from './labels'
+import { togglesFromRow, togglesToRow, type AgendaToggles } from './toggles'
 
 // ------------------------------------------------------------
 // Filas y registros
@@ -82,6 +84,10 @@ interface SettingsRow {
   address: string | null
   reminders_2h_enabled: boolean
   bot_texts: unknown
+  labels: unknown
+  preset_key: string | null
+  // Más las columnas de las piezas (TOGGLE_COLUMNS), que se leen con togglesFromRow.
+  [column: string]: unknown
 }
 
 export interface ServiceRecord {
@@ -114,7 +120,14 @@ export interface SettingsRecord {
   address: string | null
   reminders2hEnabled: boolean
   botTexts: BotTextOverrides
+  /** Las seis palabras, ya mezcladas con los defaults. */
+  labels: AgendaLabels
+  toggles: AgendaToggles
+  presetKey: string | null
 }
+
+const SETTINGS_COLS =
+  'account_id, address, reminders_2h_enabled, bot_texts, labels, preset_key, choose_staff, show_price, show_duration, reminders_enabled, allow_reschedule'
 
 const SERVICE_COLS =
   'id, name, description, duration_minutes, price, is_active, position'
@@ -638,6 +651,10 @@ export async function saveSettings(
     address?: string | null
     reminders2hEnabled?: boolean
     botTexts?: BotTextOverrides
+    /** Se MEZCLA con las palabras ya guardadas (una palabra suelta no borra las demás). */
+    labels?: Partial<AgendaLabels>
+    toggles?: Partial<AgendaToggles>
+    presetKey?: string
   },
 ): Promise<SettingsRecord> {
   const row: Record<string, unknown> = { account_id: accountId }
@@ -646,11 +663,16 @@ export async function saveSettings(
     row.reminders_2h_enabled = patch.reminders2hEnabled
   }
   if (patch.botTexts !== undefined) row.bot_texts = patch.botTexts
+  if (patch.labels !== undefined) {
+    row.labels = { ...(await storedLabels(db, accountId)), ...patch.labels }
+  }
+  if (patch.presetKey !== undefined) row.preset_key = patch.presetKey
+  if (patch.toggles !== undefined) Object.assign(row, togglesToRow(patch.toggles))
 
   const { data } = await db
     .from('booking_settings')
     .upsert(row, { onConflict: 'account_id' })
-    .select('account_id, address, reminders_2h_enabled, bot_texts')
+    .select(SETTINGS_COLS)
     .maybeSingle()
   if (!data) throw new Error('No se pudo guardar la configuración.')
 
@@ -660,7 +682,36 @@ export async function saveSettings(
     address: settings.address,
     reminders2hEnabled: Boolean(settings.reminders_2h_enabled),
     botTexts: clean.ok ? clean.value : {},
+    // Lectura tolerante: una fila vieja o dañada nunca debe tumbar un guardado ya hecho.
+    labels: readLabels(settings.labels),
+    toggles: togglesFromRow(settings),
+    presetKey: settings.preset_key ?? null,
   }
+}
+
+/**
+ * Palabras personalizadas hoy guardadas (solo las que el dueño cambió, sin
+ * defaults), para mezclar con un cambio parcial. Ignora lo que no sea texto.
+ * Leer y escribir no es atómico: dos admins guardando a la vez la misma
+ * palabra gana el último, que es lo esperado en una pantalla de ajustes.
+ */
+async function storedLabels(
+  db: SupabaseClient,
+  accountId: string,
+): Promise<Partial<AgendaLabels>> {
+  const { data } = await db
+    .from('booking_settings')
+    .select('labels')
+    .eq('account_id', accountId)
+    .maybeSingle()
+  const raw = (data as { labels?: unknown } | null)?.labels
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const kept: Partial<AgendaLabels> = {}
+  for (const key of LABEL_KEYS) {
+    const value = (raw as Record<string, unknown>)[key]
+    if (typeof value === 'string' && value.trim()) kept[key] = value
+  }
+  return kept
 }
 
 /** Cambia la moneda por defecto de la cuenta (accounts.default_currency). */

@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeFakeDb, type Row } from '@/verticals/agenda/agent/testing/fake-db'
+import { DEFAULT_LABELS } from '@/verticals/agenda/labels'
+import { DEFAULT_TOGGLES } from '@/verticals/agenda/toggles'
 
 import {
   brokenJsonRequest,
@@ -80,6 +82,9 @@ describe('PATCH /api/verticals/agenda/config', () => {
       address: 'Cra 7 # 45-12',
       reminders2hEnabled: false,
       botTexts: {},
+      labels: DEFAULT_LABELS,
+      toggles: DEFAULT_TOGGLES,
+      presetKey: null,
     })
     expect(res.body.currency).toBeNull()
     expect(db._tables.booking_settings).toHaveLength(1)
@@ -169,6 +174,79 @@ describe('PATCH /api/verticals/agenda/config', () => {
       expect(res.status).toBe(403)
     }
     expect(db._tables.booking_settings).toHaveLength(0)
+  })
+
+  it('el dueño apaga una pieza y la fila queda con esa columna en false', async () => {
+    const db = boot()
+
+    const res = (await PATCH(
+      jsonRequest({ toggles: { choose_staff: false } }),
+    )) as unknown as TestResponse
+
+    expect(res.status).toBe(200)
+    expect(res.body.settings).toMatchObject({
+      toggles: { ...DEFAULT_TOGGLES, chooseStaff: false },
+    })
+    expect(db._tables.booking_settings[0]).toMatchObject({
+      account_id: TEST_ACCOUNT,
+      choose_staff: false,
+      show_price: true,
+    })
+  })
+
+  it('un agent no puede cambiar piezas (403) y no se escribe nada', async () => {
+    const db = boot()
+    h.state.role = 'agent'
+
+    const res = (await PATCH(
+      jsonRequest({ toggles: { choose_staff: false } }),
+    )) as unknown as TestResponse
+
+    expect(res.status).toBe(403)
+    expect(db._tables.booking_settings).toHaveLength(0)
+  })
+
+  it('400 para piezas que no son sí/no, palabras con marcas y tipos de negocio desconocidos', async () => {
+    const db = boot()
+    const bodies: Record<string, unknown>[] = [
+      { toggles: { show_price: 'no' } },
+      { labels: { cita: '*x*' } },
+      { preset_key: 'tienda' },
+    ]
+    for (const body of bodies) {
+      const res = (await PATCH(jsonRequest(body))) as unknown as TestResponse
+      expect(res.status).toBe(400)
+    }
+    expect(db._tables.booking_settings).toHaveLength(0)
+  })
+
+  it('guarda palabras y tipo de negocio sin borrar dirección, textos ni piezas', async () => {
+    const db = boot({
+      ...baseSeed(),
+      booking_settings: [
+        {
+          account_id: TEST_ACCOUNT,
+          address: 'Calle 1 # 2-3',
+          reminders_2h_enabled: false,
+          bot_texts: { welcome: 'Hola' },
+          choose_staff: false,
+        },
+      ],
+    })
+
+    const res = (await PATCH(
+      jsonRequest({ labels: { profesional: 'doctor' }, preset_key: 'salud' }),
+    )) as unknown as TestResponse
+
+    expect(res.status).toBe(200)
+    expect(res.body.settings).toMatchObject({
+      address: 'Calle 1 # 2-3',
+      botTexts: { welcome: 'Hola' },
+      labels: { ...DEFAULT_LABELS, profesional: 'doctor' },
+      toggles: { ...DEFAULT_TOGGLES, chooseStaff: false },
+      presetKey: 'salud',
+    })
+    expect(db._tables.booking_settings).toHaveLength(1)
   })
 
   it('un cuerpo que no es JSON es 400, no 500', async () => {

@@ -12,6 +12,9 @@
 // ============================================================
 
 import { sanitizeBotTexts, type BotTextOverrides } from './bot-texts'
+import { sanitizeLabels, type AgendaLabels } from './labels'
+import { isPresetKey, type PresetKey } from './presets'
+import { TOGGLE_COLUMNS, TOGGLE_KEYS, type AgendaToggles } from './toggles'
 
 // ------------------------------------------------------------
 // Contrato
@@ -576,6 +579,9 @@ export interface ConfigPatch {
   currency?: string
   reminders2hEnabled?: boolean
   botTexts?: BotTextOverrides
+  labels?: Partial<AgendaLabels>
+  toggles?: Partial<AgendaToggles>
+  presetKey?: PresetKey
 }
 
 export function validateConfigPatch(input: unknown): Valid<ConfigPatch> {
@@ -643,6 +649,44 @@ export function validateConfigPatch(input: unknown): Valid<ConfigPatch> {
     const sanitized = sanitizeBotTexts(record.bot_texts)
     if (!sanitized.ok) return sanitized
     out.botTexts = sanitized.value
+    any = true
+  }
+
+  if (has(record, 'labels')) {
+    const labels = sanitizeLabels(record.labels)
+    if (!labels.ok) return labels
+    out.labels = labels.value
+    any = true
+  }
+
+  if (has(record, 'toggles')) {
+    const raw = asRecord(record.toggles)
+    if (!raw) return { ok: false, message: 'Las piezas no son válidas.' }
+    const toggles: Partial<AgendaToggles> = {}
+    let anyToggle = false
+    for (const key of TOGGLE_KEYS) {
+      const column = TOGGLE_COLUMNS[key]
+      if (!has(raw, column)) continue
+      const value = raw[column]
+      // Nada de coerción: "no" o 0 no son un apagado, son un error del cliente.
+      if (typeof value !== 'boolean') {
+        return { ok: false, message: 'Cada pieza debe ser sí o no.' }
+      }
+      toggles[key] = value
+      anyToggle = true
+    }
+    // Un objeto sin ninguna pieza conocida no es un cambio.
+    if (anyToggle) {
+      out.toggles = toggles
+      any = true
+    }
+  }
+
+  if (has(record, 'preset_key')) {
+    if (!isPresetKey(record.preset_key)) {
+      return { ok: false, message: 'Ese tipo de negocio no existe.' }
+    }
+    out.presetKey = record.preset_key
     any = true
   }
 

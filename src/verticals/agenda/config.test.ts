@@ -371,3 +371,41 @@ describe('ConfigError', () => {
     expect(err instanceof Error).toBe(true)
   })
 })
+
+describe('validateConfigPatch — agenda armable', () => {
+  it('acepta palabras, piezas y punto de partida', () => {
+    const res = validateConfigPatch({
+      labels: { profesional: 'doctor' },
+      toggles: { choose_staff: false, show_price: true },
+      preset_key: 'salud',
+    })
+    expect(res).toEqual({
+      ok: true,
+      value: {
+        labels: { profesional: 'doctor' },
+        toggles: { chooseStaff: false, showPrice: true },
+        presetKey: 'salud',
+      },
+    })
+  })
+
+  it('rechaza piezas que no son sí/no y puntos de partida desconocidos', () => {
+    expect(validateConfigPatch({ toggles: { choose_staff: 'no' } }).ok).toBe(false)
+    expect(validateConfigPatch({ toggles: { show_price: 0 } }).ok).toBe(false)
+    expect(validateConfigPatch({ toggles: null }).ok).toBe(false)
+    expect(validateConfigPatch({ toggles: [] }).ok).toBe(false)
+    expect(validateConfigPatch({ preset_key: 'tienda' }).ok).toBe(false)
+    expect(validateConfigPatch({ preset_key: null }).ok).toBe(false)
+  })
+
+  it('rechaza palabras con marcas de WhatsApp', () => {
+    expect(validateConfigPatch({ labels: { cita: '*x*' } }).ok).toBe(false)
+  })
+
+  it('claves de piezas desconocidas no cuentan como cambio', () => {
+    expect(validateConfigPatch({ toggles: { otra: true } })).toEqual({
+      ok: false,
+      message: 'No hay cambios que guardar.',
+    })
+  })
+})
