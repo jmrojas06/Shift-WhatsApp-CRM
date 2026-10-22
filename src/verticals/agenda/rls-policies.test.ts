@@ -188,8 +188,8 @@ describe('preguntas extra del bot (051 / booking_questions)', () => {
   })
 
   const rewrite = /UPDATE\s+accounts\s+SET\s+vertical_key\s*=\s*'agenda'\s+WHERE\s+vertical_key\s*=\s*'barberia'/i
-  const backfillInsert = /INSERT\s+INTO\s+booking_settings[\s\S]*?WHERE\s+vertical_key\s*=\s*'barberia'/i
-  const backfillUpdate = /UPDATE\s+booking_settings[\s\S]*?a\.vertical_key\s*=\s*'barberia'/i
+  const backfillInsert = /INSERT\s+INTO\s+booking_settings[^;]*?WHERE\s+vertical_key\s*=\s*'barberia'/i
+  const backfillUpdate = /UPDATE\s+booking_settings[^;]*?a\.vertical_key\s*=\s*'barberia'/i
 
   it("reescribe la clave del vertical 'barberia' a 'agenda'", () => {
     expect(code).toMatch(rewrite)

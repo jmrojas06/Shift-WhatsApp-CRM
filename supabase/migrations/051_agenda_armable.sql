@@ -110,13 +110,13 @@ ALTER TABLE booking_questions
   DROP CONSTRAINT IF EXISTS booking_questions_options_max_check;
 ALTER TABLE booking_questions
   ADD CONSTRAINT booking_questions_options_max_check
-  CHECK (jsonb_array_length(options) <= 10);
+  CHECK (jsonb_typeof(options) = 'array' AND jsonb_array_length(options) <= 10);
 
 ALTER TABLE booking_questions
   DROP CONSTRAINT IF EXISTS booking_questions_opcion_options_check;
 ALTER TABLE booking_questions
   ADD CONSTRAINT booking_questions_opcion_options_check
-  CHECK (kind <> 'opcion' OR jsonb_array_length(options) BETWEEN 2 AND 10);
+  CHECK (kind <> 'opcion' OR (jsonb_typeof(options) = 'array' AND jsonb_array_length(options) BETWEEN 2 AND 10));
 
 CREATE INDEX IF NOT EXISTS idx_booking_questions_account_position
   ON booking_questions (account_id, position);
