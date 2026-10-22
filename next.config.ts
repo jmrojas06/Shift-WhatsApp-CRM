@@ -154,6 +154,20 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+
+  /**
+   * The agenda vertical used to live at /barberia. `:path*` also matches
+   * the bare /barberia (zero or more segments).
+   *
+   * Temporary (307) redirect on purpose: browsers cache a permanent one,
+   * which would make a code rollback harder. Switch to `permanent: true`
+   * once rolling back to the old code is no longer needed.
+   */
+  async redirects() {
+    return [
+      { source: "/barberia/:path*", destination: "/agenda/:path*", permanent: false },
+    ];
+  },
 };
 
 export default withNextIntl(nextConfig);

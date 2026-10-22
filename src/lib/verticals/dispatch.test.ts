@@ -34,8 +34,8 @@ vi.mock('./admin-client', () => ({
 // The registered barbería handler pulls in meta-send and the full
 // booking controller; the dispatcher only needs to know it is wired
 // and what result it reports.
-vi.mock('@/verticals/barberia/agent', () => ({
-  barberiaInboundHandler: async (ctx: Record<string, unknown>) => {
+vi.mock('@/verticals/agenda/agent', () => ({
+  agendaInboundHandler: async (ctx: Record<string, unknown>) => {
     dbState.handlerCalls.push(ctx)
     if (dbState.handlerThrows) throw new Error('handler boom')
     return dbState.handlerResult
@@ -52,7 +52,11 @@ const baseArgs = {
   inboundMessageId: 'wamid-1',
 }
 
-const barberiaAccount = { data: { vertical_key: 'barberia' }, error: null }
+const agendaAccount = { data: { vertical_key: 'agenda' }, error: null }
+const legacyAgendaAccount = {
+  data: { vertical_key: 'barberia' },
+  error: null,
+}
 const openConversation = {
   data: { assigned_agent_id: null, ai_autoreply_disabled: false },
   error: null,
@@ -93,7 +97,7 @@ describe('dispatchInboundToVertical', () => {
 
   it('stands down when a human owns the conversation', async () => {
     dbState.responses = {
-      accounts: barberiaAccount,
+      accounts: agendaAccount,
       conversations: {
         data: { assigned_agent_id: 'agent-9', ai_autoreply_disabled: false },
         error: null,
@@ -106,7 +110,7 @@ describe('dispatchInboundToVertical', () => {
 
   it('stands down when AI auto-reply was disabled for the conversation', async () => {
     dbState.responses = {
-      accounts: barberiaAccount,
+      accounts: agendaAccount,
       conversations: {
         data: { assigned_agent_id: null, ai_autoreply_disabled: true },
         error: null,
@@ -118,7 +122,7 @@ describe('dispatchInboundToVertical', () => {
   })
 
   it('stays out when the conversation is gone', async () => {
-    dbState.responses = { accounts: barberiaAccount }
+    dbState.responses = { accounts: agendaAccount }
     await expect(dispatchInboundToVertical(baseArgs)).resolves.toEqual({
       consumed: false,
     })
@@ -126,7 +130,7 @@ describe('dispatchInboundToVertical', () => {
 
   it('consumes nothing when the handler declines and there is no active session', async () => {
     dbState.responses = {
-      accounts: barberiaAccount,
+      accounts: agendaAccount,
       conversations: openConversation,
       booking_sessions: { data: null, error: null },
     }
@@ -138,7 +142,7 @@ describe('dispatchInboundToVertical', () => {
 
   it('claims the message while a booking session is active, even between handler invocations', async () => {
     dbState.responses = {
-      accounts: barberiaAccount,
+      accounts: agendaAccount,
       conversations: openConversation,
       booking_sessions: {
         data: {
@@ -154,9 +158,23 @@ describe('dispatchInboundToVertical', () => {
     })
   })
 
-  it('delegates to the registered barbería handler and honors its consume', async () => {
+  it('routes accounts still on the legacy barberia key to the agenda handler', async () => {
     dbState.responses = {
-      accounts: barberiaAccount,
+      accounts: legacyAgendaAccount,
+      conversations: openConversation,
+      booking_sessions: { data: null, error: null },
+    }
+    dbState.handlerResult = { consumed: true }
+
+    await expect(dispatchInboundToVertical(baseArgs)).resolves.toEqual({
+      consumed: true,
+    })
+    expect(dbState.handlerCalls).toHaveLength(1)
+  })
+
+  it('delegates to the registered agenda handler and honors its consume', async () => {
+    dbState.responses = {
+      accounts: agendaAccount,
       conversations: openConversation,
       booking_sessions: { data: null, error: null },
     }
@@ -178,7 +196,7 @@ describe('dispatchInboundToVertical', () => {
 
   it('hands the fresh booking session to the handler', async () => {
     dbState.responses = {
-      accounts: barberiaAccount,
+      accounts: agendaAccount,
       conversations: openConversation,
       booking_sessions: {
         data: {
@@ -201,7 +219,7 @@ describe('dispatchInboundToVertical', () => {
   // can answer reminder buttons (Confirmar / Cancelar / Reprogramar).
   it('a human-owned thread reaches the handler with humanOwned: true', async () => {
     dbState.responses = {
-      accounts: barberiaAccount,
+      accounts: agendaAccount,
       conversations: {
         data: { assigned_agent_id: 'agent-9', ai_autoreply_disabled: false },
         error: null,
@@ -214,7 +232,7 @@ describe('dispatchInboundToVertical', () => {
 
   it('a paused thread (ai_autoreply_disabled) is also flagged humanOwned', async () => {
     dbState.responses = {
-      accounts: barberiaAccount,
+      accounts: agendaAccount,
       conversations: {
         data: { assigned_agent_id: null, ai_autoreply_disabled: true },
         error: null,
@@ -226,7 +244,7 @@ describe('dispatchInboundToVertical', () => {
 
   it('an open thread is flagged humanOwned: false', async () => {
     dbState.responses = {
-      accounts: barberiaAccount,
+      accounts: agendaAccount,
       conversations: openConversation,
       booking_sessions: { data: null, error: null },
     }
@@ -236,7 +254,7 @@ describe('dispatchInboundToVertical', () => {
 
   it('on a human-owned thread an active session does NOT claim what the handler declined', async () => {
     dbState.responses = {
-      accounts: barberiaAccount,
+      accounts: agendaAccount,
       conversations: {
         data: { assigned_agent_id: 'agent-9', ai_autoreply_disabled: false },
         error: null,
@@ -257,7 +275,7 @@ describe('dispatchInboundToVertical', () => {
 
   it('on a human-owned thread a handler consume (reminder tap) is honored', async () => {
     dbState.responses = {
-      accounts: barberiaAccount,
+      accounts: agendaAccount,
       conversations: {
         data: { assigned_agent_id: 'agent-9', ai_autoreply_disabled: false },
         error: null,
@@ -285,7 +303,7 @@ describe('dispatchInboundToVertical', () => {
       .spyOn(console, 'error')
       .mockImplementation(() => {})
     dbState.responses = {
-      accounts: barberiaAccount,
+      accounts: agendaAccount,
       conversations: openConversation,
       booking_sessions: { data: null, error: null },
     }

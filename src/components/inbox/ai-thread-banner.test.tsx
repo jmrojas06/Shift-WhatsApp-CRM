@@ -87,7 +87,7 @@ describe('<AiThreadBanner /> render', () => {
   })
 
   it('cuenta con vertical y sin IA: muestra el bot en pausa y el botón para reanudarlo', () => {
-    authState.account = { vertical_key: 'barberia' }
+    authState.account = { vertical_key: 'agenda' }
 
     const html = render({ disabled: true, assignedAgentId: 'user-agent' })
 
@@ -104,7 +104,7 @@ describe('<AiThreadBanner /> render', () => {
   })
 
   it('cuenta con vertical y conversación activa: no renderiza nada', () => {
-    authState.account = { vertical_key: 'barberia' }
+    authState.account = { vertical_key: 'agenda' }
 
     expect(render({ disabled: false })).toBe('')
   })

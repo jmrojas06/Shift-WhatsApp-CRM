@@ -1,5 +1,10 @@
-import type { VerticalKey, VerticalManifest, VerticalNavItem } from './types'
-import { barberiaManifest } from '@/verticals/barberia/manifest'
+import {
+  AGENDA_VERTICAL_KEYS,
+  type VerticalKey,
+  type VerticalManifest,
+  type VerticalNavItem,
+} from './types'
+import { agendaManifest } from '@/verticals/agenda/manifest'
 
 /**
  * Static manifest registry — the client-safe half of the vertical seam.
@@ -10,18 +15,32 @@ import { barberiaManifest } from '@/verticals/barberia/manifest'
  * `./dispatch.ts`, which only the webhook imports.
  */
 const MANIFESTS: Readonly<Partial<Record<VerticalKey, VerticalManifest>>> = {
-  barberia: barberiaManifest,
+  agenda: agendaManifest,
+}
+
+/** Clave canónica para un `vertical_key` (alias incluidos) o null. */
+export function normalizeVerticalKey(
+  key: string | null | undefined,
+): VerticalKey | null {
+  if (!key) return null
+  if ((AGENDA_VERTICAL_KEYS as readonly string[]).includes(key)) return 'agenda'
+  return Object.hasOwn(MANIFESTS, key) ? (key as VerticalKey) : null
+}
+
+export function isAgendaVerticalKey(key: string | null | undefined): boolean {
+  return normalizeVerticalKey(key) === 'agenda'
 }
 
 /**
  * Manifest for a `accounts.vertical_key` value. Unknown, empty, or
  * absent keys resolve to null — the account simply has no vertical.
+ * The legacy 'barberia' key resolves to the agenda manifest.
  */
 export function getVerticalManifest(
   key: string | null | undefined,
 ): VerticalManifest | null {
-  if (!key) return null
-  return MANIFESTS[key as VerticalKey] ?? null
+  const normalized = normalizeVerticalKey(key)
+  return normalized ? (MANIFESTS[normalized] ?? null) : null
 }
 
 export function listVerticals(): VerticalManifest[] {

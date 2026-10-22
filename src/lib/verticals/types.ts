@@ -6,9 +6,16 @@ import type { LucideIcon } from 'lucide-react'
  *
  * A key is stored on `accounts.vertical_key` (migration 047) and is how
  * the account installs a vertical. This union grows one entry per
- * shipped vertical — barbería is the first.
+ * shipped vertical — the agenda (citas por WhatsApp) is the first.
  */
-export type VerticalKey = 'barberia'
+export type VerticalKey = 'agenda'
+
+/**
+ * Valores de `accounts.vertical_key` que cuentan como la agenda. 'barberia'
+ * es la clave anterior a la migración 051: se acepta mientras el código
+ * nuevo convive con cuentas aún sin migrar.
+ */
+export const AGENDA_VERTICAL_KEYS = ['agenda', 'barberia'] as const
 
 /**
  * Sidebar entry contributed by a vertical. `labelKey` resolves against
