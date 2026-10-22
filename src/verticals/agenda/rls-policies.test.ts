@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
+import { BARBERIA_PRESET } from './presets/barberia'
+
 // ============================================================
 // Contrato de RLS del vertical (migración 050, D2) + guard de
 // accounts (D3), verificado sobre el TEXTO de las migraciones.
@@ -194,6 +196,15 @@ describe('preguntas extra del bot (051 / booking_questions)', () => {
   it("051 (aditiva): el backfill filtra por 'barberia' (re-correrla no pisa cuentas 'agenda')", () => {
     expect(code).toMatch(backfillInsert)
     expect(code).toMatch(backfillUpdate)
+  })
+
+  it('051: el backfill conserva la bienvenida de barbería sin pisar una personalizada', () => {
+    const update = code.match(backfillUpdate)?.[0] ?? ''
+    expect(update).toMatch(/bot_texts\s*=\s*CASE/i)
+    expect(update).toMatch(/WHEN\s+bs\.bot_texts\s*\?\s*'welcome'\s+THEN\s+bs\.bot_texts/i)
+    expect(update).toContain(BARBERIA_PRESET.welcome)
+    // Idempotente: solo toca filas que aún no tienen punto de partida.
+    expect(code).toMatch(/AND\s+bs\.preset_key\s+IS\s+NULL/i)
   })
 
   it('051 (aditiva): no toca accounts (segura con el código viejo en producción)', () => {

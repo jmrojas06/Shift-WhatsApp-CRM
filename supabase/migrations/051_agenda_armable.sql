@@ -61,7 +61,8 @@ ALTER TABLE booking_settings
 -- ------------------------------------------------------------
 -- 2) Backfill de las cuentas de barbería (aún con la clave vieja)
 -- ------------------------------------------------------------
--- Se asegura la fila de settings y se les da su vocabulario de siempre.
+-- Se asegura la fila de settings y se les da su vocabulario de siempre y
+-- su bienvenida de barbería (si ya personalizaron la suya, se respeta).
 -- Filtra por 'barberia', NO por 'agenda': ver el encabezado.
 INSERT INTO booking_settings (account_id)
 SELECT id FROM accounts WHERE vertical_key = 'barberia'
@@ -69,7 +70,14 @@ ON CONFLICT (account_id) DO NOTHING;
 
 UPDATE booking_settings bs
 SET preset_key = 'barberia',
-    labels = '{"profesional":"barbero","profesionales":"barberos"}'::jsonb
+    labels = '{"profesional":"barbero","profesionales":"barberos"}'::jsonb,
+    bot_texts = CASE
+      WHEN bs.bot_texts ? 'welcome' THEN bs.bot_texts
+      ELSE bs.bot_texts || jsonb_build_object(
+        'welcome',
+        '¡Hola! 👋 Soy el asistente de la barbería. ¿Qué servicio quieres agendar?'
+      )
+    END
 FROM accounts a
 WHERE a.id = bs.account_id
   AND a.vertical_key = 'barberia'
