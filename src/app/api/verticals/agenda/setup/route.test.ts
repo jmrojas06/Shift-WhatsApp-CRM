@@ -23,6 +23,7 @@ const h = vi.hoisted(() => ({
       accountId: string
       userId: string
       db: unknown
+      presetKey?: string
     }[],
     installError: null as Error | null,
     /** Cliente service-role falso que debe llegar al instalador. */
@@ -94,6 +95,7 @@ vi.mock('@/verticals/agenda/install', () => ({
     accountId: string
     userId: string
     db: unknown
+    presetKey?: string
   }) => {
     h.state.installCalls.push(args)
     if (h.state.installError) throw h.state.installError
@@ -115,6 +117,10 @@ vi.mock('@/verticals/agenda/install', () => ({
 
 import { POST } from './route'
 
+/** Pide la instalación; sin `body` el cuerpo va vacío (el botón de siempre). */
+const post = (body?: BodyInit) =>
+  new Request('http://localhost/api/verticals/agenda/setup', { method: 'POST', body })
+
 type TestResponse = { status: number; body: { error?: string; report?: unknown } }
 
 beforeEach(() => {
@@ -127,7 +133,7 @@ beforeEach(() => {
 
 describe('POST /api/verticals/agenda/setup', () => {
   it('instala con el service-role y responde el reporte', async () => {
-    const res = (await POST()) as unknown as TestResponse
+    const res = (await POST(post())) as unknown as TestResponse
 
     expect(res.status).toBe(200)
     expect(res.body.report).toMatchObject({
@@ -141,16 +147,64 @@ describe('POST /api/verticals/agenda/setup', () => {
     expect(h.state.installCalls[0].db).toBe(h.state.adminClient)
   })
 
+  it('sin cuerpo no pide punto de partida: el instalador usa el de la cuenta', async () => {
+    const res = (await POST(post())) as unknown as TestResponse
+
+    expect(res.status).toBe(200)
+    expect(h.state.installCalls[0].presetKey).toBeUndefined()
+  })
+
+  it('un cuerpo sin preset_key tampoco lo pide', async () => {
+    const res = (await POST(post('{}'))) as unknown as TestResponse
+
+    expect(res.status).toBe(200)
+    expect(h.state.installCalls[0].presetKey).toBeUndefined()
+  })
+
+  it('pasa el punto de partida elegido al instalador', async () => {
+    const res = (await POST(post(JSON.stringify({ preset_key: 'salud' })))) as unknown as TestResponse
+
+    expect(res.status).toBe(200)
+    expect(h.state.installCalls).toHaveLength(1)
+    expect(h.state.installCalls[0].presetKey).toBe('salud')
+    expect(h.state.installCalls[0].db).toBe(h.state.adminClient)
+  })
+
+  it.each(['tienda', '', 3, ['salud'], { a: 1 }])(
+    'rechaza preset_key inválido (%j) con 400 y no instala',
+    async (preset_key) => {
+      const res = (await POST(post(JSON.stringify({ preset_key })))) as unknown as TestResponse
+
+      expect(res.status).toBe(400)
+      expect(res.body.error).toBe('Ese punto de partida no existe.')
+      expect(h.state.installCalls).toHaveLength(0)
+    },
+  )
+
+  it.each(['[]', '"salud"', '42'])('rechaza un cuerpo que no es un objeto (%s)', async (raw) => {
+    const res = (await POST(post(raw))) as unknown as TestResponse
+
+    expect(res.status).toBe(400)
+    expect(h.state.installCalls).toHaveLength(0)
+  })
+
+  it('con un punto de partida inválido, un viewer sigue recibiendo 403', async () => {
+    h.state.role = 'viewer'
+    const res = (await POST(post(JSON.stringify({ preset_key: 'tienda' })))) as unknown as TestResponse
+
+    expect(res.status).toBe(403)
+  })
+
   it('permite a un admin (el límite exacto del rol)', async () => {
     h.state.role = 'admin'
-    const res = (await POST()) as unknown as TestResponse
+    const res = (await POST(post())) as unknown as TestResponse
     expect(res.status).toBe(200)
     expect(h.state.installCalls).toHaveLength(1)
   })
 
   it('acepta la clave anterior barberia (cuentas sin migrar)', async () => {
     h.state.verticalKey = 'barberia'
-    const res = (await POST()) as unknown as TestResponse
+    const res = (await POST(post())) as unknown as TestResponse
 
     expect(res.status).toBe(200)
     expect(h.state.installCalls).toHaveLength(1)
@@ -158,7 +212,7 @@ describe('POST /api/verticals/agenda/setup', () => {
 
   it('rechaza a un agente/viewer con 403 y no instala nada', async () => {
     h.state.role = 'viewer'
-    const res = (await POST()) as unknown as TestResponse
+    const res = (await POST(post())) as unknown as TestResponse
 
     expect(res.status).toBe(403)
     expect(h.state.installCalls).toHaveLength(0)
@@ -166,7 +220,7 @@ describe('POST /api/verticals/agenda/setup', () => {
 
   it('rechaza una cuenta sin el vertical de la agenda', async () => {
     h.state.verticalKey = 'inmobiliaria'
-    const res = (await POST()) as unknown as TestResponse
+    const res = (await POST(post())) as unknown as TestResponse
 
     expect(res.status).toBe(409)
     expect(res.body.error).toContain('no está habilitado')
@@ -175,7 +229,7 @@ describe('POST /api/verticals/agenda/setup', () => {
 
   it('rechaza también cuando vertical_key es null', async () => {
     h.state.verticalKey = null
-    const res = (await POST()) as unknown as TestResponse
+    const res = (await POST(post())) as unknown as TestResponse
 
     expect(res.status).toBe(409)
     expect(h.state.installCalls).toHaveLength(0)
@@ -186,7 +240,7 @@ describe('POST /api/verticals/agenda/setup', () => {
       code: '42703',
       message: 'column accounts.vertical_key does not exist',
     }
-    const res = (await POST()) as unknown as TestResponse
+    const res = (await POST(post())) as unknown as TestResponse
 
     expect(res.status).toBe(409)
     expect(res.body.error).toContain('no está habilitado')
@@ -195,7 +249,7 @@ describe('POST /api/verticals/agenda/setup', () => {
 
   it('convierte un fallo del instalador en 500 sin filtrar detalles', async () => {
     h.state.installError = new Error('boom secreto')
-    const res = (await POST()) as unknown as TestResponse
+    const res = (await POST(post())) as unknown as TestResponse
 
     expect(res.status).toBe(500)
     expect(res.body.error).toBe('Error interno.')

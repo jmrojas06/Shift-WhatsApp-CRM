@@ -1,10 +1,13 @@
 // ============================================================
-// Plantilla de barbería — datos semilla y contrato del instalador.
+// Plantilla de la agenda — tipos del seed y contrato del instalador.
 //
 // Este módulo es puro (sin I/O) para que la página /agenda pueda
-// importar los tipos sin arrastrar código de servidor. Todo el texto
-// está en español colombiano y es editable por el dueño desde la UI.
+// importar los tipos sin arrastrar código de servidor. Los datos de
+// cada tipo de negocio viven en `presets/`. Todo el texto está en
+// español colombiano y es editable por el dueño desde la UI.
 // ============================================================
+
+import type { PresetKey } from './presets'
 
 export interface InstallSectionCounts {
   created: number
@@ -28,6 +31,8 @@ export type AiPromptOutcome =
   | 'no_config'
 
 export interface AgendaInstallReport {
+  /** Punto de partida que se aplicó. */
+  presetKey: PresetKey
   currency: CurrencyOutcome
   services: InstallSectionCounts
   staff: InstallSectionCounts
@@ -38,6 +43,8 @@ export interface AgendaInstallReport {
   pipeline: { created: boolean; stagesCreated: number }
   quickReplies: InstallSectionCounts
   knowledge: InstallSectionCounts
+  /** Preguntas extra del bot (`created` = las del punto de partida; `skipped` = la cuenta ya tenía). */
+  questions: InstallSectionCounts
   aiPrompt: AiPromptOutcome
   /** Avisos en español para mostrar en la UI tras instalar. */
   warnings: string[]
@@ -98,127 +105,6 @@ export function isAgendaPipelineName(name: unknown): boolean {
   return (AGENDA_PIPELINE_NAMES as readonly string[]).includes(
     String(name).trim().toLowerCase(),
   )
-}
-
-export const AGENDA_SEED: AgendaSeed = {
-  services: [
-    {
-      name: 'Corte clásico',
-      description: 'Máquina, tijera y lavado. El favorito para el día a día.',
-      durationMinutes: 30,
-      price: 25000,
-      position: 0,
-    },
-    {
-      name: 'Corte + barba',
-      description: 'Corte completo y arreglo de barba con navaja y toalla caliente.',
-      durationMinutes: 45,
-      price: 40000,
-      position: 1,
-    },
-    {
-      name: 'Perfilado de barba',
-      description: 'Diseño y perfilado de barba con máquina y navaja.',
-      durationMinutes: 20,
-      price: 15000,
-      position: 2,
-    },
-  ],
-
-  staff: [
-    {
-      name: 'Andrés',
-      bio: 'Barbero principal. Atiende de lunes a sábado.',
-      position: 0,
-    },
-  ],
-
-  // Lunes a sábado, jornada partida (mediodía libre). Editable por el dueño.
-  weeklySchedule: [1, 2, 3, 4, 5, 6].flatMap((weekday) => [
-    { weekday, startTime: '09:00:00', endTime: '13:00:00' },
-    { weekday, startTime: '14:00:00', endTime: '19:00:00' },
-  ]),
-
-  tags: [
-    { name: 'cita-pendiente', color: '#f59e0b' },
-    { name: 'cita-confirmada', color: '#10b981' },
-    { name: 'cita-reprogramada', color: '#6366f1' },
-    { name: 'cita-cancelada', color: '#ef4444' },
-    { name: 'quiere-humano', color: '#8b5cf6' },
-    { name: 'atendido', color: '#3b82f6' },
-  ],
-
-  // El CRM solo ofrece campos personalizados de texto por ahora.
-  customFields: ['barbero_preferido', 'ultima_visita'],
-
-  pipeline: {
-    name: 'Barbería',
-    stages: [
-      { name: 'Nuevo', color: '#3b82f6' },
-      { name: 'Cita agendada', color: '#f59e0b' },
-      { name: 'Atendida', color: '#10b981' },
-      { name: 'No asistió', color: '#ef4444' },
-      { name: 'Perdido', color: '#6b7280' },
-    ],
-  },
-
-  quickReplies: [
-    {
-      title: 'Saludo',
-      content: '¡Hola! 👋 Gracias por escribirnos. ¿Quieres agendar una cita o tienes alguna pregunta?',
-    },
-    {
-      title: 'Horario de atención',
-      content:
-        'Atendemos de lunes a sábado, de 9:00 a.m. a 1:00 p.m. y de 2:00 p.m. a 7:00 p.m. ¿Te agendo tu cita?',
-    },
-    {
-      title: 'Lista de precios',
-      content:
-        'Corte clásico: $25.000\nCorte + barba: $40.000\nPerfilado de barba: $15.000\n¿Cuál te gustaría agendar?',
-    },
-    {
-      title: 'Ubicación',
-      content: '📍 Estamos en [escribe tu dirección]. Te esperamos de lunes a sábado.',
-    },
-  ],
-
-  knowledgeDocs: [
-    {
-      title: 'Horarios de atención',
-      content:
-        'Atendemos de lunes a sábado, de 9:00 a.m. a 1:00 p.m. y de 2:00 p.m. a 7:00 p.m. Los domingos y festivos permanecemos cerrados.\n\n' +
-        'Puedes agendar tu cita por WhatsApp en cualquier momento. El equipo responde dentro del horario de atención.\n\n' +
-        'Si necesitas una cita fuera del horario habitual, escríbenos y revisamos la disponibilidad.',
-    },
-    {
-      title: 'Servicios y precios',
-      content:
-        'Servicios disponibles: corte clásico (30 minutos) por $25.000; corte + barba (45 minutos) por $40.000; perfilado de barba (20 minutos) por $15.000.\n\n' +
-        'El precio final puede variar según el largo y el estado del cabello. El barbero confirma el valor antes de empezar.\n\n' +
-        'También atendemos a niños, siempre que vengan acompañados por un adulto.',
-    },
-    {
-      title: 'Política de citas y cancelaciones',
-      content:
-        'Puedes cancelar o reprogramar tu cita por este mismo WhatsApp. Te pedimos hacerlo con al menos 2 horas de anticipación para dejar el cupo disponible.\n\n' +
-        'Si llegas más de 10 minutos tarde, puede que debamos atender a otro cliente o reprogramar tu cita.\n\n' +
-        'Si no puedes asistir, avísanos: así liberamos el espacio para alguien más.',
-    },
-    {
-      title: 'Métodos de pago',
-      content:
-        'Recibimos efectivo, Nequi, Daviplata y tarjetas débito y crédito.\n\n' +
-        'Al pagar con tarjeta o por transferencia te entregamos el comprobante al finalizar el servicio.\n\n' +
-        'Si necesitas factura electrónica, pídesela al barbero antes de pagar.',
-    },
-    {
-      title: 'Ubicación y contacto',
-      content:
-        'Estamos ubicados en [escribe aquí tu dirección exacta y puntos de referencia para llegar].\n\n' +
-        'Puedes escribirnos por este mismo WhatsApp para pedir indicaciones o resolver cualquier duda antes de tu visita.',
-    },
-  ],
 }
 
 /**

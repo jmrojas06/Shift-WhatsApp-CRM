@@ -2,7 +2,11 @@ import { describe, it, expect } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { installAgendaTemplate } from './install'
-import { AGENDA_AI_PROMPT, AGENDA_SEED } from './seed'
+import { AGENDA_PRESETS, type PresetKey } from './presets'
+import { BARBERIA_PRESET } from './presets/barberia'
+import { AGENDA_AI_PROMPT } from './seed'
+
+const AGENDA_SEED = BARBERIA_PRESET.seed
 
 // ============================================================
 // Installer contract tests.
@@ -21,6 +25,7 @@ interface QueryApi {
   select(cols?: string, opts?: unknown): QueryApi
   insert(payload: unknown): QueryApi
   update(payload: unknown): QueryApi
+  upsert(payload: unknown, opts?: { onConflict?: string }): QueryApi
   delete(): QueryApi
   eq(col: string, val: unknown): QueryApi
   order(col?: string): QueryApi
@@ -46,8 +51,9 @@ function fakeDb(seed: Record<string, Row[]> = {}): FakeDb {
     _tables: tables,
     from(table: string): QueryApi {
       const state: {
-        op: 'select' | 'insert' | 'update' | 'delete'
+        op: 'select' | 'insert' | 'update' | 'upsert' | 'delete'
         payload?: unknown
+        onConflict?: string
         filters: [string, unknown][]
       } = { op: 'select', filters: [] }
 
@@ -66,6 +72,12 @@ function fakeDb(seed: Record<string, Row[]> = {}): FakeDb {
         update: (payload) => {
           state.op = 'update'
           state.payload = payload
+          return api
+        },
+        upsert: (payload, opts) => {
+          state.op = 'upsert'
+          state.payload = payload
+          state.onConflict = opts?.onConflict
           return api
         },
         delete: () => {
@@ -89,6 +101,13 @@ function fakeDb(seed: Record<string, Row[]> = {}): FakeDb {
             ensure(table).push(...list.map((r) => ({ ...r })))
           } else if (state.op === 'update') {
             for (const r of rows()) Object.assign(r, state.payload)
+          } else if (state.op === 'upsert') {
+            // Como PostgREST: mezcla en la fila con la misma clave de conflicto o la crea.
+            const key = state.onConflict ?? 'id'
+            const incoming = state.payload as Row
+            const existing = ensure(table).find((r) => r[key] === incoming[key])
+            if (existing) Object.assign(existing, incoming)
+            else ensure(table).push({ ...incoming })
           } else {
             for (const r of rows()) {
               const i = ensure(table).indexOf(r)
@@ -378,4 +397,291 @@ describe('installAgendaTemplate', () => {
     expect(report.currency).toBe('kept')
     expect(db._tables.accounts[0].default_currency).toBe('EUR')
   })
+})
+
+// ------------------------------------------------------------
+// Puntos de partida
+// ------------------------------------------------------------
+function installPreset(db: FakeDb, presetKey?: PresetKey) {
+  return installAgendaTemplate({
+    db: asClient(db),
+    accountId: ACCOUNT,
+    userId: USER,
+    presetKey,
+  })
+}
+
+const settingsOf = (db: FakeDb): Row => {
+  const rows = (db._tables.booking_settings ?? []).filter((r) => r.account_id === ACCOUNT)
+  expect(rows).toHaveLength(1)
+  return rows[0]
+}
+
+describe('installAgendaTemplate con punto de partida', () => {
+  it('salud instala sus servicios, palabras, punto de partida y su pregunta', async () => {
+    const db = fakeDb()
+
+    const report = await installPreset(db, 'salud')
+
+    expect(report.presetKey).toBe('salud')
+    expect(report.services).toEqual({ created: 3, skipped: 0 })
+    expect(report.staff).toEqual({ created: 1, skipped: 0 })
+    expect(report.workingHours).toEqual({ created: 10, skipped: 0 })
+    expect(report.questions).toEqual({ created: 1, skipped: 0 })
+    expect(db._tables.booking_services.map((r) => r.name)).toEqual([
+      'Consulta general',
+      'Control',
+      'Procedimiento',
+    ])
+    expect(db._tables.booking_staff.map((r) => r.name)).toEqual(['Especialista 1'])
+    // Nada de barbería: ni campos, ni respuestas rápidas, ni documentos.
+    expect(db._tables.custom_fields ?? []).toHaveLength(0)
+    expect(db._tables.quick_replies ?? []).toHaveLength(0)
+    expect(db._tables.ai_knowledge_documents ?? []).toHaveLength(0)
+    // Pero sí las etiquetas y el pipeline que usa el bot.
+    expect(report.tags.created).toBe(6)
+    expect(db._tables.pipelines.map((r) => r.name)).toEqual(['Agenda'])
+
+    const settings = settingsOf(db)
+    expect(settings.preset_key).toBe('salud')
+    expect(settings.labels).toEqual(AGENDA_PRESETS.salud.labels)
+    expect((settings.labels as { profesional: string }).profesional).toBe('especialista')
+    expect(settings.choose_staff).toBe(true)
+    expect((settings.bot_texts as { welcome: string }).welcome).toBe(AGENDA_PRESETS.salud.welcome)
+
+    expect(db._tables.booking_questions).toEqual([
+      expect.objectContaining({
+        account_id: ACCOUNT,
+        label: '¿Cuál es el motivo de la consulta?',
+        kind: 'texto',
+        required: false,
+        options: [],
+        position: 0,
+        is_active: true,
+      }),
+    ])
+  })
+
+  it('sin presetKey usa el de la cuenta; sin ninguno, barbería', async () => {
+    const withPreset = fakeDb({
+      booking_settings: [{ account_id: ACCOUNT, preset_key: 'clases' }],
+    })
+    expect((await installPreset(withPreset)).presetKey).toBe('clases')
+    expect(withPreset._tables.booking_services.map((r) => r.name)).toEqual([
+      'Clase individual',
+      'Clase de prueba',
+    ])
+
+    const invalid = fakeDb({
+      booking_settings: [{ account_id: ACCOUNT, preset_key: 'tienda' }],
+    })
+    expect((await installPreset(invalid)).presetKey).toBe('barberia')
+
+    const empty = fakeDb()
+    expect((await installPreset(empty)).presetKey).toBe('barberia')
+    expect(settingsOf(empty).preset_key).toBe('barberia')
+    expect(settingsOf(empty).labels).toEqual(AGENDA_PRESETS.barberia.labels)
+  })
+
+  it('taller apaga elegir técnico y pide la placa como obligatoria', async () => {
+    const db = fakeDb()
+
+    await installPreset(db, 'taller')
+
+    const settings = settingsOf(db)
+    expect(settings.choose_staff).toBe(false)
+    expect(settings.show_price).toBe(true)
+    expect(db._tables.booking_questions).toEqual([
+      expect.objectContaining({ label: 'Placa del vehículo', kind: 'texto', required: true }),
+    ])
+  })
+
+  it('en blanco no instala servicios, equipo, horario ni preguntas, pero sí etiquetas y pipeline', async () => {
+    const db = fakeDb()
+
+    const report = await installPreset(db, 'blanco')
+
+    expect(report.services).toEqual({ created: 0, skipped: 0 })
+    expect(report.staff).toEqual({ created: 0, skipped: 0 })
+    expect(report.staffServices).toEqual({ created: 0, skipped: 0 })
+    expect(report.workingHours).toEqual({ created: 0, skipped: 0 })
+    expect(report.questions).toEqual({ created: 0, skipped: 0 })
+    expect(db._tables.booking_services ?? []).toHaveLength(0)
+    expect(db._tables.booking_staff ?? []).toHaveLength(0)
+    expect(db._tables.booking_working_hours ?? []).toHaveLength(0)
+    expect(db._tables.booking_questions ?? []).toHaveLength(0)
+    expect(report.tags.created).toBe(6)
+    expect(report.pipeline).toEqual({ created: true, stagesCreated: 5 })
+    expect(settingsOf(db).preset_key).toBe('blanco')
+  })
+
+  it('reinstalar con otro punto de partida agrega lo que falta sin borrar ni duplicar', async () => {
+    const db = fakeDb()
+    await installPreset(db, 'barberia')
+    const before = {
+      services: db._tables.booking_services.map((r) => r.id),
+      staff: db._tables.booking_staff.map((r) => r.id),
+      tags: db._tables.tags.length,
+      pipelines: db._tables.pipelines.length,
+    }
+
+    const report = await installPreset(db, 'salud')
+
+    // Los de barbería siguen; se suman los de salud.
+    expect(report.services).toEqual({ created: 3, skipped: 0 })
+    expect(db._tables.booking_services).toHaveLength(6)
+    for (const id of before.services) {
+      expect(db._tables.booking_services.some((r) => r.id === id)).toBe(true)
+    }
+    expect(db._tables.booking_staff.map((r) => r.id)).toEqual(
+      expect.arrayContaining(before.staff),
+    )
+    expect(db._tables.booking_staff).toHaveLength(2)
+    // Etiquetas y pipeline no se duplican.
+    expect(report.tags).toEqual({ created: 0, skipped: 6 })
+    expect(db._tables.tags).toHaveLength(before.tags)
+    expect(report.pipeline).toEqual({ created: false, stagesCreated: 0 })
+    expect(db._tables.pipelines).toHaveLength(before.pipelines)
+    // Palabras y punto de partida pasan al nuevo.
+    expect(settingsOf(db).preset_key).toBe('salud')
+    expect(settingsOf(db).labels).toEqual(AGENDA_PRESETS.salud.labels)
+  })
+
+  it('no duplica las preguntas al reinstalar, ni agrega las de otro punto de partida', async () => {
+    const db = fakeDb()
+    await installPreset(db, 'taller')
+    expect(db._tables.booking_questions).toHaveLength(1)
+
+    const same = await installPreset(db, 'taller')
+    expect(same.questions).toEqual({ created: 0, skipped: 1 })
+
+    const other = await installPreset(db, 'salud')
+    expect(other.questions).toEqual({ created: 0, skipped: 1 })
+    expect(db._tables.booking_questions).toHaveLength(1)
+    expect(db._tables.booking_questions[0].label).toBe('Placa del vehículo')
+  })
+
+  it('las preguntas desactivadas no cuentan: se instalan las del punto de partida', async () => {
+    const db = fakeDb({
+      booking_questions: [
+        { id: 'q-vieja', account_id: ACCOUNT, label: 'Vieja', is_active: false },
+        { id: 'q-ajena', account_id: 'acc-2', label: 'Ajena', is_active: true },
+      ],
+    })
+
+    const report = await installPreset(db, 'salud')
+
+    expect(report.questions).toEqual({ created: 1, skipped: 0 })
+    expect(db._tables.booking_questions).toHaveLength(3)
+  })
+
+  it('si la cuenta ya tiene preguntas activas no agrega ninguna', async () => {
+    const db = fakeDb({
+      booking_questions: [{ id: 'q-1', account_id: ACCOUNT, label: 'Propia', is_active: true }],
+    })
+
+    const report = await installPreset(db, 'taller')
+
+    expect(report.questions).toEqual({ created: 0, skipped: 1 })
+    expect(db._tables.booking_questions).toHaveLength(1)
+  })
+
+  it('no pisa una bienvenida que el dueño ya escribió', async () => {
+    const db = fakeDb({
+      booking_settings: [
+        {
+          account_id: ACCOUNT,
+          preset_key: null,
+          bot_texts: { welcome: 'Hola, bienvenido a mi negocio', reminder: 'Te esperamos' },
+        },
+      ],
+    })
+
+    await installPreset(db, 'salud')
+
+    expect(settingsOf(db).bot_texts).toEqual({
+      welcome: 'Hola, bienvenido a mi negocio',
+      reminder: 'Te esperamos',
+    })
+    // Lo demás del punto de partida sí se aplica.
+    expect(settingsOf(db).preset_key).toBe('salud')
+  })
+
+  it('cambia la bienvenida que dejó otro punto de partida, no la del dueño', async () => {
+    const db = fakeDb()
+    await installPreset(db, 'barberia')
+    expect((settingsOf(db).bot_texts as { welcome: string }).welcome).toBe(
+      AGENDA_PRESETS.barberia.welcome,
+    )
+
+    await installPreset(db, 'salud')
+
+    expect((settingsOf(db).bot_texts as { welcome: string }).welcome).toBe(
+      AGENDA_PRESETS.salud.welcome,
+    )
+  })
+
+  it('reinstalar el mismo punto de partida no pisa las palabras ni las piezas que editó el dueño', async () => {
+    const db = fakeDb()
+    await installPreset(db, 'salud')
+    Object.assign(settingsOf(db), {
+      labels: { ...AGENDA_PRESETS.salud.labels, profesional: 'doctora' },
+      show_price: false,
+      bot_texts: { welcome: 'Mi bienvenida' },
+    })
+
+    const report = await installPreset(db, 'salud')
+
+    expect(report.services).toEqual({ created: 0, skipped: 3 })
+    expect((settingsOf(db).labels as { profesional: string }).profesional).toBe('doctora')
+    expect(settingsOf(db).show_price).toBe(false)
+    expect(settingsOf(db).bot_texts).toEqual({ welcome: 'Mi bienvenida' })
+  })
+
+  it('escribe el prompt del punto de partida sin nombrar la barbería en los demás', async () => {
+    const db = fakeDb({
+      ai_configs: [{ id: 'ai-1', account_id: ACCOUNT, system_prompt: '' }],
+    })
+
+    await installPreset(db, 'taller')
+
+    const prompt = String(db._tables.ai_configs[0].system_prompt)
+    expect(prompt).not.toBe(AGENDA_AI_PROMPT)
+    expect(prompt.toLowerCase()).not.toContain('barber')
+  })
+
+  it('no toca los ajustes de otras cuentas', async () => {
+    const db = fakeDb({
+      booking_settings: [
+        { account_id: 'acc-2', preset_key: 'clases', labels: { profesional: 'profe' } },
+      ],
+    })
+
+    await installPreset(db, 'salud')
+
+    const other = db._tables.booking_settings.find((r) => r.account_id === 'acc-2')
+    expect(other).toEqual({
+      account_id: 'acc-2',
+      preset_key: 'clases',
+      labels: { profesional: 'profe' },
+    })
+  })
+
+  it.each(Object.keys(AGENDA_PRESETS) as PresetKey[])(
+    '%s se puede instalar dos veces sin duplicar nada',
+    async (key) => {
+      const db = fakeDb()
+      await installPreset(db, key)
+      const first = Object.fromEntries(
+        Object.entries(db._tables).map(([t, rows]) => [t, rows.length]),
+      )
+
+      await installPreset(db, key)
+
+      const second = Object.fromEntries(
+        Object.entries(db._tables).map(([t, rows]) => [t, rows.length]),
+      )
+      expect(second).toEqual(first)
+    },
+  )
 })
