@@ -655,21 +655,31 @@ export function validateConfigPatch(input: unknown): Valid<ConfigPatch> {
   }
 
   if (has(record, 'labels')) {
-    const labels = sanitizeLabels(record.labels)
+    // Igual que las piezas: `null`, una lista o un texto no son un objeto de palabras.
+    const rawLabels = asRecord(record.labels)
+    if (!rawLabels) {
+      return { ok: false, message: 'Las palabras deben ser un objeto de clave a texto.' }
+    }
+    // sanitizeLabels ignora en silencio las claves que no conoce; aquí una errata
+    // ("turno" por "cita") debe avisar, no aparentar que se guardó.
+    for (const key of Object.keys(rawLabels)) {
+      if (!(LABEL_KEYS as readonly string[]).includes(key)) {
+        return { ok: false, message: `"${key}" no es una palabra válida.` }
+      }
+    }
+    const labels = sanitizeLabels(rawLabels)
     if (!labels.ok) return labels
-    out.labels = labels.value
     // sanitizeLabels descarta lo vacío; aquí un null o un texto en blanco
     // sobre una palabra conocida es un "volver al valor por defecto" explícito.
-    const labelsRecord = asRecord(record.labels)
-    if (labelsRecord) {
-      const reset = LABEL_KEYS.filter((key) => {
-        if (!has(labelsRecord, key)) return false
-        const value = labelsRecord[key]
-        return value === null || (typeof value === 'string' && value.trim() === '')
-      })
-      if (reset.length) out.labelsReset = reset
-    }
-    any = true
+    const reset = LABEL_KEYS.filter((key) => {
+      if (!has(rawLabels, key)) return false
+      const value = rawLabels[key]
+      return value === null || (typeof value === 'string' && value.trim() === '')
+    })
+    // Un objeto sin palabras que guardar ni reiniciar no es un cambio.
+    if (Object.keys(labels.value).length > 0) out.labels = labels.value
+    if (reset.length > 0) out.labelsReset = reset
+    if (out.labels || out.labelsReset) any = true
   }
 
   if (has(record, 'toggles')) {
@@ -696,6 +706,10 @@ export function validateConfigPatch(input: unknown): Valid<ConfigPatch> {
   }
 
   if (has(record, 'preset_key')) {
+    // El tipo de negocio se cambia, no se quita: no hay "sin tipo" al que volver.
+    if (record.preset_key === null) {
+      return { ok: false, message: 'Elige un tipo de negocio.' }
+    }
     if (!isPresetKey(record.preset_key)) {
       return { ok: false, message: 'Ese tipo de negocio no existe.' }
     }

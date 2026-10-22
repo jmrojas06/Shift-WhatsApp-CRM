@@ -245,6 +245,44 @@ describe('PATCH /api/verticals/agenda/config', () => {
     expect(db._tables.booking_settings).toHaveLength(0)
   })
 
+  it('400 con mensaje para palabras que no son objeto, claves de palabra desconocidas, piezas desconocidas y tipo de negocio vacío', async () => {
+    const db = boot()
+    const cases: [Record<string, unknown>, string][] = [
+      [{ labels: [] }, 'Las palabras deben ser un objeto de clave a texto.'],
+      [{ labels: 'cita' }, 'Las palabras deben ser un objeto de clave a texto.'],
+      [{ labels: null }, 'Las palabras deben ser un objeto de clave a texto.'],
+      [{ labels: { turno: 'x' } }, '"turno" no es una palabra válida.'],
+      [{ toggles: { otra: true } }, 'No hay cambios que guardar.'],
+      [{ preset_key: null }, 'Elige un tipo de negocio.'],
+    ]
+    for (const [body, message] of cases) {
+      const res = (await PATCH(jsonRequest(body))) as unknown as TestResponse
+      expect(res.status).toBe(400)
+      expect(res.body.error).toBe(message)
+    }
+    expect(db._tables.booking_settings).toHaveLength(0)
+  })
+
+  it('si no se pueden leer las palabras guardadas responde 500 y no escribe nada', async () => {
+    const db = boot({
+      ...baseSeed(),
+      booking_settings: [
+        { account_id: TEST_ACCOUNT, address: 'Calle 1', labels: { profesional: 'doctor' } },
+      ],
+    })
+    db._failNext('select', 'booking_settings', { message: 'timeout' })
+
+    const res = (await PATCH(
+      jsonRequest({ labels: { cita: 'consulta' } }),
+    )) as unknown as TestResponse
+
+    expect(res.status).toBe(500)
+    expect(db._tables.booking_settings[0]).toMatchObject({
+      address: 'Calle 1',
+      labels: { profesional: 'doctor' },
+    })
+  })
+
   it('guarda palabras y tipo de negocio sin borrar dirección, textos ni piezas', async () => {
     const db = boot({
       ...baseSeed(),

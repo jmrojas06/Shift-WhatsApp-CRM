@@ -35,7 +35,14 @@ import {
   type TimeOffCreateInput,
   type WorkBlockInput,
 } from './config'
-import { LABEL_KEYS, readLabels, type AgendaLabelKey, type AgendaLabels } from './labels'
+import {
+  LABEL_KEYS,
+  readLabels,
+  sanitizeLabels,
+  type AgendaLabelKey,
+  type AgendaLabels,
+} from './labels'
+import type { PresetKey } from './presets'
 import { togglesFromRow, togglesToRow, type AgendaToggles } from './toggles'
 
 // ------------------------------------------------------------
@@ -656,7 +663,7 @@ export async function saveSettings(
     /** Palabras a quitar de lo guardado: vuelven a su valor por defecto. */
     labelsReset?: readonly AgendaLabelKey[]
     toggles?: Partial<AgendaToggles>
-    presetKey?: string
+    presetKey?: PresetKey
   },
 ): Promise<SettingsRecord> {
   const row: Record<string, unknown> = { account_id: accountId }
@@ -666,8 +673,14 @@ export async function saveSettings(
   }
   if (patch.botTexts !== undefined) row.bot_texts = patch.botTexts
   if (patch.labels !== undefined || patch.labelsReset?.length) {
-    const stored = await storedLabels(db, accountId)
-    for (const key of patch.labelsReset ?? []) delete stored[key]
+    const reset = patch.labelsReset ?? []
+    const covered = new Set<string>([...Object.keys(patch.labels ?? {}), ...reset])
+    // Si el parche ya decide las seis palabras (el camino de la UI) no hay nada
+    // que mezclar: no se lee, y lo reiniciado simplemente no se escribe.
+    const stored: Partial<AgendaLabels> = LABEL_KEYS.every((key) => covered.has(key))
+      ? {}
+      : await storedLabels(db, accountId)
+    for (const key of reset) delete stored[key]
     row.labels = { ...stored, ...patch.labels }
   }
   if (patch.presetKey !== undefined) row.preset_key = patch.presetKey
@@ -695,7 +708,13 @@ export async function saveSettings(
 
 /**
  * Palabras personalizadas hoy guardadas (solo las que el dueño cambió, sin
- * defaults), para mezclar con un cambio parcial. Ignora lo que no sea texto.
+ * defaults), para mezclar con un cambio parcial. Se queda solo con lo que
+ * pasa `sanitizeLabels` palabra por palabra (como `readLabels`), así que lo
+ * viejo o dañado se limpia en el siguiente guardado de palabras.
+ *
+ * Si la lectura FALLA lanza: seguir con `{}` y escribir pisaría en silencio
+ * las palabras del dueño. Una fila que no existe (sin error) sí es `{}`.
+ *
  * Leer y escribir no es atómico: dos admins guardando a la vez la misma
  * palabra gana el último, que es lo esperado en una pantalla de ajustes.
  */
@@ -703,17 +722,18 @@ async function storedLabels(
   db: SupabaseClient,
   accountId: string,
 ): Promise<Partial<AgendaLabels>> {
-  const { data } = await db
+  const { data, error } = await db
     .from('booking_settings')
     .select('labels')
     .eq('account_id', accountId)
     .maybeSingle()
+  if (error) throw new Error('No se pudieron leer las palabras guardadas.')
   const raw = (data as { labels?: unknown } | null)?.labels
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {}
   const kept: Partial<AgendaLabels> = {}
   for (const key of LABEL_KEYS) {
-    const value = (raw as Record<string, unknown>)[key]
-    if (typeof value === 'string' && value.trim()) kept[key] = value
+    const res = sanitizeLabels({ [key]: (raw as Record<string, unknown>)[key] })
+    if (res.ok && res.value[key] !== undefined) kept[key] = res.value[key]
   }
   return kept
 }

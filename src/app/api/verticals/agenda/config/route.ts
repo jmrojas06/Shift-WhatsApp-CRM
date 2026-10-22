@@ -22,8 +22,8 @@ import { badRequest, configErrorResponse, readJsonBody } from '../_lib/http'
 // MEZCLA lo recibido con lo ya guardado (saveSettings), así que un
 // cuerpo parcial nunca borra el resto. Una palabra enviada como null o
 // en blanco vuelve a su valor por defecto (se quita de lo guardado).
-// Una pieza que no es true/false
-// es 400; nunca se ignora en silencio.
+// Una clave de palabra desconocida, una pieza que no es true/false o
+// un tipo de negocio vacío son 400; nunca se ignoran en silencio.
 //
 // Guardas:
 //   - requireRole('admin'): solo owner/admin configuran. La RLS de
@@ -49,6 +49,7 @@ export async function PATCH(request: Request) {
       patch.reminders2hEnabled !== undefined ||
       patch.botTexts !== undefined ||
       patch.labels !== undefined ||
+      patch.labelsReset !== undefined ||
       patch.toggles !== undefined ||
       patch.presetKey !== undefined
     ) {

@@ -18,14 +18,21 @@ export type Row = Record<string, unknown>
 
 export type WriteOp = 'insert' | 'update' | 'delete' | 'upsert'
 
+/** Operaciones que `_failNext` puede hacer fallar: las escrituras y la lectura (`select`). */
+export type FailableOp = WriteOp | 'select'
+
 export interface FakeDb {
   _tables: Record<string, Row[]>
   /**
-   * La próxima escritura `op` sobre `table` devuelve este error (como
+   * La próxima operación `op` sobre `table` devuelve este error (como
    * PostgREST) y no toca nada. Sirve para probar que una escritura
-   * fallida nunca se reporta como guardada.
+   * fallida nunca se reporta como guardada y que una lectura fallida
+   * no se confunde con "no hay fila". `select` aplica solo a lecturas
+   * (`from().select()` sin escribir): el `.select()` encadenado a un
+   * insert/upsert cuenta como esa escritura. Si el fallo no se consume,
+   * esa operación no ocurrió.
    */
-  _failNext(op: WriteOp, table: string, error: { message: string; code?: string }): void
+  _failNext(op: FailableOp, table: string, error: { message: string; code?: string }): void
   from(table: string): unknown
 }
 
@@ -73,7 +80,7 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
   }
   const ensure = (name: string): Row[] => (tables[name] ??= [])
   const failures: {
-    op: WriteOp
+    op: FailableOp
     table: string
     error: { message: string; code?: string }
   }[] = []
@@ -130,12 +137,12 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
     }
 
     const run = (): { data: unknown; error: unknown } => {
-      if (op === 'select') {
-        return { data: candidateRows().map((r) => ({ ...r })), error: null }
-      }
       const failIdx = failures.findIndex((f) => f.op === op && f.table === table)
       if (failIdx >= 0) {
         return { data: null, error: failures.splice(failIdx, 1)[0].error }
+      }
+      if (op === 'select') {
+        return { data: candidateRows().map((r) => ({ ...r })), error: null }
       }
       if (op === 'insert') {
         const rows = (Array.isArray(payload) ? payload : [payload ?? {}]).map(

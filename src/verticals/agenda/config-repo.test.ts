@@ -651,21 +651,89 @@ describe('saveSettings — agenda armable', () => {
     expect(rowsOf(db, 'booking_settings')[0].labels).toEqual({ profesional: 'médico', cita: 'consulta' })
   })
 
-  it.each([[''], [null]])(
-    'reiniciar una palabra (%j) la quita de lo guardado y deja las demás',
-    async () => {
-      const db = makeFakeDb({
-        ...baseSeed(),
-        booking_settings: [
-          { account_id: ACCOUNT, labels: { profesional: 'doctor', cita: 'consulta' } },
-        ],
-      })
-      const saved = await saveSettings(asClient(db), ACCOUNT, { labelsReset: ['profesional'] })
-      expect(rowsOf(db, 'booking_settings')[0].labels).toEqual({ cita: 'consulta' })
-      expect(saved.labels.profesional).toBe(DEFAULT_LABELS.profesional)
-      expect(saved.labels.cita).toBe('consulta')
-    },
-  )
+  it('reiniciar una palabra la quita de lo guardado y deja las demás', async () => {
+    const db = makeFakeDb({
+      ...baseSeed(),
+      booking_settings: [
+        { account_id: ACCOUNT, labels: { profesional: 'doctor', cita: 'consulta' } },
+      ],
+    })
+    const saved = await saveSettings(asClient(db), ACCOUNT, { labelsReset: ['profesional'] })
+    expect(rowsOf(db, 'booking_settings')[0].labels).toEqual({ cita: 'consulta' })
+    expect(saved.labels.profesional).toBe(DEFAULT_LABELS.profesional)
+    expect(saved.labels.cita).toBe('consulta')
+  })
+
+  it('lectura fallida de las palabras guardadas: lanza y no escribe nada', async () => {
+    const db = makeFakeDb({
+      ...baseSeed(),
+      booking_settings: [
+        { account_id: ACCOUNT, address: 'Calle 1', labels: { profesional: 'doctor' } },
+      ],
+    })
+    db._failNext('select', 'booking_settings', { message: 'timeout' })
+
+    await expect(
+      saveSettings(asClient(db), ACCOUNT, { address: 'Calle 9', labels: { cita: 'consulta' } }),
+    ).rejects.toThrow()
+
+    expect(rowsOf(db, 'booking_settings')).toEqual([
+      expect.objectContaining({ address: 'Calle 1', labels: { profesional: 'doctor' } }),
+    ])
+  })
+
+  it('con las seis palabras (puestas o reiniciadas) no lee lo guardado: escribe el parche tal cual', async () => {
+    const db = makeFakeDb({
+      ...baseSeed(),
+      booking_settings: [
+        { account_id: ACCOUNT, labels: { profesional: 'doctor', cita: 'consulta' } },
+      ],
+    })
+    // Si guardar leyera, este fallo pendiente lo tumbaría.
+    db._failNext('select', 'booking_settings', { message: 'timeout' })
+
+    const saved = await saveSettings(asClient(db), ACCOUNT, {
+      labels: {
+        profesionales: 'doctores',
+        servicio: 'consulta',
+        servicios: 'consultas',
+        cita: 'cita médica',
+        citas: 'citas médicas',
+      },
+      labelsReset: ['profesional'],
+    })
+
+    expect(rowsOf(db, 'booking_settings')[0].labels).toEqual({
+      profesionales: 'doctores',
+      servicio: 'consulta',
+      servicios: 'consultas',
+      cita: 'cita médica',
+      citas: 'citas médicas',
+    })
+    expect(saved.labels.profesional).toBe(DEFAULT_LABELS.profesional)
+
+    // El fallo sigue pendiente: la primera lectura de verdad lo recibe.
+    await expect(
+      saveSettings(asClient(db), ACCOUNT, { labels: { cita: 'x' } }),
+    ).rejects.toThrow()
+  })
+
+  it('al guardar palabras limpia lo guardado que ya no es válido', async () => {
+    const db = makeFakeDb({
+      ...baseSeed(),
+      booking_settings: [
+        {
+          account_id: ACCOUNT,
+          labels: { cita: '*x*', profesional: 'doctor', citas: 42, basura: 1 },
+        },
+      ],
+    })
+    await saveSettings(asClient(db), ACCOUNT, { labels: { servicio: 'trabajo' } })
+    expect(rowsOf(db, 'booking_settings')[0].labels).toEqual({
+      profesional: 'doctor',
+      servicio: 'trabajo',
+    })
+  })
 
   it('reiniciar una y cambiar otra en la misma llamada', async () => {
     const db = makeFakeDb({

@@ -394,21 +394,49 @@ describe('validateConfigPatch — agenda armable', () => {
     expect(validateConfigPatch({ toggles: { show_price: 0 } }).ok).toBe(false)
     expect(validateConfigPatch({ toggles: null }).ok).toBe(false)
     expect(validateConfigPatch({ toggles: [] }).ok).toBe(false)
-    expect(validateConfigPatch({ preset_key: 'tienda' }).ok).toBe(false)
-    expect(validateConfigPatch({ preset_key: null }).ok).toBe(false)
+    expect(validateConfigPatch({ preset_key: 'tienda' })).toEqual({
+      ok: false,
+      message: 'Ese tipo de negocio no existe.',
+    })
+  })
+
+  it('el tipo de negocio no se puede quitar', () => {
+    expect(validateConfigPatch({ preset_key: null })).toEqual({
+      ok: false,
+      message: 'Elige un tipo de negocio.',
+    })
   })
 
   it('rechaza palabras con marcas de WhatsApp', () => {
     expect(validateConfigPatch({ labels: { cita: '*x*' } }).ok).toBe(false)
   })
 
+  it('rechaza palabras que no son un objeto (null, lista, texto)', () => {
+    const message = 'Las palabras deben ser un objeto de clave a texto.'
+    for (const labels of [null, [], 'cita', 42]) {
+      expect(validateConfigPatch({ labels })).toEqual({ ok: false, message })
+    }
+  })
+
+  it('rechaza claves de palabras desconocidas en vez de guardar "nada"', () => {
+    expect(validateConfigPatch({ labels: { turno: 'x' } })).toEqual({
+      ok: false,
+      message: '"turno" no es una palabra válida.',
+    })
+    expect(validateConfigPatch({ labels: { cita: 'consulta', turno: '' } }).ok).toBe(false)
+  })
+
+  it('palabras sin nada que guardar no cuentan como cambio', () => {
+    const none = { ok: false, message: 'No hay cambios que guardar.' }
+    expect(validateConfigPatch({ labels: {} })).toEqual(none)
+  })
+
   it('una palabra vacía o null es un reinicio explícito; lo demás se guarda', () => {
     expect(
-      validateConfigPatch({ labels: { profesional: '', cita: null, citas: '  ', turno: 'x' } }),
+      validateConfigPatch({ labels: { profesional: '', cita: null, citas: '  ' } }),
     ).toEqual({
       ok: true,
       value: {
-        labels: {},
         labelsReset: ['profesional', 'cita', 'citas'],
       },
     })
