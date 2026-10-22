@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { resolveLabels } from './labels'
-import { AGENDA_AGENT_TEXTS, buildAgentTexts } from './texts'
+import { AGENDA_AGENT_TEXTS, AGENDA_TEXTS, buildAgentTexts } from './texts'
 
 /** Mitad de un par sustituto sin su compañera. */
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
@@ -95,5 +95,27 @@ describe('buildAgentTexts', () => {
 
   it('AGENDA_AGENT_TEXTS es el copy con palabras por defecto', () => {
     expect(AGENDA_AGENT_TEXTS.staffMenuBody).toBe('¿Con qué profesional quieres tu cita?')
+  })
+})
+
+describe('AGENDA_TEXTS (panel)', () => {
+  /** Textos y código de las funciones: cualquier "barbero" escrito a mano aparece aquí. */
+  function collect(value: unknown, out: string[] = []): string[] {
+    if (typeof value === 'string') out.push(value)
+    else if (typeof value === 'function') out.push(String(value))
+    else if (value && typeof value === 'object') {
+      for (const item of Object.values(value)) collect(item, out)
+    }
+    return out
+  }
+
+  it('no nombra a mano al barbero ni a la barbería: usa las palabras del negocio', () => {
+    expect(collect(AGENDA_TEXTS).join(' ')).not.toMatch(/barber/i)
+  })
+
+  it('el título del panel es neutro', () => {
+    expect(AGENDA_TEXTS.title).toBe('Agenda')
+    expect(AGENDA_TEXTS.staffTitle(resolveLabels({ profesionales: 'doctores' }))).toBe('Doctores')
+    expect(AGENDA_TEXTS.servicesCount(1, resolveLabels({ servicio: 'clase' }))).toBe('1 clase')
   })
 })

@@ -7,6 +7,10 @@
 // plano `{ ok }` para que las secciones no repitan try/catch.
 // ============================================================
 
+import type { AgendaLabelKey } from '@/verticals/agenda/labels'
+import type { PresetKey } from '@/verticals/agenda/presets'
+import type { AgendaQuestion, QuestionKind } from '@/verticals/agenda/questions'
+import type { AgendaInstallReport } from '@/verticals/agenda/seed'
 import { AGENDA_TEXTS as T } from '@/verticals/agenda/texts'
 
 export type ApiResult<T> =
@@ -81,6 +85,20 @@ export interface ConfigPatchBody {
   currency?: string
   reminders_2h_enabled?: boolean
   bot_texts?: Record<string, string>
+  /** Las seis palabras; una vacía vuelve a su valor por defecto. */
+  labels?: Record<AgendaLabelKey, string>
+  /** Piezas por columna (snake_case): { choose_staff: false }. */
+  toggles?: Record<string, boolean>
+  // El tipo de negocio NO viaja aquí: el servidor rechaza `preset_key`.
+  // Se cambia solo con installPreset (POST /setup).
+}
+
+/** Definición completa de una pregunta (el PATCH reemplaza todo). */
+export interface QuestionBody {
+  label: string
+  kind: QuestionKind
+  required: boolean
+  options: string[]
 }
 
 // ------------------------------------------------------------
@@ -184,4 +202,33 @@ export const agendaConfigApi = {
 
   deleteTimeOff: (id: string) =>
     request<{ ok: true }>(`/api/verticals/agenda/time-off/${id}`, 'DELETE'),
+
+  createQuestion: (body: QuestionBody) =>
+    request<{ question: AgendaQuestion }>(
+      '/api/verticals/agenda/questions',
+      'POST',
+      body,
+    ),
+
+  updateQuestion: (id: string, body: QuestionBody) =>
+    request<{ question: AgendaQuestion }>(
+      `/api/verticals/agenda/questions/${id}`,
+      'PATCH',
+      body,
+    ),
+
+  /** Desactiva la pregunta: las respuestas ya guardadas se conservan. */
+  deleteQuestion: (id: string) =>
+    request<{ ok: true }>(`/api/verticals/agenda/questions/${id}`, 'DELETE'),
+
+  /**
+   * Aplica un punto de partida (POST /setup). Sin clave reinstala el de la
+   * cuenta (o barbería si no tiene uno).
+   */
+  installPreset: (presetKey?: PresetKey) =>
+    request<{ report: AgendaInstallReport }>(
+      '/api/verticals/agenda/setup',
+      'POST',
+      presetKey ? { preset_key: presetKey } : undefined,
+    ),
 }

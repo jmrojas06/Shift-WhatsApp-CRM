@@ -1,7 +1,7 @@
 'use client'
 
 // ============================================================
-// Pestaña "Barberos": crear, editar, activar/desactivar,
+// Pestaña del equipo (quien atiende): crear, editar, activar/desactivar,
 // reordenar y marcar qué servicios atiende cada uno
 // (PUT /staff/[id]/services, aplicado por diff en el servidor).
 // ============================================================
@@ -37,13 +37,14 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import type { AgendaLabels } from '@/verticals/agenda/labels'
 import { AGENDA_TEXTS as T } from '@/verticals/agenda/texts'
 
 import { agendaConfigApi } from './api'
 import type { ServiceRow, StaffRow, StaffServicesMap } from './types'
 
 interface Draft {
-  /** null = barbero nuevo. */
+  /** null = integrante nuevo. */
   id: string | null
   name: string
   bio: string
@@ -54,6 +55,7 @@ interface StaffSectionProps {
   staff: StaffRow[]
   services: ServiceRow[]
   staffServices: StaffServicesMap
+  labels: AgendaLabels
   canEdit: boolean
   reload: () => Promise<void>
 }
@@ -62,6 +64,7 @@ export function StaffSection({
   staff,
   services,
   staffServices,
+  labels,
   canEdit,
   reload,
 }: StaffSectionProps) {
@@ -186,7 +189,7 @@ export function StaffSection({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{T.config.staff.title}</CardTitle>
+        <CardTitle>{T.config.staff.title(labels)}</CardTitle>
         <CardAction>
           <Button
             size="sm"
@@ -195,7 +198,7 @@ export function StaffSection({
             title={canEdit ? undefined : T.config.viewerGate}
           >
             <Plus className="h-4 w-4" />
-            {T.config.staff.add}
+            {T.config.staff.add(labels)}
           </Button>
         </CardAction>
       </CardHeader>
@@ -210,7 +213,7 @@ export function StaffSection({
           <div className="flex flex-col items-center justify-center py-8 text-center">
             <Users className="mb-2 h-8 w-8 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">
-              {T.config.staff.empty}
+              {T.config.staff.empty(labels)}
             </p>
           </div>
         ) : (
@@ -304,7 +307,9 @@ export function StaffSection({
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {draft?.id ? T.config.staff.editTitle : T.config.staff.createTitle}
+              {draft?.id
+                ? T.config.staff.editTitle(labels)
+                : T.config.staff.createTitle(labels)}
             </DialogTitle>
           </DialogHeader>
 
@@ -344,7 +349,7 @@ export function StaffSection({
                 </p>
                 {services.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
-                    {T.config.staff.noServicesAvailable}
+                    {T.config.staff.noServicesAvailable(labels)}
                   </p>
                 ) : (
                   <div className="max-h-48 space-y-2 overflow-y-auto rounded-md border border-border p-3">

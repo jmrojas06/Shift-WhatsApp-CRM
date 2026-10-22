@@ -119,10 +119,18 @@ export function BotSection({ settings, canEdit, reload }: BotSectionProps) {
                 {T.config.reminders.alwaysTitle}
               </p>
               <p className="text-xs text-muted-foreground">
-                {T.config.reminders.alwaysBody}
+                {settings.toggles.remindersEnabled
+                  ? T.config.reminders.alwaysBody
+                  : T.config.reminders.offBody}
               </p>
             </div>
-            <Badge>{T.config.services.active}</Badge>
+            <Badge
+              variant={settings.toggles.remindersEnabled ? 'default' : 'outline'}
+            >
+              {settings.toggles.remindersEnabled
+                ? T.config.services.active
+                : T.config.reminders.badgeOff}
+            </Badge>
           </div>
 
           <div className="flex items-center justify-between gap-4 rounded-md border border-border p-3">
@@ -179,7 +187,7 @@ export function BotSection({ settings, canEdit, reload }: BotSectionProps) {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-muted-foreground">
                   {T.config.bot.defaultLabel}{' '}
-                  {truncate(botTextDefault(key), 120)}
+                  {truncate(botTextDefault(key, settings.labels), 120)}
                 </p>
                 <Button
                   variant="ghost"

@@ -8,9 +8,9 @@
 // aquí además se bloquea el contenido por si alguien entra por URL
 // directa.
 //
-// Lee servicios y barberos con el cliente del usuario (RLS: los
-// miembros leen) e instala la plantilla contra la API server-only
-// con service-role — nunca desde el navegador.
+// Lee servicios, equipo y palabras del negocio con el cliente del
+// usuario (RLS: los miembros leen) e instala el tipo de negocio contra
+// la API server-only con service-role — nunca desde el navegador.
 // ============================================================
 
 import { useCallback, useEffect, useState } from 'react'
@@ -18,8 +18,8 @@ import { useRouter } from 'next/navigation'
 import {
   BellRing,
   CalendarDays,
+  ClipboardList,
   Loader2,
-  Scissors,
   Settings2,
   Users,
 } from 'lucide-react'
@@ -49,6 +49,8 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 
+import { DEFAULT_LABELS, readLabels, type AgendaLabels } from '@/verticals/agenda/labels'
+import { appointmentAnswerLines } from '@/verticals/agenda/panel'
 import { AGENDA_TEXTS as T } from '@/verticals/agenda/texts'
 import type { AppointmentStatus } from '@/verticals/agenda/appointments'
 import { formatLongDate, formatTimeLabel } from '@/verticals/agenda/agent/format'
@@ -59,11 +61,14 @@ import {
   zonedDateKey,
   zonedParts,
 } from '@/verticals/agenda/agent/time'
-import { getPreset } from '@/verticals/agenda/presets'
+import { getPreset, isPresetKey } from '@/verticals/agenda/presets'
 import {
   type AgendaInstallReport,
   type InstallSectionCounts,
 } from '@/verticals/agenda/seed'
+
+import { agendaConfigApi } from './configuracion/_components/api'
+import { SetupWizard } from './_components/setup-wizard'
 
 interface BookingServiceRow {
   id: string
@@ -88,6 +93,8 @@ interface AppointmentRow {
   service_id: string | null
   staff_id: string | null
   contact_id: string | null
+  /** jsonb: `{ [idPregunta]: { label, value } }` o, en citas viejas, texto plano. */
+  answers: unknown
 }
 
 interface ReminderAppointmentRow extends AppointmentRow {
@@ -116,6 +123,8 @@ interface AgendaAppointment {
   staffName: string | null
   contactName: string | null
   contactPhone: string | null
+  /** Respuestas a las preguntas extra, ya con su etiqueta ("Placa: ABC123"). */
+  answerLines: string[]
 }
 
 const STATUS_LABELS: Record<AppointmentStatus, string> = {
@@ -150,6 +159,8 @@ export default function AgendaPage() {
   const [staff, setStaff] = useState<BookingStaffRow[]>([])
   const [listsLoading, setListsLoading] = useState(true)
   const [loadFailed, setLoadFailed] = useState(false)
+  const [labels, setLabels] = useState<AgendaLabels>({ ...DEFAULT_LABELS })
+  const [presetKey, setPresetKey] = useState<string | null>(null)
   const [installing, setInstalling] = useState(false)
   const [report, setReport] = useState<AgendaInstallReport | null>(null)
   const [installError, setInstallError] = useState<string | null>(null)
@@ -166,6 +177,7 @@ export default function AgendaPage() {
 
   const [reminders, setReminders] = useState<ReminderItem[]>([])
   const [remindersTwoHour, setRemindersTwoHour] = useState(false)
+  const [remindersOn, setRemindersOn] = useState(true)
   const [remindersLoading, setRemindersLoading] = useState(true)
   const [remindersFailed, setRemindersFailed] = useState(false)
 
@@ -177,7 +189,7 @@ export default function AgendaPage() {
     if (!accountId || !isAgenda) return
     setListsLoading(true)
     setLoadFailed(false)
-    const [servicesRes, staffRes] = await Promise.all([
+    const [servicesRes, staffRes, settingsRes] = await Promise.all([
       supabase
         .from('booking_services')
         .select('id, name, description, duration_minutes, price, is_active')
@@ -188,21 +200,36 @@ export default function AgendaPage() {
         .select('id, name, bio, is_active')
         .eq('account_id', accountId)
         .order('position', { ascending: true }),
+      supabase
+        .from('booking_settings')
+        .select('labels, preset_key')
+        .eq('account_id', accountId)
+        .maybeSingle(),
     ])
-    if (servicesRes.error || staffRes.error) {
+    if (servicesRes.error || staffRes.error || settingsRes.error) {
       setLoadFailed(true)
     } else {
       setServices((servicesRes.data ?? []) as BookingServiceRow[])
       setStaff((staffRes.data ?? []) as BookingStaffRow[])
+      const settingsRow = settingsRes.data as {
+        labels: unknown
+        preset_key: string | null
+      } | null
+      // Lectura tolerante: una palabra mala en la base vuelve a la de por defecto.
+      setLabels(readLabels(settingsRow?.labels))
+      setPresetKey(settingsRow?.preset_key ?? null)
     }
     setListsLoading(false)
   }, [accountId, isAgenda, supabase])
 
   /**
    * Agenda del día en America/Bogota: ventana [inicio del día local,
-   * inicio del día siguiente). Nombre de servicio/barbero/contacto se
-   * resuelve con consultas aparte — sin embeds de PostgREST, que se
+   * inicio del día siguiente). Nombre de servicio/profesional/contacto
+   * se resuelve con consultas aparte — sin embeds de PostgREST, que se
    * rompen cuando el schema cache está frío (ver auth/account.ts).
+   * Las respuestas a las preguntas extra se muestran con la etiqueta
+   * guardada; si viene vacía (formato viejo) se usa la de la pregunta,
+   * por eso se leen TAMBIÉN las preguntas desactivadas.
    */
   const loadAgenda = useCallback(async () => {
     if (!accountId || !isAgenda) return
@@ -214,7 +241,9 @@ export default function AgendaPage() {
       const to = startOfZonedDay(addDaysToKey(dayKey, 1))
       const { data, error } = await supabase
         .from('booking_appointments')
-        .select('id, starts_at, status, service_id, staff_id, contact_id')
+        .select(
+          'id, starts_at, status, service_id, staff_id, contact_id, answers',
+        )
         .eq('account_id', accountId)
         .gte('starts_at', from.toISOString())
         .lt('starts_at', to.toISOString())
@@ -232,41 +261,69 @@ export default function AgendaPage() {
       const staffIds = ids(rows.map((r) => r.staff_id))
       const contactIds = ids(rows.map((r) => r.contact_id))
 
-      const [svcRows, staffRows, contactRows] = await Promise.all([
-        serviceIds.length
-          ? supabase
-              .from('booking_services')
-              .select('id, name')
-              .eq('account_id', accountId)
-              .in('id', serviceIds)
-              .then((r) => (r.data ?? []) as { id: string; name: string }[])
-          : Promise.resolve([] as { id: string; name: string }[]),
-        staffIds.length
-          ? supabase
-              .from('booking_staff')
-              .select('id, name')
-              .eq('account_id', accountId)
-              .in('id', staffIds)
-              .then((r) => (r.data ?? []) as { id: string; name: string }[])
-          : Promise.resolve([] as { id: string; name: string }[]),
-        contactIds.length
-          ? supabase
-              .from('contacts')
-              .select('id, name, phone')
-              .eq('account_id', accountId)
-              .in('id', contactIds)
-              .then(
-                (r) =>
-                  (r.data ?? []) as {
-                    id: string
-                    name: string | null
-                    phone: string | null
-                  }[],
-              )
-          : Promise.resolve(
-              [] as { id: string; name: string | null; phone: string | null }[],
-            ),
-      ])
+      const hasAnswers = rows.some(
+        (row) => row.answers && typeof row.answers === 'object',
+      )
+
+      const [svcRows, staffRows, contactRows, questionRows] =
+        await Promise.all([
+          serviceIds.length
+            ? supabase
+                .from('booking_services')
+                .select('id, name')
+                .eq('account_id', accountId)
+                .in('id', serviceIds)
+                .then((r) => (r.data ?? []) as { id: string; name: string }[])
+            : Promise.resolve([] as { id: string; name: string }[]),
+          staffIds.length
+            ? supabase
+                .from('booking_staff')
+                .select('id, name')
+                .eq('account_id', accountId)
+                .in('id', staffIds)
+                .then((r) => (r.data ?? []) as { id: string; name: string }[])
+            : Promise.resolve([] as { id: string; name: string }[]),
+          contactIds.length
+            ? supabase
+                .from('contacts')
+                .select('id, name, phone')
+                .eq('account_id', accountId)
+                .in('id', contactIds)
+                .then(
+                  (r) =>
+                    (r.data ?? []) as {
+                      id: string
+                      name: string | null
+                      phone: string | null
+                    }[],
+                )
+            : Promise.resolve(
+                [] as {
+                  id: string
+                  name: string | null
+                  phone: string | null
+                }[],
+              ),
+          // Todas las preguntas de la cuenta (activas o no): solo sirven para
+          // completar la etiqueta de respuestas viejas. Si la consulta falla,
+          // las respuestas se muestran con la etiqueta que traen.
+          hasAnswers
+            ? supabase
+                .from('booking_questions')
+                .select('id, label, position')
+                .eq('account_id', accountId)
+                .then(
+                  (r) =>
+                    (r.error ? [] : (r.data ?? [])) as {
+                      id: string
+                      label: string
+                      position: number
+                    }[],
+                )
+            : Promise.resolve(
+                [] as { id: string; label: string; position: number }[],
+              ),
+        ])
 
       const serviceNames = new Map(svcRows.map((s) => [s.id, s.name]))
       const staffNames = new Map(staffRows.map((s) => [s.id, s.name]))
@@ -289,6 +346,7 @@ export default function AgendaPage() {
               : null,
             contactName: contact?.name ?? null,
             contactPhone: contact?.phone ?? null,
+            answerLines: appointmentAnswerLines(row.answers, questionRows),
           }
         }),
       )
@@ -326,7 +384,7 @@ export default function AgendaPage() {
           .order('starts_at', { ascending: true }),
         supabase
           .from('booking_settings')
-          .select('reminders_2h_enabled')
+          .select('reminders_2h_enabled, reminders_enabled')
           .eq('account_id', accountId)
           .maybeSingle(),
       ])
@@ -336,10 +394,15 @@ export default function AgendaPage() {
         return
       }
 
-      const twoHourEnabled =
-        (settingsRes.data as { reminders_2h_enabled?: boolean } | null)
-          ?.reminders_2h_enabled === true
+      const remindersRow = settingsRes.data as {
+        reminders_2h_enabled?: boolean
+        reminders_enabled?: boolean | null
+      } | null
+      const twoHourEnabled = remindersRow?.reminders_2h_enabled === true
+      // Solo un `false` literal apaga los recordatorios (igual que en el bot).
+      const remindersEnabled = remindersRow?.reminders_enabled !== false
       setRemindersTwoHour(twoHourEnabled)
+      setRemindersOn(remindersEnabled)
 
       const rows = (appointmentsRes.data ?? []) as ReminderAppointmentRow[]
       const ids = (values: (string | null)[]) =>
@@ -405,17 +468,20 @@ export default function AgendaPage() {
               : null,
             contactName: contact?.name ?? null,
             contactPhone: contact?.phone ?? null,
-            pendingKind: pickDueReminder({
-              startsAtMs: new Date(row.starts_at).getTime(),
-              nowMs,
-              reminderSentAtMs: row.reminder_sent_at
-                ? new Date(row.reminder_sent_at).getTime()
-                : null,
-              reminder2hSentAtMs: row.reminder_2h_sent_at
-                ? new Date(row.reminder_2h_sent_at).getTime()
-                : null,
-              twoHourEnabled,
-            }),
+            // Con los recordatorios apagados nada se enviará: no hay "por enviar".
+            pendingKind: remindersEnabled
+              ? pickDueReminder({
+                  startsAtMs: new Date(row.starts_at).getTime(),
+                  nowMs,
+                  reminderSentAtMs: row.reminder_sent_at
+                    ? new Date(row.reminder_sent_at).getTime()
+                    : null,
+                  reminder2hSentAtMs: row.reminder_2h_sent_at
+                    ? new Date(row.reminder_2h_sent_at).getTime()
+                    : null,
+                  twoHourEnabled,
+                })
+              : null,
             sent24At: row.reminder_sent_at,
             sent2hAt: row.reminder_2h_sent_at,
           }
@@ -477,30 +543,32 @@ export default function AgendaPage() {
     void loadReminders()
   }, [load, loadAgenda, loadReminders])
 
+  /** Reinstalar: vuelve a aplicar el tipo de negocio que ya tiene la cuenta. */
   const handleInstall = useCallback(async () => {
     setInstalling(true)
     setInstallError(null)
     setReport(null)
-    try {
-      const res = await fetch('/api/verticals/agenda/setup', {
-        method: 'POST',
-      })
-      const payload = (await res.json().catch(() => null)) as {
-        report?: AgendaInstallReport
-        error?: string
-      } | null
-      if (!res.ok || !payload?.report) {
-        setInstallError(payload?.error ?? T.installFailed)
-      } else {
-        setReport(payload.report)
-        await load()
-      }
-    } catch {
-      setInstallError(T.installFailed)
-    } finally {
-      setInstalling(false)
+    const res = await agendaConfigApi.installPreset(
+      isPresetKey(presetKey) ? presetKey : undefined,
+    )
+    if (!res.ok) {
+      setInstallError(res.error || T.installFailed)
+    } else {
+      setReport(res.data.report)
+      await load()
     }
-  }, [load])
+    setInstalling(false)
+  }, [load, presetKey])
+
+  /** El asistente terminó: se muestra el reporte y se recargan las listas. */
+  const handleWizardInstalled = useCallback(
+    async (installed: AgendaInstallReport) => {
+      setInstallError(null)
+      setReport(installed)
+      await load()
+    },
+    [load],
+  )
 
   // Mientras el contexto de cuenta carga no se puede saber si el
   // vertical aplica; el shell de la app ya muestra el estado de cuenta.
@@ -529,7 +597,13 @@ export default function AgendaPage() {
     )
   }
 
-  const installed = services.length > 0 || staff.length > 0
+  // "En blanco" no crea servicios ni equipo: se reconoce por el reporte de
+  // la instalación recién hecha o por el tipo de negocio guardado.
+  const installed =
+    services.length > 0 ||
+    staff.length > 0 ||
+    report !== null ||
+    presetKey === 'blanco'
   const todayLabel = formatLongDate(zonedDateKey(new Date()))
 
   const sectionLines: Array<[string, InstallSectionCounts]> = report
@@ -542,6 +616,7 @@ export default function AgendaPage() {
         [T.sections.customFields, report.customFields],
         [T.sections.quickReplies, report.quickReplies],
         [T.sections.knowledge, report.knowledge],
+        [T.sections.questions, report.questions],
       ]
     : []
 
@@ -600,7 +675,9 @@ export default function AgendaPage() {
           ) : appointments.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-8 text-center">
               <CalendarDays className="mb-2 h-8 w-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">{T.agendaEmpty}</p>
+              <p className="text-sm text-muted-foreground">
+                {T.agendaEmpty(labels)}
+              </p>
             </div>
           ) : (
             <ul className="divide-y divide-border">
@@ -625,6 +702,15 @@ export default function AgendaPage() {
                           appointment.contactPhone ||
                           T.agendaContactFallback}
                       </p>
+                      {appointment.answerLines.length > 0 && (
+                        <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+                          {appointment.answerLines.map((line, index) => (
+                            <li key={index} className="break-words">
+                              {line}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge variant={STATUS_BADGE_VARIANTS[appointment.status]}>
@@ -685,7 +771,9 @@ export default function AgendaPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-1">
-            <p className="text-xs text-muted-foreground">{T.remindersHint}</p>
+            <p className="text-xs text-muted-foreground">
+              {T.remindersHint(labels)}
+            </p>
             <p className="text-xs text-muted-foreground">
               {T.remindersWindowNote}
             </p>
@@ -694,6 +782,12 @@ export default function AgendaPage() {
           {remindersFailed && (
             <Alert variant="destructive">
               <AlertDescription>{T.remindersLoadFailed}</AlertDescription>
+            </Alert>
+          )}
+
+          {!remindersOn && !remindersLoading && !remindersFailed && (
+            <Alert>
+              <AlertDescription>{T.remindersOffNote}</AlertDescription>
             </Alert>
           )}
 
@@ -811,9 +905,11 @@ export default function AgendaPage() {
           <CardDescription>
             {listsLoading
               ? T.loading
-              : installed
-                ? T.statusInstalledBody
-                : T.statusNotInstalledBody}
+              : loadFailed
+                ? T.loadError
+                : installed
+                  ? T.statusInstalledBody
+                  : T.statusNotInstalledBody}
           </CardDescription>
           {!listsLoading && (
             <CardAction>
@@ -824,29 +920,33 @@ export default function AgendaPage() {
           )}
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="text-sm text-muted-foreground">
-              {T.servicesCount(services.length)} ·{' '}
-              {T.staffCount(staff.length)}
-            </span>
-            <div className="ml-auto">
-              <GatedButton
-                canAct={canEditSettings}
-                gateReason={T.gateReason}
-                onClick={handleInstall}
-                disabled={installing}
-              >
-                {installing && (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                )}
-                {installing
-                  ? T.installing
-                  : installed
-                    ? T.reinstallButton
-                    : T.installButton}
-              </GatedButton>
+          {/* Sin plantilla: el asistente (tipo de negocio) reemplaza al botón único. */}
+          {!listsLoading && !loadFailed && !installed ? (
+            <SetupWizard
+              canEdit={canEditSettings}
+              onInstalled={handleWizardInstalled}
+            />
+          ) : (
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-sm text-muted-foreground">
+                {T.servicesCount(services.length, labels)} ·{' '}
+                {T.staffCount(staff.length, labels)}
+              </span>
+              <div className="ml-auto">
+                <GatedButton
+                  canAct={canEditSettings}
+                  gateReason={T.gateReason}
+                  onClick={handleInstall}
+                  disabled={installing || listsLoading}
+                >
+                  {installing && (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  )}
+                  {installing ? T.installing : T.reinstallButton}
+                </GatedButton>
+              </div>
             </div>
-          </div>
+          )}
 
           {installError && (
             <Alert variant="destructive">
@@ -863,6 +963,22 @@ export default function AgendaPage() {
           {/* Resultado de la última instalación */}
           {report && (
             <div className="space-y-3 rounded-lg border border-border p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium">{T.wizard.doneTitle}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {T.wizard.doneBody}
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => router.push('/agenda/configuracion')}
+                >
+                  <Settings2 className="h-4 w-4" />
+                  {T.wizard.goToConfig}
+                </Button>
+              </div>
               <p className="text-sm font-medium">{T.reportTitle}</p>
               <div className="grid gap-x-8 gap-y-1 sm:grid-cols-2">
                 {sectionLines.map(([label, counts]) => (
@@ -929,20 +1045,20 @@ export default function AgendaPage() {
         </CardContent>
       </Card>
 
-      {/* Servicios y barberos */}
+      {/* Servicios y equipo (con las palabras del negocio) */}
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>{T.servicesTitle}</CardTitle>
+            <CardTitle>{T.servicesTitle(labels)}</CardTitle>
           </CardHeader>
           <CardContent>
             {listsLoading ? (
               <p className="text-sm text-muted-foreground">{T.loading}</p>
             ) : services.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-8 text-center">
-                <Scissors className="mb-2 h-8 w-8 text-muted-foreground" />
+                <ClipboardList className="mb-2 h-8 w-8 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground">
-                  {T.servicesEmpty}
+                  {T.servicesEmpty(labels)}
                 </p>
               </div>
             ) : (
@@ -984,7 +1100,7 @@ export default function AgendaPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>{T.staffTitle}</CardTitle>
+            <CardTitle>{T.staffTitle(labels)}</CardTitle>
           </CardHeader>
           <CardContent>
             {listsLoading ? (
@@ -992,7 +1108,9 @@ export default function AgendaPage() {
             ) : staff.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-8 text-center">
                 <Users className="mb-2 h-8 w-8 text-muted-foreground" />
-                <p className="text-sm text-muted-foreground">{T.staffEmpty}</p>
+                <p className="text-sm text-muted-foreground">
+                  {T.staffEmpty(labels)}
+                </p>
               </div>
             ) : (
               <ul className="divide-y divide-border">

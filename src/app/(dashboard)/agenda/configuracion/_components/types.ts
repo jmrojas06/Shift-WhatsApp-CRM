@@ -1,3 +1,7 @@
+import { DEFAULT_LABELS, type AgendaLabels } from '@/verticals/agenda/labels'
+import type { AgendaQuestion } from '@/verticals/agenda/questions'
+import { DEFAULT_TOGGLES, type AgendaToggles } from '@/verticals/agenda/toggles'
+
 // ============================================================
 // Tipos de las filas que la página de Configuración lee con el
 // cliente RLS del usuario y reparte entre las secciones.
@@ -44,13 +48,25 @@ export interface SettingsRow {
   address: string | null
   reminders_2h_enabled: boolean
   bot_texts: Record<string, string>
+  /** Palabras del negocio, ya mezcladas con las de por defecto. */
+  labels: AgendaLabels
+  /** Piezas prendidas/apagadas (una columna ausente cuenta como prendida). */
+  toggles: AgendaToggles
+  /** Tipo de negocio elegido (clave del punto de partida) o null. */
+  preset_key: string | null
 }
 
-/** service_id[] que atiende cada barbero. */
+/** Pregunta extra del bot (definición completa). */
+export type QuestionRow = AgendaQuestion
+
+/** service_id[] que atiende cada integrante del equipo. */
 export type StaffServicesMap = Record<string, string[]>
 
 export const EMPTY_SETTINGS: SettingsRow = {
   address: null,
   reminders_2h_enabled: false,
   bot_texts: {},
+  labels: { ...DEFAULT_LABELS },
+  toggles: { ...DEFAULT_TOGGLES },
+  preset_key: null,
 }

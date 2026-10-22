@@ -1,7 +1,7 @@
 'use client'
 
 // ============================================================
-// Pestaña "Horarios": editor semanal por barbero. Cada día admite
+// Pestaña "Horarios": editor semanal por integrante del equipo. Cada día admite
 // varios bloques (turnos partidos: 9–12 y 13–18). Guardar reemplaza
 // el horario completo por diff en el servidor; la disponibilidad se
 // recalcula al vuelo y las citas confirmadas no se tocan.
@@ -28,6 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import type { AgendaLabels } from '@/verticals/agenda/labels'
 import { AGENDA_TEXTS as T } from '@/verticals/agenda/texts'
 
 import { agendaConfigApi } from './api'
@@ -68,6 +69,7 @@ function blocksFromRows(
 interface ScheduleSectionProps {
   staff: StaffRow[]
   workingHours: WorkingHoursRow[]
+  labels: AgendaLabels
   canEdit: boolean
   reload: () => Promise<void>
 }
@@ -75,6 +77,7 @@ interface ScheduleSectionProps {
 export function ScheduleSection({
   staff,
   workingHours,
+  labels,
   canEdit,
   reload,
 }: ScheduleSectionProps) {
@@ -92,7 +95,7 @@ export function ScheduleSection({
     return staff.some((s) => s.id === selectedId) ? selectedId : staff[0].id
   }, [staff, selectedId])
 
-  // Borrador de la edición en curso, atado al barbero. Sin cambios,
+  // Borrador de la edición en curso, atado a la persona elegida. Sin cambios,
   // se muestra lo que hay en la base: se deriva en render (sin
   // efectos) para no disparar cascadas de setState.
   const baseBlocks = useMemo(
@@ -177,18 +180,18 @@ export function ScheduleSection({
     <Card>
       <CardHeader>
         <CardTitle>{T.config.schedule.title}</CardTitle>
-        <CardDescription>{T.config.schedule.subtitle}</CardDescription>
+        <CardDescription>{T.config.schedule.subtitle(labels)}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
         {staff.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            {T.config.schedule.pickStaffEmpty}
+            {T.config.schedule.pickStaffEmpty()}
           </p>
         ) : (
           <>
             <div className="max-w-xs space-y-2">
               <Label htmlFor="schedule-staff">
-                {T.config.schedule.pickStaff}
+                {T.config.schedule.pickStaff(labels)}
               </Label>
               <Select
                 value={activeStaffId ?? undefined}
@@ -201,7 +204,7 @@ export function ScheduleSection({
                   <SelectValue>
                     {(value: string | null) => {
                       const member = staff.find((s) => s.id === value)
-                      if (!member) return T.config.schedule.pickStaff
+                      if (!member) return T.config.schedule.pickStaff(labels)
                       return member.is_active
                         ? member.name
                         : `${member.name} (${T.config.staff.inactive})`

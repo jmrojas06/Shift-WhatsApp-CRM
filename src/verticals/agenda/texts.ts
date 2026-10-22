@@ -1,10 +1,20 @@
 // ============================================================
-// Textos de la superficie de barbería — español colombiano.
+// Textos de la superficie de la agenda — español colombiano.
 //
 // Por decisión de producto, el vertical NO entra a los catálogos
 // i18n del CRM (messages/*.json): su superficie es solo es-CO y su
 // copy vive aquí, junto al manifest y las semillas.
+//
+// El panel no escribe a mano "barbero" ni "cita": donde la pantalla
+// nombra a quien atiende o lo que se agenda, la entrada es una función
+// de las palabras del negocio (labels). Junto a esas palabras se evitan
+// artículos y adjetivos, porque el género cambia ("la cita", "el
+// turno", "la sesión").
 // ============================================================
+
+import { truncate } from './agent/format'
+import { DEFAULT_LABELS, LABEL_MAX, capitalize, type AgendaLabels } from './labels'
+import { MAX_OPTIONS, MAX_QUESTIONS, MIN_OPTIONS, QUESTION_LABEL_MAX } from './questions'
 
 /**
  * Claves del copy del bot que el dueño puede sobreescribir desde
@@ -20,12 +30,14 @@ export type EditableBotTextKey =
   | 'handoff'
 
 export const AGENDA_TEXTS = {
-  title: 'Barbería',
-  subtitle: 'Tu plantilla de barbería: servicios, barberos y horarios.',
+  title: 'Agenda',
+  subtitle: 'Tus servicios, tu equipo y tus horarios.',
   loading: 'Cargando…',
+  /** Tooltip de lo que un rol de solo lectura no puede hacer. */
+  readOnly: (action: string) => `Solo lectura: tu rol no puede ${action}.`,
   notEnabledTitle: 'Módulo no habilitado',
   notEnabledBody:
-    'El módulo de barbería no está activo para esta cuenta. Pídele a tu asesor de Shift Digital que lo active.',
+    'El módulo de agenda no está activo para esta cuenta. Pídele a tu asesor de Shift Digital que lo active.',
   loadError:
     'No se pudo cargar la información. Recarga la página e inténtalo de nuevo.',
 
@@ -35,19 +47,33 @@ export const AGENDA_TEXTS = {
   statusInstalledBody:
     'La plantilla está instalada. Reinstalar es seguro: no duplica ni sobrescribe lo que ya editaste.',
   statusNotInstalledBody:
-    'Instala la plantilla para crear servicios de ejemplo, un barbero con horario, etiquetas, pipeline, respuestas rápidas y documentos para tu agente de IA.',
-  installButton: 'Instalar plantilla de barbería',
+    'Aún no has elegido tu tipo de negocio. Con tu elección creamos servicios de ejemplo, un horario, etiquetas, pipeline, respuestas rápidas y documentos para tu agente de IA.',
   reinstallButton: 'Reinstalar plantilla',
   installing: 'Instalando…',
   gateReason: 'instalar la plantilla',
   installFailed: 'No se pudo completar la instalación. Inténtalo de nuevo.',
 
+  // ----------------------------------------------------------
+  // Asistente de arranque (cuenta sin plantilla)
+  // ----------------------------------------------------------
+  wizard: {
+    title: 'Elige tu tipo de negocio',
+    hint: 'Es solo un punto de partida: crea servicios, un horario y respuestas de ejemplo y ajusta las palabras del bot. Después editas todo en Configuración.',
+    choose: 'Usar este tipo',
+    installingNamed: (name: string) => `Preparando tu agenda de "${name}"…`,
+    viewerGate: 'elegir el tipo de negocio',
+    doneTitle: 'Tu agenda está lista',
+    doneBody:
+      'Revisa los servicios, el equipo y el horario de ejemplo en Configuración y ajústalos a tu negocio.',
+    goToConfig: 'Ir a Configuración',
+  },
+
   reportTitle: 'Resultado de la instalación',
   createdLabel: 'creados',
   skippedLabel: 'ya existían',
   pipelineCreated: (stages: number) =>
-    `Pipeline "Barbería" creado con ${stages} etapas`,
-  pipelineSkipped: 'El pipeline "Barbería" ya existía',
+    `Pipeline de la agenda creado con ${stages} etapas`,
+  pipelineSkipped: 'El pipeline de la agenda ya existía',
   aiPromptWritten: 'Prompt creado (estaba vacío)',
   aiPromptAlreadySet: 'Prompt ya configurado; no se modificó',
   aiPromptNoConfig: 'Aún sin configurar',
@@ -55,22 +81,25 @@ export const AGENDA_TEXTS = {
   promptSuggestionHint:
     'Cópialo en Agentes de IA cuando conectes tu proveedor; no sobrescribimos nada.',
 
-  servicesTitle: 'Servicios',
-  servicesEmpty: 'Aún no hay servicios. Instala la plantilla o créalos a tu medida.',
-  staffTitle: 'Barberos',
-  staffEmpty: 'Aún no hay barberos en el equipo.',
+  servicesTitle: (l: AgendaLabels) => capitalize(l.servicios),
+  servicesEmpty: (l: AgendaLabels) =>
+    `Aún no hay ${l.servicios}. Elige un tipo de negocio o créalos a tu medida.`,
+  staffTitle: (l: AgendaLabels) => capitalize(l.profesionales),
+  staffEmpty: (l: AgendaLabels) => `Aún no hay ${l.profesionales} en el equipo.`,
   inactiveLabel: 'Inactivo',
-  servicesCount: (n: number) => (n === 1 ? '1 servicio' : `${n} servicios`),
-  staffCount: (n: number) => (n === 1 ? '1 barbero' : `${n} barberos`),
+  servicesCount: (n: number, l: AgendaLabels) =>
+    n === 1 ? `1 ${l.servicio}` : `${n} ${l.servicios}`,
+  staffCount: (n: number, l: AgendaLabels) =>
+    n === 1 ? `1 ${l.profesional}` : `${n} ${l.profesionales}`,
   minutes: (n: number) => `${n} min`,
 
   // ----------------------------------------------------------
   // Agenda del día
   // ----------------------------------------------------------
   agendaTitle: 'Agenda de hoy',
-  agendaEmpty: 'No hay citas para hoy.',
+  agendaEmpty: (l: AgendaLabels) => `No hay ${l.citas} para hoy.`,
   agendaServiceGone: 'Servicio eliminado',
-  agendaStaffGone: 'Sin barbero',
+  agendaStaffGone: 'Sin asignar',
   agendaContactFallback: 'Sin nombre',
   agendaStatusPending: 'Pendiente',
   agendaStatusConfirmed: 'Confirmada',
@@ -81,10 +110,10 @@ export const AGENDA_TEXTS = {
   agendaActionNoShow: 'No asistió',
   agendaActionCancel: 'Cancelar',
   agendaChangeFailed:
-    'No se pudo actualizar la cita. Recarga la agenda e inténtalo de nuevo.',
-  agendaPastTitle: 'La cita ya pasó',
+    'No se pudo actualizar. Recarga la agenda e inténtalo de nuevo.',
+  agendaPastTitle: 'Ya pasó',
   agendaPastBody: (date: string, time: string) =>
-    `La cita del ${date} a las ${time} ya pasó. ¿Seguro que quieres cambiar su estado?`,
+    `Estaba programado para el ${date} a las ${time} y ya pasó. ¿Seguro que quieres cambiar su estado?`,
   agendaPastConfirm: 'Sí, cambiar',
   agendaPastBack: 'Volver',
   viewerGate: 'acciones sobre las citas',
@@ -93,10 +122,12 @@ export const AGENDA_TEXTS = {
   // Recordatorios (Fase 3)
   // ----------------------------------------------------------
   remindersTitle: 'Recordatorios',
-  remindersHint:
-    'Cada cita recibe un recordatorio 24 horas antes; la segunda señal (2 horas antes) se activa en Configuración.',
+  remindersHint: (l: AgendaLabels) =>
+    `Cada ${l.cita} recibe un recordatorio 24 horas antes; la segunda señal (2 horas antes) se activa en Configuración.`,
   remindersWindowNote:
     'Con la conversación abierta (el cliente escribió en las últimas 24 h) se envía un mensaje con botones; si no, la plantilla aprobada de Meta.',
+  remindersOffNote:
+    'Los recordatorios están apagados. Puedes prenderlos en Configuración, en la pestaña Piezas.',
   remindersTwoHourOn: '2 h activado',
   remindersTwoHourOff: '2 h desactivado',
   remindersPendingTitle: 'Por enviar',
@@ -112,13 +143,14 @@ export const AGENDA_TEXTS = {
 
   sections: {
     services: 'Servicios',
-    staff: 'Barberos',
-    staffServices: 'Barbero–servicios',
+    staff: 'Equipo',
+    staffServices: 'Servicios de cada integrante',
     workingHours: 'Bloques de horario',
     tags: 'Etiquetas',
     customFields: 'Campos personalizados',
     quickReplies: 'Respuestas rápidas',
     knowledge: 'Documentos de conocimiento',
+    questions: 'Preguntas extra',
     aiAgent: 'Agente de IA',
     pipeline: 'Pipeline',
   },
@@ -129,7 +161,7 @@ export const AGENDA_TEXTS = {
   config: {
     title: 'Configuración',
     subtitle:
-      'Administra tu negocio, tus servicios, tus barberos y los textos del bot.',
+      'Administra tu negocio, tus servicios, tu equipo y los textos del bot.',
     openConfig: 'Configuración',
     backToAgenda: 'Volver a la agenda',
     loading: 'Cargando la configuración…',
@@ -160,12 +192,17 @@ export const AGENDA_TEXTS = {
       cancel: 'Cancelar',
     },
 
+    // Las pestañas de servicios y equipo toman el nombre de las palabras del
+    // negocio (ver la página); estos son los valores por si faltan.
     tabs: {
       business: 'Negocio',
+      type: 'Tipo de negocio',
       services: 'Servicios',
-      staff: 'Barberos',
+      staff: 'Equipo',
       schedule: 'Horarios',
       timeOff: 'Bloqueos',
+      pieces: 'Piezas',
+      questions: 'Preguntas',
       bot: 'Bot y recordatorios',
     },
 
@@ -185,14 +222,135 @@ export const AGENDA_TEXTS = {
       save: 'Guardar datos del negocio',
     },
 
+    // ----------------------------------------------------------
+    // Pestaña "Tipo de negocio"
+    // ----------------------------------------------------------
+    type: {
+      title: 'Tipo de negocio',
+      hint: 'Elige el punto de partida que más se parezca a tu negocio. Cambia las palabras que usa el bot y cómo se muestran los servicios, y agrega ejemplos para arrancar.',
+      current: 'Actual',
+      wordsTitle: 'Palabras de tu negocio',
+      wordsHint:
+        'Así llama tu negocio a cada cosa, en el bot y en el panel. Deja una palabra vacía para usar la de por defecto.',
+      words: {
+        profesional: 'Quien atiende (singular)',
+        profesionales: 'Quien atiende (plural)',
+        servicio: 'Lo que se agenda (singular)',
+        servicios: 'Lo que se agenda (plural)',
+        cita: 'La reserva (singular)',
+        citas: 'La reserva (plural)',
+      } satisfies Record<keyof AgendaLabels, string>,
+      wordsDefaultNote: 'Por defecto:',
+      saveWords: 'Guardar palabras',
+      wordTooLong: (word: string) =>
+        `"${word}" no puede pasar de ${LABEL_MAX} caracteres.`,
+      wordInvalid: (word: string) =>
+        `"${word}" tiene caracteres no permitidos (por ejemplo * _ ~ o comillas invertidas).`,
+      confirmTitle: (name: string) => `¿Usar "${name}" como tipo de negocio?`,
+      confirmBody:
+        'Se aplican las palabras y cómo se muestran los servicios (quién atiende, precios, duración). Se agregan los servicios, el horario de ejemplo y las preguntas que aún no tengas. Tus citas, servicios, equipo y preguntas actuales se quedan activos: desactiva lo que no uses. La bienvenida solo cambia si no la personalizaste.',
+      sameTitle: (name: string) => `Ya usas "${name}"`,
+      sameBody:
+        'Ya usas este tipo de negocio. Volver a aplicarlo no cambia tus servicios ni tu equipo: solo rellena las etiquetas, el pipeline, las respuestas rápidas y los documentos que falten.',
+      cancel: 'Cancelar',
+      apply: 'Sí, usar este tipo',
+      reapply: 'Volver a aplicar',
+      applied: (name: string) =>
+        `Listo: ahora usas "${name}". Revisa los servicios, el equipo y las preguntas en las otras pestañas.`,
+      viewerGate: 'cambiar el tipo de negocio',
+    },
+
+    // ----------------------------------------------------------
+    // Pestaña "Piezas"
+    // ----------------------------------------------------------
+    pieces: {
+      title: 'Piezas',
+      hint: 'Prende solo lo que tu negocio usa. El bot salta los pasos que apagues.',
+      on: 'Prendida',
+      off: 'Apagada',
+      items: {
+        chooseStaff: {
+          title: 'Elegir quién atiende',
+          hint: (l: AgendaLabels) =>
+            `Apagado: el bot no pregunta "¿con qué ${l.profesional}?" y asigna a quien esté libre.`,
+        },
+        showPrice: {
+          title: 'Mostrar precios',
+          hint: () => 'Apagado: el bot no muestra el precio en el menú, el resumen ni la confirmación.',
+        },
+        showDuration: {
+          title: 'Mostrar duración',
+          hint: () => 'Apagado: el menú de servicios del bot no muestra los minutos.',
+        },
+        remindersEnabled: {
+          title: 'Recordatorios',
+          hint: (l: AgendaLabels) =>
+            `Mensaje automático antes de cada ${l.cita}: 24 horas antes y, si lo activas en "Bot y recordatorios", 2 horas antes.`,
+        },
+        allowReschedule: {
+          title: 'Reprogramar y cancelar',
+          hint: (l: AgendaLabels) =>
+            `Apagado: si el cliente quiere cambiar o cancelar su ${l.cita}, el bot avisa a una persona del equipo para que lo atienda por el chat.`,
+        },
+      },
+    },
+
+    // ----------------------------------------------------------
+    // Pestaña "Preguntas"
+    // ----------------------------------------------------------
+    questions: {
+      title: 'Preguntas extra',
+      hint: (l: AgendaLabels) =>
+        `El bot las hace después de elegir la hora y antes de confirmar la ${l.cita}. Máximo ${MAX_QUESTIONS}.`,
+      count: (n: number) => `${n} de ${MAX_QUESTIONS}`,
+      remaining: (n: number) =>
+        n === 0
+          ? 'Ya llegaste al máximo de preguntas.'
+          : n === 1
+            ? 'Puedes agregar 1 pregunta más.'
+            : `Puedes agregar ${n} preguntas más.`,
+      empty: 'Sin preguntas extra: el bot pasa directo al resumen.',
+      addTitle: 'Agregar pregunta',
+      editTitle: 'Editar pregunta',
+      label: 'Pregunta',
+      labelPlaceholder: 'Ej.: ¿Cuál es la placa de tu carro?',
+      labelHint: (n: number) => `${n} de ${QUESTION_LABEL_MAX} caracteres`,
+      kind: 'Tipo de respuesta',
+      kinds: {
+        texto: 'Texto libre',
+        direccion: 'Dirección',
+        numero: 'Número',
+        opcion: 'Opciones',
+      },
+      required: 'Obligatoria',
+      optional: 'Opcional',
+      requiredHint: 'Si no es obligatoria, el cliente puede omitirla.',
+      options: 'Opciones (una por línea)',
+      optionsPlaceholder: 'Norte\nSur',
+      optionsHint: `Entre ${MIN_OPTIONS} y ${MAX_OPTIONS} opciones. Con 3 o menos, el bot las muestra como botones (hasta 20 caracteres cada una); con más, como una lista (hasta 24). No pueden repetirse ni ser solo números.`,
+      save: 'Guardar pregunta',
+      saveEdit: 'Guardar cambios',
+      cancel: 'Cancelar',
+      edit: 'Editar',
+      remove: 'Quitar',
+      removeTitle: 'Quitar pregunta',
+      removeBody:
+        'El bot dejará de hacerla. Las respuestas que ya dieron tus clientes se conservan.',
+      removeYes: 'Sí, quitar',
+      viewerGate: 'editar las preguntas',
+    },
+
     reminders: {
       title: 'Recordatorios de citas',
       alwaysTitle: 'Recordatorio 24 h antes',
       alwaysBody:
-        'Siempre activo: cada cita recibe un recordatorio el día anterior.',
+        'Activo mientras la pieza Recordatorios esté prendida: cada cita recibe un recordatorio el día anterior.',
+      offBody:
+        'Apagado: prende la pieza Recordatorios en la pestaña Piezas para que se envíen.',
       twoHourTitle: 'Segunda señal 2 h antes',
       twoHourBody:
         'Envía un recordatorio adicional dos horas antes de la cita.',
+      badgeOff: 'Apagado',
     },
 
     services: {
@@ -204,7 +362,7 @@ export const AGENDA_TEXTS = {
       editTitle: 'Editar servicio',
       name: 'Nombre',
       description: 'Descripción',
-      descriptionPlaceholder: 'Corte clásico con máquina y tijera',
+      descriptionPlaceholder: 'Qué incluye y para quién es',
       duration: 'Duración (minutos)',
       price: 'Precio',
       active: 'Activo',
@@ -217,32 +375,33 @@ export const AGENDA_TEXTS = {
     },
 
     staff: {
-      title: 'Barberos',
-      empty:
-        'Aún no hay barberos. Crea el equipo para asignarles horarios y servicios.',
-      add: 'Agregar barbero',
-      createTitle: 'Nuevo barbero',
-      editTitle: 'Editar barbero',
+      title: (l: AgendaLabels) => capitalize(l.profesionales),
+      empty: (l: AgendaLabels) =>
+        `Aún no hay ${l.profesionales}. Crea el equipo para asignarles horarios y servicios.`,
+      add: (l: AgendaLabels) => `Agregar ${l.profesional}`,
+      createTitle: (l: AgendaLabels) => `Agregar ${l.profesional}`,
+      editTitle: (l: AgendaLabels) => `Editar ${l.profesional}`,
       name: 'Nombre',
       bio: 'Descripción',
-      bioPlaceholder: 'Especialista en fades y barba',
+      bioPlaceholder: 'Qué hace y en qué se especializa',
       bioHint: 'Descripción corta (opcional).',
       active: 'Activo',
       inactive: 'Inactivo',
       servicesTitle: 'Servicios que atiende',
       servicesHint:
-        'Solo se ofrecerá este barbero para los servicios marcados. La opción "Cualquiera" asigna al que esté disponible.',
-      noServicesAvailable:
-        'Todavía no hay servicios activos. Créalos en la pestaña Servicios.',
-      save: 'Guardar barbero',
+        'Solo se ofrecerá para los servicios marcados. La opción "Cualquiera" asigna a quien esté disponible.',
+      noServicesAvailable: (l: AgendaLabels) =>
+        `Todavía no hay servicios activos. Créalos en la pestaña ${capitalize(l.servicios)}.`,
+      save: 'Guardar',
     },
 
     schedule: {
       title: 'Horario semanal',
-      subtitle:
-        'Define cuándo acepta citas cada barbero. Los cambios aplican de inmediato a nuevas reservas; las citas ya confirmadas no se tocan.',
-      pickStaff: 'Barbero',
-      pickStaffEmpty: 'Crea primero un barbero para configurar su horario.',
+      subtitle: (l: AgendaLabels) =>
+        `Define cuándo acepta ${l.citas} cada integrante del equipo. Los cambios aplican de inmediato a nuevas reservas; lo que ya está confirmado no se toca.`,
+      pickStaff: (l: AgendaLabels) => capitalize(l.profesional),
+      pickStaffEmpty: () =>
+        'Crea primero a alguien del equipo para configurar su horario.',
       hint: 'Para el almuerzo, usa dos bloques (por ejemplo 9:00–12:00 y 13:00–18:00).',
       empty: 'Sin bloques este día.',
       addBlock: 'Agregar bloque',
@@ -263,8 +422,9 @@ export const AGENDA_TEXTS = {
       title: 'Bloqueos puntuales',
       subtitle:
         'Vacaciones, citas médicas o días no disponibles. Mientras un bloqueo está activo, el bot no ofrece horas en ese rango.',
-      pickStaff: 'Barbero',
-      pickStaffEmpty: 'Crea primero un barbero para programar bloqueos.',
+      pickStaff: (l: AgendaLabels) => capitalize(l.profesional),
+      pickStaffEmpty: () =>
+        'Crea primero a alguien del equipo para programar bloqueos.',
       from: 'Desde',
       to: 'Hasta',
       reason: 'Motivo',
@@ -274,7 +434,8 @@ export const AGENDA_TEXTS = {
       upcoming: 'Próximos bloqueos',
       delete: 'Eliminar',
       deleteTitle: 'Eliminar bloqueo',
-      deleteBody: '¿Seguro que quieres eliminar este bloqueo? El barbero vuelve a estar disponible en ese rango.',
+      deleteBody:
+        '¿Seguro que quieres eliminar este bloqueo? Esa persona vuelve a estar disponible en ese rango.',
       deleteYes: 'Sí, eliminar',
       deleteNo: 'Cancelar',
       past: 'Pasado',
@@ -318,9 +479,6 @@ export const AGENDA_TEXTS = {
 // Las plantillas que reciben datos lo hacen como funciones con
 // argumentos con nombre — nada de concatenaciones en el llamador.
 // ============================================================
-
-import { truncate } from './agent/format'
-import { DEFAULT_LABELS, type AgendaLabels } from './labels'
 
 /** Datos de una cita usados en resumen y confirmaciones. */
 export interface AgendaAppointmentSummary {

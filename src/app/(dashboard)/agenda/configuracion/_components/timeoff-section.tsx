@@ -2,7 +2,7 @@
 
 // ============================================================
 // Pestaña "Bloqueos": rangos puntuales (vacaciones, diligencias)
-// por barbero. Se guardan como timestamptz y se capturan/muestran
+// por integrante del equipo. Se guardan como timestamptz y se capturan/muestran
 // en hora de Bogotá: el input datetime-local no conoce la zona, así
 // que se convierte con zonedTimeToUtc/zonedParts.
 // ============================================================
@@ -38,6 +38,7 @@ import {
 } from '@/components/ui/select'
 import { formatLongDate, formatTimeLabel } from '@/verticals/agenda/agent/format'
 import { zonedParts, zonedTimeToUtc } from '@/verticals/agenda/agent/time'
+import type { AgendaLabels } from '@/verticals/agenda/labels'
 import { AGENDA_TEXTS as T } from '@/verticals/agenda/texts'
 
 import { agendaConfigApi } from './api'
@@ -60,6 +61,7 @@ function rangeLabel(row: TimeOffRow): string {
 interface TimeOffSectionProps {
   staff: StaffRow[]
   timeOff: TimeOffRow[]
+  labels: AgendaLabels
   canEdit: boolean
   reload: () => Promise<void>
 }
@@ -67,6 +69,7 @@ interface TimeOffSectionProps {
 export function TimeOffSection({
   staff,
   timeOff,
+  labels,
   canEdit,
   reload,
 }: TimeOffSectionProps) {
@@ -184,7 +187,7 @@ export function TimeOffSection({
       <CardContent className="space-y-5">
         {staff.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            {T.config.timeOff.pickStaffEmpty}
+            {T.config.timeOff.pickStaffEmpty()}
           </p>
         ) : (
           <>
@@ -192,7 +195,7 @@ export function TimeOffSection({
               <div className="grid gap-4 sm:grid-cols-3">
                 <div className="space-y-2">
                   <Label htmlFor="timeoff-staff">
-                    {T.config.timeOff.pickStaff}
+                    {T.config.timeOff.pickStaff(labels)}
                   </Label>
                   <Select
                     value={activeStaffId ?? undefined}
@@ -203,7 +206,7 @@ export function TimeOffSection({
                       <SelectValue>
                         {(value: string | null) => {
                           const member = staff.find((s) => s.id === value)
-                          if (!member) return T.config.timeOff.pickStaff
+                          if (!member) return T.config.timeOff.pickStaff(labels)
                           return member.is_active
                             ? member.name
                             : `${member.name} (${T.config.staff.inactive})`
