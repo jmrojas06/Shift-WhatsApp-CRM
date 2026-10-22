@@ -59,8 +59,8 @@ import {
   zonedDateKey,
   zonedParts,
 } from '@/verticals/agenda/agent/time'
+import { getPreset } from '@/verticals/agenda/presets'
 import {
-  AGENDA_AI_PROMPT,
   type AgendaInstallReport,
   type InstallSectionCounts,
 } from '@/verticals/agenda/seed'
@@ -920,7 +920,7 @@ export default function AgendaPage() {
                     {T.promptSuggestionHint}
                   </p>
                   <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-muted/50 p-3 text-xs">
-                    {AGENDA_AI_PROMPT}
+                    {getPreset(report.presetKey).aiPrompt}
                   </pre>
                 </div>
               )}

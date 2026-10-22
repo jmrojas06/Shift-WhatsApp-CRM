@@ -81,10 +81,6 @@ export const BARBERIA_PRESET: AgendaPreset = {
           'Atendemos de lunes a sábado, de 9:00 a.m. a 1:00 p.m. y de 2:00 p.m. a 7:00 p.m. ¿Te agendo tu cita?',
       },
       {
-        title: 'Lista de precios',
-        content: '[escribe tus precios]',
-      },
-      {
         title: 'Ubicación',
         content: '📍 Estamos en [escribe tu dirección]. Te esperamos de lunes a sábado.',
       },

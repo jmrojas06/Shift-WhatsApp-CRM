@@ -104,7 +104,8 @@ describe('puntos de partida', () => {
     const { knowledgeDocs, quickReplies } = AGENDA_PRESETS.barberia.seed
     const text = JSON.stringify([knowledgeDocs, quickReplies])
     expect(text).not.toMatch(/Nequi|Daviplata|factura electrónica|10 minutos tarde|2 horas|acompañados/)
-    expect(quickReplies.find((q) => q.title === 'Lista de precios')?.content).toBe('[escribe tus precios]')
+    // Sin respuestas rápidas con precios de relleno: un agente podría enviarlas tal cual al cliente.
+    expect(quickReplies.find((q) => q.title === 'Lista de precios')).toBeUndefined()
     const doc = (title: string) => knowledgeDocs.find((d) => d.title === title)?.content ?? ''
     expect(doc('Métodos de pago')).toContain('[Escribe aquí')
     expect(doc('Política de citas y cancelaciones')).toContain('[Escribe aquí')
