@@ -64,6 +64,14 @@ export interface VerticalInboundContext {
   db: SupabaseClient
   /** Active booking session, when one exists. */
   session: VerticalSession | null
+  /**
+   * A human owns the thread (`assigned_agent_id`) or the bot was paused
+   * on it (`ai_autoreply_disabled`). The handler is still called so it
+   * can answer taps on messages the SYSTEM sent (e.g. reminder buttons),
+   * but it must decline everything else — and the dispatcher never
+   * claims the message on its behalf.
+   */
+  humanOwned?: boolean
 }
 
 export interface VerticalDispatchResult {

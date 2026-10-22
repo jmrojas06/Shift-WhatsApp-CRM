@@ -350,7 +350,10 @@
       "tookOver": "Você assumiu esta conversa.",
       "resumed": "IA retomada.",
       "updateError": "Não foi possível atualizar o assistente de IA.",
-      "networkError": "Não foi possível conectar ao servidor."
+      "networkError": "Não foi possível conectar ao servidor.",
+      "botPausedTitle": "O bot de agendamentos está pausado aqui",
+      "resumeBot": "Retomar bot",
+      "botResumed": "Bot retomado."
     }
   },
   "Contacts": {

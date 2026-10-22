@@ -350,7 +350,10 @@
       "tookOver": "Tomaste el control de este chat.",
       "resumed": "IA reanudada.",
       "updateError": "No se pudo actualizar el asistente de IA.",
-      "networkError": "No se pudo conectar con el servidor."
+      "networkError": "No se pudo conectar con el servidor.",
+      "botPausedTitle": "El bot de reservas está en pausa aquí",
+      "resumeBot": "Reanudar bot",
+      "botResumed": "Bot reanudado."
     }
   },
   "Contacts": {

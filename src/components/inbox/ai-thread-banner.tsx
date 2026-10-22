@@ -6,6 +6,33 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useTranslations } from "next-intl";
 import { useAuth } from "@/hooks/use-auth";
+import { getVerticalManifest } from "@/lib/verticals/registry";
+
+export type AiBannerMode = "hidden" | "paused" | "active";
+
+/**
+ * Which banner (if any) a thread shows. Pure so it can be tested
+ * without a DOM.
+ *
+ * A paused thread needs a way back even when the account never turned
+ * on AI auto-reply: the vertical's booking bot (barbería) pauses the
+ * thread on handoff with the same `ai_autoreply_disabled` flag and
+ * stands down until someone resumes it.
+ */
+export function resolveAiBannerMode(args: {
+  /** null while the account's AI status is still loading. */
+  autoReplyOn: boolean | null;
+  hasVertical: boolean;
+  paused: boolean;
+  assignedAgentId?: string | null;
+}): AiBannerMode {
+  if (args.paused && (args.autoReplyOn || args.hasVertical)) return "paused";
+  // No auto-reply (or still loading) → nothing to show.
+  if (!args.autoReplyOn) return "hidden";
+  // Active, but a human already owns it → the bot won't fire; no banner.
+  if (args.assignedAgentId) return "hidden";
+  return "active";
+}
 
 // ------------------------------------------------------------
 // Account AI status is the same for every conversation, so cache it per
@@ -79,7 +106,8 @@ export function AiThreadBanner({
   onChange,
 }: AiThreadBannerProps) {
   const t = useTranslations("Inbox.aiBanner");
-  const { accountId } = useAuth();
+  const { accountId, account } = useAuth();
+  const hasVertical = getVerticalManifest(account?.vertical_key) !== null;
   const [autoReplyOn, setAutoReplyOn] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   // Optimistic local mirror of the pause flag so the banner flips
@@ -124,25 +152,37 @@ export function AiThreadBanner({
               : {}
             : { assigned_agent_id: null }),
         });
-        toast.success(paused ? t("tookOver") : t("resumed"));
+        toast.success(
+          paused ? t("tookOver") : autoReplyOn ? t("resumed") : t("botResumed"),
+        );
       } catch {
         toast.error(t("networkError"));
       } finally {
         setBusy(false);
       }
     },
-    [conversationId, currentUserId, onChange, t],
+    [autoReplyOn, conversationId, currentUserId, onChange, t],
   );
 
-  // Account has no auto-reply → nothing to show. (Still loading → nothing.)
-  if (!autoReplyOn) return null;
+  const mode = resolveAiBannerMode({
+    autoReplyOn,
+    hasVertical,
+    paused,
+    assignedAgentId,
+  });
+  if (mode === "hidden") return null;
 
-  // Paused here (a human took over, or the model handed off).
-  if (paused) {
+  // Paused here (a human took over, or the model / booking bot handed
+  // off). Without AI auto-reply only the vertical's bot is paused, so
+  // the copy names the bot instead of the AI.
+  if (mode === "paused") {
+    const botOnly = !autoReplyOn;
     return (
       <Banner tone="muted">
         <div className="min-w-0 flex-1">
-          <p className="font-medium text-foreground">{t("pausedTitle")}</p>
+          <p className="font-medium text-foreground">
+            {botOnly ? t("botPausedTitle") : t("pausedTitle")}
+          </p>
           {handoffSummary && (
             <p className="truncate text-muted-foreground" title={handoffSummary}>
               {handoffSummary}
@@ -150,14 +190,11 @@ export function AiThreadBanner({
           )}
         </div>
         <BannerButton onClick={() => toggle(false)} busy={busy} icon={Undo2}>
-          {t("resume")}
+          {botOnly ? t("resumeBot") : t("resume")}
         </BannerButton>
       </Banner>
     );
   }
-
-  // Active, but a human already owns it → the bot won't fire; no banner.
-  if (assignedAgentId) return null;
 
   // Active on this thread.
   return (

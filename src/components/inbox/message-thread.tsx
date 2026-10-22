@@ -1162,7 +1162,7 @@ export function MessageThread({
 
       {/* AI auto-reply banner — take over an active bot, or resume it
           after a handoff. Renders nothing unless the account has
-          auto-reply configured. */}
+          auto-reply configured, or a vertical's bot is paused here. */}
       <AiThreadBanner
         conversationId={conversation.id}
         disabled={conversation.ai_autoreply_disabled ?? false}

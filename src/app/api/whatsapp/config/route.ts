@@ -23,6 +23,7 @@ import {
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
 import { resolveVerifyTokenForSave } from '@/lib/whatsapp/verify-token'
 import { getT } from '@/lib/i18n/translate'
+import { requireRole, toErrorResponse } from '@/lib/auth/account'
 
 const t = getT('Api')
 
@@ -249,6 +250,14 @@ export async function GET() {
  * form (token / ids / PIN), 502 = Meta has to change something.
  */
 export async function POST(request: Request) {
+  // Owner/admin only, BEFORE anything reaches Meta. RLS already refuses
+  // an agent's write, but only after /register and /subscribed_apps ran.
+  try {
+    await requireRole('admin')
+  } catch (err) {
+    return toErrorResponse(err)
+  }
+
   try {
     const supabase = await createClient()
 
@@ -591,6 +600,14 @@ export async function POST(request: Request) {
  * encrypted token (mismatched ENCRYPTION_KEY across environments).
  */
 export async function DELETE() {
+  // Owner/admin only. Without this an agent got `success: true` while
+  // RLS silently deleted nothing.
+  try {
+    await requireRole('admin')
+  } catch (err) {
+    return toErrorResponse(err)
+  }
+
   try {
     const supabase = await createClient()
 

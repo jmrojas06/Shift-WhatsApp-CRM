@@ -21,7 +21,15 @@ plantilla de recordatorio.
 ## 2. Activar el vertical y la moneda (COP)
 
 Hoy no hay UI para elegir vertical: se activa en la base, una sola vez
-por cuenta. En Supabase → SQL Editor:
+por cuenta. Desde la migración 050, `vertical_key` (y `owner_user_id`)
+**no se pueden cambiar desde la app** ni con la sesión de un admin: se
+hace en Supabase → SQL Editor, que corre como `postgres`.
+
+> **Zona horaria:** el vertical asume `America/Bogota` para todas las
+> cuentas (ver `docs/barberia-configuracion.md`). No lo actives para un
+> negocio en otra zona horaria hasta que exista soporte multi-zona.
+
+En Supabase → SQL Editor:
 
 ```sql
 update public.accounts

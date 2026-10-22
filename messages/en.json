@@ -350,7 +350,10 @@
       "tookOver": "You’ve taken over this chat.",
       "resumed": "AI resumed.",
       "updateError": "Couldn’t update the AI assistant.",
-      "networkError": "Couldn’t reach the server."
+      "networkError": "Couldn’t reach the server.",
+      "botPausedTitle": "The booking bot is paused here",
+      "resumeBot": "Resume bot",
+      "botResumed": "Bot resumed."
     }
   },
   "Contacts": {

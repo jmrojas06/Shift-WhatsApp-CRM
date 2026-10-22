@@ -23,6 +23,12 @@ import { sendBarberiaReminder } from '@/verticals/barberia/agent/reminders-send'
  * simultáneas no duplican mensajes.
  */
 
+// Una corrida puede mandar hasta 50 recordatorios (más la 2.ª señal),
+// cada uno con varias consultas y una llamada a Meta: el límite por
+// defecto de la plataforma se queda corto. Vercel lo recorta al techo
+// del plan.
+export const maxDuration = 60
+
 /** Comparación timing-safe, sin filtrar longitud ni contenido. */
 function secretMatches(supplied: string, expected: string): boolean {
   const suppliedBuf = Buffer.from(supplied)

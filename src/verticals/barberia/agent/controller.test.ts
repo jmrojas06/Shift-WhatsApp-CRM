@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import type { VerticalSession } from '@/lib/verticals/types'
@@ -98,6 +98,24 @@ function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
       return failures.splice(idx, 1)[0].error
     }
 
+    // Índice único parcial de 047 (idx_booking_sessions_one_active):
+    // una sola sesión 'active' por (account_id, contact_id).
+    const violatesOneActiveSession = (row: Row, self?: Row): boolean =>
+      table === 'booking_sessions' &&
+      row.status === 'active' &&
+      ensure(table).some(
+        (r) =>
+          r !== self &&
+          r.status === 'active' &&
+          r.account_id === row.account_id &&
+          r.contact_id === row.contact_id,
+      )
+    const UNIQUE_VIOLATION = {
+      code: '23505',
+      message:
+        'duplicate key value violates unique constraint "idx_booking_sessions_one_active"',
+    }
+
     const run = (): { data: unknown; error: unknown } => {
       if (op === 'select') {
         return { data: candidateRows().map((r) => ({ ...r })), error: null }
@@ -106,6 +124,9 @@ function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
         const fail = takeFailure('insert')
         if (fail) return { data: null, error: fail }
         const rows = Array.isArray(payload) ? payload : [payload as Row]
+        if (rows.some((r) => violatesOneActiveSession(r))) {
+          return { data: null, error: UNIQUE_VIOLATION }
+        }
         inserted = rows.map((r) => ({ ...r }))
         ensure(table).push(...inserted)
         return { data: null, error: null }
@@ -135,8 +156,17 @@ function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
       if (op === 'update') {
         const fail = takeFailure('update')
         if (fail) return { data: null, error: fail }
-        for (const row of candidateRows()) Object.assign(row, payload as Row)
-        return { data: null, error: null }
+        const targets = candidateRows()
+        if (
+          targets.some((row) =>
+            violatesOneActiveSession({ ...row, ...(payload as Row) }, row),
+          )
+        ) {
+          return { data: null, error: UNIQUE_VIOLATION }
+        }
+        for (const row of targets) Object.assign(row, payload as Row)
+        // Con `.select()` PostgREST devuelve las filas afectadas.
+        return { data: targets.map((r) => ({ ...r })), error: null }
       }
       const fail = takeFailure('delete')
       if (fail) return { data: null, error: fail }
@@ -458,6 +488,7 @@ async function send(
   rec: Recorder,
   input: { text?: string; replyId?: string | null },
   now: Date = NOW,
+  opts: { humanOwned?: boolean } = {},
 ) {
   const inboundMessageId = seedInbound(db, input)
   return handleBarberiaInbound({
@@ -470,8 +501,16 @@ async function send(
     configOwnerUserId: OWNER,
     inboundMessageId,
     session: currentSession(db, now),
+    humanOwned: opts.humanOwned,
   })
 }
+
+/** Como lo llama el dispatcher cuando un humano es dueño del hilo (D1). */
+const sendHuman = (
+  db: FakeDb,
+  rec: Recorder,
+  input: { text?: string; replyId?: string | null },
+) => send(db, rec, input, NOW, { humanOwned: true })
 
 function last(rec: Recorder): SenderCall {
   const call = rec.calls.at(-1)
@@ -789,6 +828,56 @@ describe('carreras por la misma hora', () => {
     expect(db._tables.booking_appointments[0].id).toBe('appt-race')
   })
 
+  it('dos "Confirmar" a la vez (doble tap con Cualquiera) dejan UNA sola cita', async () => {
+    const db = makeFakeDb(baseSeed())
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'hola' })
+    await send(db, rec, { replyId: svcId(SERVICE_CORTE) })
+    await send(db, rec, { replyId: staffId('any') })
+    await send(db, rec, { replyId: dayId(MONDAY) })
+    await send(db, rec, { replyId: slotId('2026-10-19T16:30:00.000Z') }) // ambos libres
+    const before = rec.calls.length
+
+    // Los dos webhooks leen la misma sesión antes de que cualquiera escriba.
+    const [a, b] = await Promise.all([
+      send(db, rec, { replyId: 'act:confirm' }),
+      send(db, rec, { replyId: 'act:confirm' }),
+    ])
+
+    expect(a.consumed).toBe(true)
+    expect(b.consumed).toBe(true)
+    expect(db._tables.booking_appointments).toHaveLength(1)
+    const sent = rec.calls.slice(before)
+    // Una confirmación y nada que la contradiga.
+    expect(sent).toHaveLength(1)
+    expect(sent[0].bodyText).toContain('quedó agendada')
+    expect(messagesWith(rec, 'ocupó')).toHaveLength(0)
+    expect(sessionRow(db)).toBeUndefined()
+  })
+
+  it('si la cita no se crea, la sesión reclamada vuelve a quedar activa', async () => {
+    const db = makeFakeDb(baseSeed())
+    const rec = makeRecorder()
+
+    await walkToDay(db, rec)
+    await send(db, rec, { replyId: dayId(MONDAY) })
+    await send(db, rec, { replyId: slotId('2026-10-19T14:00:00.000Z') })
+
+    db._failNext('insert', 'booking_appointments', { message: 'timeout' })
+    await send(db, rec, { replyId: 'act:confirm' })
+
+    expect(db._tables.booking_appointments).toHaveLength(0)
+    expect(last(rec).kind).toBe('buttons') // re-ofrece el resumen
+    expect((sessionRow(db)?.state as Record<string, unknown>).step).toBe(
+      'summary',
+    )
+
+    // El reintento funciona sobre la misma sesión.
+    await send(db, rec, { replyId: 'act:confirm' })
+    expect(db._tables.booking_appointments).toHaveLength(1)
+  })
+
   it('un choque a nivel de base de datos (EXCLUDE) se trata como hora ocupada', async () => {
     const db = makeFakeDb(baseSeed())
     const rec = makeRecorder()
@@ -1002,6 +1091,85 @@ describe('gestión de una cita existente', () => {
     )
 
     expect(last(rec).bodyText).toContain('reprogramada')
+  })
+})
+
+describe('escrituras críticas que fallan', () => {
+  const silence = () => vi.spyOn(console, 'error').mockImplementation(() => {})
+
+  it('si cancelar falla, responde confirmError (no "cancelada") y re-ofrece la confirmación', async () => {
+    silence()
+    const seed = baseSeed()
+    seed.booking_appointments = [appointmentRow()]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'cita' })
+    await send(db, rec, { replyId: 'act:cancel' })
+    db._failNext('update', 'booking_appointments', { message: 'timeout' })
+    const res = await send(db, rec, { replyId: 'act:cancel_yes' })
+
+    expect(res.consumed).toBe(true)
+    expect(db._tables.booking_appointments[0].status).toBe('confirmed')
+    expect(messagesWith(rec, BARBERIA_AGENT_TEXTS.confirmError)).toHaveLength(1)
+    expect(messagesWith(rec, BARBERIA_AGENT_TEXTS.cancelDone)).toHaveLength(0)
+    expect(db._tables.booking_events).toHaveLength(0)
+    expect((sessionRow(db)?.state as Record<string, unknown>).step).toBe(
+      'manage_cancel_confirm',
+    )
+  })
+
+  it('si confirmar desde el recordatorio falla, responde confirmError (no "confirmada")', async () => {
+    silence()
+    const seed = baseSeed()
+    seed.booking_appointments = [
+      appointmentRow({ status: 'pending', confirmed_at: null }),
+    ]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    db._failNext('update', 'booking_appointments', { message: 'timeout' })
+    const res = await send(db, rec, { replyId: 'rem:confirm' })
+
+    expect(res.consumed).toBe(true)
+    expect(db._tables.booking_appointments[0].status).toBe('pending')
+    expect(last(rec).bodyText).toBe(BARBERIA_AGENT_TEXTS.confirmError)
+    expect(messagesWith(rec, 'queda confirmada')).toHaveLength(0)
+    expect(db._tables.booking_events).toHaveLength(0)
+  })
+
+  it('si al reprogramar no se puede cancelar la cita anterior, deshace la nueva', async () => {
+    silence()
+    const seed = baseSeed()
+    seed.booking_appointments = [appointmentRow()]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'cita' })
+    await send(db, rec, { replyId: 'act:reschedule' })
+    await send(db, rec, { replyId: dayId(MONDAY) })
+    await send(db, rec, { replyId: slotId('2026-10-19T16:00:00.000Z') })
+    db._failNext('update', 'booking_appointments', { message: 'timeout' })
+    await send(db, rec, { replyId: 'act:confirm' })
+
+    const active = db._tables.booking_appointments.filter(
+      (a) => a.status === 'confirmed' || a.status === 'pending',
+    )
+    // El cliente conserva SOLO su cita original.
+    expect(active.map((a) => a.id)).toEqual(['appt-old'])
+    expect(messagesWith(rec, BARBERIA_AGENT_TEXTS.confirmError)).toHaveLength(1)
+    expect(messagesWith(rec, 'reprogramada')).toHaveLength(0)
+    expect(sessionRow(db)).toBeDefined()
+  })
+
+  it('si pausar el bot falla en el handoff, el error sube y no se promete un humano', async () => {
+    const db = makeFakeDb(baseSeed())
+    const rec = makeRecorder()
+
+    db._failNext('update', 'conversations', { message: 'timeout' })
+
+    await expect(send(db, rec, { text: 'necesito un asesor' })).rejects.toThrow()
+    expect(messagesWith(rec, 'asesor humano')).toHaveLength(0)
   })
 })
 
@@ -1265,6 +1433,58 @@ describe('botones del recordatorio (rem:*)', () => {
     expect(state.mode).toBe('reschedule')
   })
 
+  it('reprogramar con una sesión vencida que sigue "active" la expira y el flujo avanza', async () => {
+    // Reserva abandonada de ayer: quedó 'active' con expires_at vencido.
+    // El dispatcher no la entrega (está vencida), pero el índice único
+    // de sesión activa sigue contándola.
+    const seed = baseSeed()
+    seed.booking_appointments = [appointmentRow()]
+    seed.booking_sessions = [
+      {
+        id: 'sess-abandonada',
+        account_id: ACCOUNT,
+        contact_id: CONTACT,
+        state: { step: 'pick_service', mode: 'book', options: [], fails: 0 },
+        status: 'active',
+        expires_at: '2026-10-18T20:00:00.000Z',
+      },
+    ]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, { replyId: 'rem:reschedule' })
+
+    expect(res.consumed).toBe(true)
+    const old = db._tables.booking_sessions.find(
+      (s) => s.id === 'sess-abandonada',
+    )
+    expect(old?.status).toBe('expired')
+    const fresh = sessionRow(db)
+    expect(fresh?.id).not.toBe('sess-abandonada')
+    expect((fresh?.state as Record<string, unknown>).step).toBe('pick_day')
+
+    // El siguiente tap (un día) encuentra la sesión y avanza.
+    const next = await send(db, rec, { replyId: dayId(MONDAY) })
+    expect(next.consumed).toBe(true)
+    expect((sessionRow(db)?.state as Record<string, unknown>).step).toBe(
+      'pick_slot',
+    )
+  })
+
+  it('si crear la sesión falla, el error sube (no se manda un menú huérfano)', async () => {
+    const seed = baseSeed()
+    seed.booking_appointments = [appointmentRow()]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    db._failNext('insert', 'booking_sessions', { message: 'boom' })
+
+    await expect(
+      send(db, rec, { replyId: 'rem:reschedule' }),
+    ).rejects.toThrow()
+    expect(rec.calls).toHaveLength(0)
+  })
+
   it('un rem:* desconocido no se consume ni arranca nada', async () => {
     const db = makeFakeDb(baseSeed())
     const rec = makeRecorder()
@@ -1274,6 +1494,112 @@ describe('botones del recordatorio (rem:*)', () => {
     expect(res.consumed).toBe(false)
     expect(rec.calls).toHaveLength(0)
     expect(sessionRow(db)).toBeUndefined()
+  })
+})
+
+describe('recordatorio con un humano a cargo del chat (D1)', () => {
+  function humanSeed(assignedAgentId: string | null = HANDOFF_AGENT) {
+    const seed = baseSeed()
+    seed.booking_appointments = [
+      appointmentRow({ status: 'pending', confirmed_at: null }),
+    ]
+    seed.conversations[0].assigned_agent_id = assignedAgentId
+    seed.conversations[0].ai_autoreply_disabled = assignedAgentId === null
+    return seed
+  }
+
+  it('Confirmar funciona aunque haya agente asignado', async () => {
+    const db = makeFakeDb(humanSeed())
+    const rec = makeRecorder()
+
+    const res = await sendHuman(db, rec, { replyId: 'rem:confirm' })
+
+    expect(res.consumed).toBe(true)
+    expect(db._tables.booking_appointments[0].status).toBe('confirmed')
+    expect(last(rec).bodyText).toContain('queda confirmada')
+    expect(sessionRow(db)).toBeUndefined()
+  })
+
+  it('Cancelar funciona aunque la IA esté en pausa: pide confirmación y cancela', async () => {
+    const db = makeFakeDb(humanSeed(null))
+    const rec = makeRecorder()
+
+    const first = await sendHuman(db, rec, { replyId: 'rem:cancel' })
+    expect(first.consumed).toBe(true)
+    expect(optionTitles(last(rec))).toContain('Sí, cancelar')
+
+    const second = await sendHuman(db, rec, { replyId: 'act:cancel_yes' })
+    expect(second.consumed).toBe(true)
+    expect(db._tables.booking_appointments[0].status).toBe('cancelled')
+    expect(last(rec).bodyText).toContain('cancelada')
+    expect(sessionRow(db)).toBeUndefined()
+  })
+
+  it('Reprogramar con agente asignado NO abre el flujo: avisa al agente, registra y responde', async () => {
+    const db = makeFakeDb(humanSeed())
+    const rec = makeRecorder()
+
+    const res = await sendHuman(db, rec, { replyId: 'rem:reschedule' })
+
+    expect(res.consumed).toBe(true)
+    // Sin flujo del bot y la cita intacta.
+    expect(db._tables.booking_sessions).toHaveLength(0)
+    expect(db._tables.booking_appointments[0].status).toBe('pending')
+    // Aviso al agente asignado.
+    expect(db._tables.notifications).toHaveLength(1)
+    expect(db._tables.notifications[0]).toMatchObject({
+      account_id: ACCOUNT,
+      user_id: HANDOFF_AGENT,
+      type: 'conversation_assigned',
+      conversation_id: CONVERSATION,
+      contact_id: CONTACT,
+    })
+    expect(String(db._tables.notifications[0].body)).toContain('Carlos')
+    // Intento registrado.
+    const event = db._tables.booking_events.find(
+      (e) => e.event === 'reschedule_requested',
+    )
+    expect(event).toMatchObject({ appointment_id: 'appt-old', actor: 'bot' })
+    // El cliente sabe que sigue un humano.
+    expect(last(rec).bodyText).toBe(BARBERIA_AGENT_TEXTS.rescheduleHandedToHuman)
+    expect(rec.calls).toHaveLength(1)
+  })
+
+  it('Reprogramar con la IA en pausa y sin agente avisa al dueño', async () => {
+    const db = makeFakeDb(humanSeed(null))
+    const rec = makeRecorder()
+
+    await sendHuman(db, rec, { replyId: 'rem:reschedule' })
+
+    expect(db._tables.notifications[0].user_id).toBe(OWNER)
+    expect(db._tables.booking_sessions).toHaveLength(0)
+  })
+
+  it('cualquier otro mensaje en el hilo del humano no se consume ni responde', async () => {
+    const db = makeFakeDb(humanSeed())
+    const rec = makeRecorder()
+
+    const greeting = await sendHuman(db, rec, { text: 'hola, quiero una cita' })
+    const handoffWord = await sendHuman(db, rec, { text: 'asesor' })
+    const staleTap = await sendHuman(db, rec, { replyId: dayId(MONDAY) })
+
+    expect(greeting.consumed).toBe(false)
+    expect(handoffWord.consumed).toBe(false)
+    expect(staleTap.consumed).toBe(false)
+    expect(rec.calls).toHaveLength(0)
+    expect(db._tables.booking_sessions).toHaveLength(0)
+  })
+
+  it('sin humano a cargo, Reprogramar sigue abriendo el flujo normal', async () => {
+    const seed = baseSeed()
+    seed.booking_appointments = [appointmentRow()]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    await send(db, rec, { replyId: 'rem:reschedule' })
+
+    expect((sessionRow(db)?.state as Record<string, unknown>).step).toBe('pick_day')
+    expect(db._tables.notifications).toHaveLength(0)
   })
 })
 

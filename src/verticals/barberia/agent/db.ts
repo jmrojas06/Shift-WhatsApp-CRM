@@ -122,15 +122,32 @@ export async function expireStaleSessions(
   contactId: string,
   nowIso: string,
 ): Promise<void> {
-  await db
+  const { error } = await db
     .from('booking_sessions')
     .update({ status: 'expired', updated_at: nowIso })
     .eq('account_id', accountId)
     .eq('contact_id', contactId)
     .eq('status', 'active')
     .lte('expires_at', nowIso)
+  // Si falla, createSession choca con el índice único y ESA lanza.
+  if (error) logWriteError('expirar sesiones vencidas', error)
 }
 
+/**
+ * Escrituras que ocurren DESPUÉS de mandarle el menú al cliente
+ * (refrescar / cerrar la sesión): lanzar ya no deshace el mensaje y
+ * solo haría que la IA o las automatizaciones respondieran encima.
+ * Se registran para que no fallen en silencio.
+ */
+function logWriteError(label: string, error: { message?: string }): void {
+  console.error(`[barberia] no se pudo ${label}:`, error.message ?? error)
+}
+
+/**
+ * Crea la sesión activa del contacto. Lanza si la base la rechaza
+ * (p. ej. el índice único de sesión activa de 047): sin fila, el
+ * siguiente tap del cliente no tendría a qué engancharse.
+ */
 export async function createSession(
   db: SupabaseClient,
   args: {
@@ -141,7 +158,7 @@ export async function createSession(
     expiresAtIso: string
   },
 ): Promise<void> {
-  await db.from('booking_sessions').insert({
+  const { error } = await db.from('booking_sessions').insert({
     id: args.id,
     account_id: args.accountId,
     contact_id: args.contactId,
@@ -149,6 +166,9 @@ export async function createSession(
     status: 'active',
     expires_at: args.expiresAtIso,
   })
+  if (error) {
+    throw new Error(`No se pudo crear la sesión de reservas: ${error.message}`)
+  }
 }
 
 export async function updateSession(
@@ -161,7 +181,7 @@ export async function updateSession(
     expiresAtIso: string
   },
 ): Promise<void> {
-  await db
+  const { error } = await db
     .from('booking_sessions')
     .update({
       state: args.state,
@@ -170,6 +190,50 @@ export async function updateSession(
     })
     .eq('id', args.id)
     .eq('account_id', args.accountId)
+  if (error) logWriteError('guardar el paso de la sesión', error)
+}
+
+/**
+ * Reclama la sesión para confirmar: UPDATE condicional active →
+ * completed. Solo un proceso gana; si dos taps de "Confirmar" llegan
+ * a la vez, el perdedor recibe false y no agenda nada (sin esto, con
+ * "Cualquiera" el segundo agendaba con otro barbero).
+ */
+export async function claimSession(
+  db: SupabaseClient,
+  args: { id: string; accountId: string; updatedAtIso: string },
+): Promise<boolean> {
+  const { data, error } = await db
+    .from('booking_sessions')
+    .update({ status: 'completed', updated_at: args.updatedAtIso })
+    .eq('id', args.id)
+    .eq('account_id', args.accountId)
+    .eq('status', 'active')
+    .select('id')
+  if (error) {
+    throw new Error(`No se pudo reclamar la sesión de reservas: ${error.message}`)
+  }
+  return ((data ?? []) as unknown[]).length > 0
+}
+
+/**
+ * Devuelve a 'active' una sesión reclamada cuando la cita no se pudo
+ * crear (hora ganada por otro, error de base): el cliente sigue en el
+ * flujo y su siguiente tap la encuentra.
+ */
+export async function releaseSession(
+  db: SupabaseClient,
+  args: { id: string; accountId: string; updatedAtIso: string },
+): Promise<void> {
+  const { error } = await db
+    .from('booking_sessions')
+    .update({ status: 'active', updated_at: args.updatedAtIso })
+    .eq('id', args.id)
+    .eq('account_id', args.accountId)
+    .eq('status', 'completed')
+  if (error) {
+    console.error('[barberia] no se pudo reabrir la sesión:', error.message)
+  }
 }
 
 export async function closeSession(
@@ -181,11 +245,12 @@ export async function closeSession(
     updatedAtIso: string
   },
 ): Promise<void> {
-  await db
+  const { error } = await db
     .from('booking_sessions')
     .update({ status: args.status, updated_at: args.updatedAtIso })
     .eq('id', args.id)
     .eq('account_id', args.accountId)
+  if (error) logWriteError('cerrar la sesión', error)
 }
 
 // ------------------------------------------------------------
@@ -476,7 +541,7 @@ export async function cancelAppointment(
     cancelledAtIso: string
   },
 ): Promise<void> {
-  await db
+  const { error } = await db
     .from('booking_appointments')
     .update({
       status: 'cancelled',
@@ -486,6 +551,8 @@ export async function cancelAppointment(
     })
     .eq('id', args.id)
     .eq('account_id', args.accountId)
+  // Crítica: el bot no puede decir "cancelada" si la cita sigue viva.
+  if (error) throw new Error(`No se pudo cancelar la cita: ${error.message}`)
 }
 
 /**
@@ -501,7 +568,7 @@ export async function markAppointmentConfirmed(
     confirmedAtIso: string
   },
 ): Promise<void> {
-  await db
+  const { error } = await db
     .from('booking_appointments')
     .update({
       status: 'confirmed',
@@ -510,6 +577,7 @@ export async function markAppointmentConfirmed(
     })
     .eq('id', args.id)
     .eq('account_id', args.accountId)
+  if (error) throw new Error(`No se pudo confirmar la cita: ${error.message}`)
 }
 
 // ------------------------------------------------------------
@@ -660,6 +728,23 @@ export async function insertBookingEvent(
 // Handoff
 // ------------------------------------------------------------
 
+/** Agente asignado a la conversación (null si nadie la tiene). */
+export async function loadConversationAssignee(
+  db: SupabaseClient,
+  accountId: string,
+  conversationId: string,
+): Promise<string | null> {
+  const { data } = await db
+    .from('conversations')
+    .select('assigned_agent_id')
+    .eq('id', conversationId)
+    .eq('account_id', accountId)
+    .maybeSingle()
+  return ((data as Record<string, unknown> | null)?.assigned_agent_id as
+    | string
+    | null) ?? null
+}
+
 export async function loadHandoffAgentId(
   db: SupabaseClient,
   accountId: string,
@@ -688,7 +773,7 @@ export async function markConversationHandoff(
     agentId: string | null
   },
 ): Promise<void> {
-  await db
+  const { error } = await db
     .from('conversations')
     .update({
       ai_autoreply_disabled: true,
@@ -697,6 +782,9 @@ export async function markConversationHandoff(
     })
     .eq('id', args.conversationId)
     .eq('account_id', args.accountId)
+  // Crítica: sin la pausa, prometerle un humano al cliente sería falso
+  // (el bot y la IA seguirían respondiendo).
+  if (error) throw new Error(`No se pudo pausar el bot: ${error.message}`)
 }
 
 export async function insertNotification(

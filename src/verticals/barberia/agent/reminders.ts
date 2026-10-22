@@ -275,7 +275,7 @@ async function hasRecentCustomerMessage(
 export interface ReminderRunSummary {
   /** Cuentas con vertical_key = 'barberia'. */
   accounts: number
-  /** Citas activas dentro de la ventana de 24 h. */
+  /** Citas activas con alguna señal pendiente (24 h o 2 h). */
   due: number
   sent: number
   failed: number
@@ -311,6 +311,75 @@ interface AccountRow {
   owner_user_id: string
 }
 
+const DUE_COLUMNS =
+  'id, account_id, contact_id, conversation_id, service_id, staff_id, starts_at, status, reminder_sent_at, reminder_2h_sent_at'
+
+/**
+ * Citas con alguna señal PENDIENTE, nunca las ya recordadas: si no,
+ * con más de `limit` citas en las próximas 24 h (sumando todas las
+ * barberías) las ya recordadas ocupaban todo el cupo y las demás
+ * esperaban hasta que las primeras pasaran.
+ *
+ * Dos consultas, cada una sobre su índice parcial (047 / 048):
+ *   - 24 h: `reminder_sent_at IS NULL` dentro de las próximas 24 h;
+ *   - 2 h: solo cuentas con la 2.ª señal activa,
+ *     `reminder_2h_sent_at IS NULL` dentro de las próximas 2 h.
+ */
+async function loadPendingAppointments(
+  db: SupabaseClient,
+  args: {
+    accountIds: string[]
+    twoHourAccountIds: string[]
+    nowIso: string
+    horizonIso: string
+    h2HorizonIso: string
+    limit: number
+  },
+): Promise<DueAppointmentRow[]> {
+  const { data: firstRows, error: firstError } = await db
+    .from('booking_appointments')
+    .select(DUE_COLUMNS)
+    .in('account_id', args.accountIds)
+    .in('status', ['pending', 'confirmed'])
+    .is('reminder_sent_at', null)
+    .gt('starts_at', args.nowIso)
+    .lte('starts_at', args.horizonIso)
+    .order('starts_at', { ascending: true })
+    .limit(args.limit)
+  if (firstError) {
+    throw new Error(`no se pudieron leer las citas: ${firstError.message}`)
+  }
+
+  let secondRows: unknown[] = []
+  if (args.twoHourAccountIds.length) {
+    const { data, error } = await db
+      .from('booking_appointments')
+      .select(DUE_COLUMNS)
+      .in('account_id', args.twoHourAccountIds)
+      .in('status', ['pending', 'confirmed'])
+      .is('reminder_2h_sent_at', null)
+      .gt('starts_at', args.nowIso)
+      .lte('starts_at', args.h2HorizonIso)
+      .order('starts_at', { ascending: true })
+      .limit(args.limit)
+    if (error) {
+      throw new Error(`no se pudieron leer las citas (2 h): ${error.message}`)
+    }
+    secondRows = data ?? []
+  }
+
+  const byId = new Map<string, DueAppointmentRow>()
+  for (const row of [
+    ...((firstRows ?? []) as DueAppointmentRow[]),
+    ...(secondRows as DueAppointmentRow[]),
+  ]) {
+    byId.set(row.id, row)
+  }
+  return [...byId.values()].sort((a, b) =>
+    a.starts_at < b.starts_at ? -1 : a.starts_at > b.starts_at ? 1 : 0,
+  )
+}
+
 /**
  * Una pasada del runner: busca citas activas que empiecen dentro de
  * 24 h, decide la señal vencida, reclama y envía. Pensado para
@@ -333,37 +402,45 @@ export async function runBarberiaReminders(
     errors: [],
   }
 
-  const { data: accountRows } = await args.db
+  // Un fallo de lectura LANZA: devolver "0 citas" hacía que el runner
+  // dejara de recordar sin que la ruta alertara (responde 500 + alerta).
+  const { data: accountRows, error: accountsError } = await args.db
     .from('accounts')
     .select('id, name, owner_user_id')
     .eq('vertical_key', 'barberia')
+  if (accountsError) {
+    throw new Error(`no se pudieron leer las cuentas: ${accountsError.message}`)
+  }
   const accounts = (accountRows ?? []) as AccountRow[]
   summary.accounts = accounts.length
   if (!accounts.length) return summary
   const accountsById = new Map(accounts.map((a) => [a.id, a]))
 
   // 2.ª señal por cuenta (fila ausente = desactivada).
-  const { data: settingsRows } = await args.db
+  const { data: settingsRows, error: settingsError } = await args.db
     .from('booking_settings')
     .select('account_id, reminders_2h_enabled')
     .in('account_id', [...accountsById.keys()])
+  if (settingsError) {
+    throw new Error(
+      `no se pudo leer la configuración de recordatorios: ${settingsError.message}`,
+    )
+  }
   const twoHourByAccount = new Map<string, boolean>()
   for (const row of (settingsRows ?? []) as Record<string, unknown>[]) {
     twoHourByAccount.set(row.account_id as string, row.reminders_2h_enabled === true)
   }
 
-  const { data: dueRows } = await args.db
-    .from('booking_appointments')
-    .select(
-      'id, account_id, contact_id, conversation_id, service_id, staff_id, starts_at, status, reminder_sent_at, reminder_2h_sent_at',
-    )
-    .in('account_id', [...accountsById.keys()])
-    .in('status', ['pending', 'confirmed'])
-    .gt('starts_at', nowIso)
-    .lte('starts_at', horizonIso)
-    .order('starts_at', { ascending: true })
-    .limit(args.limit ?? DEFAULT_LIMIT)
-  const due = (dueRows ?? []) as DueAppointmentRow[]
+  const due = await loadPendingAppointments(args.db, {
+    accountIds: [...accountsById.keys()],
+    twoHourAccountIds: [...twoHourByAccount.entries()]
+      .filter(([, enabled]) => enabled)
+      .map(([id]) => id),
+    nowIso,
+    horizonIso,
+    h2HorizonIso: new Date(now.getTime() + H2_MS).toISOString(),
+    limit: args.limit ?? DEFAULT_LIMIT,
+  })
   summary.due = due.length
 
   for (const appt of due) {

@@ -15,7 +15,10 @@
 // ============================================================
 
 import { supabaseAdmin } from '@/lib/flows/admin-client'
-import { loadAccountMetaCredentials } from '@/lib/flows/meta-send'
+import {
+  loadAccountMetaCredentials,
+  MessagePersistAfterSendError,
+} from '@/lib/flows/meta-send'
 import { sendTemplateMessage } from '@/lib/whatsapp/meta-api'
 import {
   isRecipientNotAllowedError,
@@ -34,8 +37,12 @@ import {
 
 /**
  * Envía el recordatorio por el canal que decidió el runner.
- * Lanza si el envío no llegó a Meta: el runner revierte la marca y
- * lo reintenta en la próxima corrida.
+ *
+ * Lanza SOLO si el mensaje no llegó a Meta: el runner revierte la
+ * marca y lo reintenta en la próxima corrida. Si Meta ya lo aceptó y
+ * lo que falla es guardarlo en `messages`, se registra el error y NO
+ * se lanza — revertir la marca reenviaría un recordatorio que el
+ * cliente ya recibió.
  */
 export async function sendBarberiaReminder(
   delivery: ReminderDelivery,
@@ -47,14 +54,30 @@ export async function sendBarberiaReminder(
       contactId: delivery.contactId,
       configOwnerUserId: delivery.ownerUserId,
     })
-    await sender.sendButtons({
-      bodyText: buildReminderBody(delivery),
-      buttons: reminderButtons(),
-    })
+    try {
+      await sender.sendButtons({
+        bodyText: buildReminderBody(delivery),
+        buttons: reminderButtons(),
+      })
+    } catch (err) {
+      if (!(err instanceof MessagePersistAfterSendError)) throw err
+      logDeliveredButNotLogged(delivery, err.whatsappMessageId, err.message)
+    }
     return
   }
 
   await sendReminderTemplate(delivery)
+}
+
+function logDeliveredButNotLogged(
+  delivery: ReminderDelivery,
+  waMessageId: string,
+  reason: string,
+): void {
+  console.error(
+    `[barberia reminders] cita ${delivery.appointmentId}: recordatorio enviado (${waMessageId}) pero no se pudo registrar en messages — no se reenvía:`,
+    reason,
+  )
 }
 
 /**
@@ -138,7 +161,10 @@ async function sendReminderTemplate(delivery: ReminderDelivery): Promise<void> {
     status: 'sent',
   })
   if (msgErr) {
-    throw new Error(`Recordatorio: no se pudo registrar el mensaje (${msgErr.message})`)
+    // El cliente ya lo recibió: lanzar haría que el runner revierta la
+    // marca y lo mande otra vez en la próxima corrida.
+    logDeliveredButNotLogged(delivery, waMessageId, msgErr.message)
+    return
   }
 
   const nowIso = new Date().toISOString()

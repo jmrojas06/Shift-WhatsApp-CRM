@@ -16,8 +16,16 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 export type Row = Record<string, unknown>
 
+export type WriteOp = 'insert' | 'update' | 'delete' | 'upsert'
+
 export interface FakeDb {
   _tables: Record<string, Row[]>
+  /**
+   * La próxima escritura `op` sobre `table` devuelve este error (como
+   * PostgREST) y no toca nada. Sirve para probar que una escritura
+   * fallida nunca se reporta como guardada.
+   */
+  _failNext(op: WriteOp, table: string, error: { message: string; code?: string }): void
   from(table: string): unknown
 }
 
@@ -51,6 +59,11 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
     tables[name] = rows.map((row) => ({ ...row }))
   }
   const ensure = (name: string): Row[] => (tables[name] ??= [])
+  const failures: {
+    op: WriteOp
+    table: string
+    error: { message: string; code?: string }
+  }[] = []
 
   function from(table: string) {
     const filters: { col: string; kind: FilterKind; value: unknown }[] = []
@@ -106,6 +119,10 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
     const run = (): { data: unknown; error: unknown } => {
       if (op === 'select') {
         return { data: candidateRows().map((r) => ({ ...r })), error: null }
+      }
+      const failIdx = failures.findIndex((f) => f.op === op && f.table === table)
+      if (failIdx >= 0) {
+        return { data: null, error: failures.splice(failIdx, 1)[0].error }
       }
       if (op === 'insert') {
         const rows = (Array.isArray(payload) ? payload : [payload ?? {}]).map(
@@ -225,7 +242,13 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
     return api
   }
 
-  return { _tables: tables, from }
+  return {
+    _tables: tables,
+    _failNext(op, table, error) {
+      failures.push({ op, table, error })
+    },
+    from,
+  }
 }
 
 /** El fake habla el subconjunto de PostgREST que usa el repo. */

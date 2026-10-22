@@ -184,6 +184,14 @@ where id = '<uuid-de-la-cita>';
   de gestión que existe dentro del chat (elegir día/hora, o confirmar la
   cancelación). Al confirmar la cancelación, se aplica la etiqueta
   `cita-cancelada` y queda el evento en el historial de la cita.
+- **¿Y si el chat lo tiene un asesor (agente asignado o bot en pausa)?**
+  **Confirmar** y **Cancelar** funcionan igual (Cancelar sigue pidiendo
+  «Sí, cancelar»). **Reprogramar** NO abre el flujo del bot encima del
+  asesor: el bot avisa al agente asignado (o al dueño si nadie tiene el
+  chat) con una notificación, registra el intento en el historial de la
+  cita (`reschedule_requested`) y le responde al cliente que un asesor lo
+  ayuda por el mismo chat. Cualquier otro mensaje en ese chat es del
+  asesor: el bot no responde.
 - **¿La confirmación por botón etiqueta al cliente?** No: solo marca la
   cita como confirmada y registra el evento (`via: recordatorio`). Las
   etiquetas se reservan para cancelación/reprogramación/handoff.

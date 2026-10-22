@@ -12,6 +12,9 @@
 -- build the schema", not a spec of it — asserting every column here
 -- would just be the migrations restated in a second place, drifting.
 DO $$
+DECLARE
+  v_table text;
+  v_cmd text;
 BEGIN
   -- The core tables, from 001.
   IF to_regclass('public.messages') IS NULL THEN
@@ -280,6 +283,71 @@ BEGIN
   ) THEN
     RAISE EXCEPTION
       'booking_settings_bot_texts_object_check is missing — migration 049 did not apply';
+  END IF;
+
+  -- 050 (D2): configuration writes are owner/admin only. Every write
+  -- policy on the six config tables must exist AND gate on 'admin' —
+  -- a policy left at 'agent' (or dropped and not recreated) re-opens
+  -- direct PostgREST edits for agents.
+  FOR v_table IN SELECT unnest(ARRAY[
+    'booking_services', 'booking_staff', 'booking_staff_services',
+    'booking_working_hours', 'booking_time_off', 'booking_settings'
+  ]) LOOP
+    FOR v_cmd IN SELECT unnest(ARRAY['INSERT', 'UPDATE', 'DELETE']) LOOP
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = v_table
+          AND cmd = v_cmd
+          AND coalesce(qual, '') || coalesce(with_check, '') LIKE '%''admin''%'
+          AND coalesce(qual, '') || coalesce(with_check, '') NOT LIKE '%''agent''%'
+      ) THEN
+        RAISE EXCEPTION
+          '% % policy is missing or not admin-only — migration 050 did not apply',
+          v_table, v_cmd;
+      END IF;
+    END LOOP;
+    -- Reads stay open to every member (viewer included).
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_policies
+      WHERE schemaname = 'public'
+        AND tablename = v_table
+        AND cmd = 'SELECT'
+        AND coalesce(qual, '') NOT LIKE '%''admin''%'
+        AND coalesce(qual, '') NOT LIKE '%''agent''%'
+    ) THEN
+      RAISE EXCEPTION
+        '% SELECT policy is missing or no longer open to every member', v_table;
+    END IF;
+  END LOOP;
+
+  -- …while operational tables keep agent writes (the agenda moves
+  -- appointments; the bot's sessions are agent-writable too).
+  FOR v_table IN SELECT unnest(ARRAY['booking_appointments', 'booking_sessions']) LOOP
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_policies
+      WHERE schemaname = 'public'
+        AND tablename = v_table
+        AND cmd = 'UPDATE'
+        AND coalesce(qual, '') LIKE '%''agent''%'
+    ) THEN
+      RAISE EXCEPTION
+        '% UPDATE policy no longer allows agents — 050 must not touch operational tables',
+        v_table;
+    END IF;
+  END LOOP;
+
+  -- 050 (D3): owner_user_id / vertical_key are guarded by a BEFORE
+  -- UPDATE trigger on accounts (034's pattern for profiles).
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid = 'public.accounts'::regclass
+      AND tgname = 'enforce_account_protected_columns'
+      AND NOT tgisinternal
+      AND tgenabled <> 'D'
+  ) THEN
+    RAISE EXCEPTION
+      'enforce_account_protected_columns trigger is missing on accounts — migration 050 did not apply';
   END IF;
 
   RAISE NOTICE 'schema verification passed';

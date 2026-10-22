@@ -425,6 +425,57 @@ describe('replaceWorkingHours', () => {
       replaceWorkingHours(asClient(db), ACCOUNT, 'st-other', []),
     ).rejects.toMatchObject({ code: 'not_found' })
   })
+
+  it('si el insert falla, lanza y conserva el horario anterior', async () => {
+    const db = makeFakeDb(baseSeed())
+    db._failNext('insert', 'booking_working_hours', { message: 'insert failed' })
+
+    await expect(
+      replaceWorkingHours(asClient(db), ACCOUNT, 'st-1', [
+        { weekday: 2, startTime: '10:00', endTime: '16:00' },
+      ]),
+    ).rejects.toThrow('No se pudo guardar el horario')
+    expect(findRow(db, 'booking_working_hours', 'wh-1')).toBeDefined()
+  })
+
+  it('si borrar los bloques viejos falla, lanza (no reporta guardado)', async () => {
+    const db = makeFakeDb(baseSeed())
+    db._failNext('delete', 'booking_working_hours', { message: 'delete failed' })
+
+    await expect(
+      replaceWorkingHours(asClient(db), ACCOUNT, 'st-1', [
+        { weekday: 2, startTime: '10:00', endTime: '16:00' },
+      ]),
+    ).rejects.toThrow('No se pudo quitar los bloques viejos')
+  })
+})
+
+describe('escrituras fallidas de configuración', () => {
+  it('setStaffServices lanza si el insert o el delete fallan', async () => {
+    const db = makeFakeDb(baseSeed())
+    db._failNext('insert', 'booking_staff_services', { message: 'x' })
+    await expect(
+      setStaffServices(asClient(db), ACCOUNT, 'st-1', ['svc-1', 'svc-2']),
+    ).rejects.toThrow('No se pudo asignar los servicios')
+
+    db._failNext('delete', 'booking_staff_services', { message: 'x' })
+    await expect(
+      setStaffServices(asClient(db), ACCOUNT, 'st-1', []),
+    ).rejects.toThrow('No se pudo quitar servicios')
+  })
+
+  it('reorderServices y reorderStaff lanzan si el update falla', async () => {
+    const db = makeFakeDb(baseSeed())
+    db._failNext('update', 'booking_services', { message: 'x' })
+    await expect(
+      reorderServices(asClient(db), ACCOUNT, ['svc-2', 'svc-1']),
+    ).rejects.toThrow('No se pudo reordenar los servicios')
+
+    db._failNext('update', 'booking_staff', { message: 'x' })
+    await expect(
+      reorderStaff(asClient(db), ACCOUNT, ['st-1']),
+    ).rejects.toThrow('No se pudo reordenar los barberos')
+  })
 })
 
 describe('time off', () => {
