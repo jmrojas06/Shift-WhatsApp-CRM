@@ -164,6 +164,31 @@ describe('PATCH /api/verticals/agenda/config', () => {
     expect(res.body.error).toContain('debe ser texto')
   })
 
+  it.each([[''], [null]])(
+    'vaciar una palabra (%j) vuelve a su valor por defecto sin tocar las otras',
+    async (empty) => {
+      const db = boot({
+        ...baseSeed(),
+        booking_settings: [
+          {
+            account_id: TEST_ACCOUNT,
+            labels: { profesional: 'doctor', cita: 'consulta' },
+          },
+        ],
+      })
+
+      const res = (await PATCH(
+        jsonRequest({ labels: { profesional: empty } }),
+      )) as unknown as TestResponse
+
+      expect(res.status).toBe(200)
+      expect(res.body.settings).toMatchObject({
+        labels: { ...DEFAULT_LABELS, cita: 'consulta' },
+      })
+      expect(db._tables.booking_settings[0].labels).toEqual({ cita: 'consulta' })
+    },
+  )
+
   it('rechaza a agent y viewer con 403 sin escribir nada', async () => {
     const db = boot()
     for (const role of ['agent', 'viewer'] as const) {

@@ -20,7 +20,9 @@ import { badRequest, configErrorResponse, readJsonBody } from '../_lib/http'
 //
 // `labels`: la UI manda siempre las seis palabras, pero el servidor
 // MEZCLA lo recibido con lo ya guardado (saveSettings), así que un
-// cuerpo parcial nunca borra el resto. Una pieza que no es true/false
+// cuerpo parcial nunca borra el resto. Una palabra enviada como null o
+// en blanco vuelve a su valor por defecto (se quita de lo guardado).
+// Una pieza que no es true/false
 // es 400; nunca se ignora en silencio.
 //
 // Guardas:
@@ -55,6 +57,7 @@ export async function PATCH(request: Request) {
         reminders2hEnabled: patch.reminders2hEnabled,
         botTexts: patch.botTexts,
         labels: patch.labels,
+        labelsReset: patch.labelsReset,
         toggles: patch.toggles,
         presetKey: patch.presetKey,
       })

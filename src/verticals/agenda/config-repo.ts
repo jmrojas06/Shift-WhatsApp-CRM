@@ -35,7 +35,7 @@ import {
   type TimeOffCreateInput,
   type WorkBlockInput,
 } from './config'
-import { LABEL_KEYS, readLabels, type AgendaLabels } from './labels'
+import { LABEL_KEYS, readLabels, type AgendaLabelKey, type AgendaLabels } from './labels'
 import { togglesFromRow, togglesToRow, type AgendaToggles } from './toggles'
 
 // ------------------------------------------------------------
@@ -653,6 +653,8 @@ export async function saveSettings(
     botTexts?: BotTextOverrides
     /** Se MEZCLA con las palabras ya guardadas (una palabra suelta no borra las demás). */
     labels?: Partial<AgendaLabels>
+    /** Palabras a quitar de lo guardado: vuelven a su valor por defecto. */
+    labelsReset?: readonly AgendaLabelKey[]
     toggles?: Partial<AgendaToggles>
     presetKey?: string
   },
@@ -663,8 +665,10 @@ export async function saveSettings(
     row.reminders_2h_enabled = patch.reminders2hEnabled
   }
   if (patch.botTexts !== undefined) row.bot_texts = patch.botTexts
-  if (patch.labels !== undefined) {
-    row.labels = { ...(await storedLabels(db, accountId)), ...patch.labels }
+  if (patch.labels !== undefined || patch.labelsReset?.length) {
+    const stored = await storedLabels(db, accountId)
+    for (const key of patch.labelsReset ?? []) delete stored[key]
+    row.labels = { ...stored, ...patch.labels }
   }
   if (patch.presetKey !== undefined) row.preset_key = patch.presetKey
   if (patch.toggles !== undefined) Object.assign(row, togglesToRow(patch.toggles))

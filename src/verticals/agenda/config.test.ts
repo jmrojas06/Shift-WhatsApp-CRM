@@ -402,6 +402,23 @@ describe('validateConfigPatch — agenda armable', () => {
     expect(validateConfigPatch({ labels: { cita: '*x*' } }).ok).toBe(false)
   })
 
+  it('una palabra vacía o null es un reinicio explícito; lo demás se guarda', () => {
+    expect(
+      validateConfigPatch({ labels: { profesional: '', cita: null, citas: '  ', turno: 'x' } }),
+    ).toEqual({
+      ok: true,
+      value: {
+        labels: {},
+        labelsReset: ['profesional', 'cita', 'citas'],
+      },
+    })
+    const mixed = validateConfigPatch({ labels: { profesional: null, cita: 'consulta' } })
+    expect(mixed).toEqual({
+      ok: true,
+      value: { labels: { cita: 'consulta' }, labelsReset: ['profesional'] },
+    })
+  })
+
   it('claves de piezas desconocidas no cuentan como cambio', () => {
     expect(validateConfigPatch({ toggles: { otra: true } })).toEqual({
       ok: false,

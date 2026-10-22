@@ -651,6 +651,36 @@ describe('saveSettings — agenda armable', () => {
     expect(rowsOf(db, 'booking_settings')[0].labels).toEqual({ profesional: 'médico', cita: 'consulta' })
   })
 
+  it.each([[''], [null]])(
+    'reiniciar una palabra (%j) la quita de lo guardado y deja las demás',
+    async () => {
+      const db = makeFakeDb({
+        ...baseSeed(),
+        booking_settings: [
+          { account_id: ACCOUNT, labels: { profesional: 'doctor', cita: 'consulta' } },
+        ],
+      })
+      const saved = await saveSettings(asClient(db), ACCOUNT, { labelsReset: ['profesional'] })
+      expect(rowsOf(db, 'booking_settings')[0].labels).toEqual({ cita: 'consulta' })
+      expect(saved.labels.profesional).toBe(DEFAULT_LABELS.profesional)
+      expect(saved.labels.cita).toBe('consulta')
+    },
+  )
+
+  it('reiniciar una y cambiar otra en la misma llamada', async () => {
+    const db = makeFakeDb({
+      ...baseSeed(),
+      booking_settings: [
+        { account_id: ACCOUNT, labels: { profesional: 'doctor', cita: 'consulta' } },
+      ],
+    })
+    await saveSettings(asClient(db), ACCOUNT, {
+      labels: { cita: 'sesión' },
+      labelsReset: ['profesional'],
+    })
+    expect(rowsOf(db, 'booking_settings')[0].labels).toEqual({ cita: 'sesión' })
+  })
+
   it('una fila con datos viejos o dañados nunca rompe la lectura', async () => {
     const db = makeFakeDb({
       ...baseSeed(),

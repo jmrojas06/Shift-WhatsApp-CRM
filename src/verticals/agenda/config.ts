@@ -12,7 +12,7 @@
 // ============================================================
 
 import { sanitizeBotTexts, type BotTextOverrides } from './bot-texts'
-import { sanitizeLabels, type AgendaLabels } from './labels'
+import { LABEL_KEYS, sanitizeLabels, type AgendaLabelKey, type AgendaLabels } from './labels'
 import { isPresetKey, type PresetKey } from './presets'
 import { TOGGLE_COLUMNS, TOGGLE_KEYS, type AgendaToggles } from './toggles'
 
@@ -580,6 +580,8 @@ export interface ConfigPatch {
   reminders2hEnabled?: boolean
   botTexts?: BotTextOverrides
   labels?: Partial<AgendaLabels>
+  /** Palabras que el dueño vació (null o en blanco): vuelven a su valor por defecto. */
+  labelsReset?: AgendaLabelKey[]
   toggles?: Partial<AgendaToggles>
   presetKey?: PresetKey
 }
@@ -656,6 +658,17 @@ export function validateConfigPatch(input: unknown): Valid<ConfigPatch> {
     const labels = sanitizeLabels(record.labels)
     if (!labels.ok) return labels
     out.labels = labels.value
+    // sanitizeLabels descarta lo vacío; aquí un null o un texto en blanco
+    // sobre una palabra conocida es un "volver al valor por defecto" explícito.
+    const labelsRecord = asRecord(record.labels)
+    if (labelsRecord) {
+      const reset = LABEL_KEYS.filter((key) => {
+        if (!has(labelsRecord, key)) return false
+        const value = labelsRecord[key]
+        return value === null || (typeof value === 'string' && value.trim() === '')
+      })
+      if (reset.length) out.labelsReset = reset
+    }
     any = true
   }
 
