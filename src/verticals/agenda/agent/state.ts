@@ -19,6 +19,7 @@ export type BookingStep =
   | 'pick_staff'
   | 'pick_day'
   | 'pick_slot'
+  | 'ask_question'
   | 'summary'
   | 'manage_menu'
   | 'manage_cancel_confirm'
@@ -49,6 +50,17 @@ export interface BookingState {
   slotStartsAt?: string
   /** Cita existente que se está gestionando (cancelar/reprogramar). */
   appointmentId?: string
+  /**
+   * Pregunta extra en curso, por id (no por posición: el dueño puede reordenar,
+   * desactivar o editar mientras el cliente responde). Con `step: 'ask_question'`.
+   */
+  questionId?: string
+  /**
+   * Respuestas por id de pregunta. Una pregunta opcional que el cliente no
+   * respondió queda con '' (así no se vuelve a preguntar); esas no se muestran
+   * ni se guardan en la cita.
+   */
+  answers?: Record<string, string>
 }
 
 export function newBookingState(
@@ -67,6 +79,8 @@ export const staffId = (id: string): string => `staff:${id}`
 export const dayId = (key: string): string => `day:${key}`
 export const slotId = (iso: string): string => `slot:${iso}`
 export const actId = (action: string): string => `act:${action}`
+/** Opción `index` (base 0) de la pregunta extra en curso. */
+export const ansId = (index: number): string => `ans:${index}`
 
 // ------------------------------------------------------------
 // Ids del recordatorio (Fase 3)
@@ -94,9 +108,9 @@ export function parseReminderId(id: string): ReminderAction | null {
     : null
 }
 
-export type OptionKind = 'svc' | 'staff' | 'day' | 'slot' | 'act'
+export type OptionKind = 'svc' | 'staff' | 'day' | 'slot' | 'act' | 'ans'
 
-const OPTION_KINDS: readonly OptionKind[] = ['svc', 'staff', 'day', 'slot', 'act']
+const OPTION_KINDS: readonly OptionKind[] = ['svc', 'staff', 'day', 'slot', 'act', 'ans']
 
 export function parseOptionId(
   id: string,
@@ -286,4 +300,22 @@ export function matchChoice({
     }
   }
   return null
+}
+
+/**
+ * Respuesta a una pregunta extra de opciones. Como `matchChoice`, pero un
+ * texto que es el título ENTERO de una opción (sin mayúsculas ni tildes) gana
+ * sobre leerlo como número de posición. Los títulos no pueden ser solo
+ * números, así que "2" sigue siendo la posición 2; esto cubre títulos como
+ * "2 horas" y filas viejas.
+ */
+export function matchAnswerOption(args: MatchChoiceArgs): string | null {
+  if (!args.replyId) {
+    const typed = normalizeText(args.text)
+    if (typed) {
+      const exact = args.options.find((o) => normalizeText(o.title) === typed)
+      if (exact) return exact.id
+    }
+  }
+  return matchChoice(args)
 }

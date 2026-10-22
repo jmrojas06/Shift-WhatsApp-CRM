@@ -2,8 +2,8 @@
 // Controlador de reservas por WhatsApp — agenda.
 //
 //   hola/cita → sesión (booking_sessions) → servicios → barbero
-//   (o "Cualquiera") → días con cupo → horas → resumen →
-//   Confirmar / Reprogramar / Cancelar → cita confirmed + negocio
+//   (o "Cualquiera") → días con cupo → horas → preguntas extra del
+//   negocio (si hay) → resumen → Confirmar / Reprogramar / Cancelar → cita confirmed + negocio
 //   en el pipeline Barbería + etiqueta + evento.
 //
 // Principios (todos verificados por controller.test.ts):
@@ -28,7 +28,9 @@ import type { VerticalDispatchResult, VerticalSession } from '@/lib/verticals/ty
 
 import type { AgendaAppointmentSummary } from '../texts'
 import { mergeBotTexts, type AgendaAgentTextsMerged } from '../bot-texts'
+import { listQuestions } from '../config-repo'
 import { capitalize } from '../labels'
+import { validateAnswer, type AgendaQuestion } from '../questions'
 import {
   computeDaySlots,
   mergeSlotsByStart,
@@ -76,9 +78,11 @@ import {
 import { formatDayLabel, formatLongDate, formatPrice, formatTimeLabel, truncate } from './format'
 import {
   actId,
+  ansId,
   containsHandoffWord,
   containsIntentWord,
   dayId,
+  matchAnswerOption,
   matchChoice,
   newBookingState,
   parseOptionId,
@@ -461,7 +465,20 @@ function coerceState(raw: Record<string, unknown>): BookingState {
     ...(typeof raw.appointmentId === 'string'
       ? { appointmentId: raw.appointmentId }
       : {}),
+    ...(typeof raw.questionId === 'string' ? { questionId: raw.questionId } : {}),
+    ...(raw.answers && typeof raw.answers === 'object' && !Array.isArray(raw.answers)
+      ? { answers: coerceAnswers(raw.answers as Record<string, unknown>) }
+      : {}),
   })
+}
+
+/** Respuestas guardadas en la sesión: solo textos ('' = opcional sin responder). */
+function coerceAnswers(raw: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [id, value] of Object.entries(raw)) {
+    if (typeof value === 'string') out[id] = value
+  }
+  return out
 }
 
 // ------------------------------------------------------------
@@ -474,6 +491,12 @@ async function advanceSession(
   input: { text: string; replyId: string | null },
 ): Promise<void> {
   const state = coerceState(session.state)
+  // Las preguntas extra se responden escribiendo (o con la opción tocada): no
+  // pasan por el emparejamiento general del menú.
+  if (state.step === 'ask_question') {
+    await handleAnswer(dialog, session.id, state, input)
+    return
+  }
   const choice = matchChoice({
     text: input.text,
     replyId: input.replyId,
@@ -503,6 +526,136 @@ async function registerFail(
   const next = { ...state, fails }
   await dialog.sender.sendText({ text: dialog.texts.retry })
   await conclude(dialog, sessionId, next)
+}
+
+// ------------------------------------------------------------
+// Preguntas extra
+//
+// El estado sigue la pregunta por ID (no por posición) y se vuelve a
+// leer la lista en cada mensaje: el dueño puede reordenar, editar o
+// desactivar mientras el cliente responde. "La próxima" es siempre la
+// primera, en el orden actual, que aún no tiene respuesta.
+// ------------------------------------------------------------
+
+/**
+ * Preguntas activas en orden. Si la base falla devuelve null: el que llama
+ * sigue SIN preguntas (jamás se pierde una reserva por las preguntas extra).
+ */
+async function loadQuestions(dialog: Dialog): Promise<AgendaQuestion[] | null> {
+  try {
+    return await listQuestions(dialog.db, dialog.accountId)
+  } catch (err) {
+    console.error('[agenda] no se pudieron leer las preguntas extra:', err)
+    return null
+  }
+}
+
+function hasAnswer(answers: Record<string, string> | undefined, id: string): boolean {
+  return answers !== undefined && Object.hasOwn(answers, id)
+}
+
+function nextUnanswered(
+  questions: AgendaQuestion[],
+  answers: Record<string, string> | undefined,
+): AgendaQuestion | null {
+  return questions.find((q) => !hasAnswer(answers, q.id)) ?? null
+}
+
+/** Siguiente paso tras elegir la hora o responder: la próxima pregunta o el resumen. */
+function stateAfterQuestions(
+  state: BookingState,
+  questions: AgendaQuestion[] | null,
+): BookingState {
+  const next = questions ? nextUnanswered(questions, state.answers) : null
+  return next
+    ? { ...state, step: 'ask_question', questionId: next.id }
+    : { ...state, step: 'summary', questionId: undefined }
+}
+
+async function handleAnswer(
+  dialog: Dialog,
+  sessionId: string,
+  state: BookingState,
+  input: { text: string; replyId: string | null },
+): Promise<void> {
+  const questions = await loadQuestions(dialog)
+  if (!questions) {
+    await conclude(dialog, sessionId, stateAfterQuestions(state, null))
+    return
+  }
+
+  const question = questions.find((q) => q.id === state.questionId)
+  if (!question) {
+    // La desactivaron (o la borraron): este mensaje no era para ninguna
+    // pregunta vigente, así que no se consume. Sigue la próxima o el resumen.
+    await conclude(dialog, sessionId, stateAfterQuestions({ ...state, fails: 0 }, questions))
+    return
+  }
+
+  // Cambió de tipo desde que se la mostramos (de opciones a texto o al revés):
+  // lo que contestó no corresponde a lo que ahora se pregunta. Se repite.
+  if ((state.options.length > 0) !== (question.kind === 'opcion')) {
+    await conclude(dialog, sessionId, state)
+    return
+  }
+
+  let value: string
+  if (question.kind === 'opcion') {
+    const choice = matchAnswerOption({
+      text: input.text,
+      replyId: input.replyId,
+      options: state.options,
+    })
+    const offered = choice ? state.options.find((o) => o.id === choice) : undefined
+    if (!offered) {
+      await registerFail(dialog, sessionId, state)
+      return
+    }
+    // Se guarda el título que se ofreció; si el dueño ya lo quitó, se repite.
+    if (!question.options.includes(offered.title)) {
+      await conclude(dialog, sessionId, state)
+      return
+    }
+    value = offered.title
+  } else {
+    // Un tap de un menú viejo no responde una pregunta escrita.
+    if (input.replyId !== null) {
+      await registerFail(dialog, sessionId, state)
+      return
+    }
+    const check = validateAnswer(question, input.text)
+    if (!check.ok) {
+      const warning =
+        check.reason === 'number'
+          ? dialog.texts.answerInvalidNumber
+          : check.reason === 'too_long'
+            ? dialog.texts.answerTooLong
+            : dialog.texts.answerRequired
+      await dialog.sender.sendText({ text: warning })
+      await conclude(dialog, sessionId, state)
+      return
+    }
+    value = check.value
+  }
+
+  // '' = pregunta opcional sin responder: queda marcada para no repetirla, pero
+  // ni el resumen ni la cita la guardan.
+  const answers = { ...state.answers, [question.id]: value }
+  await conclude(
+    dialog,
+    sessionId,
+    stateAfterQuestions({ ...state, answers, fails: 0 }, questions),
+  )
+}
+
+/** Respuestas con texto, en el orden actual de las preguntas vigentes. */
+function visibleAnswers(
+  questions: AgendaQuestion[],
+  answers: Record<string, string> | undefined,
+): { id: string; label: string; value: string }[] {
+  return questions
+    .filter((q) => hasAnswer(answers, q.id) && answers![q.id])
+    .map((q) => ({ id: q.id, label: q.label, value: answers![q.id] }))
 }
 
 async function handleChoice(
@@ -641,12 +794,15 @@ async function handleChoice(
         await offerAlternatives(dialog, sessionId, state)
         return
       }
-      await conclude(dialog, sessionId, {
-        ...state,
-        dateKey,
-        slotStartsAt: startsAtIso,
-        step: 'summary',
-      })
+      // Cita nueva: preguntas extra del negocio antes del resumen. Reprogramar
+      // una existente no las repite (la cita nueva copia las respuestas).
+      const questions =
+        state.mode === 'reschedule' ? null : await loadQuestions(dialog)
+      await conclude(
+        dialog,
+        sessionId,
+        stateAfterQuestions({ ...state, dateKey, slotStartsAt: startsAtIso }, questions),
+      )
       return
     }
 
@@ -657,9 +813,12 @@ async function handleChoice(
         return
       }
       if (parsed.value === 'reschedule') {
+        // Con otra hora se vuelve a empezar: nada de respuestas viejas.
         await conclude(dialog, sessionId, {
           ...state,
           slotStartsAt: undefined,
+          answers: undefined,
+          questionId: undefined,
           step: 'pick_day',
         })
         return
@@ -876,6 +1035,8 @@ async function confirmAppointment(
     return
   }
 
+  const answers = await answersForNewAppointment(dialog, state, oldAppt)
+
   // Un solo ganador por sesión: si otro proceso (un doble tap de
   // "Confirmar") ya la reclamó, ese es el que agenda y responde.
   // Aquí no se inserta nada ni se manda un mensaje que contradiga.
@@ -900,6 +1061,7 @@ async function confirmAppointment(
     createdVia: 'bot',
     confirmedAtIso: dialog.nowIso,
     rescheduledFrom: oldAppt?.id ?? null,
+    answers,
   })
 
   if (error) {
@@ -1174,6 +1336,32 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
       return { state: { ...state, options }, closed: false }
     }
 
+    case 'ask_question': {
+      const questions = await loadQuestions(dialog)
+      // Su pregunta sigue vigente; si no, la próxima sin responder (o el resumen).
+      const question = questions
+        ? (questions.find((q) => q.id === state.questionId) ??
+          nextUnanswered(questions, state.answers))
+        : null
+      if (!question) {
+        return renderStep(dialog, { ...state, step: 'summary', questionId: undefined })
+      }
+      if (question.kind === 'opcion') {
+        const options: OfferedOption[] = question.options.map((title, i) => ({
+          id: ansId(i),
+          title,
+        }))
+        await sendOptions(dialog, {
+          bodyText: question.label,
+          buttonLabel: dialog.texts.answerMenuButton,
+          options,
+        })
+        return { state: { ...state, questionId: question.id, options }, closed: false }
+      }
+      await dialog.sender.sendText({ text: question.label })
+      return { state: { ...state, questionId: question.id, options: [] }, closed: false }
+    }
+
     case 'summary': {
       const built = await buildSummaryForState(dialog, state)
       if (!built) {
@@ -1433,7 +1621,31 @@ async function buildSummaryForState(
           dialog.texts.staffAnyTitle)
         : dialog.texts.staffAnyTitle
   }
-  return buildSummary(dialog, service, staffName, new Date(state.slotStartsAt))
+  const summary = buildSummary(dialog, service, staffName, new Date(state.slotStartsAt))
+  // Las respuestas a las preguntas extra, en el orden actual (solo cita nueva).
+  if (state.mode === 'reschedule' || !state.answers) return summary
+  const questions = await loadQuestions(dialog)
+  const answers = questions ? visibleAnswers(questions, state.answers) : []
+  return answers.length
+    ? { ...summary, answers: answers.map(({ label, value }) => ({ label, value })) }
+    : summary
+}
+
+/**
+ * Respuestas que lleva la cita nueva. Reprogramar una cita existente copia las
+ * de la anterior; una cita nueva guarda las del estado, acotadas a las
+ * preguntas vigentes (si no se pueden leer, las que ya tenía).
+ */
+async function answersForNewAppointment(
+  dialog: Dialog,
+  state: BookingState,
+  oldAppt: AppointmentInfo | null,
+): Promise<Record<string, string>> {
+  if (oldAppt) return oldAppt.answers
+  if (!state.answers) return {}
+  const questions = await loadQuestions(dialog)
+  if (!questions) return state.answers
+  return Object.fromEntries(visibleAnswers(questions, state.answers).map((a) => [a.id, a.value]))
 }
 
 /** Descripción de la fila del menú según las piezas duración / precio. */

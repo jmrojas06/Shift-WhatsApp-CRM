@@ -15,6 +15,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { sanitizeBotTexts, type BotTextOverrides } from '../bot-texts'
 import { readLabels, type AgendaLabels } from '../labels'
+import { clampAnswers } from '../questions'
 import { isAgendaPipelineName } from '../seed'
 import { togglesFromRow, type AgendaToggles } from '../toggles'
 import type { WorkBlock } from './availability'
@@ -56,6 +57,8 @@ export interface AppointmentInfo {
   startsAt: Date
   endsAt: Date
   status: string
+  /** Respuestas a las preguntas extra, por id de pregunta (solo texto). */
+  answers: Record<string, string>
 }
 
 export async function loadAccount(
@@ -444,7 +447,17 @@ export async function isStaffFree(
 // ------------------------------------------------------------
 
 const APPOINTMENT_COLS =
-  'id, contact_id, service_id, staff_id, starts_at, ends_at, status'
+  'id, contact_id, service_id, staff_id, starts_at, ends_at, status, answers'
+
+/** `answers` es jsonb: se acepta solo un objeto de textos, lo demás se ignora. */
+function readAnswers(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const out: Record<string, string> = {}
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === 'string' && value) out[id] = value
+  }
+  return out
+}
 
 function mapAppointment(row: Record<string, unknown>): AppointmentInfo {
   return {
@@ -455,6 +468,7 @@ function mapAppointment(row: Record<string, unknown>): AppointmentInfo {
     startsAt: new Date(row.starts_at as string),
     endsAt: new Date(row.ends_at as string),
     status: row.status as string,
+    answers: readAnswers(row.answers),
   }
 }
 
@@ -514,8 +528,11 @@ export async function insertAppointment(
     createdVia: 'bot'
     confirmedAtIso: string
     rescheduledFrom?: string | null
+    /** Por id de pregunta. Solo se guarda si queda algo; se acota al tope de la base. */
+    answers?: Record<string, string>
   },
 ): Promise<{ error: { code?: string | null; message?: string } | null }> {
+  const answers = clampAnswers(args.answers)
   const { error } = await db.from('booking_appointments').insert({
     id: args.id,
     account_id: args.accountId,
@@ -531,6 +548,7 @@ export async function insertAppointment(
     ...(args.rescheduledFrom
       ? { rescheduled_from: args.rescheduledFrom }
       : {}),
+    ...(Object.keys(answers).length ? { answers } : {}),
   })
   return { error }
 }

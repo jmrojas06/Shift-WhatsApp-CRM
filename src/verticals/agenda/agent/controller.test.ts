@@ -27,7 +27,7 @@ type Row = Record<string, unknown>
 interface FakeDb {
   _tables: Record<string, Row[]>
   _failNext(
-    op: 'insert' | 'update' | 'upsert' | 'delete',
+    op: 'select' | 'insert' | 'update' | 'upsert' | 'delete',
     table: string,
     error: { code?: string; message?: string },
   ): void
@@ -81,18 +81,22 @@ function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
 
     const candidateRows = (): Row[] => {
       const out = ensure(table).filter(matches)
-      for (const { col, ascending } of orders) {
+      if (orders.length) {
+        // Como PostgREST: el primer `.order()` manda y los siguientes desempatan.
         out.sort((a, b) => {
-          const av = a[col] as never
-          const bv = b[col] as never
-          if (av === bv) return 0
-          return (av < bv ? -1 : 1) * (ascending ? 1 : -1)
+          for (const { col, ascending } of orders) {
+            const av = a[col] as never
+            const bv = b[col] as never
+            if (av === bv) continue
+            return (av < bv ? -1 : 1) * (ascending ? 1 : -1)
+          }
+          return 0
         })
       }
       return limitN === null ? out : out.slice(0, limitN)
     }
 
-    const takeFailure = (opName: Op): { code?: string } | null => {
+    const takeFailure = (opName: Op): { code?: string; message?: string } | null => {
       const idx = failures.findIndex((f) => f.op === opName && f.table === table)
       if (idx === -1) return null
       return failures.splice(idx, 1)[0].error
@@ -118,6 +122,8 @@ function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
 
     const run = (): { data: unknown; error: unknown } => {
       if (op === 'select') {
+        const fail = takeFailure('select')
+        if (fail) return { data: null, error: fail }
         return { data: candidateRows().map((r) => ({ ...r })), error: null }
       }
       if (op === 'insert') {
@@ -2377,5 +2383,623 @@ describe('pieza reprogramar/cancelar apagada', () => {
     expect(rec.calls).toHaveLength(0)
     expect(sessionRow(db)).toBeDefined()
     expect(changeEvents(db)).toHaveLength(0)
+  })
+})
+
+// ------------------------------------------------------------
+// Preguntas extra (Fase 1, Task 10)
+// ------------------------------------------------------------
+
+describe('preguntas extra', () => {
+  const SLOT = '2026-10-19T14:00:00.000Z'
+  const SLOT_2 = '2026-10-19T14:30:00.000Z'
+  const MOTIVO = '¿Motivo de la visita?'
+  const SEDE = '¿En qué sede?'
+
+  function question(overrides: Row): Row {
+    return {
+      account_id: ACCOUNT,
+      required: true,
+      options: [],
+      position: 0,
+      is_active: true,
+      kind: 'texto',
+      ...overrides,
+    }
+  }
+
+  const qMotivo = (o: Row = {}) =>
+    question({ id: 'q-motivo', label: MOTIVO, kind: 'texto', position: 0, ...o })
+  const qSede = (o: Row = {}) =>
+    question({
+      id: 'q-sede',
+      label: SEDE,
+      kind: 'opcion',
+      options: ['Norte', 'Sur'],
+      position: 1,
+      ...o,
+    })
+
+  function withQuestions(db: FakeDb, ...rows: Row[]) {
+    db._tables.booking_questions = rows.length ? rows : [qMotivo(), qSede()]
+  }
+
+  const questionRow = (db: FakeDb, id: string): Row => {
+    const row = db._tables.booking_questions.find((r) => r.id === id)
+    if (!row) throw new Error(`no hay pregunta ${id}`)
+    return row
+  }
+
+  /** Servicio, barbero, día y hora: el siguiente mensaje del bot es la primera pregunta. */
+  async function walkToSlot(db: FakeDb, rec: Recorder, slot: string = SLOT) {
+    await walkToDay(db, rec)
+    await send(db, rec, { replyId: dayId(MONDAY) })
+    await send(db, rec, { replyId: slotId(slot) })
+  }
+
+  const state = (db: FakeDb) => sessionRow(db)?.state as Record<string, unknown>
+  const silence = () => vi.spyOn(console, 'error').mockImplementation(() => {})
+  const SUMMARY_BUTTONS = ['Confirmar ✅', 'Reprogramar', 'Cancelar']
+
+  it('después de la hora pregunta en orden y luego muestra el resumen con las respuestas', async () => {
+    const db = makeFakeDb(baseSeed())
+    withQuestions(db)
+    const rec = makeRecorder()
+
+    await walkToSlot(db, rec)
+    expect(last(rec).kind).toBe('text')
+    expect(last(rec).bodyText).toBe(MOTIVO)
+    expect(state(db).step).toBe('ask_question')
+    expect(state(db).questionId).toBe('q-motivo')
+
+    await send(db, rec, { text: 'Control' })
+    expect(last(rec).kind).toBe('buttons')
+    expect(last(rec).bodyText).toBe(SEDE)
+    expect(optionTitles(last(rec))).toEqual(['Norte', 'Sur'])
+    expect(optionIds(last(rec))).toEqual(['ans:0', 'ans:1'])
+
+    await send(db, rec, { replyId: 'ans:1' })
+    expect(optionTitles(last(rec))).toEqual(SUMMARY_BUTTONS)
+    expect(last(rec).bodyText).toContain('📝 ¿Motivo de la visita?: Control')
+    expect(last(rec).bodyText).toContain('📝 ¿En qué sede?: Sur')
+    expect(state(db).step).toBe('summary')
+    expect(state(db).answers).toEqual({ 'q-motivo': 'Control', 'q-sede': 'Sur' })
+  })
+
+  it('al confirmar, la cita guarda las respuestas por id de pregunta (el mensaje final no las repite)', async () => {
+    const db = makeFakeDb(baseSeed())
+    withQuestions(db)
+    const rec = makeRecorder()
+
+    await walkToSlot(db, rec)
+    await send(db, rec, { text: 'Control' })
+    await send(db, rec, { replyId: 'ans:0' })
+    await send(db, rec, { replyId: 'act:confirm' })
+
+    expect(db._tables.booking_appointments.at(-1)?.answers).toEqual({
+      'q-motivo': 'Control',
+      'q-sede': 'Norte',
+    })
+    expect(last(rec).bodyText).toContain('Quedó agendado')
+    expect(last(rec).bodyText).not.toContain('📝')
+  })
+
+  it('una cuenta sin preguntas va directo al resumen y la cita no lleva answers', async () => {
+    const db = makeFakeDb(baseSeed())
+    const rec = makeRecorder()
+
+    await walkToSlot(db, rec)
+    expect(optionTitles(last(rec))).toEqual(SUMMARY_BUTTONS)
+    expect(last(rec).bodyText).not.toContain('📝')
+    await send(db, rec, { replyId: 'act:confirm' })
+    expect('answers' in db._tables.booking_appointments[0]).toBe(false)
+  })
+
+  it('una respuesta obligatoria vacía repite la pregunta con aviso', async () => {
+    const db = makeFakeDb(baseSeed())
+    withQuestions(db)
+    const rec = makeRecorder()
+
+    await walkToSlot(db, rec)
+    await send(db, rec, { text: '   ' })
+
+    expect(messagesWith(rec, AGENDA_AGENT_TEXTS.answerRequired)).toHaveLength(1)
+    expect(last(rec).bodyText).toBe(MOTIVO)
+    expect(state(db).step).toBe('ask_question')
+    expect(state(db).answers ?? {}).toEqual({})
+  })
+
+  it('una respuesta demasiado larga avisa y repite la pregunta', async () => {
+    const db = makeFakeDb(baseSeed())
+    withQuestions(db)
+    const rec = makeRecorder()
+
+    await walkToSlot(db, rec)
+    await send(db, rec, { text: 'x'.repeat(201) })
+
+    expect(messagesWith(rec, AGENDA_AGENT_TEXTS.answerTooLong)).toHaveLength(1)
+    expect(last(rec).bodyText).toBe(MOTIVO)
+  })
+
+  it('el texto de la respuesta se limpia (espacios y caracteres invisibles)', async () => {
+    const db = makeFakeDb(baseSeed())
+    withQuestions(db, qMotivo())
+    const rec = makeRecorder()
+
+    await walkToSlot(db, rec)
+    await send(db, rec, { text: '  Con\ntrol​  ' })
+
+    expect(last(rec).bodyText).toContain('📝 ¿Motivo de la visita?: Con trol')
+  })
+
+  describe('pregunta de número', () => {
+    const qNum = () => question({ id: 'q-num', label: '¿Cuántas personas?', kind: 'numero' })
+
+    it('con letras avisa y repite; con dígitos la guarda', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qNum())
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      await send(db, rec, { text: 'cuatro' })
+      expect(messagesWith(rec, AGENDA_AGENT_TEXTS.answerInvalidNumber)).toHaveLength(1)
+      expect(last(rec).bodyText).toBe('¿Cuántas personas?')
+      expect(state(db).step).toBe('ask_question')
+
+      await send(db, rec, { text: '4' })
+      expect(last(rec).bodyText).toContain('📝 ¿Cuántas personas?: 4')
+    })
+  })
+
+  describe('pregunta de opción: cómo responde el cliente', () => {
+    async function atSede(options: string[] = ['Norte', 'Sur']) {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qSede({ options, position: 0 }))
+      const rec = makeRecorder()
+      await walkToSlot(db, rec)
+      return { db, rec }
+    }
+
+    it('un tap guarda el título ofrecido', async () => {
+      const { db, rec } = await atSede()
+      await send(db, rec, { replyId: 'ans:1' })
+      expect(state(db).answers).toEqual({ 'q-sede': 'Sur' })
+    })
+
+    it('escribir el título entero (sin importar mayúsculas ni tildes) lo elige', async () => {
+      const options = ['Norte', 'Sur', 'Sede Cañas', 'Médico']
+      const first = await atSede(options)
+      await send(first.db, first.rec, { text: 'SUR' })
+      expect(state(first.db).answers).toEqual({ 'q-sede': 'Sur' })
+
+      const second = await atSede(options)
+      await send(second.db, second.rec, { text: 'medico' })
+      expect(state(second.db).answers).toEqual({ 'q-sede': 'Médico' })
+
+      const third = await atSede(options)
+      await send(third.db, third.rec, { text: 'sede canas' })
+      expect(state(third.db).answers).toEqual({ 'q-sede': 'Sede Cañas' })
+    })
+
+    it('escribir un número elige por posición cuando ningún título es ese número', async () => {
+      const options = ['2 horas', 'Un día']
+      const first = await atSede(options)
+      await send(first.db, first.rec, { text: '2' })
+      expect(state(first.db).answers).toEqual({ 'q-sede': 'Un día' })
+
+      const second = await atSede(options)
+      await send(second.db, second.rec, { text: '1.' })
+      expect(state(second.db).answers).toEqual({ 'q-sede': '2 horas' })
+
+      const third = await atSede(options)
+      await send(third.db, third.rec, { text: '2 horas' })
+      expect(state(third.db).answers).toEqual({ 'q-sede': '2 horas' })
+    })
+
+    it('una respuesta que no empareja cuenta como fallo y a la segunda pasa a un humano', async () => {
+      const { db, rec } = await atSede()
+      await send(db, rec, { text: 'ni idea' })
+      expect(messagesWith(rec, AGENDA_AGENT_TEXTS.retry)).toHaveLength(1)
+      expect(last(rec).bodyText).toBe(SEDE)
+      expect(state(db).step).toBe('ask_question')
+
+      await send(db, rec, { text: 'tampoco' })
+      expect(messagesWith(rec, AGENDA_AGENT_TEXTS.handoff)).toHaveLength(1)
+      expect(sessionRow(db)).toBeUndefined()
+    })
+
+    it('un tap de un menú viejo no se acepta', async () => {
+      const { db, rec } = await atSede()
+      await send(db, rec, { replyId: 'ans:7' })
+      expect(messagesWith(rec, AGENDA_AGENT_TEXTS.retry)).toHaveLength(1)
+      expect(state(db).answers ?? {}).toEqual({})
+    })
+
+    it('tocar un botón viejo cuando se pregunta por texto no responde nada', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qMotivo())
+      const rec = makeRecorder()
+      await walkToSlot(db, rec)
+
+      await send(db, rec, { replyId: 'act:confirm' })
+      expect(messagesWith(rec, AGENDA_AGENT_TEXTS.retry)).toHaveLength(1)
+      expect(last(rec).bodyText).toBe(MOTIVO)
+      expect(state(db).answers ?? {}).toEqual({})
+    })
+  })
+
+  describe('pregunta opcional', () => {
+    const qNota = () =>
+      question({ id: 'q-nota', label: '¿Alguna nota?', kind: 'texto', required: false, position: 0 })
+
+    it('sin texto se salta: no se guarda ni se muestra, y sigue la próxima', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qNota(), qSede({ position: 1 }))
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      expect(last(rec).bodyText).toBe('¿Alguna nota?')
+      await send(db, rec, { text: '   ' })
+      expect(messagesWith(rec, AGENDA_AGENT_TEXTS.answerRequired)).toHaveLength(0)
+      expect(last(rec).bodyText).toBe(SEDE)
+
+      await send(db, rec, { replyId: 'ans:0' })
+      expect(last(rec).bodyText).toContain('📝 ¿En qué sede?: Norte')
+      expect(last(rec).bodyText).not.toContain('¿Alguna nota?')
+
+      await send(db, rec, { replyId: 'act:confirm' })
+      expect(db._tables.booking_appointments[0].answers).toEqual({ 'q-sede': 'Norte' })
+    })
+
+    it('si solo hay una opcional y se salta, la cita no lleva answers', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qNota())
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      await send(db, rec, { text: '' })
+      expect(optionTitles(last(rec))).toEqual(SUMMARY_BUTTONS)
+      await send(db, rec, { replyId: 'act:confirm' })
+      expect('answers' in db._tables.booking_appointments[0]).toBe(false)
+    })
+
+    it('con texto se guarda', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qNota())
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      await send(db, rec, { text: 'Llego 5 minutos tarde' })
+      await send(db, rec, { replyId: 'act:confirm' })
+      expect(db._tables.booking_appointments[0].answers).toEqual({ 'q-nota': 'Llego 5 minutos tarde' })
+    })
+  })
+
+  describe('la configuración cambia mientras el cliente responde', () => {
+    it('una pregunta desactivada se salta (sin consumir el mensaje) y sigue la próxima', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db)
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      expect(last(rec).bodyText).toBe(MOTIVO)
+      questionRow(db, 'q-motivo').is_active = false
+
+      await send(db, rec, { text: 'Control' })
+      expect(last(rec).bodyText).toBe(SEDE)
+      expect(state(db).questionId).toBe('q-sede')
+      expect(state(db).answers ?? {}).toEqual({})
+
+      await send(db, rec, { replyId: 'ans:0' })
+      await send(db, rec, { replyId: 'act:confirm' })
+      expect(db._tables.booking_appointments[0].answers).toEqual({ 'q-sede': 'Norte' })
+    })
+
+    it('si era la última pregunta, pasa al resumen con lo que ya respondió', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db)
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      await send(db, rec, { text: 'Control' })
+      questionRow(db, 'q-sede').is_active = false
+
+      await send(db, rec, { replyId: 'ans:0' })
+      expect(optionTitles(last(rec))).toEqual(SUMMARY_BUTTONS)
+      expect(last(rec).bodyText).toContain('📝 ¿Motivo de la visita?: Control')
+      expect(last(rec).bodyText).not.toContain('sede')
+    })
+
+    it('si desactivan todas, el cliente llega al resumen sin respuestas', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db)
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      questionRow(db, 'q-motivo').is_active = false
+      questionRow(db, 'q-sede').is_active = false
+
+      await send(db, rec, { text: 'Control' })
+      expect(optionTitles(last(rec))).toEqual(SUMMARY_BUTTONS)
+      await send(db, rec, { replyId: 'act:confirm' })
+      expect('answers' in db._tables.booking_appointments[0]).toBe(false)
+    })
+
+    it('si cambian las opciones y la elegida ya no existe, se repite la pregunta sin guardar', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qSede({ position: 0 }))
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      expect(optionTitles(last(rec))).toEqual(['Norte', 'Sur'])
+      questionRow(db, 'q-sede').options = ['Norte', 'Centro']
+
+      await send(db, rec, { replyId: 'ans:1' }) // "Sur" ya no existe
+      expect(optionTitles(last(rec))).toEqual(['Norte', 'Centro'])
+      expect(last(rec).bodyText).toBe(SEDE)
+      expect(state(db).step).toBe('ask_question')
+      expect(state(db).answers ?? {}).toEqual({})
+      expect(messagesWith(rec, AGENDA_AGENT_TEXTS.retry)).toHaveLength(0)
+
+      await send(db, rec, { replyId: 'ans:1' })
+      expect(state(db).answers).toEqual({ 'q-sede': 'Centro' })
+    })
+
+    it('si cambian las opciones pero la elegida sigue, se acepta', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qSede({ position: 0 }))
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      questionRow(db, 'q-sede').options = ['Norte', 'Sur', 'Centro']
+
+      await send(db, rec, { replyId: 'ans:1' })
+      expect(state(db).answers).toEqual({ 'q-sede': 'Sur' })
+    })
+
+    it('si una pregunta de opción pasa a texto, se repite como texto', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qSede({ position: 0 }))
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      Object.assign(questionRow(db, 'q-sede'), { kind: 'texto', options: [] })
+
+      await send(db, rec, { replyId: 'ans:0' })
+      expect(last(rec).kind).toBe('text')
+      expect(last(rec).bodyText).toBe(SEDE)
+      expect(state(db).answers ?? {}).toEqual({})
+
+      await send(db, rec, { text: 'La del centro' })
+      expect(state(db).answers).toEqual({ 'q-sede': 'La del centro' })
+    })
+
+    it('si una pregunta de texto pasa a opción, se repite con sus opciones', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db, qMotivo())
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      Object.assign(questionRow(db, 'q-motivo'), { kind: 'opcion', options: ['Control', 'Primera vez'] })
+
+      await send(db, rec, { text: 'Control' })
+      expect(last(rec).kind).toBe('buttons')
+      expect(optionTitles(last(rec))).toEqual(['Control', 'Primera vez'])
+      expect(state(db).answers ?? {}).toEqual({})
+    })
+
+    it('si reordenan, pregunta la primera sin responder en el orden nuevo y el resumen sigue ese orden', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db)
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      questionRow(db, 'q-sede').position = 0
+      questionRow(db, 'q-motivo').position = 1
+
+      await send(db, rec, { text: 'Control' })
+      expect(last(rec).bodyText).toBe(SEDE)
+
+      await send(db, rec, { replyId: 'ans:1' })
+      const body = last(rec).bodyText
+      expect(body.indexOf('¿En qué sede?: Sur')).toBeGreaterThan(-1)
+      expect(body.indexOf('¿En qué sede?: Sur')).toBeLessThan(body.indexOf('¿Motivo de la visita?: Control'))
+    })
+
+    it('si agregan una pregunta mientras responde, también se la hace', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db)
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      db._tables.booking_questions.push(
+        question({ id: 'q-extra', label: '¿Algo más?', kind: 'texto', position: 2 }),
+      )
+      await send(db, rec, { text: 'Control' })
+      await send(db, rec, { replyId: 'ans:0' })
+      expect(last(rec).bodyText).toBe('¿Algo más?')
+    })
+  })
+
+  describe('si no se pueden leer las preguntas', () => {
+    it('al entrar sigue al resumen y la cita se crea igual', async () => {
+      const spy = silence()
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db)
+      const rec = makeRecorder()
+
+      await walkToDay(db, rec)
+      await send(db, rec, { replyId: dayId(MONDAY) })
+      db._failNext('select', 'booking_questions', { message: 'boom' })
+      await send(db, rec, { replyId: slotId(SLOT) })
+
+      expect(optionTitles(last(rec))).toEqual(SUMMARY_BUTTONS)
+      expect(spy).toHaveBeenCalled()
+
+      await send(db, rec, { replyId: 'act:confirm' })
+      expect(db._tables.booking_appointments).toHaveLength(1)
+      expect(db._tables.booking_appointments[0].status).toBe('confirmed')
+      expect('answers' in db._tables.booking_appointments[0]).toBe(false)
+      expect(last(rec).bodyText).toContain('Quedó agendado')
+    })
+
+    it('a mitad de las preguntas sigue al resumen sin perder la reserva', async () => {
+      const spy = silence()
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db)
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      await send(db, rec, { text: 'Control' })
+      db._failNext('select', 'booking_questions', { message: 'boom' })
+      await send(db, rec, { replyId: 'ans:0' })
+
+      expect(optionTitles(last(rec))).toEqual(SUMMARY_BUTTONS)
+      expect(spy).toHaveBeenCalled()
+      await send(db, rec, { replyId: 'act:confirm' })
+      expect(db._tables.booking_appointments).toHaveLength(1)
+      expect(last(rec).bodyText).toContain('Quedó agendado')
+    })
+
+    it('si falla al confirmar, guarda las respuestas que ya tenía', async () => {
+      silence()
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db)
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      await send(db, rec, { text: 'Control' })
+      await send(db, rec, { replyId: 'ans:0' })
+      db._failNext('select', 'booking_questions', { message: 'boom' })
+      await send(db, rec, { replyId: 'act:confirm' })
+
+      expect(db._tables.booking_appointments).toHaveLength(1)
+      expect(db._tables.booking_appointments[0].answers).toEqual({
+        'q-motivo': 'Control',
+        'q-sede': 'Norte',
+      })
+    })
+  })
+
+  describe('desde el resumen', () => {
+    it('"Reprogramar" borra las respuestas y vuelve a preguntar después de elegir otra hora', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db)
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      await send(db, rec, { text: 'Control' })
+      await send(db, rec, { replyId: 'ans:0' })
+      expect(state(db).answers).toEqual({ 'q-motivo': 'Control', 'q-sede': 'Norte' })
+
+      await send(db, rec, { replyId: 'act:reschedule' })
+      expect(state(db).step).toBe('pick_day')
+      expect(state(db).answers).toBeUndefined()
+      expect(state(db).questionId).toBeUndefined()
+      expect(state(db).slotStartsAt).toBeUndefined()
+
+      await send(db, rec, { replyId: dayId(MONDAY) })
+      await send(db, rec, { replyId: slotId(SLOT_2) })
+      expect(last(rec).bodyText).toBe(MOTIVO)
+      await send(db, rec, { text: 'Otra cosa' })
+      await send(db, rec, { replyId: 'ans:1' })
+      await send(db, rec, { replyId: 'act:confirm' })
+
+      expect(db._tables.booking_appointments[0].answers).toEqual({
+        'q-motivo': 'Otra cosa',
+        'q-sede': 'Sur',
+      })
+    })
+
+    it('si la hora se ocupa al confirmar, conserva las respuestas y no las vuelve a preguntar', async () => {
+      const db = makeFakeDb(baseSeed())
+      withQuestions(db)
+      const rec = makeRecorder()
+
+      await walkToSlot(db, rec)
+      await send(db, rec, { text: 'Control' })
+      await send(db, rec, { replyId: 'ans:0' })
+
+      db._tables.booking_appointments.push(
+        appointmentRow({
+          id: 'appt-race',
+          staff_id: STAFF_ANDRES,
+          starts_at: SLOT,
+          ends_at: SLOT_2,
+        }),
+      )
+      await send(db, rec, { replyId: 'act:confirm' })
+      expect(messagesWith(rec, 'ocupó')).toHaveLength(1)
+      expect(state(db).step).toBe('pick_slot')
+
+      await send(db, rec, { replyId: slotId(SLOT_2) })
+      expect(optionTitles(last(rec))).toEqual(SUMMARY_BUTTONS)
+      expect(last(rec).bodyText).toContain('📝 ¿Motivo de la visita?: Control')
+
+      await send(db, rec, { replyId: 'act:confirm' })
+      const fresh = db._tables.booking_appointments.find((a) => a.id !== 'appt-race')
+      expect(fresh?.answers).toEqual({ 'q-motivo': 'Control', 'q-sede': 'Norte' })
+    })
+  })
+
+  describe('reprogramar una cita que ya existe', () => {
+    it('no vuelve a preguntar y la cita nueva copia las respuestas de la anterior', async () => {
+      const seed = baseSeed()
+      seed.booking_appointments = [
+        appointmentRow({ answers: { 'q-motivo': 'Control', 'q-sede': 'Sur' } }),
+      ]
+      const db = makeFakeDb(seed)
+      withQuestions(db)
+      const rec = makeRecorder()
+
+      await send(db, rec, { text: 'cita' })
+      await send(db, rec, { replyId: 'act:reschedule' })
+      await send(db, rec, { replyId: dayId(MONDAY) })
+      await send(db, rec, { replyId: slotId('2026-10-19T16:00:00.000Z') })
+
+      expect(optionTitles(last(rec))).toEqual(SUMMARY_BUTTONS)
+      expect(messagesWith(rec, MOTIVO)).toHaveLength(0)
+      expect(messagesWith(rec, SEDE)).toHaveLength(0)
+      expect(state(db).step).toBe('summary')
+
+      await send(db, rec, { replyId: 'act:confirm' })
+      const fresh = db._tables.booking_appointments.find((a) => a.id !== 'appt-old')
+      expect(fresh?.answers).toEqual({ 'q-motivo': 'Control', 'q-sede': 'Sur' })
+      expect(fresh?.rescheduled_from).toBe('appt-old')
+      expect(last(rec).bodyText).toContain('Quedó reprogramado')
+    })
+
+    it('si la cita anterior no tenía respuestas, la nueva tampoco', async () => {
+      const seed = baseSeed()
+      seed.booking_appointments = [appointmentRow()]
+      const db = makeFakeDb(seed)
+      withQuestions(db)
+      const rec = makeRecorder()
+
+      await send(db, rec, { text: 'cita' })
+      await send(db, rec, { replyId: 'act:reschedule' })
+      await send(db, rec, { replyId: dayId(MONDAY) })
+      await send(db, rec, { replyId: slotId('2026-10-19T16:00:00.000Z') })
+      await send(db, rec, { replyId: 'act:confirm' })
+
+      const fresh = db._tables.booking_appointments.find((a) => a.id !== 'appt-old')
+      expect('answers' in (fresh ?? {})).toBe(false)
+    })
+
+    it('"Agendar otra vez" desde la gestión sí hace las preguntas', async () => {
+      const seed = baseSeed()
+      seed.booking_appointments = [appointmentRow()]
+      const db = makeFakeDb(seed)
+      withQuestions(db)
+      const rec = makeRecorder()
+
+      await send(db, rec, { text: 'cita' })
+      await send(db, rec, { replyId: 'act:new' })
+      await send(db, rec, { replyId: svcId(SERVICE_CORTE) })
+      await send(db, rec, { replyId: staffId(STAFF_ANDRES) })
+      await send(db, rec, { replyId: dayId(MONDAY) })
+      await send(db, rec, { replyId: slotId(SLOT) })
+      expect(last(rec).bodyText).toBe(MOTIVO)
+    })
   })
 })
