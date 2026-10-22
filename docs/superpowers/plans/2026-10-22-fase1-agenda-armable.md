@@ -303,8 +303,10 @@ git commit -m "refactor(agenda): rename barberia vertical to agenda with legacy 
 --      leen, owner/admin escriben).
 --   4. booking_appointments.answers: respuestas a esas preguntas.
 --
--- Idempotente. Orden de despliegue: PRIMERO el código (acepta las dos
--- claves), DESPUÉS esta migración.
+-- Idempotente. Orden de despliegue: aplicar 051 → desplegar el código
+-- (acepta las dos claves) → volver a correr 051 (idempotente) → aplicar
+-- 052 (la reescritura de la clave del vertical vive en
+-- 052_agenda_vertical_key.sql, que va DESPUÉS del despliegue).
 -- ============================================================
 
 -- 1) Clave del vertical ------------------------------------------------
@@ -3103,9 +3105,10 @@ git commit -m "docs(agenda): rename vertical docs and generic reminder template"
 ```
 
 - [ ] **Paso 5: Entrega al usuario (no push).** Resumir los commits, recordar el orden de despliegue
-  (**primero el código** —acepta `barberia` y `agenda`—, **después** aplicar 051 en el SQL Editor
-  dentro de una transacción, después correr `supabase/ci/verify-schema.sql`) y pedir OK para el push
-  y el PR.
+  (**aplicar 051** en el SQL Editor dentro de una transacción → **desplegar el código** —acepta
+  `barberia` y `agenda`— → **volver a correr 051** (idempotente) → **aplicar 052**
+  `052_agenda_vertical_key.sql`, la reescritura de `vertical_key` → correr
+  `supabase/ci/verify-schema.sql`) y pedir OK para el push y el PR.
 
 ---
 

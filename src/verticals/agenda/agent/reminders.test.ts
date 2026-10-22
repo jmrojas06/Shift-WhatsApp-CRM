@@ -374,6 +374,7 @@ function delivery(over: Partial<ReminderDelivery> = {}): ReminderDelivery {
     dateLabel: 'martes 20 de octubre de 2026',
     timeLabel: '7:00 a. m.',
     labels: DEFAULT_LABELS,
+    allowReschedule: true,
     ...over,
   }
 }
@@ -430,6 +431,21 @@ describe('builders del recordatorio', () => {
       'Cancelar',
     ])
     for (const b of buttons) expect(b.title.length).toBeLessThanOrEqual(20)
+  })
+
+  it('con reprogramar/cancelar apagado el mensaje libre solo lleva Confirmar', () => {
+    expect(reminderButtons(false).map((b) => b.id)).toEqual(['rem:confirm'])
+    expect(reminderButtons(true)).toHaveLength(3)
+  })
+
+  it('los reemplazos de la plantilla usan las palabras del negocio', () => {
+    const params = buildReminderTemplateParams(
+      delivery({
+        serviceName: null,
+        labels: { ...DEFAULT_LABELS, servicio: 'tratamiento' },
+      }),
+    )
+    expect(params[1]).toBe('tu tratamiento')
   })
 
   it('la plantilla documentada usa el idioma es', () => {
@@ -677,6 +693,7 @@ describe('runAgendaReminders', () => {
 
       const summary = await runAgendaReminders({ db: asClient(db), now: NOW, send: rec.send })
 
+      expect(summary.due).toBe(0)
       expect(summary.sent).toBe(0)
       expect(rec.deliveries).toHaveLength(0)
     })
@@ -704,6 +721,18 @@ describe('runAgendaReminders', () => {
 
       expect(summary.sent).toBe(1)
       expect(rec.deliveries[0].labels).toEqual(DEFAULT_LABELS)
+    })
+
+    it('cada entrega lleva si la cuenta permite reprogramar (por defecto sí)', async () => {
+      const seed = twoAccountSeed()
+      seed.booking_settings.push({ account_id: ACCOUNT, allow_reschedule: false })
+      const db = makeFakeDb(seed)
+      const rec = makeRecorder()
+
+      await runAgendaReminders({ db: asClient(db), now: NOW, send: rec.send })
+
+      expect(rec.deliveries.find((d) => d.accountId === ACCOUNT)?.allowReschedule).toBe(false)
+      expect(rec.deliveries.find((d) => d.accountId === OTHER_ACCOUNT)?.allowReschedule).toBe(true)
     })
 
     it('cada entrega lleva las palabras de su cuenta', async () => {

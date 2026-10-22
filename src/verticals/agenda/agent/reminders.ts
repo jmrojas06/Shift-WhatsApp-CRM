@@ -121,6 +121,11 @@ export interface ReminderDelivery {
   timeLabel: string
   /** Palabras del negocio (cita, servicio…) para el cuerpo del mensaje libre. */
   labels: AgendaLabels
+  /**
+   * Pieza "reprogramar/cancelar" de la cuenta. Apagada, el mensaje libre
+   * solo ofrece Confirmar (la plantilla de Meta tiene botones fijos).
+   */
+  allowReschedule: boolean
 }
 
 export type ReminderSender = (delivery: ReminderDelivery) => Promise<void>
@@ -137,12 +142,21 @@ export const reminderStaffLabel = (
   texts: { staffAnyTitle: string } = AGENDA_AGENT_TEXTS,
 ): string => name ?? texts.staffAnyTitle
 
-/** Botones Confirmar / Reprogramar / Cancelar (ids estáticos rem:*). */
-export function reminderButtons(): { id: string; title: string }[] {
+/**
+ * Botones Confirmar / Reprogramar / Cancelar (ids estáticos rem:*).
+ * Con la pieza de reprogramar apagada solo queda Confirmar.
+ */
+export function reminderButtons(
+  allowReschedule = true,
+): { id: string; title: string }[] {
   const actions: { action: ReminderAction; title: string }[] = [
     { action: 'confirm', title: AGENDA_AGENT_TEXTS.reminderConfirm },
-    { action: 'reschedule', title: AGENDA_AGENT_TEXTS.reminderReschedule },
-    { action: 'cancel', title: AGENDA_AGENT_TEXTS.reminderCancel },
+    ...(allowReschedule
+      ? [
+          { action: 'reschedule' as const, title: AGENDA_AGENT_TEXTS.reminderReschedule },
+          { action: 'cancel' as const, title: AGENDA_AGENT_TEXTS.reminderCancel },
+        ]
+      : []),
   ]
   return actions.map(({ action, title }) => ({ id: remId(action), title }))
 }
@@ -165,10 +179,11 @@ export function buildReminderBody(d: ReminderDelivery): string {
  * {{5}} hora.
  */
 export function buildReminderTemplateParams(d: ReminderDelivery): string[] {
+  const texts = buildAgentTexts(d.labels)
   return [
     d.businessName,
-    reminderServiceLabel(d.serviceName),
-    reminderStaffLabel(d.staffName),
+    reminderServiceLabel(d.serviceName, texts),
+    reminderStaffLabel(d.staffName, texts),
     d.dateLabel,
     d.timeLabel,
   ]
@@ -430,7 +445,7 @@ export async function runAgendaReminders(
   // recordatorios prendidos y palabras por defecto.
   const { data: settingsRows, error: settingsError } = await args.db
     .from('booking_settings')
-    .select('account_id, reminders_2h_enabled, reminders_enabled, labels')
+    .select('account_id, reminders_2h_enabled, reminders_enabled, allow_reschedule, labels')
     .in('account_id', [...accountsById.keys()])
   if (settingsError) {
     throw new Error(
@@ -440,11 +455,13 @@ export async function runAgendaReminders(
   const twoHourByAccount = new Map<string, boolean>()
   const labelsByAccount = new Map<string, AgendaLabels>()
   const disabledAccounts = new Set<string>()
+  const noChangesAccounts = new Set<string>()
   for (const row of (settingsRows ?? []) as Record<string, unknown>[]) {
     const id = row.account_id as string
     twoHourByAccount.set(id, row.reminders_2h_enabled === true)
     labelsByAccount.set(id, readLabels(row.labels))
     if (row.reminders_enabled === false) disabledAccounts.add(id)
+    if (row.allow_reschedule === false) noChangesAccounts.add(id)
   }
 
   const activeAccountIds = [...accountsById.keys()].filter(
@@ -528,6 +545,7 @@ export async function runAgendaReminders(
       dateLabel: formatLongDate(parts.dateKey),
       timeLabel: formatTimeLabel(parts),
       labels: labelsByAccount.get(appt.account_id) ?? DEFAULT_LABELS,
+      allowReschedule: !noChangesAccounts.has(appt.account_id),
     }
 
     const claim = await claimReminder(args.db, {

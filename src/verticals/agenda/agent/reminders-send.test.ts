@@ -90,6 +90,7 @@ function delivery(channel: 'text' | 'template'): ReminderDelivery {
     dateLabel: 'martes 20 de octubre de 2026',
     timeLabel: '7:00 a. m.',
     labels: DEFAULT_LABELS,
+    allowReschedule: true,
   }
 }
 
@@ -112,6 +113,15 @@ describe('sendAgendaReminder — mensaje libre', () => {
       expect.stringContaining('no se reenvía'),
       expect.any(String),
     )
+  })
+
+  it('con reprogramar/cancelar apagado solo ofrece el botón Confirmar', async () => {
+    sendButtons.mockResolvedValue(undefined)
+
+    await sendAgendaReminder({ ...delivery('text'), allowReschedule: false })
+
+    const args = sendButtons.mock.calls[0][0] as { buttons: { id: string }[] }
+    expect(args.buttons.map((b) => b.id)).toEqual(['rem:confirm'])
   })
 
   it('si Meta rechaza el envío, lanza para que el runner revierta y reintente', async () => {

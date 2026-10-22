@@ -715,6 +715,8 @@ export async function insertBookingEvent(
     appointmentId: string
     event: string
     payload: Record<string, unknown>
+    /** Por defecto lo pone la base (now()); el controlador pasa su reloj. */
+    createdAtIso?: string
   },
 ): Promise<void> {
   await db.from('booking_events').insert({
@@ -724,7 +726,57 @@ export async function insertBookingEvent(
     event: args.event,
     actor: 'bot',
     payload: args.payload,
+    ...(args.createdAtIso ? { created_at: args.createdAtIso } : {}),
   })
+}
+
+/**
+ * ¿Ya hay un evento de esta clase para la cita desde `sinceIso`?
+ * Sirve para no repetir avisos cuando el cliente toca dos veces seguidas.
+ * Si la lectura falla devuelve false (mejor un aviso de más que ninguno).
+ */
+export async function hasRecentBookingEvent(
+  db: SupabaseClient,
+  args: {
+    accountId: string
+    appointmentId: string
+    events: string[]
+    sinceIso: string
+  },
+): Promise<boolean> {
+  const { data, error } = await db
+    .from('booking_events')
+    .select('id')
+    .eq('account_id', args.accountId)
+    .eq('appointment_id', args.appointmentId)
+    .in('event', args.events)
+    .gte('created_at', args.sinceIso)
+    .limit(1)
+  if (error) return false
+  return Array.isArray(data) && data.length > 0
+}
+
+/**
+ * Quién tiene el hilo: un agente asignado o la IA en pausa significan que
+ * un humano ya es dueño (misma regla que el dispatcher).
+ */
+export async function loadConversationOwnership(
+  db: SupabaseClient,
+  accountId: string,
+  conversationId: string,
+): Promise<{ assigneeId: string | null; humanOwned: boolean }> {
+  const { data } = await db
+    .from('conversations')
+    .select('assigned_agent_id, ai_autoreply_disabled')
+    .eq('id', conversationId)
+    .eq('account_id', accountId)
+    .maybeSingle()
+  const row = (data as Record<string, unknown> | null) ?? null
+  const assigneeId = (row?.assigned_agent_id as string | null | undefined) ?? null
+  return {
+    assigneeId,
+    humanOwned: Boolean(assigneeId || row?.ai_autoreply_disabled),
+  }
 }
 
 // ------------------------------------------------------------

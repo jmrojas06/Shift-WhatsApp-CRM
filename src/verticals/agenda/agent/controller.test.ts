@@ -2056,6 +2056,8 @@ describe('límites de Meta en UTF-16', () => {
 })
 
 describe('pieza reprogramar/cancelar apagada', () => {
+  const HUMAN = 'user-human'
+
   function offDb() {
     const db = makeFakeDb(baseSeed())
     setSettings(db, { allow_reschedule: false })
@@ -2063,13 +2065,22 @@ describe('pieza reprogramar/cancelar apagada', () => {
     return db
   }
 
-  it('el menú de gestión solo ofrece agendar otra vez', async () => {
+  const changeEvents = (db: FakeDb) =>
+    db._tables.booking_events.filter(
+      (e) => e.event === 'reschedule_requested' || e.event === 'cancel_requested',
+    )
+
+  const notifiedUsers = (db: FakeDb) => db._tables.notifications.map((n) => n.user_id)
+
+  it('el menú de gestión solo ofrece agendar otra vez y explica cómo cambiar', async () => {
     const db = offDb()
     const rec = makeRecorder()
 
     await send(db, rec, { text: 'hola' })
 
     expect(optionIds(last(rec))).toEqual(['act:new'])
+    expect(last(rec).bodyText).toContain('asesor')
+    expect(last(rec).bodyText).toContain('cita')
   })
 
   it('con la pieza prendida el menú sigue ofreciendo las tres opciones', async () => {
@@ -2080,11 +2091,26 @@ describe('pieza reprogramar/cancelar apagada', () => {
     await send(db, rec, { text: 'hola' })
 
     expect(optionIds(last(rec))).toEqual(['act:new', 'act:reschedule', 'act:cancel'])
+    expect(last(rec).bodyText).not.toContain('asesor')
   })
 
-  it.each(['rem:reschedule', 'rem:cancel'])(
-    'el tap %s pasa a un humano: un solo mensaje, bot en pausa, aviso y cita intacta',
-    async (replyId) => {
+  it('el menú sin cambios usa las palabras del negocio', async () => {
+    const db = offDb()
+    setSettings(db, { labels: { cita: 'turno', citas: 'turnos' } })
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'turno' })
+
+    expect(last(rec).bodyText).toContain('tu turno')
+    expect(last(rec).bodyText).not.toContain('cita')
+  })
+
+  it.each([
+    ['rem:reschedule', 'reschedule_requested'],
+    ['rem:cancel', 'cancel_requested'],
+  ])(
+    'el tap %s pasa a un humano: un solo mensaje, bot en pausa, aviso al dueño y cita intacta',
+    async (replyId, event) => {
       const db = offDb()
       const rec = makeRecorder()
 
@@ -2095,27 +2121,96 @@ describe('pieza reprogramar/cancelar apagada', () => {
       expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.changesByHuman)
       expect(db._tables.booking_appointments[0].status).toBe('confirmed')
       expect(db._tables.booking_sessions).toHaveLength(0)
-      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
-      expect(db._tables.notifications.some((n) => n.user_id === HANDOFF_AGENT)).toBe(true)
+      const conv = db._tables.conversations[0]
+      expect(conv.ai_autoreply_disabled).toBe(true)
+      expect(conv.assigned_agent_id).toBe(HANDOFF_AGENT)
+      expect(String(conv.ai_handoff_summary)).toContain(
+        replyId === 'rem:cancel' ? 'cancelar' : 'reprogramar',
+      )
+      expect(changeEvents(db).map((e) => e.event)).toEqual([event])
+      // Al agente asignado lo avisa el trigger 027; al dueño, el bot.
+      expect(notifiedUsers(db)).toEqual([OWNER])
       expect(
-        db._tables.booking_events.some((e) => e.event === 'reschedule_requested' || e.event === 'cancel_requested'),
+        db._tables.contact_tags.some(
+          (ct) => ct.contact_id === CONTACT && ct.tag_id === TAG_HUMANO,
+        ),
       ).toBe(true)
     },
   )
 
-  it('con un humano a cargo también responde una sola vez con el texto de cambios', async () => {
+  it('con un humano a cargo no le quita el hilo: responde una vez y avisa a asignado y dueño', async () => {
     const db = offDb()
-    db._tables.conversations[0].assigned_agent_id = HANDOFF_AGENT
+    db._tables.conversations[0].assigned_agent_id = HUMAN
     const rec = makeRecorder()
 
     await sendHuman(db, rec, { replyId: 'rem:reschedule' })
 
+    const conv = db._tables.conversations[0]
+    expect(conv.assigned_agent_id).toBe(HUMAN)
+    expect(conv.ai_handoff_summary ?? null).toBeNull()
+    expect(conv.ai_autoreply_disabled).toBe(false)
     expect(rec.calls).toHaveLength(1)
     expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.changesByHuman)
+    expect([...notifiedUsers(db)].sort()).toEqual([HUMAN, OWNER].sort())
+    expect(db._tables.contact_tags ?? []).toHaveLength(0)
+  })
+
+  it('si el asignado es el dueño, se le avisa una sola vez', async () => {
+    const db = offDb()
+    db._tables.conversations[0].assigned_agent_id = OWNER
+    const rec = makeRecorder()
+
+    await sendHuman(db, rec, { replyId: 'rem:reschedule' })
+
+    expect(notifiedUsers(db)).toEqual([OWNER])
+    expect(rec.calls).toHaveLength(1)
+  })
+
+  it('un humano a cargo no pierde el hilo ni desde un menú viejo', async () => {
+    const db = makeFakeDb(baseSeed())
+    db._tables.booking_appointments.push(appointmentRow())
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'hola' })
+    setSettings(db, { allow_reschedule: false })
+    db._tables.conversations[0].assigned_agent_id = HUMAN
+    rec.calls.length = 0
+
+    await send(db, rec, { replyId: 'act:cancel' })
+
+    const conv = db._tables.conversations[0]
+    expect(conv.assigned_agent_id).toBe(HUMAN)
+    expect(conv.ai_handoff_summary ?? null).toBeNull()
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.changesByHuman)
+    expect(rec.calls).toHaveLength(1)
+  })
+
+  it('dos taps seguidos: un solo mensaje, un solo evento, un solo aviso', async () => {
+    const db = offDb()
+    const rec = makeRecorder()
+
+    await send(db, rec, { replyId: 'rem:reschedule' })
+    await send(db, rec, { replyId: 'rem:reschedule' })
+
+    expect(rec.calls).toHaveLength(1)
+    expect(changeEvents(db)).toHaveLength(1)
+    expect(db._tables.notifications).toHaveLength(1)
+  })
+
+  it('pasados 2 minutos un nuevo tap vuelve a avisar', async () => {
+    const db = offDb()
+    const rec = makeRecorder()
+
+    await send(db, rec, { replyId: 'rem:reschedule' })
+    await send(db, rec, { replyId: 'rem:reschedule' }, new Date(NOW.getTime() + 3 * 60_000))
+
+    expect(rec.calls).toHaveLength(2)
+    expect(changeEvents(db)).toHaveLength(2)
   })
 
   it('"Confirmar" del recordatorio sigue funcionando', async () => {
     const db = offDb()
+    db._tables.booking_appointments[0].status = 'pending'
+    db._tables.booking_appointments[0].confirmed_at = null
     const rec = makeRecorder()
 
     await send(db, rec, { replyId: 'rem:confirm' })
@@ -2124,27 +2219,28 @@ describe('pieza reprogramar/cancelar apagada', () => {
     expect(last(rec).bodyText).toContain('Queda confirmado')
   })
 
-  it.each(['act:reschedule', 'act:cancel'])(
-    'un menú viejo con %s no sirve de atajo: pasa a un humano',
-    async (replyId) => {
-      const db = makeFakeDb(baseSeed())
-      db._tables.booking_appointments.push(appointmentRow())
-      const rec = makeRecorder()
-      await send(db, rec, { text: 'hola' }) // menú con las tres opciones
-      setSettings(db, { allow_reschedule: false })
-      rec.calls.length = 0
+  it.each([
+    ['act:reschedule', 'reschedule_requested'],
+    ['act:cancel', 'cancel_requested'],
+  ])('un menú viejo con %s no sirve de atajo: pasa a un humano', async (replyId, event) => {
+    const db = makeFakeDb(baseSeed())
+    db._tables.booking_appointments.push(appointmentRow())
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'hola' }) // menú con las tres opciones
+    setSettings(db, { allow_reschedule: false })
+    rec.calls.length = 0
 
-      await send(db, rec, { replyId })
+    await send(db, rec, { replyId })
 
-      expect(rec.calls).toHaveLength(1)
-      expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.changesByHuman)
-      expect(db._tables.booking_appointments[0].status).toBe('confirmed')
-      expect(sessionRow(db)).toBeUndefined()
-      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
-    },
-  )
+    expect(rec.calls).toHaveLength(1)
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.changesByHuman)
+    expect(db._tables.booking_appointments[0].status).toBe('confirmed')
+    expect(sessionRow(db)).toBeUndefined()
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(changeEvents(db).map((e) => e.event)).toEqual([event])
+  })
 
-  it('una confirmación de cancelación abierta antes de apagar la pieza no cancela', async () => {
+  it('una confirmación de cancelación abierta antes de apagar la pieza no cancela y pasa a un humano', async () => {
     const db = makeFakeDb(baseSeed())
     db._tables.booking_appointments.push(appointmentRow())
     const rec = makeRecorder()
@@ -2157,5 +2253,111 @@ describe('pieza reprogramar/cancelar apagada', () => {
     expect(db._tables.booking_appointments[0].status).toBe('confirmed')
     expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.changesByHuman)
     expect(rec.calls).toHaveLength(1)
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(notifiedUsers(db)).toEqual([OWNER])
+    expect(changeEvents(db).map((e) => e.event)).toEqual(['cancel_requested'])
+  })
+
+  it('si la cita ya no está activa responde que ya no está activo, sin pasar a un humano', async () => {
+    const db = makeFakeDb(baseSeed())
+    db._tables.booking_appointments.push(appointmentRow())
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'hola' })
+    setSettings(db, { allow_reschedule: false })
+    db._tables.booking_appointments[0].status = 'cancelled'
+    rec.calls.length = 0
+
+    await send(db, rec, { replyId: 'act:cancel' })
+
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.managedAppointmentGone)
+    expect(rec.calls).toHaveLength(1)
+    expect(sessionRow(db)).toBeUndefined()
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    expect(changeEvents(db)).toHaveLength(0)
+  })
+
+  it('una sesión de reprogramación abierta cuando se apaga la pieza pasa a un humano', async () => {
+    const db = makeFakeDb(baseSeed())
+    db._tables.booking_appointments.push(appointmentRow())
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: 'rem:reschedule' }) // pick_day en modo reschedule
+    setSettings(db, { allow_reschedule: false })
+    rec.calls.length = 0
+
+    await send(db, rec, { replyId: dayId(MONDAY) })
+
+    expect(rec.calls).toHaveLength(1)
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.changesByHuman)
+    expect(changeEvents(db).map((e) => e.event)).toEqual(['reschedule_requested'])
+    expect(db._tables.booking_appointments[0].status).toBe('confirmed')
+    expect(sessionRow(db)).toBeUndefined()
+  })
+
+  it('en el resumen de una reprogramación, "Cancelar" solo descarta el cambio (no es una cancelación)', async () => {
+    const db = makeFakeDb(baseSeed())
+    db._tables.booking_appointments.push(appointmentRow())
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: 'rem:reschedule' })
+    await send(db, rec, { replyId: dayId(MONDAY) })
+    await send(db, rec, { replyId: slotId('2026-10-19T16:30:00.000Z') })
+    setSettings(db, { allow_reschedule: false })
+    rec.calls.length = 0
+
+    await send(db, rec, { replyId: 'act:cancel' })
+
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.cancelDeclined)
+    expect(rec.calls).toHaveLength(1)
+    expect(db._tables.booking_appointments[0].status).toBe('confirmed')
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    expect(changeEvents(db)).toHaveLength(0)
+    expect(sessionRow(db)).toBeUndefined()
+  })
+
+  describe('una cita nueva con la pieza apagada', () => {
+    async function toSummary() {
+      const db = makeFakeDb(baseSeed())
+      setSettings(db, { allow_reschedule: false, choose_staff: false })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'hola' })
+      await send(db, rec, { replyId: svcId(SERVICE_CORTE) })
+      await send(db, rec, { replyId: dayId(MONDAY) })
+      await send(db, rec, { replyId: slotId('2026-10-19T16:30:00.000Z') })
+      return { db, rec }
+    }
+
+    it('"Cambiar hora" del resumen vuelve a elegir día', async () => {
+      const { db, rec } = await toSummary()
+
+      await send(db, rec, { replyId: 'act:reschedule' })
+
+      expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.dayMenuBody)
+      expect(changeEvents(db)).toHaveLength(0)
+    })
+
+    it('"Cancelar" del resumen descarta el borrador', async () => {
+      const { db, rec } = await toSummary()
+
+      await send(db, rec, { replyId: 'act:cancel' })
+
+      expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.draftCancelled)
+      expect(changeEvents(db)).toHaveLength(0)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    })
+  })
+
+  it('si pausar el bot falla, el cliente no recibe nada y la sesión queda abierta', async () => {
+    const db = makeFakeDb(baseSeed())
+    db._tables.booking_appointments.push(appointmentRow())
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'hola' })
+    setSettings(db, { allow_reschedule: false })
+    rec.calls.length = 0
+    db._failNext('update', 'conversations', { message: 'timeout' })
+
+    await expect(send(db, rec, { replyId: 'act:cancel' })).rejects.toThrow()
+
+    expect(rec.calls).toHaveLength(0)
+    expect(sessionRow(db)).toBeDefined()
+    expect(changeEvents(db)).toHaveLength(0)
   })
 })

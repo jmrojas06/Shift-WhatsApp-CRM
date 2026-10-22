@@ -426,6 +426,9 @@ export function buildAgentTexts(l: AgendaLabels) {
     // ----------------------------------------------------------
     manageMenuBody: (a: { service: string; date: string; time: string }) =>
       `Vi que ya tienes algo agendado:\n\n📌 ${a.service}\n📅 ${a.date}\n🕐 ${a.time}\n\n¿Qué quieres hacer?`,
+    /** Pieza "reprogramar/cancelar" apagada: solo se puede agendar otra vez. */
+    manageMenuBodyNoChanges: (a: { service: string; date: string; time: string }) =>
+      `Vi que ya tienes algo agendado:\n\n📌 ${a.service}\n📅 ${a.date}\n🕐 ${a.time}\n\nPara cambiar o cancelar tu ${l.cita}, escríbeme "asesor" y te ayuda una persona. ¿O quieres agendar otra vez?`,
     // Fijo y neutro en género: "Nueva turno" / "Nuevo cita" no existen.
     manageNew: 'Agendar otra vez',
     manageReschedule: 'Reprogramar',
@@ -447,7 +450,7 @@ export function buildAgentTexts(l: AgendaLabels) {
     serviceFallback: `tu ${l.servicio}`,
     /** Pieza "reprogramar/cancelar" apagada: lo atiende una persona. */
     changesByHuman:
-      'Para cambiar o cancelar, te ayuda un asesor por este chat. Ya le avisé; mientras tanto todo sigue igual. 🙌',
+      `Para cambiar o cancelar tu ${l.cita} te ayuda un asesor por este chat. Ya le avisé; mientras tanto tu ${l.cita} sigue igual. 🙌`,
 
     // ----------------------------------------------------------
     // Recordatorios (Fase 3)
@@ -486,8 +489,9 @@ export function buildAgentTexts(l: AgendaLabels) {
     handoffNotificationBody: (name: string) =>
       `${name} pidió hablar con una persona desde el flujo de ${l.citas}.`,
     /** Pieza "reprogramar/cancelar" apagada: el cliente quiere cambiar su cita. */
-    changeRequestNote: `El cliente quiere cambiar o cancelar su ${l.cita} y esa opción está apagada (bot en pausa).`,
-    changeRequestNotificationTitle: 'Cliente quiere cambiar su cita (Agenda)',
+    changeRequestNote: (a: { action: 'reschedule' | 'cancel'; date: string; time: string }) =>
+      `El cliente quiere ${a.action === 'cancel' ? 'cancelar' : 'reprogramar'} su ${l.cita} del ${a.date} a las ${a.time}, pero esa opción está apagada (bot en pausa).`,
+    changeRequestNotificationTitle: `Cliente quiere cambiar su ${l.cita} (Agenda)`,
     changeRequestNotificationBody: (a: {
       who: string
       action: 'reschedule' | 'cancel'

@@ -57,7 +57,7 @@ export async function sendAgendaReminder(
     try {
       await sender.sendButtons({
         bodyText: buildReminderBody(delivery),
-        buttons: reminderButtons(),
+        buttons: reminderButtons(delivery.allowReschedule),
       })
     } catch (err) {
       if (!(err instanceof MessagePersistAfterSendError)) throw err

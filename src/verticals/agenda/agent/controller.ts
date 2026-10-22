@@ -54,7 +54,9 @@ import {
   loadAppointment,
   loadBotSettings,
   loadContact,
+  hasRecentBookingEvent,
   loadConversationAssignee,
+  loadConversationOwnership,
   loadHandoffAgentId,
   loadInboundMessage,
   loadStaffName,
@@ -376,7 +378,6 @@ async function handleReminderTap(
     await handoffChangeRequest(dialog, appt, action, {
       via: 'recordatorio',
       sessionId: session?.id ?? null,
-      pauseBot: !humanOwned,
     })
     return
   }
@@ -512,31 +513,25 @@ async function handleChoice(
 ): Promise<void> {
   const parsed = parseOptionId(choice)
 
-  // Pieza "reprogramar/cancelar" apagada: un menú o una confirmación
-  // abiertos antes de apagarla no son un atajo para saltársela.
+  // Pieza "reprogramar/cancelar" apagada: un menú, una confirmación o
+  // una reprogramación abiertos antes de apagarla no son un atajo.
+  // Excepción: en el resumen de una reprogramación, "Cancelar" solo
+  // descarta el cambio y deja la cita como está (cancelDeclined).
   if (!dialog.settings.toggles.allowReschedule) {
+    const value = parsed?.kind === 'act' ? parsed.value : null
+    const dropsRescheduleDraft =
+      state.step === 'summary' && state.mode === 'reschedule' && value === 'cancel'
     const blocked =
-      state.mode === 'reschedule' ||
-      (state.step === 'manage_menu' &&
-        parsed?.kind === 'act' &&
-        (parsed.value === 'reschedule' || parsed.value === 'cancel')) ||
-      (state.step === 'manage_cancel_confirm' &&
-        parsed?.kind === 'act' &&
-        parsed.value === 'cancel_yes')
+      !dropsRescheduleDraft &&
+      (state.mode === 'reschedule' ||
+        (state.step === 'manage_menu' && (value === 'reschedule' || value === 'cancel')) ||
+        (state.step === 'manage_cancel_confirm' && value === 'cancel_yes'))
     if (blocked) {
       const kind =
-        parsed?.kind === 'act' && parsed.value === 'cancel' ||
-        parsed?.kind === 'act' && parsed.value === 'cancel_yes'
+        state.mode !== 'reschedule' && (value === 'cancel' || value === 'cancel_yes')
           ? 'cancel'
           : 'reschedule'
-      const appt =
-        (await loadManagedAppointment(dialog, state)) ??
-        (await findNextAppointment(
-          dialog.db,
-          dialog.accountId,
-          dialog.contactId,
-          dialog.nowIso,
-        ))
+      const appt = await loadManagedAppointment(dialog, state)
       if (!appt) {
         await dialog.sender.sendText({
           text: dialog.texts.managedAppointmentGone,
@@ -552,7 +547,6 @@ async function handleChoice(
       await handoffChangeRequest(dialog, appt, kind, {
         via: 'menu',
         sessionId,
-        pauseBot: true,
       })
       return
     }
@@ -1224,8 +1218,11 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
             ]
           : []),
       ]
+      const menuBody = dialog.settings.toggles.allowReschedule
+        ? dialog.texts.manageMenuBody
+        : dialog.texts.manageMenuBodyNoChanges
       await sendButtons(dialog, {
-        bodyText: dialog.texts.manageMenuBody({
+        bodyText: menuBody({
           service: service?.name ?? dialog.texts.serviceFallback,
           date: formatLongDate(parts.dateKey),
           time: formatTimeLabel(parts),
@@ -1638,75 +1635,32 @@ async function handoffRescheduleRequest(
   })
 }
 
+/** Ventana en la que un segundo tap sobre la misma cita no repite el aviso. */
+const CHANGE_REQUEST_DEDUPE_MS = 2 * 60 * 1000
+
 /**
  * Pieza "reprogramar/cancelar" apagada: el cliente pidió cambiar su
- * cita y eso lo atiende una persona. Pausa el bot (salvo que un humano
- * ya sea dueño del hilo), avisa al agente asignado o al dueño, deja
- * rastro y cierra la sesión. El cliente recibe UN solo mensaje, al
- * final: si pausar falla, el error sube y no se promete un asesor.
+ * cita y eso lo atiende una persona.
+ *
+ *   - Idempotente: si ya hay un aviso de esta cita en los últimos 2
+ *     minutos (doble tap), no avisa, no registra y no responde otra vez.
+ *   - Nunca le quita el hilo a un humano: solo pausa el bot (y asigna
+ *     al agente de handoff, etiqueta y avisa) si nadie es dueño del chat.
+ *   - Avisos como en performHandoff: al agente que asignamos lo avisa el
+ *     trigger de asignación (027); el dueño recibe el suyo aquí; si ya
+ *     había un asignado, se le avisa a él. Nadie recibe dos.
+ *   - El mensaje al cliente (UN solo `changesByHuman`) va al final: si
+ *     pausar falla, el error sube, la sesión sigue abierta y no se
+ *     promete un asesor.
  */
 async function handoffChangeRequest(
   dialog: Dialog,
   appt: AppointmentInfo,
   kind: 'reschedule' | 'cancel',
-  opts: { via: 'recordatorio' | 'menu'; sessionId: string | null; pauseBot: boolean },
+  opts: { via: 'recordatorio' | 'menu'; sessionId: string | null },
 ): Promise<void> {
-  if (opts.pauseBot) {
-    await markConversationHandoff(dialog.db, {
-      accountId: dialog.accountId,
-      conversationId: dialog.conversationId,
-      note: dialog.texts.changeRequestNote,
-      agentId: await loadHandoffAgentId(dialog.db, dialog.accountId),
-    })
-  }
-
-  const assignee = await loadConversationAssignee(
-    dialog.db,
-    dialog.accountId,
-    dialog.conversationId,
-  )
-  const notifyUserId = assignee ?? dialog.account?.ownerUserId ?? null
-  const parts = zonedParts(appt.startsAt)
-
-  if (notifyUserId) {
-    const contact = await loadContact(
-      dialog.db,
-      dialog.accountId,
-      dialog.contactId,
-    )
-    const who = contact?.name?.trim() || contact?.phone || 'Un cliente'
-    await bestEffort('aviso de cambio de cita al equipo', () =>
-      insertNotification(dialog.db, {
-        accountId: dialog.accountId,
-        userId: notifyUserId,
-        conversationId: dialog.conversationId,
-        contactId: dialog.contactId,
-        title: dialog.texts.changeRequestNotificationTitle,
-        body: dialog.texts.changeRequestNotificationBody({
-          who,
-          action: kind,
-          date: formatLongDate(parts.dateKey),
-          time: formatTimeLabel(parts),
-        }),
-      }),
-    )
-  }
-
-  await bestEffort('evento de cambio de cita pedido', () =>
-    insertBookingEvent(dialog.db, {
-      accountId: dialog.accountId,
-      appointmentId: appt.id,
-      event: kind === 'cancel' ? 'cancel_requested' : 'reschedule_requested',
-      payload: {
-        via: opts.via,
-        handled_by: 'humano',
-        reason: 'allow_reschedule_off',
-        notified_user_id: notifyUserId,
-      },
-    }),
-  )
-
-  if (opts.sessionId) {
+  const closeOwnSession = async () => {
+    if (!opts.sessionId) return
     await closeSession(dialog.db, {
       id: opts.sessionId,
       accountId: dialog.accountId,
@@ -1715,6 +1669,94 @@ async function handoffChangeRequest(
     })
   }
 
+  const alreadyAsked = await hasRecentBookingEvent(dialog.db, {
+    accountId: dialog.accountId,
+    appointmentId: appt.id,
+    events: ['reschedule_requested', 'cancel_requested'],
+    sinceIso: new Date(dialog.now.getTime() - CHANGE_REQUEST_DEDUPE_MS).toISOString(),
+  })
+  if (alreadyAsked) {
+    await closeOwnSession()
+    return
+  }
+
+  const parts = zonedParts(appt.startsAt)
+  const date = formatLongDate(parts.dateKey)
+  const time = formatTimeLabel(parts)
+
+  const { assigneeId, humanOwned } = await loadConversationOwnership(
+    dialog.db,
+    dialog.accountId,
+    dialog.conversationId,
+  )
+
+  // Quién queda con el hilo y a quién avisa el bot (sin repetidos).
+  const owner = dialog.account?.ownerUserId ?? null
+  const notify = new Set<string>()
+  if (!humanOwned) {
+    const agentId = await loadHandoffAgentId(dialog.db, dialog.accountId)
+    await markConversationHandoff(dialog.db, {
+      accountId: dialog.accountId,
+      conversationId: dialog.conversationId,
+      note: dialog.texts.changeRequestNote({ action: kind, date, time }),
+      agentId,
+    })
+    await bestEffort('etiqueta quiere-humano', () =>
+      applyContactTag(dialog.db, {
+        accountId: dialog.accountId,
+        contactId: dialog.contactId,
+        tagName: 'quiere-humano',
+        userId: dialog.configOwnerUserId,
+      }),
+    )
+    if (owner && owner !== agentId) notify.add(owner)
+  } else {
+    if (assigneeId) notify.add(assigneeId)
+    if (owner) notify.add(owner)
+  }
+
+  if (notify.size) {
+    const contact = await loadContact(
+      dialog.db,
+      dialog.accountId,
+      dialog.contactId,
+    )
+    const who = contact?.name?.trim() || contact?.phone || 'Un cliente'
+    for (const userId of notify) {
+      await bestEffort('aviso de cambio de cita al equipo', () =>
+        insertNotification(dialog.db, {
+          accountId: dialog.accountId,
+          userId,
+          conversationId: dialog.conversationId,
+          contactId: dialog.contactId,
+          title: dialog.texts.changeRequestNotificationTitle,
+          body: dialog.texts.changeRequestNotificationBody({
+            who,
+            action: kind,
+            date,
+            time,
+          }),
+        }),
+      )
+    }
+  }
+
+  await bestEffort('evento de cambio de cita pedido', () =>
+    insertBookingEvent(dialog.db, {
+      accountId: dialog.accountId,
+      appointmentId: appt.id,
+      event: kind === 'cancel' ? 'cancel_requested' : 'reschedule_requested',
+      createdAtIso: dialog.nowIso,
+      payload: {
+        via: opts.via,
+        handled_by: 'humano',
+        reason: 'allow_reschedule_off',
+        notified_user_ids: [...notify],
+      },
+    }),
+  )
+
+  await closeOwnSession()
   await dialog.sender.sendText({ text: dialog.texts.changesByHuman })
 }
 
