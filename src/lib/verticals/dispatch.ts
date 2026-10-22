@@ -1,4 +1,4 @@
-import { barberiaInboundHandler } from '@/verticals/barberia/agent'
+import { agendaInboundHandler } from '@/verticals/agenda/agent'
 
 import { supabaseAdmin } from './admin-client'
 import { getVerticalManifest } from './registry'
@@ -15,10 +15,10 @@ import type {
  * Deliberately separate from the manifest registry (`./registry.ts`):
  * manifests are imported by client components, handlers pull in
  * service-role helpers and DB writers that must never reach the client
- * bundle. Phase 2 plugs the barbería booking controller in here.
+ * bundle. Phase 2 plugs the agenda booking controller in here.
  */
 const VERTICAL_HANDLERS: Partial<Record<VerticalKey, VerticalInboundHandler>> =
-  { barberia: barberiaInboundHandler }
+  { agenda: agendaInboundHandler }
 
 interface DispatchArgs {
   accountId: string

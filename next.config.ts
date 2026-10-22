@@ -130,6 +130,13 @@ const nextConfig: NextConfig = {
    * they apply to every response regardless of which cache rule
    * matched.
    */
+  async redirects() {
+    return [
+      { source: "/barberia", destination: "/agenda", permanent: true },
+      { source: "/barberia/:path*", destination: "/agenda/:path*", permanent: true },
+    ];
+  },
+
   async headers() {
     return [
       {

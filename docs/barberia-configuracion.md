@@ -46,8 +46,8 @@ qué garantiza el servidor y cómo probarlo.
   citas, horarios y bloqueos se guardan en UTC y se capturan/muestran
   en hora de Bogotá.
   - **Limitación conocida:** el producto asume `America/Bogota` para
-    TODAS las cuentas (constante `BARBERIA_TZ` en
-    `src/verticals/barberia/agent/time.ts`: disponibilidad, menús del
+    TODAS las cuentas (constante `AGENDA_TZ` en
+    `src/verticals/agenda/agent/time.ts`: disponibilidad, menús del
     bot, agenda y recordatorios). Una barbería en otra zona (España,
     EE. UU.) vería las horas corridas. Soportar varias zonas horarias
     (p. ej. una columna `timezone` en `booking_settings`) es un
@@ -135,17 +135,17 @@ Todas las rutas exigen **admin+** y filtran por la cuenta del usuario:
 | Método y ruta | Qué hace |
 | --- | --- |
 | `PATCH /api/account` | Renombrar la cuenta (ruta core) |
-| `PATCH /api/verticals/barberia/config` | Dirección, moneda, 2 h y textos |
-| `POST /api/verticals/barberia/services` | Crear servicio |
-| `PUT /api/verticals/barberia/services` | Reordenar (`{ ids }`) |
-| `PATCH /api/verticals/barberia/services/[id]` | Editar/activar/desactivar |
-| `POST /api/verticals/barberia/staff` | Crear barbero |
-| `PUT /api/verticals/barberia/staff` | Reordenar (`{ ids }`) |
-| `PATCH /api/verticals/barberia/staff/[id]` | Editar/activar/desactivar |
-| `PUT /api/verticals/barberia/staff/[id]/services` | Servicios que atiende (`{ service_ids }`) |
-| `PUT /api/verticals/barberia/staff/[id]/hours` | Horario semanal (`{ hours }`) |
-| `POST /api/verticals/barberia/time-off` | Crear bloqueo |
-| `DELETE /api/verticals/barberia/time-off/[id]` | Eliminar bloqueo |
+| `PATCH /api/verticals/agenda/config` | Dirección, moneda, 2 h y textos |
+| `POST /api/verticals/agenda/services` | Crear servicio |
+| `PUT /api/verticals/agenda/services` | Reordenar (`{ ids }`) |
+| `PATCH /api/verticals/agenda/services/[id]` | Editar/activar/desactivar |
+| `POST /api/verticals/agenda/staff` | Crear barbero |
+| `PUT /api/verticals/agenda/staff` | Reordenar (`{ ids }`) |
+| `PATCH /api/verticals/agenda/staff/[id]` | Editar/activar/desactivar |
+| `PUT /api/verticals/agenda/staff/[id]/services` | Servicios que atiende (`{ service_ids }`) |
+| `PUT /api/verticals/agenda/staff/[id]/hours` | Horario semanal (`{ hours }`) |
+| `POST /api/verticals/agenda/time-off` | Crear bloqueo |
+| `DELETE /api/verticals/agenda/time-off/[id]` | Eliminar bloqueo |
 
 Códigos: **400** validación (mensaje en es-CO listo para mostrar),
 **403** rol insuficiente, **404** id inexistente o de otra cuenta,

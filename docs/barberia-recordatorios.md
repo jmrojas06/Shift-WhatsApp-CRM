@@ -71,7 +71,7 @@ Crear en WhatsApp Manager → *Plantillas de mensaje* → **Crear plantilla**:
 
 > El nombre y el idioma deben coincidir exactamente con los de
 > `BARBERIA_REMINDER_TEMPLATE` en
-> `src/verticals/barberia/agent/reminders.ts`. Si hace falta otro idioma
+> `src/verticals/agenda/agent/reminders.ts`. Si hace falta otro idioma
 > o nombre, se cambia en ambos sitios.
 
 ## Activar la señal de 2 h
@@ -95,7 +95,7 @@ Para desactivarla, el mismo upsert con `false`.
 
 ## Programar el runner
 
-El endpoint es `GET /api/verticals/barberia/reminders/run` y se protege
+El endpoint es `GET /api/verticals/agenda/reminders/run` y se protege
 contra `AUTOMATION_CRON_SECRET` (el mismo secreto que usan los crons de
 automatizaciones). Acepta el secreto de dos formas:
 
@@ -127,7 +127,7 @@ header `x-cron-secret`. Además avisa por correo si la ejecución falla —
 
 ```bash
 curl -s -H "x-cron-secret: $AUTOMATION_CRON_SECRET" \
-  https://<tu-dominio>/api/verticals/barberia/reminders/run
+  https://<tu-dominio>/api/verticals/agenda/reminders/run
 ```
 
 ### Alertas de fallos

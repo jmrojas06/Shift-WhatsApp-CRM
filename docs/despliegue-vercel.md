@@ -81,7 +81,7 @@ exporta un backup (`docs/operacion-datos-y-secretos.md`).
 {
   "crons": [
     {
-      "path": "/api/verticals/barberia/reminders/run",
+      "path": "/api/verticals/agenda/reminders/run",
       "schedule": "*/10 * * * *"
     }
   ]
@@ -95,7 +95,7 @@ exporta un backup (`docs/operacion-datos-y-secretos.md`).
 
 ```bash
 curl -s -H "x-cron-secret: $AUTOMATION_CRON_SECRET" \
-  https://<tu-dominio>/api/verticals/barberia/reminders/run
+  https://<tu-dominio>/api/verticals/agenda/reminders/run
 ```
 
 - **Alternativa/respaldo:** pinger externo (cron-job.org u otro) cada
@@ -167,7 +167,7 @@ detalle del contenedor está en `docs/docker.md`.
    script que lea el secreto):
 
    ```cron
-   */10 * * * * curl -fsS -H "x-cron-secret: EL_SECRETO" https://crm.tu-dominio.com/api/verticals/barberia/reminders/run
+   */10 * * * * curl -fsS -H "x-cron-secret: EL_SECRETO" https://crm.tu-dominio.com/api/verticals/agenda/reminders/run
    ```
 
 5. Logs: `docker compose logs -f app`. El healthcheck del contenedor ya
