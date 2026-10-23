@@ -10,6 +10,7 @@
 
 import {
   ORDER_LIMITS,
+  hasCentPrecision,
   orderTotals,
   toCents,
   validateOrderCreate,
@@ -146,11 +147,12 @@ export function formatAmountInput(value: number): string {
 /**
  * Al salir de un campo de dinero se reescribe tal como se entendió
  * ('1,234.56' → '1.234,56'), para que la persona vea el valor real antes
- * de guardar. Vacío o ilegible se deja igual: el error lo da el dominio.
+ * de guardar. Vacío, ilegible o con más de 2 decimales ('0,125') se deja
+ * igual: nunca se redondea a escondidas; el error lo da el dominio.
  */
 export function normalizeAmountField(raw: string): string {
   const value = parseAmountInput(raw)
-  if (value === null || !Number.isFinite(value)) return raw
+  if (value === null || !Number.isFinite(value) || !hasCentPrecision(value)) return raw
   return formatAmountInput(value)
 }
 

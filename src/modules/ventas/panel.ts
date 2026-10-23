@@ -450,3 +450,21 @@ export function actionOutcome(res: ActionResponse, opts: { inDialog: boolean }):
       : { tone: 'success', text: notice ? `${done} ${notice.text}` : done }
   return { ok: true, order, closeDialog: true, reload: false, feedback: { kind: 'notice', result } }
 }
+
+// ------------------------------------------------------------
+// URL de /ventas
+// ------------------------------------------------------------
+
+/**
+ * /ventas sin un parámetro (por ejemplo `pedido` al cerrar el detalle),
+ * conservando los demás (`q`…).
+ */
+export function ventasUrlWithout(
+  params: string | URLSearchParams | { toString(): string },
+  key: string,
+): string {
+  const next = new URLSearchParams(params.toString())
+  next.delete(key)
+  const query = next.toString()
+  return query ? `/ventas?${query}` : '/ventas'
+}

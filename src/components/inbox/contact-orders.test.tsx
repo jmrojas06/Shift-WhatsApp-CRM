@@ -33,7 +33,7 @@ vi.mock('@/lib/supabase/client', () => ({
 
 vi.mock('next-intl', () => ({ useTranslations: () => (key: string) => key }))
 
-import { ContactOrders, salesLinkForContact } from './contact-orders'
+import { ContactOrders, nextLoadState, salesLinkForContact } from './contact-orders'
 import { MobileOrdersButton } from './mobile-orders-button'
 import { VENTAS_TEXTS as T } from '@/modules/ventas/texts'
 
@@ -132,5 +132,21 @@ describe('<MobileOrdersButton />: entrada a Ventas en el celular', () => {
     authState.account = { modules: ['ventas'] }
     authState.canSendMessages = false
     expect(renderMobile()).toBe('')
+  })
+})
+
+describe('nextLoadState: refrescar sin parpadeo', () => {
+  it('la carga normal (primera vez o cambio de contacto) pasa a "cargando"', () => {
+    expect(nextLoadState('ready', false)).toBe('loading')
+    expect(nextLoadState('failed', false)).toBe('loading')
+  })
+
+  it('el refresco tras crear un pedido deja la lista que había hasta que llega la nueva', () => {
+    expect(nextLoadState('ready', true)).toBe('ready')
+  })
+
+  it('si no había lista que mostrar, un refresco sí muestra "cargando"', () => {
+    expect(nextLoadState('failed', true)).toBe('loading')
+    expect(nextLoadState('loading', true)).toBe('loading')
   })
 })

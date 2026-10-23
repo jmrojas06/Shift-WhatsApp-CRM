@@ -63,6 +63,15 @@ export function toCents(amount: number): number {
   return cents === 0 ? 0 : cents
 }
 
+/**
+ * ¿El importe cabe en centavos (máximo 2 decimales), descontando el ruido
+ * de coma flotante? Misma tolerancia que usa la validación del pedido.
+ */
+export function hasCentPrecision(amount: number): boolean {
+  const scaled = amount * 100
+  return Math.abs(scaled - Math.round(scaled)) <= Math.abs(scaled) * CENT_NOISE_RELATIVE
+}
+
 /** Centavos enteros → importe con 2 decimales. */
 export function fromCents(cents: number): number {
   const amount = cents / 100
@@ -201,8 +210,7 @@ function validateAmount(raw: unknown, subject: string): Valid<number> {
       message: `${subject} no puede pasar de ${plainAmount(ORDER_LIMITS.amountMaxCents)}.`,
     }
   }
-  const scaled = raw * 100
-  if (Math.abs(scaled - cents) > Math.abs(scaled) * CENT_NOISE_RELATIVE) {
+  if (!hasCentPrecision(raw)) {
     return { ok: false, message: `${subject} admite máximo 2 decimales.` }
   }
   return { ok: true, value: fromCents(cents) }

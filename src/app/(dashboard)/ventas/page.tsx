@@ -31,6 +31,7 @@ import type { OrderAction } from '@/modules/ventas/orders'
 import {
   actionOutcome,
   filterOrders,
+  ventasUrlWithout,
   salesSummary,
   type ActionFeedback,
   type OrderFilter,
@@ -197,8 +198,9 @@ function VentasPageInner() {
 
   const closeDetail = useCallback(() => {
     setDetailId(null)
-    // Cerrar el detalle quita `?pedido=` para que recargar no lo vuelva a abrir.
-    if (searchParams.get('pedido')) router.replace('/ventas')
+    // Cerrar el detalle quita `?pedido=` (y solo eso: `q` se queda) para
+    // que recargar no lo vuelva a abrir.
+    if (searchParams.get('pedido')) router.replace(ventasUrlWithout(searchParams, 'pedido'))
   }, [router, searchParams])
 
   /**

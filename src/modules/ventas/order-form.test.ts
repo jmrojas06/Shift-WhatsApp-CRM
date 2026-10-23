@@ -79,6 +79,18 @@ describe('formatAmountInput / normalizeAmountField: mostrar cómo se entendió',
     expect(normalizeAmountField(raw)).toBe(text)
   })
 
+  it('con más de 2 decimales no redondea: deja el texto para que el dominio avise', () => {
+    expect(normalizeAmountField('0,125')).toBe('0,125')
+    expect(normalizeAmountField('1.234,567')).toBe('1.234,567')
+    expect(normalizeAmountField('0.125')).toBe('0.125')
+    expect(normalizeAmountField('45,9999')).toBe('45,9999')
+  })
+
+  it('el ruido de coma flotante no cuenta como decimal extra', () => {
+    expect(normalizeAmountField('0,1')).toBe('0,10')
+    expect(normalizeAmountField('1234567,89')).toBe('1.234.567,89')
+  })
+
   it('vacío o ilegible se deja como está (el error lo da el dominio)', () => {
     expect(normalizeAmountField('')).toBe('')
     expect(normalizeAmountField('gratis')).toBe('gratis')

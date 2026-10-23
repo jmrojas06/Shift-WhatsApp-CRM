@@ -45,6 +45,15 @@ export interface ContactOrdersProps {
 
 type LoadState = 'loading' | 'ready' | 'failed' | 'migration'
 
+/**
+ * Estado al empezar una carga. La normal (primera vez o cambio de
+ * contacto) muestra "cargando"; el refresco silencioso tras crear un
+ * pedido deja la lista que había hasta que llega la nueva (sin parpadeo).
+ */
+export function nextLoadState(current: LoadState, silent: boolean): LoadState {
+  return silent && current === 'ready' ? 'ready' : 'loading'
+}
+
 /** Enlace a /ventas con la búsqueda puesta en el teléfono del contacto. */
 export function salesLinkForContact(phone: string | null | undefined): string {
   const q = phone?.trim()
@@ -68,10 +77,10 @@ export function ContactOrders({
   // cambia mientras carga, la respuesta vieja se descarta.
   const requestRef = useRef(0)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts: { silent?: boolean } = {}) => {
     if (!enabled || !accountId) return
     const request = ++requestRef.current
-    setState('loading')
+    setState((current) => nextLoadState(current, Boolean(opts.silent)))
     const { data, error } = await fetchPanelOrders(createClient(), accountId, {
       contactId,
       limit: CONTACT_ORDERS_LIMIT,
@@ -178,7 +187,7 @@ export function ContactOrders({
             contactName={contactName}
             conversationId={conversationId}
             currency={account?.default_currency ?? defaultCurrency}
-            onCreated={() => void load()}
+            onCreated={() => void load({ silent: true })}
           />
         )}
       </section>

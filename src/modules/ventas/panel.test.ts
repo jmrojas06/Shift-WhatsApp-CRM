@@ -6,6 +6,7 @@ import {
   SUMMARY_LIMIT,
   SUMMARY_ORDER_COLUMNS,
   actionOutcome,
+  ventasUrlWithout,
   availableOrderActions,
   isSummaryTruncated,
   filterOrders,
@@ -497,5 +498,22 @@ describe('orderNoticeLine: estado del último aviso en el pedido', () => {
 
   it('un valor raro en la base no rompe la pantalla', () => {
     expect(orderNoticeLine(order({ last_notice: 'otro' as never }))).toBeNull()
+  })
+})
+
+describe('ventasUrlWithout: cerrar el detalle sin perder la búsqueda', () => {
+  it('quita solo `pedido` y conserva `q` y los demás', () => {
+    expect(ventasUrlWithout('pedido=1001&q=%2B57%20300', 'pedido')).toBe('/ventas?q=%2B57+300')
+    expect(ventasUrlWithout(new URLSearchParams('q=ana&pedido=7&x=1'), 'pedido')).toBe('/ventas?q=ana&x=1')
+  })
+
+  it('sin más parámetros: /ventas a secas', () => {
+    expect(ventasUrlWithout('pedido=1001', 'pedido')).toBe('/ventas')
+    expect(ventasUrlWithout('', 'pedido')).toBe('/ventas')
+  })
+
+  it('el valor de q vuelve igual al leerlo', () => {
+    const url = ventasUrlWithout('pedido=1&q=%2B57%20300%20123%204567', 'pedido')
+    expect(new URL(url, 'https://x.test').searchParams.get('q')).toBe('+57 300 123 4567')
   })
 })
