@@ -21,12 +21,15 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { format } from "date-fns";
 import { useTranslations } from "next-intl";
 import { contactHandle } from "@/lib/whatsapp/wa-identity";
+import { ContactOrders } from "./contact-orders";
 
 interface ContactSidebarProps {
   contact: Contact | null;
+  /** Open conversation, linked to orders created from this panel. */
+  conversationId?: string | null;
 }
 
-export function ContactSidebar({ contact }: ContactSidebarProps) {
+export function ContactSidebar({ contact, conversationId = null }: ContactSidebarProps) {
   const tSidebar = useTranslations("Inbox.sidebar");
   const tThread = useTranslations("Inbox.messageThread");
 
@@ -183,6 +186,13 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
               </div>
             )}
           </div>
+
+          {/* Sales (Ventas module): renders its own divider, or nothing. */}
+          <ContactOrders
+            contactId={contact.id}
+            contactName={displayName}
+            conversationId={conversationId}
+          />
 
           {/* Divider */}
           <div className="my-4 border-t border-border" />

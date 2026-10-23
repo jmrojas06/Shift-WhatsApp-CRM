@@ -182,28 +182,54 @@ export const VENTAS_TEXTS = {
     moduleOff: 'El módulo de ventas no está activo para esta cuenta.',
     forbidden: 'Tu rol no puede hacer esto.',
     generic: 'No pudimos completar la acción. Inténtalo de nuevo.',
+    invalid: 'Revisa los datos del pedido.',
+    stale: 'Alguien más cambió este pedido. Ya te mostramos cómo quedó.',
+    session: 'Tu sesión se cerró. Vuelve a iniciar sesión para seguir.',
+    network: 'No hay conexión con el servidor. Revisa tu internet e inténtalo de nuevo.',
+    loadFailed: 'No pudimos cargar los pedidos. Recarga la página.',
+    migrationMissing:
+      'Ventas todavía no está instalado en la base de datos de esta cuenta. Pídele a tu asesor de Shift Digital que termine la instalación.',
   },
 
   summary: {
+    label: 'Resumen del mes',
     soldThisMonth: 'Vendido este mes',
-    orders: 'Pedidos',
-    pending: 'Por cobrar',
+    soldHint: 'Pagos recibidos este mes, hora de Colombia.',
+    orders: 'Pedidos este mes',
+    ordersHint: 'Creados este mes, sin contar los cancelados.',
+    pending: 'Pendiente por cobrar',
+    pendingHint: 'Pedidos activos que todavía no se han pagado.',
   },
 
   filters: {
     all: 'Todos',
-    pendingPayment: 'Pago pendiente',
-    toShip: 'Por enviar',
+    pendingPayment: 'Pendientes de pago',
+    toShip: 'Pagados por enviar',
     shipped: 'Enviados',
     delivered: 'Entregados',
     cancelled: 'Cancelados',
   },
-  searchPlaceholder: 'Buscar por número o cliente',
+  filtersLabel: 'Filtrar pedidos',
+  searchLabel: 'Buscar pedidos',
+  searchPlaceholder: 'Buscar por número, nombre o teléfono',
+  resultsCount: (count: number | string) =>
+    Number(count) === 1 ? '1 pedido' : `${count} pedidos`,
 
   empty: {
     title: 'Todavía no hay pedidos',
     body: 'Cuando cierres una venta, créala desde la conversación y aparecerá aquí.',
     filtered: 'No hay pedidos con este filtro.',
+    search: 'Ningún pedido coincide con tu búsqueda.',
+  },
+
+  /** Resultado del aviso al cliente justo después de guardar. */
+  notice: {
+    sent: 'Le avisamos al cliente por WhatsApp.',
+    failed: (reason: string | null | undefined) =>
+      reason && String(reason).trim()
+        ? `El pedido quedó guardado, pero no pudimos avisarle al cliente por WhatsApp. Motivo: ${reason}.`
+        : 'El pedido quedó guardado, pero no pudimos avisarle al cliente por WhatsApp.',
+    failedBadge: 'Aviso sin mandar',
   },
 
   status: {
@@ -236,6 +262,16 @@ export const VENTAS_TEXTS = {
     deliveredAt: 'Entregado',
     cancelledAt: 'Cancelado',
     quantityTimes: (quantity: number | string) => `${quantity} ×`,
+    title: (number: number | string) => `Pedido #${number}`,
+    shippingData: 'Datos de envío',
+    timeline: 'Historial',
+    noticeTitle: 'Aviso al cliente',
+    noNotice: 'Todavía no se ha mandado ningún aviso de este pedido.',
+    noticeReason: (reason: string) => `Motivo: ${reason}`,
+    idNumberNote: 'Dato personal: úsalo solo para el envío o la factura.',
+    loadFailed: 'No pudimos cargar el detalle del pedido.',
+    empty: 'Sin datos',
+    close: 'Cerrar',
   },
 
   actions: {
@@ -246,6 +282,8 @@ export const VENTAS_TEXTS = {
     viewDetail: 'Ver detalle',
     working: 'Guardando…',
     done: 'Listo.',
+    groupLabel: (number: number | string) => `Acciones del pedido #${number}`,
+    readOnlyReason: 'cambiar pedidos',
   },
 
   shipDialog: {
@@ -293,12 +331,24 @@ export const VENTAS_TEXTS = {
     saving: 'Guardando…',
     cancel: 'Cancelar',
     created: (number: number | string) => `Pedido #${number} creado.`,
+    description: (name: string) => `Para ${name}. El nombre y el teléfono salen del contacto.`,
+    lineLabel: (n: number | string) => `Producto ${n}`,
+    quantityPlaceholder: '1',
+    pricePlaceholder: '0',
+    amountHint: 'Escribe los valores sin símbolo, por ejemplo 150.000',
+    linesLimit: (max: number | string) => `Máximo ${max} productos por pedido.`,
+    totalHint: 'El total final lo calcula el sistema al guardar.',
+    deliveryTitle: 'Entrega',
+    paidTitle: '¿Ya pagó?',
+    done: 'Listo',
+    createAnother: 'Crear otro pedido',
   },
 
   contactOrders: {
     title: 'Pedidos de este contacto',
     empty: 'Este contacto todavía no tiene pedidos.',
     viewAll: 'Ver en Ventas',
+    loadFailed: 'No pudimos cargar los pedidos de este contacto.',
   },
 
   settings: {
@@ -307,7 +357,14 @@ export const VENTAS_TEXTS = {
     notifyPaid: 'Aviso de pago recibido',
     notifyShipped: 'Aviso de pedido enviado',
     notifyDelivered: 'Aviso de pedido entregado',
+    notifyPaidHint: 'Cuando marcas un pedido como pagado.',
+    notifyShippedHint: 'Con la transportadora y el número de guía.',
+    notifyDeliveredHint: 'Cuando marcas un pedido como entregado.',
+    windowNote:
+      'Si el cliente no te ha escrito en las últimas 24 horas, el aviso sale con una plantilla aprobada por Meta. Mientras no esté aprobada, el pedido muestra "aviso sin mandar".',
     saved: 'Cambios guardados.',
+    saveFailed: 'No pudimos guardar el cambio. Inténtalo de nuevo.',
     adminOnly: 'Solo el dueño o un administrador puede cambiar los avisos.',
+    loadFailed: 'No pudimos leer los avisos de esta cuenta.',
   },
 } as const
