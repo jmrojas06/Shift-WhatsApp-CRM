@@ -491,6 +491,61 @@ BEGIN
       'an account still has vertical_key = barberia — migration 052 did not apply';
   END IF;
 
+  -- 053: combinable account modules. A column or constraint that
+  -- silently failed to add would only surface at runtime (every account
+  -- read selects `modules`), and the trigger must keep the client away
+  -- from it.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'accounts'
+      AND column_name = 'modules' AND data_type = 'ARRAY' AND is_nullable = 'NO'
+  ) THEN
+    RAISE EXCEPTION
+      'accounts.modules (text[] NOT NULL) is missing — migration 053 did not apply';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.accounts'::regclass
+      AND conname = 'accounts_modules_check'
+      AND contype = 'c'
+  ) THEN
+    RAISE EXCEPTION
+      'accounts_modules_check constraint is missing — migration 053 did not apply';
+  END IF;
+
+  IF to_regprocedure('public.valid_module_keys(text[])') IS NULL THEN
+    RAISE EXCEPTION
+      'public.valid_module_keys(text[]) is missing — migration 053 did not apply';
+  END IF;
+
+  IF NOT public.valid_module_keys(ARRAY['agenda', 'ventas'])
+     OR public.valid_module_keys(ARRAY['Ventas'])
+     OR public.valid_module_keys(ARRAY['con espacio'])
+  THEN
+    RAISE EXCEPTION
+      'valid_module_keys does not enforce the module key shape — migration 053 did not apply';
+  END IF;
+
+  IF pg_get_functiondef('public.enforce_account_protected_columns()'::regprocedure)
+       NOT LIKE '%modules%'
+  THEN
+    RAISE EXCEPTION
+      'enforce_account_protected_columns does not protect accounts.modules — migration 053 did not apply';
+  END IF;
+
+  -- 053: the backfill — an agenda account must list the agenda in
+  -- modules. Like the 052 check, only meaningful against PRODUCTION
+  -- after 053 ran (the CI database has no accounts).
+  IF EXISTS (
+    SELECT 1 FROM accounts
+    WHERE vertical_key IN ('agenda', 'barberia')
+      AND NOT ('agenda' = ANY(modules))
+  ) THEN
+    RAISE EXCEPTION
+      'an agenda account has no agenda in modules — migration 053 did not apply';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

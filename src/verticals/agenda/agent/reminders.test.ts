@@ -28,12 +28,39 @@ type Row = Record<string, unknown>
 
 interface FakeDb {
   _tables: Record<string, Row[]>
+  /** Pedidos `.or(...)` recibidos, tal cual. */
+  _ors: string[]
   from(table: string): unknown
 }
 
-type FilterKind = 'eq' | 'in' | 'lt' | 'lte' | 'gt' | 'gte' | 'is'
+type FilterKind = 'eq' | 'in' | 'lt' | 'lte' | 'gt' | 'gte' | 'is' | 'or'
 
-function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
+/**
+ * `.or('vertical_key.in.(a,b),modules.cs.{a}')` como PostgREST: una fila
+ * pasa si cumple alguna condición. Solo soporta `in` y `cs` (array contiene).
+ */
+function matchesOr(row: Row, expr: string): boolean {
+  const conditions: boolean[] = []
+  for (const m of expr.matchAll(/(\w+)\.in\.\(([^)]*)\)/g)) {
+    conditions.push(m[2].split(',').includes(String(row[m[1]])))
+  }
+  for (const m of expr.matchAll(/(\w+)\.cs\.\{([^}]*)\}/g)) {
+    const have = Array.isArray(row[m[1]]) ? (row[m[1]] as string[]) : []
+    conditions.push(m[2].split(',').every((k) => have.includes(k)))
+  }
+  return conditions.some(Boolean)
+}
+
+interface FakeDbOptions {
+  /** Simula una base sin la migración 053: filtrar por `modules` falla. */
+  modulesColumnMissing?: boolean
+}
+
+function makeFakeDb(
+  seed: Record<string, Row[]>,
+  options: FakeDbOptions = {},
+): FakeDb {
+  const ors: string[] = []
   const tables: Record<string, Row[]> = {}
   for (const [name, rows] of Object.entries(seed)) {
     tables[name] = rows.map((row) => ({ ...row }))
@@ -67,6 +94,8 @@ function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
             return String(v) >= String(value)
           case 'is':
             return v === value
+          case 'or':
+            return matchesOr(row, value as string)
         }
       })
 
@@ -84,6 +113,15 @@ function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
     }
 
     const run = (): { data: unknown; error: unknown } => {
+      if (
+        options.modulesColumnMissing &&
+        filters.some((f) => f.kind === 'or' && String(f.value).includes('modules'))
+      ) {
+        return {
+          data: null,
+          error: { code: '42703', message: 'column accounts.modules does not exist' },
+        }
+      }
       if (op === 'select') {
         return { data: candidateRows().map((r) => ({ ...r })), error: null }
       }
@@ -123,6 +161,11 @@ function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
         filters.push({ col, kind: 'in', value })
         return api
       },
+      or: (expr: string) => {
+        ors.push(expr)
+        filters.push({ col: '', kind: 'or', value: expr })
+        return api
+      },
       gt: (col: string, value: unknown) => {
         filters.push({ col, kind: 'gt', value })
         return api
@@ -155,7 +198,7 @@ function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
     return api
   }
 
-  return { _tables: tables, from }
+  return { _tables: tables, _ors: ors, from }
 }
 
 // ------------------------------------------------------------
@@ -615,6 +658,59 @@ describe('runAgendaReminders', () => {
     }
   })
 
+  describe('cuentas por módulos (053)', () => {
+    async function run(seed: Record<string, Row[]>, options?: FakeDbOptions) {
+      const db = makeFakeDb(seed, options)
+      const rec = makeRecorder()
+      const summary = await runAgendaReminders({
+        db: asClient(db),
+        now: NOW,
+        send: rec.send,
+      })
+      return { db, rec, summary }
+    }
+
+    it('atiende una cuenta con modules [agenda] aunque vertical_key sea null', async () => {
+      const seed = baseSeed()
+      seed.accounts[0].vertical_key = null
+      seed.accounts[0].modules = ['agenda']
+      const { rec, summary } = await run(seed)
+      expect(summary.accounts).toBe(1)
+      expect(summary.sent).toBe(1)
+      expect(rec.deliveries.map((d) => d.appointmentId)).toEqual([APPT])
+    })
+
+    it('atiende una cuenta con agenda y ventas a la vez', async () => {
+      const seed = baseSeed()
+      seed.accounts[0].modules = ['agenda', 'ventas']
+      const { summary } = await run(seed)
+      expect(summary.sent).toBe(1)
+    })
+
+    it('sigue atendiendo cuentas con solo vertical_key (modules vacío o ausente)', async () => {
+      const seed = baseSeed()
+      seed.accounts[0].modules = []
+      const { summary } = await run(seed)
+      expect(summary.sent).toBe(1)
+    })
+
+    it('no toca una cuenta que solo tiene ventas', async () => {
+      const seed = baseSeed()
+      seed.accounts[0].vertical_key = null
+      seed.accounts[0].modules = ['ventas']
+      const { summary } = await run(seed)
+      expect(summary.accounts).toBe(0)
+      expect(summary.sent).toBe(0)
+    })
+
+    it('antes de 053 (sin columna modules) cae a vertical_key y sigue recordando', async () => {
+      const { db, summary } = await run(baseSeed(), { modulesColumnMissing: true })
+      expect(summary.accounts).toBe(1)
+      expect(summary.sent).toBe(1)
+      expect(db._ors).toHaveLength(1)
+    })
+  })
+
   it('solo toca cuentas con vertical_key barbería', async () => {
     const seed = baseSeed()
     seed.booking_appointments.push({
@@ -925,7 +1021,7 @@ describe('runAgendaReminders', () => {
         from(table: string) {
           if (table !== brokenTable) return db.from(table)
           const chain: Record<string, unknown> = {}
-          for (const m of ['select', 'eq', 'in', 'is', 'gt', 'lte', 'order', 'limit']) {
+          for (const m of ['select', 'eq', 'in', 'or', 'is', 'gt', 'lte', 'order', 'limit']) {
             chain[m] = () => chain
           }
           chain.then = (resolve: (v: unknown) => unknown) =>

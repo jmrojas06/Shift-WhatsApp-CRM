@@ -297,8 +297,32 @@ async function hasRecentCustomerMessage(
   return ((data ?? []) as unknown[]).length > 0
 }
 
+/** Postgres `undefined_column`: la migración de esa columna aún no corre. */
+const UNDEFINED_COLUMN = '42703'
+
+/**
+ * Cuentas con el módulo agenda: `modules` contiene 'agenda' **o**
+ * `vertical_key` es 'agenda' / 'barberia' (cuentas sin `modules`, sea
+ * porque 053 backfilleó solo parte o porque aún no corre). Una sola
+ * consulta con `.or(...)`; si la columna `modules` no existe todavía
+ * (42703) repite con `vertical_key`, para que el cron siga recordando
+ * antes de aplicar 053.
+ */
+async function readAgendaAccounts(db: SupabaseClient) {
+  const verticalKeys = AGENDA_VERTICAL_KEYS.join(',')
+  const result = await db
+    .from('accounts')
+    .select('id, name, owner_user_id')
+    .or(`vertical_key.in.(${verticalKeys}),modules.cs.{agenda}`)
+  if (result.error?.code !== UNDEFINED_COLUMN) return result
+  return db
+    .from('accounts')
+    .select('id, name, owner_user_id')
+    .in('vertical_key', [...AGENDA_VERTICAL_KEYS])
+}
+
 export interface ReminderRunSummary {
-  /** Cuentas de la agenda (vertical_key 'agenda' o el alias 'barberia'). */
+  /** Cuentas de la agenda (módulo `agenda`, o `vertical_key` 'agenda' / alias 'barberia'). */
   accounts: number
   /** Citas activas con alguna señal pendiente (24 h o 2 h). */
   due: number
@@ -429,10 +453,9 @@ export async function runAgendaReminders(
 
   // Un fallo de lectura LANZA: devolver "0 citas" hacía que el runner
   // dejara de recordar sin que la ruta alertara (responde 500 + alerta).
-  const { data: accountRows, error: accountsError } = await args.db
-    .from('accounts')
-    .select('id, name, owner_user_id')
-    .in('vertical_key', [...AGENDA_VERTICAL_KEYS])
+  const { data: accountRows, error: accountsError } = await readAgendaAccounts(
+    args.db,
+  )
   if (accountsError) {
     throw new Error(`no se pudieron leer las cuentas: ${accountsError.message}`)
   }

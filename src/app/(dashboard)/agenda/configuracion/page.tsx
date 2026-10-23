@@ -3,8 +3,8 @@
 // ============================================================
 // /agenda/configuracion — onboarding del vertical sin SQL.
 //
-// Solo para cuentas de la agenda (`vertical_key` 'agenda' o la
-// clave anterior 'barberia'). Lee toda la
+// Solo para cuentas con el módulo agenda (`modules` o, mientras esté
+// vacío, `vertical_key` 'agenda' / 'barberia'). Lee toda la
 // configuración con el cliente del usuario (RLS: los miembros
 // leen) en una sola ronda de consultas y la reparte entre las
 // pestañas (incluidas las palabras del negocio, que dan nombre a las
@@ -37,7 +37,7 @@ import {
 } from '@/components/ui/tabs'
 import { useAuth } from '@/hooks/use-auth'
 import { createClient } from '@/lib/supabase/client'
-import { isAgendaVerticalKey } from '@/lib/verticals/registry'
+import { hasModule } from '@/lib/verticals/registry'
 import { capitalize, readLabels } from '@/verticals/agenda/labels'
 import { isMissingMigrationError } from '@/verticals/agenda/panel'
 import { readQuestion } from '@/verticals/agenda/questions'
@@ -67,7 +67,7 @@ import {
 export default function AgendaConfiguracionPage() {
   const { account, accountId, canEditSettings } = useAuth()
   const router = useRouter()
-  const isAgenda = isAgendaVerticalKey(account?.vertical_key)
+  const isAgenda = hasModule(account, 'agenda')
 
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)

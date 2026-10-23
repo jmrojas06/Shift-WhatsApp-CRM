@@ -16,6 +16,8 @@ const h = vi.hoisted(() => ({
     role: 'owner' as 'owner' | 'admin' | 'viewer',
     /** vertical_key que reporta la cuenta. */
     verticalKey: 'agenda' as string | null,
+    /** accounts.modules que reporta la cuenta (053). */
+    modules: [] as string[] | undefined,
     /** Error simulado en el select de la cuenta (p. ej. 047 sin aplicar). */
     verticalError: null as { code: string; message: string } | null,
     /** Llamadas capturadas al instalador. */
@@ -63,7 +65,7 @@ vi.mock('@/lib/auth/account', () => {
                 maybeSingle: async () => ({
                   data: h.state.verticalError
                     ? null
-                    : { vertical_key: h.state.verticalKey },
+                    : { modules: h.state.modules, vertical_key: h.state.verticalKey },
                   error: h.state.verticalError,
                 }),
               }),
@@ -126,6 +128,7 @@ type TestResponse = { status: number; body: { error?: string; report?: unknown }
 beforeEach(() => {
   h.state.role = 'owner'
   h.state.verticalKey = 'agenda'
+  h.state.modules = []
   h.state.verticalError = null
   h.state.installCalls = []
   h.state.installError = null
@@ -245,7 +248,27 @@ describe('POST /api/verticals/agenda/setup', () => {
     const res = (await POST(post())) as unknown as TestResponse
 
     expect(res.status).toBe(409)
-    expect(res.body.error).toContain('no está habilitado')
+    expect(res.body.error).toBe(
+      'El módulo Agenda no está activo para esta cuenta.',
+    )
+    expect(h.state.installCalls).toHaveLength(0)
+  })
+
+  it('acepta una cuenta con la agenda en modules (aunque vertical_key sea otra cosa)', async () => {
+    h.state.verticalKey = null
+    h.state.modules = ['agenda', 'ventas']
+    const res = (await POST(post())) as unknown as TestResponse
+
+    expect(res.status).toBe(200)
+    expect(h.state.installCalls).toHaveLength(1)
+  })
+
+  it('rechaza una cuenta que solo tiene ventas', async () => {
+    h.state.verticalKey = null
+    h.state.modules = ['ventas']
+    const res = (await POST(post())) as unknown as TestResponse
+
+    expect(res.status).toBe(409)
     expect(h.state.installCalls).toHaveLength(0)
   })
 
@@ -257,7 +280,7 @@ describe('POST /api/verticals/agenda/setup', () => {
     expect(h.state.installCalls).toHaveLength(0)
   })
 
-  it('trata una columna ausente (047 sin aplicar) como módulo no habilitado', async () => {
+  it('trata una columna ausente (047 sin aplicar) como módulo no activo', async () => {
     h.state.verticalError = {
       code: '42703',
       message: 'column accounts.vertical_key does not exist',
@@ -265,7 +288,7 @@ describe('POST /api/verticals/agenda/setup', () => {
     const res = (await POST(post())) as unknown as TestResponse
 
     expect(res.status).toBe(409)
-    expect(res.body.error).toContain('no está habilitado')
+    expect(res.body.error).toContain('no está activo')
     expect(h.state.installCalls).toHaveLength(0)
   })
 

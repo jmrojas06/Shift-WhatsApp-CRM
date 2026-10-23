@@ -46,6 +46,10 @@ interface AccountSummary {
   /** Installed vertical module key (migration 047). Null for classic
    *  accounts without a vertical; drives per-vertical navigation. */
   vertical_key: string | null;
+  /** Active module keys (migration 053). Empty for classic accounts or
+   *  while the column doesn't exist yet; `getAccountModules` falls back
+   *  to `vertical_key` then. */
+  modules: string[];
 }
 
 /**
@@ -157,6 +161,16 @@ interface ProfileRow {
   account_role: string | null;
 }
 
+/** Shape of the `accounts` select below; later columns are absent on
+ *  deployments that lag their migration. */
+interface AccountRow {
+  id: string;
+  name: string;
+  default_currency?: string | null;
+  vertical_key?: string | null;
+  modules?: string[] | null;
+}
+
 /**
  * AuthProvider — wrap this around the dashboard layout.
  * Makes ONE getSession() call for the whole tree instead of one per
@@ -238,24 +252,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // account name lookup itself can't.
         let accountRow: AccountSummary | null = null;
         if (data.account_id) {
+          // Column lists from newest to oldest schema. A deployment that
+          // lags its migration (053 adds `modules`, 047 `vertical_key`)
+          // retries with the next shorter list on 42703 so the account
+          // strip keeps working until the migration is applied.
+          const accountSelects = [
+            "id, name, default_currency, vertical_key, modules",
+            "id, name, default_currency, vertical_key",
+            "id, name, default_currency",
+          ];
           let accountRes = await supabase
             .from("accounts")
-            // default_currency added in migration 021; vertical_key in
-            // 047. Both are narrowed below for older schemas where they
-            // read null — and a schema without the 047 column retries
-            // once without it so the account strip keeps working while
-            // a deployment lags its migration.
-            .select("id, name, default_currency, vertical_key")
+            .select(accountSelects[0])
             .eq("id", data.account_id)
             .maybeSingle();
-          if (accountRes.error?.code === "42703") {
+          for (
+            let i = 1;
+            accountRes.error?.code === "42703" && i < accountSelects.length;
+            i++
+          ) {
             accountRes = await supabase
               .from("accounts")
-              .select("id, name, default_currency")
+              .select(accountSelects[i])
               .eq("id", data.account_id)
               .maybeSingle();
           }
-          const account = accountRes.data;
+          const account = accountRes.data as unknown as AccountRow | null;
           const accountErr = accountRes.error;
           if (accountErr) {
             console.error("[AuthProvider] fetchAccount error:", {
@@ -270,6 +292,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               name: account.name,
               default_currency: account.default_currency ?? DEFAULT_CURRENCY,
               vertical_key: account.vertical_key ?? null,
+              modules: account.modules ?? [],
             };
           }
         }

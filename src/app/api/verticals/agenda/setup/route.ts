@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server'
 
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { requireRole } from '@/lib/auth/account'
+import { requireModule, toModuleErrorResponse } from '@/lib/modules/require-module'
 import { supabaseAdmin } from '@/lib/verticals/admin-client'
-import { isAgendaVerticalKey } from '@/lib/verticals/registry'
 import { installAgendaTemplate } from '@/verticals/agenda/install'
 import { isPresetKey, type PresetKey } from '@/verticals/agenda/presets'
 
@@ -20,18 +20,16 @@ import { badRequest } from '../_lib/http'
 //
 // Guardas:
 //   - Sesión con rol owner/admin (requireRole('admin')).
-//   - La cuenta debe tener `vertical_key` de la agenda ('agenda' o la
-//     clave anterior 'barberia'). Si la
-//     columna no existe todavía (migración 047 sin aplicar), la
-//     cuenta se trata como sin vertical — nunca se instala a ciegas.
+//   - La cuenta debe tener el módulo agenda activo (`modules` de la
+//     migración 053 o, mientras esté vacío, `vertical_key` 'agenda' /
+//     la clave anterior 'barberia'). Si no se puede leer la cuenta,
+//     cuenta como sin módulo: 409, nunca se instala a ciegas.
 //   - La instalación escribe con service-role, pero SIEMPRE acotada
 //     a `ctx.accountId`; el rol humano se valida antes.
 //
 // Idempotente: repetir la llamada no duplica ni sobrescribe datos
 // del dueño (ver install.ts).
 // ============================================================
-
-const NOT_ENABLED = 'El módulo de agenda no está habilitado para esta cuenta.'
 
 const INVALID_PRESET = 'Ese punto de partida no existe.'
 const INVALID_BODY = 'El cuerpo no es JSON válido.'
@@ -62,21 +60,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const { data: account, error: accountError } = await ctx.supabase
-      .from('accounts')
-      .select('vertical_key')
-      .eq('id', ctx.accountId)
-      .maybeSingle()
-
-    if (accountError) {
-      console.error(
-        '[agenda setup] no se pudo verificar el vertical de la cuenta:',
-        accountError,
-      )
-    }
-    if (accountError || !isAgendaVerticalKey(account?.vertical_key)) {
-      return NextResponse.json({ error: NOT_ENABLED }, { status: 409 })
-    }
+    await requireModule(ctx, 'agenda')
 
     const report = await installAgendaTemplate({
       db: supabaseAdmin(),
@@ -87,6 +71,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ report })
   } catch (err) {
-    return toErrorResponse(err)
+    return toModuleErrorResponse(err)
   }
 }

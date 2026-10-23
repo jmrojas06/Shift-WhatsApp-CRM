@@ -10,18 +10,43 @@ const dbState = vi.hoisted(() => ({
   handlerResult: { consumed: false } as { consumed: boolean },
   handlerThrows: false,
   handlerCalls: [] as Record<string, unknown>[],
+  /** Simula una base sin la migración 053: pedir `modules` falla (42703). */
+  modulesColumnMissing: false,
+  /** Qué columnas de `accounts` pidió el dispatcher, en orden. */
+  accountSelects: [] as string[],
+  /** Tablas consultadas, en orden. */
+  tablesRead: [] as string[],
 }))
 
 vi.mock('./admin-client', () => ({
   supabaseAdmin: () => ({
     from(table: string) {
+      dbState.tablesRead.push(table)
+      let cols = ''
       const chain = {
-        select: () => chain,
+        select: (c?: string) => {
+          cols = c ?? ''
+          if (table === 'accounts') dbState.accountSelects.push(cols)
+          return chain
+        },
         eq: () => chain,
         gt: () => chain,
         maybeSingle: async () => {
           if (dbState.throwOn === table) {
             throw new Error(`db down: ${table}`)
+          }
+          if (
+            table === 'accounts' &&
+            dbState.modulesColumnMissing &&
+            cols.includes('modules')
+          ) {
+            return {
+              data: null,
+              error: {
+                code: '42703',
+                message: 'column accounts.modules does not exist',
+              },
+            }
           }
           return dbState.responses[table] ?? { data: null, error: null }
         },
@@ -68,6 +93,9 @@ beforeEach(() => {
   dbState.handlerResult = { consumed: false }
   dbState.handlerThrows = false
   dbState.handlerCalls = []
+  dbState.modulesColumnMissing = false
+  dbState.accountSelects = []
+  dbState.tablesRead = []
 })
 
 describe('dispatchInboundToVertical', () => {
@@ -284,6 +312,72 @@ describe('dispatchInboundToVertical', () => {
     dbState.handlerResult = { consumed: true }
     await expect(dispatchInboundToVertical(baseArgs)).resolves.toEqual({
       consumed: true,
+    })
+  })
+
+  describe('módulos combinables', () => {
+    it('una cuenta con modules [agenda, ventas] sigue usando el bot de la agenda', async () => {
+      dbState.responses = {
+        accounts: {
+          data: { modules: ['agenda', 'ventas'], vertical_key: null },
+          error: null,
+        },
+        conversations: openConversation,
+        booking_sessions: { data: null, error: null },
+      }
+      dbState.handlerResult = { consumed: true }
+      await expect(dispatchInboundToVertical(baseArgs)).resolves.toEqual({
+        consumed: true,
+      })
+      expect(dbState.handlerCalls).toHaveLength(1)
+    })
+
+    it('una cuenta solo con ventas (sin bot) no consume nada ni llama al bot', async () => {
+      dbState.responses = {
+        accounts: {
+          data: { modules: ['ventas'], vertical_key: null },
+          error: null,
+        },
+        conversations: openConversation,
+        booking_sessions: { data: null, error: null },
+      }
+      dbState.handlerResult = { consumed: true }
+      await expect(dispatchInboundToVertical(baseArgs)).resolves.toEqual({
+        consumed: false,
+      })
+      expect(dbState.handlerCalls).toHaveLength(0)
+    })
+
+    it('modules vacío cae a vertical_key', async () => {
+      dbState.responses = {
+        accounts: {
+          data: { modules: [], vertical_key: 'barberia' },
+          error: null,
+        },
+        conversations: openConversation,
+        booking_sessions: { data: null, error: null },
+      }
+      dbState.handlerResult = { consumed: true }
+      await expect(dispatchInboundToVertical(baseArgs)).resolves.toEqual({
+        consumed: true,
+      })
+    })
+
+    it('antes de la migración 053 (sin columna modules) el bot de la agenda sigue funcionando', async () => {
+      dbState.modulesColumnMissing = true
+      dbState.responses = {
+        accounts: { data: { vertical_key: 'agenda' }, error: null },
+        conversations: openConversation,
+        booking_sessions: { data: null, error: null },
+      }
+      dbState.handlerResult = { consumed: true }
+      await expect(dispatchInboundToVertical(baseArgs)).resolves.toEqual({
+        consumed: true,
+      })
+      expect(dbState.accountSelects).toEqual([
+        'modules, vertical_key',
+        'vertical_key',
+      ])
     })
   })
 

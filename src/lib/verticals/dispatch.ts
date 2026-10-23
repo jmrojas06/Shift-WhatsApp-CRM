@@ -1,11 +1,13 @@
 import { agendaInboundHandler } from '@/verticals/agenda/agent'
 
+import { readAccountModules } from '@/lib/modules/read-account-modules'
+
 import { supabaseAdmin } from './admin-client'
-import { getVerticalManifest } from './registry'
+import { getAccountModules } from './registry'
 import type {
+  ModuleKey,
   VerticalDispatchResult,
   VerticalInboundHandler,
-  VerticalKey,
   VerticalSession,
 } from './types'
 
@@ -17,7 +19,7 @@ import type {
  * service-role helpers and DB writers that must never reach the client
  * bundle. Phase 2 plugs the agenda booking controller in here.
  */
-const VERTICAL_HANDLERS: Partial<Record<VerticalKey, VerticalInboundHandler>> =
+const VERTICAL_HANDLERS: Partial<Record<ModuleKey, VerticalInboundHandler>> =
   { agenda: agendaInboundHandler }
 
 interface DispatchArgs {
@@ -52,16 +54,13 @@ export async function dispatchInboundToVertical(
   try {
     const db = supabaseAdmin()
 
-    // Accounts without a vertical early-exit on this single lookup.
-    const { data: account } = await db
-      .from('accounts')
-      .select('vertical_key')
-      .eq('id', args.accountId)
-      .maybeSingle()
-    const manifest = getVerticalManifest(
-      (account as { vertical_key?: string | null } | null)?.vertical_key,
+    // Accounts without a module that has a bot (none, or only Ventas)
+    // early-exit on this single lookup.
+    const { account } = await readAccountModules(db, args.accountId)
+    const botModules = getAccountModules(account).filter(
+      (key) => VERTICAL_HANDLERS[key],
     )
-    if (!manifest) return notConsumed
+    if (botModules.length === 0) return notConsumed
 
     // Same stand-down gates as the AI auto-reply: a human owns this
     // thread, or auto-replies were turned off for it (handoff ran).
@@ -78,8 +77,6 @@ export async function dispatchInboundToVertical(
     const humanOwned = Boolean(
       conv.assigned_agent_id || conv.ai_autoreply_disabled,
     )
-    const handler = VERTICAL_HANDLERS[manifest.key]
-    if (humanOwned && !handler) return notConsumed
 
     const { data: sessionRow } = await db
       .from('booking_sessions')
@@ -97,7 +94,11 @@ export async function dispatchInboundToVertical(
         }
       : null
 
-    if (handler) {
+    // In Ventas A only the agenda has a bot, so this loop runs at most
+    // once. How to split one message between two bots is decided later.
+    for (const key of botModules) {
+      const handler = VERTICAL_HANDLERS[key]
+      if (!handler) continue
       const result = await handler({
         accountId: args.accountId,
         conversationId: args.conversationId,
