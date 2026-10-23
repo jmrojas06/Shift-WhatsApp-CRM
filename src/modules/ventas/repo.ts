@@ -5,13 +5,17 @@
 // orders.ts y llaman aquí. Reglas:
 //
 //   - Dos clientes de Supabase, cada uno para lo suyo:
-//       * `ctx.supabase` (el del usuario, con RLS): `create_order()`
-//         y TODA lectura y escritura de `orders`. Así aplican la
-//         política de UPDATE (agent+, misma cuenta) y los triggers de
-//         la migración 054 (estado solo hacia delante, pago sin
-//         reversa, marcas de tiempo fijadas por el servidor).
+//       * `ctx.supabase` (el del usuario, con RLS): `create_order()` y
+//         la lectura y las escrituras de `orders` que hace una persona
+//         (cambio de estado, transportadora, guía, ciudad, dirección).
+//         Así aplican la política de UPDATE (agent+, misma cuenta) y los
+//         triggers de la migración 054 (estado solo hacia delante, pago
+//         sin reversa, marcas de tiempo fijadas por el servidor).
 //       * `db` (service-role, `supabaseAdmin()`): pipeline, negocio y
-//         líneas del pedido. Un agente no puede crear pipelines con
+//         líneas del pedido, y las dos escrituras del sistema sobre
+//         `orders`: el enlace `deal_id` (reflejo del negocio, no lo
+//         decide la persona) y, desde notify.ts, `last_notice` /
+//         `last_notice_error`. Un agente no puede crear pipelines con
 //         RLS (solo admin) y el pedido no debe depender de eso. Toda
 //         consulta de `db` va filtrada por `account_id`.
 //   - El pedido manda (diseño §3.2): el negocio del pipeline es un

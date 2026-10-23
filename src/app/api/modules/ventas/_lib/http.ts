@@ -73,8 +73,8 @@ const SETTING_FOR_NOTICE = {
 /**
  * Manda el aviso de `kind` si el interruptor de la cuenta está prendido.
  * Resultado (ver notify.ts): 'sent' = salió; 'skipped' = el interruptor
- * de ese aviso está apagado; 'failed' = no salió (falló el envío, no se
- * pudieron leer los ajustes, o el envío aún no está disponible).
+ * de ese aviso está apagado; 'failed' = no salió (falló el envío o no se
+ * pudieron leer los ajustes; el motivo queda en `last_notice_error`).
  * Jamás lanza: el cambio de estado ya se guardó y no se deshace.
  */
 export async function deliverNotice(

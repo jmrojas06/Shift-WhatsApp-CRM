@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -29,6 +33,17 @@ import { stubCreateOrder } from './testing/create-order-stub'
 // el service-role (`db`: pipeline, negocio y líneas). Los tests de
 // estado los separan en dos fakes para comprobar quién hace qué.
 // ============================================================
+
+/** Texto exacto del RAISE EXCEPTION de create_order() cuando Ventas no está activo. */
+function moduleMessageInMigration054(): string {
+  const sql = readFileSync(
+    join(fileURLToPath(new URL('../../../supabase/migrations', import.meta.url)), '054_ventas.sql'),
+    'utf8',
+  )
+  const match = sql.match(/RAISE EXCEPTION\s+'(El módulo Ventas no está activo[^']*)'/)
+  if (!match) throw new Error('054_ventas.sql ya no tiene el mensaje de módulo apagado')
+  return match[1]
+}
 
 const ACCOUNT = 'acc-1'
 const OTHER_ACCOUNT = 'acc-2'
@@ -393,7 +408,10 @@ describe('createOrder', () => {
 
   describe('errores de la función', () => {
     const invalid = 'Los datos del pedido no son válidos. Revisa los productos, precios y el envío.'
-    const moduleMessage = 'El módulo Ventas no está activo para esta cuenta.'
+    // El texto que lanza la base: se lee de la migración 054 (no de
+    // moduleNotActiveMessage) para que el test falle si SQL y TypeScript
+    // dejan de decir lo mismo.
+    const moduleMessage = moduleMessageInMigration054()
     const cases: [string, string, number, string, string][] = [
       // code de Postgres, mensaje crudo, status, code de dominio, mensaje en español
       ['42501', 'raw postgres text', 403, 'forbidden', 'No tienes permiso para crear pedidos en esta cuenta.'],

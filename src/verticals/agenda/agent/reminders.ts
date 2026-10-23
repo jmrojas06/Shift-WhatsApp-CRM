@@ -282,8 +282,11 @@ async function revertReminder(
 // Runner
 // ------------------------------------------------------------
 
-/** ¿El cliente escribió en las últimas 24 h? (ventana de WhatsApp) */
-async function hasRecentCustomerMessage(
+/**
+ * ¿El cliente escribió en las últimas 24 h? (ventana de WhatsApp). Exportada
+ * para los avisos de Ventas, que usan la misma regla de canal.
+ */
+export async function hasRecentCustomerMessage(
   db: SupabaseClient,
   conversationId: string,
   now: Date,
