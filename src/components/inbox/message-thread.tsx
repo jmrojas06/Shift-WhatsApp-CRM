@@ -1010,10 +1010,12 @@ export function MessageThread({
               <ArrowLeft aria-hidden="true" className="h-5 w-5" />
             </button>
           )}
-          {/* Avatar — hidden on phones so the name keeps its room. */}
+          {/* Avatar — hidden on phones so the name keeps its room, and also
+              between lg and xl, where the list column leaves the thread
+              header too narrow for avatar + name + session timer. */}
           <div
             aria-hidden="true"
-            className="hidden h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground sm:flex"
+            className="hidden h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground sm:flex lg:hidden xl:flex"
           >
             {displayName.charAt(0).toUpperCase()}
           </div>
@@ -1039,15 +1041,24 @@ export function MessageThread({
             <h2 className="hidden truncate text-sm font-semibold text-foreground lg:block">
               {displayName}
             </h2>
-            <p className="truncate text-xs text-muted-foreground">
+            <p className="truncate text-xs text-muted-foreground lg:hidden xl:block">
               {contactHandle(contact)}
             </p>
+            {/* Between lg and xl the timer moves under the name (replacing
+                the handle) so the name keeps its room. */}
+            <Badge
+              variant={sessionInfo.expired ? "destructive" : "success"}
+              className="hidden w-fit gap-1 text-[11px] lg:inline-flex xl:hidden"
+            >
+              <Clock aria-hidden="true" className="h-3 w-3" />
+              {sessionInfo.remaining}
+            </Badge>
           </div>
           {/* Session timer badge — hidden on the narrowest phones so
               the name + back arrow keep their room. */}
           <Badge
             variant={sessionInfo.expired ? "destructive" : "success"}
-            className="ml-1 hidden shrink-0 gap-1 text-[11px] sm:ml-2 sm:inline-flex"
+            className="ml-1 hidden shrink-0 gap-1 text-[11px] sm:ml-2 sm:inline-flex lg:hidden xl:inline-flex"
           >
             <Clock aria-hidden="true" className="h-3 w-3" />
             {sessionInfo.remaining}
@@ -1172,7 +1183,7 @@ export function MessageThread({
               )}
             >
               <UserPlus aria-hidden="true" className="h-4 w-4" />
-              <span className="hidden max-w-32 truncate sm:inline">{assignLabel}</span>
+              <span className="hidden max-w-32 truncate sm:inline lg:hidden xl:inline">{assignLabel}</span>
               <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />
             </DropdownMenuTrigger>
             <DropdownMenuContent
