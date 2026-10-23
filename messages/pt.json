@@ -33,7 +33,6 @@
     "settings": "Configurações",
     "beta": "Beta",
     "unreadConversations": "{count} {count, plural, =1 {conversa não lida} other {conversas não lidas}}",
-    "unreadNotifications": "{count} {count, plural, =1 {notificação não lida} other {notificações não lidas}}",
     "roleOwner": "Proprietário",
     "roleAdmin": "Administrador",
     "roleAgent": "Agente",
@@ -150,7 +149,9 @@
       "avgMinutes": "Média"
     },
     "emptyState": {
-      "title": "Ainda não há dados suficientes"
+      "title": "Ainda não há dados suficientes",
+      "loadError": "Não foi possível carregar estas informações.",
+      "loadErrorHint": "Recarregue a página para tentar novamente."
     },
     "attention": {
       "title": "Para atender",
@@ -214,7 +215,9 @@
       "removeFilter": "Remover o filtro {name}",
       "emptyInbox": "Ainda não há conversas. Elas aparecerão aqui quando um cliente escrever para você no WhatsApp.",
       "showAll": "Ver todas",
-      "unreadMessages": "{count, plural, =1 {1 mensagem não lida} other {# mensagens não lidas}}"
+      "unreadMessages": "{count, plural, =1 {1 mensagem não lida} other {# mensagens não lidas}}",
+      "loadFailed": "Não foi possível carregar as conversas. Verifique sua conexão e tente novamente.",
+      "retry": "Tentar novamente"
     },
     "messageThread": {
       "backToConversations": "Voltar às conversas",
@@ -240,7 +243,6 @@
       "today": "Hoje",
       "yesterday": "Ontem",
       "customer": "Cliente",
-      "unknown": "Desconhecido",
       "sendFailed": "Falha ao enviar: {reason}",
       "sendTemplateFailed": "Falha ao enviar o modelo: {reason}",
       "waitForSending": "Aguarde a mensagem terminar de ser enviada",
@@ -250,7 +252,9 @@
       "documentFallback": "Documento",
       "you": "Você",
       "changeStatus": "Status: {status}. Alterar status",
-      "loadingMessages": "Carregando mensagens"
+      "loadingMessages": "Carregando mensagens",
+      "messagesLabel": "Mensagens da conversa",
+      "openContactInfo": "Ver as informações de {name}"
     },
     "sessionTimer": {
       "expired": "Expirada",
@@ -285,7 +289,6 @@
       "draftWithAI": "Redigir uma resposta com IA",
       "addCaption": "Adicionar uma legenda…",
       "removeAttachment": "Remover anexo",
-      "moreActions": "Mais",
       "interactiveMessage": "Mensagem interativa",
       "quickReplies": "Respostas rápidas",
       "quickRepliesEmpty": "Nenhuma resposta rápida ainda. Adicione algumas em Configurações → Respostas rápidas.",
@@ -304,7 +307,9 @@
       "uploadFailed": "Falha no upload.",
       "composerMenu": "Anexar, modelos e respostas rápidas",
       "replyWith": "Responder com",
-      "messageLabel": "Mensagem"
+      "messageLabel": "Mensagem",
+      "typeMessagePlaceholderTouch": "Digite uma mensagem…",
+      "quickRepliesLoadFailed": "Não foi possível carregar as respostas rápidas. Feche e tente novamente."
     },
     "bubble": {
       "photo": "Foto",
@@ -324,7 +329,11 @@
       "downloadFailed": "Não foi possível baixar o anexo",
       "viewImage": "Ver imagem",
       "expandVideo": "Expandir vídeo",
-      "imageAlt": "Imagem compartilhada"
+      "imageAlt": "Imagem compartilhada",
+      "statusSending": "Enviando",
+      "statusSent": "Enviada",
+      "statusDelivered": "Entregue",
+      "statusRead": "Lida"
     },
     "mediaViewer": {
       "counter": "{index} de {total}",
@@ -342,7 +351,6 @@
     "actions": {
       "reply": "Responder",
       "copyText": "Copiar texto",
-      "delete": "Excluir",
       "react": "Reagir",
       "reactWith": "Reagir com {emoji}",
       "nothingToCopy": "Nada para copiar",
@@ -355,7 +363,6 @@
       "video": "[Vídeo]",
       "document": "[Documento]",
       "audio": "[Áudio]",
-      "voiceMessage": "[Mensagem de voz]",
       "location": "[Localização]",
       "template": "[Modelo]",
       "message": "[Mensagem]",
@@ -377,7 +384,8 @@
       "send": "Enviar modelo",
       "headerVarLabel": "Cabeçalho {var}",
       "bodyVarLabel": "Corpo {var}",
-      "urlButtonVarLabel": "Botão de URL \"{text}\" — valor para {var}"
+      "urlButtonVarLabel": "Botão de URL \"{text}\" — valor para {var}",
+      "loadFailed": "Não foi possível carregar os modelos. Feche e tente novamente."
     },
     "sidebar": {
       "contactInfo": "Informações do contato",
@@ -389,7 +397,8 @@
       "addNotePlaceholder": "Adicionar uma nota…",
       "newNoteLabel": "Nova nota",
       "addNote": "Salvar nota",
-      "copyHandle": "Copiar {handle}"
+      "copyHandle": "Copiar {handle}",
+      "noteSaveFailed": "Não foi possível salvar a nota. Tente novamente."
     },
     "aiBanner": {
       "pausedTitle": "O assistente de IA está pausado aqui",
@@ -441,7 +450,6 @@
       "deleteContactTitle": "Excluir contato",
       "deleteContactDesc": "Tem certeza de que deseja excluir {name}? Esta ação não pode ser desfeita.",
       "cancel": "Cancelar",
-      "deleteBtn": "Excluir",
       "deleteBulkTitle": "Excluir contatos",
       "deleteBulkDesc": "{count, plural, =1 {Tem certeza de que deseja excluir o contato selecionado? Esta ação não pode ser desfeita.} other {Tem certeza de que deseja excluir os # contatos selecionados? Esta ação não pode ser desfeita.}}",
       "toastFailedLoad": "Não foi possível carregar os contatos. Recarregue a página.",
@@ -459,7 +467,8 @@
       "previousPage": "Página anterior",
       "nextPage": "Próxima página",
       "deleteContactBtn": "Excluir contato",
-      "deleteBulkBtn": "{count, plural, =1 {Excluir 1 contato} other {Excluir # contatos}}"
+      "deleteBulkBtn": "{count, plural, =1 {Excluir 1 contato} other {Excluir # contatos}}",
+      "selectAll": "Selecionar todos"
     },
     "form": {
       "addTitle": "Adicionar contato",
@@ -476,11 +485,7 @@
       "companyLabel": "Empresa",
       "companyPlaceholder": "Nome da empresa",
       "tagsLabel": "Tags",
-      "tagsPlaceholder": "Selecione tags…",
-      "noTagsFound": "Nenhuma tag encontrada.",
-      "createTagAction": "Criar tag \"{value}\"",
       "cancel": "Cancelar",
-      "save": "Salvar contato",
       "update": "Atualizar",
       "create": "Criar",
       "toastSuccessAdd": "Contato criado com sucesso",
@@ -502,36 +507,19 @@
     "detailView": {
       "tabs": {
         "details": "Detalhes",
-        "activity": "Atividade",
         "notes": "Notas",
         "custom": "Campos personalizados",
         "deals": "Negócios",
-        "tags": "Tags",
-        "noTags": "Sem tags",
-        "noDeals": "Sem negócios",
-        "addNotePlaceholder": "Adicionar uma nota…"
+        "tags": "Tags"
       },
-      "actions": {
-        "edit": "Editar",
-        "message": "Mensagem",
-        "delete": "Excluir"
-      },
-      "contactInfo": "Informações do contato",
       "unnamed": "Desconhecido",
       "contactDetailsDesc": "Dados do contato",
       "name": "Nome",
       "phone": "Telefone",
       "email": "E-mail",
       "company": "Empresa",
-      "createdAt": "Criado em",
-      "customFields": "Campos personalizados",
       "noCustomFields": "Nenhum campo personalizado definido. Crie-os em Configurações.",
-      "manageFields": "Gerenciar campos",
       "enterCustomField": "Informe {name}…",
-      "activityTab": {
-        "title": "Histórico de atividade",
-        "noActivity": "Nenhuma atividade ainda."
-      },
       "notesTab": {
         "title": "Notas internas",
         "placeholder": "Escreva uma nota…",
@@ -566,7 +554,11 @@
       "deleteNoteAria": "Excluir nota",
       "deleteNoteTitle": "Excluir esta nota?",
       "deleteNoteDesc": "A nota será removida deste contato. Esta ação não pode ser desfeita.",
-      "cancel": "Cancelar"
+      "cancel": "Cancelar",
+      "phonePlaceholder": "+55 11 91234 5678",
+      "phoneHint": "Inclua o código do país, ex.: +55 para o Brasil.",
+      "copyPhone": "Copiar {phone}",
+      "phoneCopied": "Copiado"
     },
     "importModal": {
       "title": "Importar contatos",
@@ -637,7 +629,10 @@
       "toastCreated": "\"{name}\" criado.",
       "toastRenameFailed": "Não foi possível renomear o campo.",
       "toastDeleteFailed": "Não foi possível excluir o campo.",
-      "toastDeleted": "\"{name}\" excluído."
+      "toastDeleted": "\"{name}\" excluído.",
+      "cancel": "Cancelar",
+      "deleteBtn": "Excluir campo",
+      "deleteAria": "Excluir o campo {name}"
     }
   },
   "Pipelines": {
@@ -669,11 +664,18 @@
         "negotiation": "Negociação",
         "won": "Ganho"
       },
-      "title": "Pipeline"
+      "title": "Pipeline",
+      "loading": "Carregando o pipeline…"
     },
     "board": {
       "dropDealHere": "Solte um negócio aqui",
-      "addDeal": "Adicionar negócio"
+      "addDeal": "Adicionar negócio",
+      "dragInstructions": "Para mover um negócio para outra etapa, pressione Espaço ou Enter, use as setas para levá-lo até a etapa e pressione Espaço ou Enter de novo para soltá-lo. Pressione Escape para cancelar.",
+      "dragAnnounceStart": "Você pegou o negócio {title}.",
+      "dragAnnounceOver": "O negócio {title} está sobre a etapa {stage}.",
+      "dragAnnounceEnd": "Você soltou o negócio {title} na etapa {stage}.",
+      "dragAnnounceCancel": "Você cancelou o movimento. O negócio {title} voltou ao seu lugar.",
+      "draggableRoleDescription": "negócio móvel"
     },
     "card": {
       "noContact": "Sem contato",
@@ -687,7 +689,6 @@
       "title": "Título",
       "titlePlaceholder": "Título do negócio",
       "contact": "Contato",
-      "selectContact": "Selecione um contato",
       "linkToConversation": "Vincular a uma conversa",
       "value": "Valor",
       "currency": "Moeda",
@@ -706,10 +707,8 @@
       "saveChanges": "Salvar alterações",
       "createDeal": "Criar negócio",
       "deletePrompt": "Excluir este negócio?",
-      "confirm": "Confirmar",
       "deleting": "Excluindo…",
       "deleteDeal": "Excluir negócio",
-      "toastRequired": "Título, contato e etapa são obrigatórios",
       "toastFailedSave": "Falha ao salvar o negócio",
       "toastNotSignedIn": "Você não está conectado",
       "toastNotLinked": "Seu perfil não está vinculado a uma conta.",
@@ -727,9 +726,12 @@
       "contactRequired": "Escolha o contato deste negócio. Você pode buscar por nome ou telefone.",
       "stageRequired": "Escolha a etapa do funil.",
       "missingFields": "Para salvar, preencha: {fields}.",
-      "searchContactLabel": "Buscar contato",
       "searchContactPlaceholder": "Buscar por nome ou telefone",
-      "noContactMatches": "Nenhum contato corresponde à busca"
+      "noContactMatches": "Nenhum contato corresponde à busca",
+      "showContacts": "Mostrar contatos",
+      "clearContact": "Remover o contato escolhido",
+      "loadingContacts": "Carregando contatos…",
+      "noContactsYet": "Ainda não há contatos. Crie um primeiro na seção Contatos."
     },
     "settings": {
       "managePipeline": "Gerenciar pipeline",
@@ -745,8 +747,6 @@
       "createNewPipeline": "Criar um novo pipeline",
       "saving": "Salvando…",
       "saveChanges": "Salvar alterações",
-      "dragToReorder": "Arraste para reordenar",
-      "changeColor": "Mudar cor",
       "toastFailedSave": "Falha ao salvar o pipeline",
       "toastSaved": "Pipeline salvo",
       "toastFailedAddStage": "Falha ao adicionar a etapa",
@@ -822,7 +822,8 @@
       "broadcastInProgress": "Disparo em andamento",
       "retry": "Tentar novamente",
       "emptyBody": "Um disparo envia a mesma mensagem para muitos contatos de uma vez, como uma promoção ou um aviso.",
-      "emptyRequirement": "Para criá-lo você precisa de um modelo de mensagem aprovado pela Meta. Você pode criá-lo em Configurações, em Modelos."
+      "emptyRequirement": "Para criá-lo você precisa de um modelo de mensagem aprovado pela Meta. Você pode criá-lo em Configurações, em Modelos.",
+      "loading": "Carregando disparos…"
     },
     "status": {
       "draft": "Rascunho",
@@ -885,7 +886,9 @@
       "toastResumeFailed": "Não foi possível retomar: {error}",
       "unknownError": "Erro desconhecido",
       "unknownContact": "Desconhecido",
-      "confirmDelete": "Sim, excluir"
+      "confirmDelete": "Sim, excluir",
+      "loading": "Carregando disparo…",
+      "errorLoad": "Não foi possível carregar o disparo. Recarregue a página para tentar novamente."
     },
     "new": {
       "title": "Novo disparo",
@@ -912,7 +915,9 @@
         "subtitle": "Selecione um modelo de mensagem aprovado para o seu disparo.",
         "noTemplates": "Nenhum modelo disponível.",
         "createFirst": "Crie um modelo em Configurações primeiro.",
-        "errorLoad": "Falha ao carregar os modelos"
+        "errorLoad": "Falha ao carregar os modelos",
+        "loading": "Carregando modelos…",
+        "goToTemplates": "Ir para Modelos"
       },
       "selectAudience": {
         "title": "Selecionar público",
@@ -923,16 +928,13 @@
           "customField": "Campo personalizado",
           "csv": "Enviar CSV"
         },
-        "allDesc": "Enviar para todos os {count} contatos do seu banco de dados.",
         "allDescLoading": "Enviar para todos os contatos do seu banco de dados.",
         "tagDesc": "Enviar para contatos com tags específicas.",
         "customFieldDesc": "Enviar para contatos que atendem a uma regra de campo personalizado.",
         "csvDesc": "Envie um CSV com números de telefone (e nomes opcionais).",
         "selectTags": "Selecionar tags",
-        "searchTags": "Buscar tags…",
         "noTagsFound": "Nenhuma tag encontrada.",
         "excludeTags": "Excluir tags (opcional)",
-        "searchExcludeTags": "Buscar tags para excluir…",
         "field": "Campo",
         "selectField": "Selecione um campo…",
         "operator": "Operador",
@@ -945,14 +947,15 @@
         "csvFormatDesc": "Deve conter uma coluna 'phone' (formato E.164). A coluna 'name' é opcional.",
         "csvContactsFound": "{count} contato(s) válido(s) encontrado(s) no CSV.",
         "csvInvalidPhones": "{count} linha(s) ignorada(s): os números de telefone devem começar com + e o código do país (ex.: +5511999990000).",
-        "errorLoadTags": "Falha ao carregar as tags",
-        "errorLoadFields": "Falha ao carregar os campos personalizados",
         "errorCsvParse": "Não foi possível ler o arquivo CSV.",
         "errorCsvMissingPhone": "O CSV deve ter uma coluna 'phone'.",
         "audienceSummary": "Resumo do público",
         "calculating": "Calculando…",
         "estimatedRecipients": "destinatários estimados",
-        "selectTypeForEstimate": "Selecione um tipo de público para ver a estimativa."
+        "selectTypeForEstimate": "Selecione um tipo de público para ver a estimativa.",
+        "noCustomFields": "Você ainda não tem campos personalizados. Crie um para filtrar seu público por ele.",
+        "goToFields": "Ir para Campos e tags",
+        "incompleteHint": "Complete o público para continuar."
       },
       "personalize": {
         "title": "Personalizar variáveis",
@@ -961,8 +964,6 @@
         "headerImageDesc": "Este modelo exige uma imagem de cabeçalho.",
         "imageUrl": "URL da imagem",
         "imageUrlPlaceholder": "https://example.com/image.jpg",
-        "variables": "Variáveis",
-        "varDesc": "Defina valores para {{name}}",
         "type": "Tipo",
         "typeStatic": "Valor fixo",
         "typeContact": "Campo do contato",
@@ -990,7 +991,15 @@
         "sampleName": "Nome do cliente",
         "sampleCompany": "Empresa",
         "samplePhone": "+57 300 123 4567",
-        "sampleEmail": "cliente@exemplo.com"
+        "sampleEmail": "cliente@exemplo.com",
+        "headerMedia": "Arquivo do cabeçalho",
+        "mediaUrl": "URL do arquivo",
+        "headerMediaDesc": "Este modelo exige um arquivo de cabeçalho (vídeo ou documento).",
+        "mediaTypes": {
+          "image": "Imagem",
+          "video": "Vídeo",
+          "document": "Documento"
+        }
       },
       "scheduleSend": {
         "title": "Revisar e enviar",
@@ -1004,18 +1013,14 @@
         "audienceTags": "Filtrado por tags",
         "audienceField": "Filtrado por campo personalizado",
         "audienceCsv": "Upload de CSV",
-        "variables": "Variáveis:",
-        "variablesMapped": "{count} associadas",
         "saveDraft": "Salvar como rascunho",
         "sendNow": "Enviar disparo",
         "sending": "Enviando…",
-        "preparing": "Preparando…",
-        "progressDesc": "Processando {current} de {total} destinatários…",
-        "toastFailedPreview": "Falha ao carregar os dados da pré-visualização",
         "estimatedReach": "Alcance estimado",
         "language": "Idioma",
         "confirmTitle": "Confirmar disparo",
-        "confirmDesc": "Você está prestes a enviar este disparo para <b>{count, number}</b> {count, plural, =1 {contato} other {contatos}} usando o modelo <b>{template}</b>. Esta ação não pode ser desfeita."
+        "confirmDesc": "Você está prestes a enviar este disparo para <b>{count, number}</b> {count, plural, =1 {contato} other {contatos}} usando o modelo <b>{template}</b>. Esta ação não pode ser desfeita.",
+        "nameRequiredHint": "Digite um nome para salvar o rascunho ou enviar o disparo."
       }
     },
     "sending": {
@@ -1064,7 +1069,8 @@
         "duplicateError": "Falha ao duplicar",
         "deleteError": "Falha ao excluir"
       },
-      "loadFailed": "Falha ao carregar as automações"
+      "loadFailed": "Falha ao carregar as automações",
+      "loading": "Carregando automações…"
     },
     "edit": {
       "loading": "Carregando…",
@@ -1077,8 +1083,6 @@
       "emptyTitle": "Nenhuma execução ainda",
       "emptyDesc": "Acione esta automação para ver as execuções aqui.",
       "unknownContact": "Contato desconhecido",
-      "step": "{count} etapa",
-      "stepPlural": "{count} etapas",
       "noSteps": "Nenhuma etapa registrada.",
       "status": {
         "success": "sucesso",
@@ -1086,7 +1090,10 @@
         "failed": "falhou"
       },
       "back": "Voltar",
-      "backAria": "Voltar"
+      "backAria": "Voltar",
+      "loading": "Carregando registros…",
+      "notFound": "Não encontramos esta automação. Ela pode ter sido excluída.",
+      "stepsCount": "{count, plural, =1 {# etapa} other {# etapas}}"
     },
     "relative": {
       "never": "nunca",
@@ -1213,7 +1220,6 @@
       "kindCondition": "Condição",
       "kindWait": "Espera",
       "kindAction": "Ação",
-      "delete": "Excluir",
       "config": {
         "messageText": "Texto da mensagem",
         "placeholderMessageText": "Olá! Obrigado por entrar em contato…",
@@ -1247,10 +1253,7 @@
         "placeholderContact": "nome / e-mail / empresa",
         "placeholderTag": "id da tag",
         "urlLabel": "URL",
-        "headersLabel": "Cabeçalhos",
-        "placeholderHeaders": "{\"Authorization\": \"Bearer …\"}",
         "bodyTemplateLabel": "Modelo do corpo",
-        "placeholderBody": "{\"id\": \"{{ contact.id }}\"}",
         "matchType": "Tipo de correspondência",
         "matchContains": "Contém",
         "matchWord": "Palavra inteira",
@@ -1316,12 +1319,17 @@
       "triggerKeyword": "Acionado por: {keywords}",
       "triggerFirstInbound": "Acionado pela primeira mensagem recebida de um contato",
       "triggerManual": "Acionamento manual",
-      "cloneFailedStatus": "Falha ao clonar: {status}"
+      "cloneFailedStatus": "Falha ao clonar: {status}",
+      "loading": "Carregando fluxos…",
+      "retry": "Tentar novamente",
+      "deleteTitle": "Excluir fluxo"
     },
     "edit": {
       "notFound": "Fluxo não encontrado.",
       "backToFlows": "← Voltar aos fluxos",
-      "loadError": "Não foi possível carregar o fluxo."
+      "loadError": "Não foi possível carregar o fluxo.",
+      "loading": "Carregando fluxo…",
+      "retry": "Tentar novamente"
     },
     "logs": {
       "title": "Execuções",
@@ -1331,7 +1339,6 @@
       "unknownContact": "Contato desconhecido",
       "atNode": "em {node}",
       "started": "Iniciada {time}",
-      "reprompts": "{count} repetições de pergunta",
       "ranFor": "durou {duration}",
       "capturedVars": "Variáveis capturadas ({count})",
       "noEvents": "Nenhum evento registrado para esta execução.",
@@ -1341,7 +1348,20 @@
       "statusTimedOut": "Tempo esgotado",
       "statusPaused": "Pausada pelo agente",
       "statusFailed": "Falhou",
-      "loading": "Carregando execuções…"
+      "loading": "Carregando execuções…",
+      "retry": "Tentar novamente",
+      "repromptsCount": "{count, plural, =1 {# repetição de pergunta} other {# repetições de pergunta}}",
+      "eventTypes": {
+        "started": "Iniciada",
+        "node_entered": "Entrou no nó",
+        "message_sent": "Mensagem enviada",
+        "reply_received": "Resposta recebida",
+        "fallback_fired": "Resposta não reconhecida",
+        "handoff": "Transferida para uma pessoa",
+        "timeout": "Tempo esgotado",
+        "error": "Erro",
+        "completed": "Concluída"
+      }
     },
     "builder": {
       "triggerTitle": "Gatilho",
@@ -1367,8 +1387,6 @@
       "deleteNode": "Excluir nó",
       "canvasView": "Canvas",
       "listView": "Lista",
-      "noNodeSelected": "Nenhum nó selecionado",
-      "noNodeDesc": "Selecione um nó no canvas para editar sua configuração.",
       "editorView": "Visualização do editor",
       "form": {
         "advancesTo": "Avança para",
@@ -1491,7 +1509,10 @@
           "label": "Fim",
           "blurb": "Encerra o fluxo"
         }
-      }
+      },
+      "removeNodeTitle": "Excluir este nó?",
+      "removeNodeBody": "“{key}” e as setas que chegam até ele serão removidos. Nada é salvo até você tocar em Salvar.",
+      "cancel": "Cancelar"
     },
     "validation": {
       "noIssues": "Nenhum problema. Pronto para ativar.",
@@ -1544,7 +1565,9 @@
       "fixIssues": "Corrija os problemas abaixo antes de ativar",
       "save": "Salvar",
       "descriptionPlaceholder": "Adicione uma breve descrição (interna — os clientes não a veem)",
-      "descriptionLabel": "Descrição do fluxo"
+      "descriptionLabel": "Descrição do fluxo",
+      "deleteTitle": "Excluir fluxo",
+      "cancel": "Cancelar"
     }
   },
   "Settings": {
@@ -1579,7 +1602,6 @@
       "you": "Você",
       "unnamed": "Sem nome",
       "joined": "Entrou em {date}",
-      "remove": "Remover",
       "removedToast": "{name} saiu da equipe",
       "updatedToast": "Agora {name} tem a função {role}",
       "pendingInvitations": "Convites pendentes",
@@ -1611,7 +1633,8 @@
       "revokeDialogTitle": "Revogar convite",
       "revokeDialogDesc": "O link de <bold>{label}</bold> deixará de funcionar. Se precisar, crie um novo convite.",
       "revokeBtn": "Revogar convite",
-      "revoking": "Revogando…"
+      "revoking": "Revogando…",
+      "revokeInviteLabel": "Revogar o convite \"{name}\""
     },
     "invite": {
       "inviteCreated": "Convite criado",
@@ -1624,7 +1647,7 @@
       "done": "Concluído",
       "dialogTitle": "Convidar um colega",
       "networkError": "Não foi possível conectar ao servidor. Tentar novamente?",
-      "fallbackAccountName": "nossa conta do wacrm",
+      "fallbackAccountName": "nossa conta do Shift CRM",
       "dialogDesc": "Gere um link de convite de uso único. Compartilhe pelo WhatsApp, Slack ou qualquer outro canal — não é preciso serviço de e-mail.",
       "roleLabel": "Função",
       "validForLabel": "Link válido por",
@@ -1641,7 +1664,7 @@
       "labelTooLong": "O rótulo deve ter no máximo {max} caracteres",
       "copied": "Link do convite copiado",
       "clipboardBlocked": "Área de transferência bloqueada — copie o link manualmente",
-      "whatsappMessage": "Entre em {accountName} no wacrm usando este link (válido por {expiresInDays} dias): {url}",
+      "whatsappMessage": "Entre em {accountName} no Shift CRM usando este link (válido por {expiresInDays} dias): {url}",
       "createFailed": "Falha ao criar o convite"
     },
     "tagsAndFields": {
@@ -1680,7 +1703,8 @@
       },
       "newTagLabel": "Nome da nova etiqueta",
       "colorGroupLabel": "Cor da etiqueta",
-      "loadingTags": "Carregando etiquetas…"
+      "loadingTags": "Carregando etiquetas…",
+      "noTagsReadOnly": "Ainda não há etiquetas."
     },
     "templates": {
       "title": "Modelos de mensagem",
@@ -1764,8 +1788,8 @@
       "saveResubmit": "Salvar e reenviar",
       "submitApproval": "Enviar para aprovação",
       "deleteDialogTitle": "Excluir modelo?",
-      "deleteMetaDesc": "\"{name}\" será excluído da Meta e do wacrm. Disparos ativos que usam este modelo começarão a falhar no próximo envio. Não é possível desfazer.",
-      "deleteLocalDesc": "\"{name}\" será excluído do wacrm. Ele nunca foi enviado à Meta, então não há limpeza remota necessária.",
+      "deleteMetaDesc": "\"{name}\" será excluído da Meta e do Shift CRM. Disparos ativos que usam este modelo começarão a falhar no próximo envio. Não é possível desfazer.",
+      "deleteLocalDesc": "\"{name}\" será excluído do Shift CRM. Ele nunca foi enviado à Meta, então não há limpeza remota necessária.",
       "deleting": "Excluindo…",
       "delete": "Excluir",
       "toastLoadFailed": "Falha ao carregar os modelos",
@@ -1844,7 +1868,7 @@
       "twoStepPin": "PIN de verificação em duas etapas",
       "optional": "(opcional)",
       "pinPlaceholder": "PIN de 6 dígitos do Gerenciador do WhatsApp da Meta",
-      "pinHint": "Necessário apenas para receber mensagens em um número de produção. Defina-o em Meta Business Manager → Contas do WhatsApp → Números de telefone → Verificação em duas etapas e cole-o aqui para que o wacrm possa inscrever o número — caso contrário, a Meta encaminha os eventos recebidos para o último app que reivindicou o número (o sintoma que afeta segundos números em um WABA compartilhado). Números de teste da Meta não têm PIN e já vêm registrados — deixe em branco para eles. Deixar em branco também mantém um registro existente intacto.",
+      "pinHint": "Necessário apenas para receber mensagens em um número de produção. Defina-o em Meta Business Manager → Contas do WhatsApp → Números de telefone → Verificação em duas etapas e cole-o aqui para que o Shift CRM possa inscrever o número — caso contrário, a Meta encaminha os eventos recebidos para o último app que reivindicou o número (o sintoma que afeta segundos números em um WABA compartilhado). Números de teste da Meta não têm PIN e já vêm registrados — deixe em branco para eles. Deixar em branco também mantém um registro existente intacto.",
       "webhookTitle": "Configuração do webhook",
       "webhookDesc": "Use esta URL como callback do webhook no painel do app da Meta.",
       "webhookUrl": "URL de callback do webhook",
@@ -1921,7 +1945,39 @@
       "reconnectAskAdmin": "Peça a um administrador da conta para reconectar o WhatsApp.",
       "showToken": "Mostrar token",
       "hideToken": "Ocultar token",
-      "copyWebhookUrl": "Copiar a URL do webhook"
+      "copyWebhookUrl": "Copiar a URL do webhook",
+      "cancel": "Cancelar",
+      "resetDialogTitle": "Redefinir a configuração do WhatsApp?",
+      "metaError": {
+        "tokenExpired": "Seu token de acesso expirou. Os tokens temporários da página Configuração da API duram 24 horas. Crie um token permanente em Configurações da empresa da Meta → Usuários do sistema → Gerar token, com as permissões whatsapp_business_management e whatsapp_business_messaging, e cole-o em Token de acesso permanente.",
+        "tokenRevoked": "A Meta invalidou seu token de acesso (troca de senha, sessão encerrada ou token redefinido). Crie um novo token permanente em Configurações da empresa → Usuários do sistema → Gerar token e cole-o em Token de acesso permanente.",
+        "tokenInvalid": "A Meta rejeitou o token de acesso porque ele não é válido. Confira se você o copiou por inteiro; se continuar falhando, crie um novo token permanente em Configurações da empresa → Usuários do sistema → Gerar token.",
+        "permissions": "O token não tem permissão para fazer isso. O usuário do sistema dele precisa das permissões whatsapp_business_management e whatsapp_business_messaging e deve estar atribuído a esta conta do WhatsApp Business (Configurações da empresa → Usuários do sistema → Adicionar ativos → Contas do WhatsApp). Depois, gere um novo token.",
+        "businessAccess": "A Meta negou o acesso: a empresa dona do token não pode gerenciar este número nem esta conta do WhatsApp Business. Atribua o usuário do sistema à conta em Configurações da empresa e confirme que o token tem a permissão whatsapp_business_management.",
+        "notFoundPhone": "A Meta não encontra esse Phone Number ID, ou a empresa dona do token não é a proprietária do número. Copie-o exatamente de Meta → WhatsApp → Configuração da API e confirme que o token foi criado no mesmo portfólio de empresas.",
+        "notFoundWaba": "A Meta não encontra esse ID da conta do WhatsApp Business, ou a empresa dona do token não é a proprietária. Copie-o exatamente de Meta → WhatsApp → Configuração da API e confirme que o token foi criado no mesmo portfólio de empresas.",
+        "pinRejected": "A Meta rejeitou o PIN de verificação em duas etapas. Informe o PIN de 6 dígitos que você definiu no Gerenciador do WhatsApp → Números de telefone → Verificação em duas etapas.",
+        "badParam": "A Meta rejeitou um dos dados enviados. Confira se o Phone Number ID e o ID da conta do WhatsApp Business foram copiados exatamente: só dígitos e sem espaços.",
+        "phoneNotRegistered": "Este número ainda não está registrado na API do WhatsApp Cloud. Informe abaixo o PIN de verificação em duas etapas e salve de novo para registrá-lo.",
+        "pinWrong": "O PIN de verificação em duas etapas está incorreto. Use o PIN de 6 dígitos do Gerenciador do WhatsApp → Números de telefone → Verificação em duas etapas (ou redefina-o lá) e salve de novo.",
+        "pinLocked": "A Meta bloqueou por um tempo as tentativas de PIN deste número por excesso de erros. Aguarde um pouco antes de salvar de novo com o PIN correto.",
+        "reverify": "A Meta pede que este número seja verificado de novo. Abra o Gerenciador do WhatsApp → Números de telefone, conclua a verificação (SMS ou ligação) e salve de novo.",
+        "recentlyDeleted": "Este número foi excluído do WhatsApp há pouco e ainda não pode ser registrado: a Meta bloqueia o registro por um tempo depois da exclusão. Tente de novo mais tarde.",
+        "accountRestricted": "A Meta restringiu ou bloqueou esta conta do WhatsApp Business, por isso ela não pode ser conectada. Veja a restrição em Meta Business Manager → Qualidade da conta (ou Gerenciador do WhatsApp → Visão geral) e conteste.",
+        "policyBlock": "A Meta bloqueou temporariamente esta conta por violação de políticas. Veja o aviso em Meta Business Manager → Qualidade da conta: o bloqueio sai sozinho ou após uma contestação.",
+        "rateLimit": "A Meta está limitando as requisições deste app ou da conta do WhatsApp Business neste momento. Você não precisa mudar nada: aguarde alguns minutos e tente de novo.",
+        "temporary": "A Meta retornou um erro temporário (código {code}). Aguarde um minuto e tente de novo; se continuar, confira metastatus.com e compartilhe o Trace ID com o suporte da Meta.",
+        "wabaMismatch": "Esse Phone Number ID não pertence a essa conta do WhatsApp Business. Confira os dois valores em Meta → WhatsApp → Configuração da API: o ID da conta deve ser o que lista este número.",
+        "generic": "A Meta retornou um erro ao tentar {step}. Confira os dados e tente de novo; se continuar falhando, compartilhe os detalhes abaixo com o suporte da Meta."
+      },
+      "metaStep": {
+        "verify_number": "ler o número de telefone",
+        "waba_phone_numbers": "listar os números da conta do WhatsApp Business",
+        "register": "registrar o número",
+        "subscribe_waba": "inscrever a conta no app",
+        "subscribed_apps": "ler as inscrições da conta",
+        "unknown": "conectar com a Meta"
+      }
     },
     "sections": {
       "overview": "Visão geral",
@@ -2107,7 +2163,19 @@
       "done": "Concluído",
       "networkError": "Não foi possível conectar ao servidor",
       "loadingKeys": "Carregando chaves de API…",
-      "revokeConfirm": "Revogar a chave \"{name}\"? As integrações que a usam deixarão de funcionar, e isso não pode ser desfeito."
+      "revokeConfirm": "Revogar a chave \"{name}\"? As integrações que a usam deixarão de funcionar, e isso não pode ser desfeito.",
+      "scopeDescriptions": {
+        "messagesSend": "Enviar mensagens do WhatsApp",
+        "messagesRead": "Ler mensagens e o status de entrega",
+        "contactsRead": "Listar e ler contatos",
+        "contactsWrite": "Criar e atualizar contatos",
+        "conversationsRead": "Listar e ler conversas",
+        "broadcastsSend": "Iniciar campanhas de transmissão",
+        "webhooksManage": "Registrar e gerenciar webhooks de eventos de saída"
+      },
+      "revokeDialogTitle": "Revogar chave de API",
+      "revoking": "Revogando…",
+      "revokeLabel": "Revogar a chave \"{name}\""
     },
     "deals": {
       "title": "Negócios e moeda",
@@ -2124,7 +2192,7 @@
     },
     "aiConfig": {
       "title": "Configuração do agente",
-      "description": "Use sua própria chave da OpenAI, Anthropic ou de uma API compatível com OpenAI. O wacrm chama o provedor diretamente com sua chave — sem taxas de IA por assento, e seus dados continuam sob seu controle. Isso alimenta as respostas redigidas por IA, o bot de resposta automática e o Playground.",
+      "description": "Use sua própria chave da OpenAI, Anthropic ou de uma API compatível com OpenAI. O Shift CRM chama o provedor diretamente com sua chave — sem taxas de IA por assento, e seus dados continuam sob seu controle. Isso alimenta as respostas redigidas por IA, o bot de resposta automática e o Playground.",
       "adminOnlyConfig": "Somente administradores e proprietários podem alterar a configuração de IA.",
       "loadFailed": "Falha ao carregar a configuração de IA",
       "providerAndKey": "Provedor e chave",
@@ -2164,7 +2232,11 @@
       "providerOpenAiCompatible": "API compatível com OpenAI",
       "baseUrl": "URL base",
       "baseUrlHint": "URL base da API compatível com OpenAI, por exemplo https://api.groq.com/openai/v1. O caminho /chat/completions é adicionado automaticamente, a menos que você informe esse caminho.",
-      "missingBaseUrl": "Informe a URL base da API compatível com OpenAI."
+      "missingBaseUrl": "Informe a URL base da API compatível com OpenAI.",
+      "loading": "Carregando a configuração de IA…",
+      "showKey": "Mostrar a chave",
+      "hideKey": "Ocultar a chave",
+      "keyPlaceholderGeneric": "Sua chave de API"
     },
     "aiKnowledge": {
       "loadFailed": "Falha ao carregar a base de conhecimento",
@@ -2193,14 +2265,18 @@
       "reindexTooltip": "Gerar novamente os embeddings de todos os documentos (ex.: após adicionar uma chave de embeddings)",
       "editDoc": "Editar",
       "deleteDoc": "Excluir",
-      "loading": "Carregando…"
+      "loading": "Carregando…",
+      "deleting": "Excluindo…",
+      "deleteDocTitle": "Excluir documento",
+      "deleteDocConfirm": "Excluir \"{name}\" da base de conhecimento? O assistente deixará de usá-lo, e isso não pode ser desfeito.",
+      "editDocLabel": "Editar \"{name}\"",
+      "deleteDocLabel": "Excluir \"{name}\""
     },
     "quickReplies": {
       "nameRequired": "Dê um nome à resposta rápida.",
       "saveError": "Não foi possível salvar a resposta rápida. Tente novamente.",
       "updated": "Resposta rápida atualizada.",
       "created": "Resposta rápida criada.",
-      "deleteConfirm": "Excluir esta resposta rápida?",
       "deleteError": "Não foi possível excluir a resposta rápida. Tente novamente.",
       "title": "Respostas rápidas",
       "description": "Trechos reutilizáveis — texto simples ou uma mensagem interativa salva — que os agentes podem inserir pelo editor da caixa de entrada.",
@@ -2218,7 +2294,21 @@
       "editLabel": "Editar \"{name}\"",
       "deleteLabel": "Excluir \"{name}\"",
       "kindLabel": "Tipo de resposta",
-      "messageLabel": "Mensagem"
+      "messageLabel": "Mensagem",
+      "loadFailed": "Não foi possível carregar as respostas rápidas. Verifique sua conexão e tente de novo.",
+      "deleteTitle": "Excluir resposta rápida",
+      "deleteDesc": "Excluir \"{name}\"? Os agentes não poderão mais inseri-la pela caixa de entrada, e isso não pode ser desfeito.",
+      "delete": "Excluir",
+      "deleting": "Excluindo…"
+    },
+    "common": {
+      "retry": "Tentar de novo"
+    },
+    "readOnly": {
+      "whatsapp": "Somente administradores e proprietários podem alterar a conexão do WhatsApp. Aqui você pode ver o status e testar a conexão.",
+      "templates": "Somente administradores e proprietários podem criar, editar, sincronizar ou excluir modelos. Você pode consultá-los.",
+      "tags": "Somente administradores e proprietários podem criar ou excluir etiquetas.",
+      "quickReplies": "Sua função é somente leitura: você pode ver as respostas rápidas, mas não criá-las, editá-las nem excluí-las."
     }
   },
   "SignupPage": {
@@ -2306,7 +2396,10 @@
     "signingOut": "Saindo…",
     "signOutSwitch": "Sair e usar outro e-mail",
     "createAndJoin": "Criar conta e entrar na equipe",
-    "haveAccount": "Já tenho uma conta"
+    "haveAccount": "Já tenho uma conta",
+    "conflictAlreadyMember": "Você já faz parte desta conta, então não precisa aceitar o convite.",
+    "conflictSharedAccount": "Você já pertence a outra conta compartilhada. Para ingressar nesta, entre ou cadastre-se com outro e-mail.",
+    "conflictHasData": "Sua conta atual já tem dados e não pode ser substituída. Para ingressar nesta, cadastre-se com outro e-mail."
   },
   "Notifications": {
     "title": "Notificações",
@@ -2317,7 +2410,8 @@
     "retry": "Tentar novamente",
     "emptyTitle": "Nenhuma notificação ainda",
     "emptyDesc": "Você verá um alerta aqui quando alguém atribuir uma conversa a você.",
-    "unread": "Não lidas"
+    "unread": "Não lidas",
+    "loadFailed": "Não foi possível carregar suas notificações. Verifique sua conexão e tente novamente."
   },
   "Agents": {
     "title": "Agentes de IA",
@@ -2356,8 +2450,11 @@
       "tokensPerDay": "Tokens por dia",
       "byModel": "Por modelo",
       "modelCalls": "{tokens} tok · {count, plural, =1 {# chamada} other {# chamadas}}",
-      "partialWindow": "Exibindo uma janela parcial — o uso é alto o suficiente para que apenas os registros mais recentes sejam resumidos aqui."
-    }
+      "partialWindow": "Exibindo uma janela parcial — o uso é alto o suficiente para que apenas os registros mais recentes sejam resumidos aqui.",
+      "loading": "Carregando uso…",
+      "retry": "Tentar novamente"
+    },
+    "loading": "Carregando…"
   },
   "Interactive": {
     "replyButtons": "Botões de resposta",
@@ -2941,5 +3038,9 @@
     "sessionExpired": "Sua sessão expirou. Peça um novo link ou entre novamente.",
     "network": "Não foi possível conectar. Verifique sua internet e tente novamente.",
     "generic": "Algo deu errado. Tente novamente em instantes."
+  },
+  "AuthFields": {
+    "showPassword": "Mostrar a senha",
+    "hidePassword": "Ocultar a senha"
   }
 }
