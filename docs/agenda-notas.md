@@ -71,7 +71,20 @@ hay que traerlo **a mano sobre esta rama** (no hacer merge ciego ni
 pisar) y volver a correr typecheck, lint y las pruebas. Ojo con los
 archivos que esta rama renombró de `barberia` a `agenda`.
 
-## 6. Fuera de esta fase
+## 6. Módulo Ventas (convive con la agenda)
+
+Desde la migración 053 una cuenta puede tener varios módulos a la vez
+(`accounts.modules`, por ejemplo `{agenda,ventas}`). El módulo **Ventas**
+(pedidos hechos por WhatsApp) está documentado en `docs/ventas.md` (uso,
+plantillas de Meta y datos personales) y su despliegue en
+`docs/ventas-despliegue.md`.
+
+Ojo al activar Ventas en una cuenta con agenda: si `modules` está vacío
+y la agenda solo está en `vertical_key`, hay que agregar `agenda` a
+`modules` **antes** que `ventas`, o la cuenta pierde la agenda (menú y
+bot). El SQL exacto está en `docs/ventas.md` → «Activar».
+
+## 7. Fuera de esta fase
 
 - **Aprobar cada cita** (el dueño aprueba por WhatsApp antes de
   confirmar): Fase 2, junto con el calendario interno, el enlace `.ics`
