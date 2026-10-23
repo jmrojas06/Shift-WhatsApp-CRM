@@ -6,11 +6,10 @@ import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import type { Notification } from "@/types";
 import { Bell, CheckCheck, Loader2, UserPlus } from "lucide-react";
-import { formatDistanceToNow } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { useTranslations } from "next-intl";
+import { useFormatter, useTranslations } from "next-intl";
 
 // Icon per notification type. Only one type exists today
 // (conversation_assigned) but this keeps future types a one-line add.
@@ -20,6 +19,7 @@ const TYPE_ICON: Record<Notification["type"], typeof Bell> = {
 
 export default function NotificationsPage() {
   const t = useTranslations("Notifications");
+  const format = useFormatter();
   const router = useRouter();
   const { accountId } = useAuth();
   const [notifications, setNotifications] = useState<Notification[] | null>(
@@ -156,18 +156,30 @@ export default function NotificationsPage() {
   }
 
   if (notifications === null) {
+    // Skeleton rows shaped like the final list instead of a spinner.
     return (
-      <div className="flex h-64 items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+      <div className="space-y-6" role="status" aria-label={t("title")}>
+        <div className="h-8 w-48 animate-pulse rounded-md bg-muted" />
+        <ul className="space-y-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <li key={i} className="flex items-start gap-3 rounded-xl border border-border bg-card p-4">
+              <div className="size-10 animate-pulse rounded-lg bg-muted" />
+              <div className="flex-1 space-y-2">
+                <div className="h-4 w-1/2 animate-pulse rounded bg-muted" />
+                <div className="h-3 w-1/3 animate-pulse rounded bg-muted" />
+              </div>
+            </li>
+          ))}
+        </ul>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">{t("title")}</h1>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold text-foreground">{t("title")}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {t("description")}
           </p>
@@ -210,10 +222,10 @@ export default function NotificationsPage() {
                   type="button"
                   onClick={() => handleClick(n)}
                   className={cn(
-                    "flex w-full items-start gap-3 rounded-xl border p-4 text-left transition-colors",
+                    "flex w-full items-start gap-3 rounded-xl border p-4 text-left transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
                     isUnread
-                      ? "border-primary/30 bg-primary/5 hover:border-primary/50"
-                      : "border-border bg-card hover:border-border/70",
+                      ? "border-primary/25 bg-primary/5 hover:bg-primary/10"
+                      : "border-border bg-card hover:bg-muted/60",
                   )}
                 >
                   <div
@@ -252,10 +264,8 @@ export default function NotificationsPage() {
                         {n.body}
                       </p>
                     )}
-                    <p className="mt-1 text-[11px] text-muted-foreground/70">
-                      {formatDistanceToNow(new Date(n.created_at), {
-                        addSuffix: true,
-                      })}
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {format.relativeTime(new Date(n.created_at))}
                     </p>
                   </div>
                 </button>

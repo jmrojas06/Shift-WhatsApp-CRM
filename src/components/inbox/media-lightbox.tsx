@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { format } from "date-fns";
 import {
   ChevronLeft,
   ChevronRight,
@@ -14,7 +13,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useTranslations } from "next-intl";
+import { useFormatter, useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import {
   Dialog,
@@ -59,6 +58,7 @@ export function MediaLightbox({
   contactLabel,
 }: MediaLightboxProps) {
   const t = useTranslations("Inbox.mediaViewer");
+  const formatter = useFormatter();
 
   const index = galleryIndexOf(items, activeId);
   const item = index >= 0 ? items[index] : null;
@@ -116,7 +116,10 @@ export function MediaLightbox({
   if (!item) return null;
 
   const authorLabel = item.fromCustomer ? contactLabel : t("you");
-  const timestamp = format(new Date(item.createdAt), "MMM d, yyyy HH:mm");
+  const timestamp = formatter.dateTime(new Date(item.createdAt), {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
 
   return (
     <Dialog
@@ -153,9 +156,9 @@ export function MediaLightbox({
               rel="noopener noreferrer"
               aria-label={t("openOriginal")}
               title={t("openOriginal")}
-              className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:h-11 pointer-coarse:w-11"
             >
-              <ExternalLink className="h-4 w-4" />
+              <ExternalLink aria-hidden="true" className="h-4 w-4" />
             </a>
             <ToolbarButton
               icon={Download}
@@ -291,7 +294,7 @@ function ToolbarButton({
       disabled={busy}
       aria-label={label}
       title={label}
-      className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-60"
+      className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-60 pointer-coarse:h-11 pointer-coarse:w-11"
     >
       {busy ? (
         <Loader2 className="h-4 w-4 animate-spin" />
@@ -323,7 +326,7 @@ function NavButton({
       aria-label={label}
       title={label}
       className={cn(
-        "absolute top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-border/60 bg-background/85 text-foreground shadow-md backdrop-blur-sm transition-colors hover:bg-background disabled:pointer-events-none disabled:opacity-0",
+        "absolute top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-border/60 bg-background/85 text-foreground shadow-md outline-none backdrop-blur-sm transition-colors hover:bg-background focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-0 pointer-coarse:h-11 pointer-coarse:w-11",
         side === "left" ? "left-1" : "right-1",
       )}
     >

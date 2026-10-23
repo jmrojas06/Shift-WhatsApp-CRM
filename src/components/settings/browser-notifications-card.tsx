@@ -106,7 +106,7 @@ export function BrowserNotificationsCard({ className }: { className?: string }) 
   return (
     <Card className={className}>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-foreground">
+        <CardTitle className="flex items-center gap-2 text-[15px] font-semibold text-foreground">
           <Bell className="size-4 text-muted-foreground" />
           {t('title')}
         </CardTitle>
@@ -143,7 +143,7 @@ export function BrowserNotificationsCard({ className }: { className?: string }) 
             <p className="text-xs text-muted-foreground">{t(statusKey)}</p>
 
             {permission === 'denied' && (
-              <p className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+              <p className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
                 <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
                 <span>{t('deniedHint')}</span>
               </p>

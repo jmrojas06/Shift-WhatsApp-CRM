@@ -16,8 +16,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { format } from "date-fns";
-import { useTranslations } from "next-intl";
+import { useFormatter, useTranslations } from "next-intl";
 import { contactHandle } from "@/lib/whatsapp/wa-identity";
 import { ContactOrders } from "./contact-orders";
 
@@ -29,7 +28,7 @@ interface ContactSidebarProps {
 
 export function ContactSidebar({ contact, conversationId = null }: ContactSidebarProps) {
   const tSidebar = useTranslations("Inbox.sidebar");
-  const tThread = useTranslations("Inbox.messageThread");
+  const formatter = useFormatter();
 
   const { accountId } = useAuth();
   const [copied, setCopied] = useState(false);
@@ -124,25 +123,23 @@ export function ContactSidebar({ contact, conversationId = null }: ContactSideba
     setAddingNote(false);
   }, [contact, newNote, accountId]);
 
-  if (!contact) {
-    return (
-      <div className="flex h-full w-70 items-center justify-center border-l border-border bg-card">
-        <p className="text-sm text-muted-foreground">{tThread("selectConversation")}</p>
-      </div>
-    );
-  }
+  // Nothing to show without a contact. The inbox page only mounts this
+  // panel once a conversation is open, so this is just a safety net.
+  if (!contact) return null;
 
   const displayName = contact.name || contactHandle(contact);
   const initials = displayName.charAt(0).toUpperCase();
 
   return (
     <div className="flex h-full w-70 flex-col border-l border-border bg-card">
-      <ScrollArea className="flex-1">
+      <ScrollArea className="min-h-0 flex-1">
         <div className="p-4">
           {/* Contact Info */}
           <div className="flex flex-col items-center text-center">
             <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted text-lg font-semibold text-foreground">
               {contact.avatar_url ? (
+                // External profile URL (hosts not allow-listed for next/image).
+                // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={contact.avatar_url}
                   alt={displayName}
@@ -152,7 +149,7 @@ export function ContactSidebar({ contact, conversationId = null }: ContactSideba
                 initials
               )}
             </div>
-            <h3 className="mt-3 text-sm font-semibold text-foreground">
+            <h3 className="mt-3 max-w-full truncate text-sm font-semibold text-foreground">
               {displayName}
             </h3>
             {contact.company && (
@@ -163,17 +160,20 @@ export function ContactSidebar({ contact, conversationId = null }: ContactSideba
           {/* Phone */}
           <div className="mt-4 space-y-2">
             <button
+              type="button"
               onClick={handleCopyPhone}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted"
+              aria-label={tSidebar("copyHandle", { handle: contactHandle(contact) })}
+              title={tSidebar("copyHandle", { handle: contactHandle(contact) })}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
             >
-              <Phone className="h-4 w-4 text-muted-foreground" />
-              <span className="flex-1 text-left">
+              <Phone aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate text-left">
                 {contactHandle(contact)}
               </span>
               {copied ? (
-                <Check className="h-3 w-3 text-primary" />
+                <Check aria-hidden="true" className="h-3 w-3 text-success" />
               ) : (
-                <Copy className="h-3 w-3 text-muted-foreground" />
+                <Copy aria-hidden="true" className="h-3 w-3 text-muted-foreground" />
               )}
             </button>
 
@@ -246,7 +246,7 @@ export function ContactSidebar({ contact, conversationId = null }: ContactSideba
                     <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
                       <span>
                         {deal.currency ?? "$"}
-                        {deal.value.toLocaleString()}
+                        {formatter.number(deal.value)}
                       </span>
                       {deal.stage && (
                         <span
@@ -278,19 +278,22 @@ export function ContactSidebar({ contact, conversationId = null }: ContactSideba
             <div className="mt-2">
               <div className="flex gap-2">
                 <textarea
+                  aria-label={tSidebar("newNoteLabel")}
                   value={newNote}
                   onChange={(e) => setNewNote(e.target.value)}
                   placeholder={tSidebar("addNotePlaceholder")}
                   rows={2}
-                  className="flex-1 resize-none rounded-lg border border-border bg-muted px-3 py-2 text-xs text-foreground placeholder-muted-foreground outline-none focus:border-primary/50"
+                  className="min-w-0 flex-1 resize-none rounded-lg border border-input bg-muted px-3 py-2 text-[13px] text-foreground outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                 />
                 <Button
                   size="sm"
-                  className="h-auto bg-primary px-2 hover:bg-primary/90"
+                  className="h-auto px-2"
                   onClick={handleAddNote}
                   disabled={!newNote.trim() || addingNote}
+                  aria-label={tSidebar("addNote")}
+                  title={tSidebar("addNote")}
                 >
-                  <Plus className="h-3 w-3" />
+                  <Plus aria-hidden="true" />
                 </Button>
               </div>
 
@@ -304,7 +307,10 @@ export function ContactSidebar({ contact, conversationId = null }: ContactSideba
                       {note.note_text}
                     </p>
                     <p className="mt-1 text-[10px] text-muted-foreground">
-                      {format(new Date(note.created_at), "MMM d, yyyy HH:mm")}
+                      {formatter.dateTime(new Date(note.created_at), {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })}
                     </p>
                   </div>
                 ))}

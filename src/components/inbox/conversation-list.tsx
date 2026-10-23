@@ -10,8 +10,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus, Tag } from "@/types";
 import { Search, ChevronDown, X } from "lucide-react";
-import { formatDistanceToNow } from "date-fns";
-import { useTranslations } from "next-intl";
+import { useFormatter, useNow, useTranslations } from "next-intl";
 import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
@@ -21,6 +20,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  INBOX_FILTERS,
+  countUnreadConversations,
+  matchesInboxFilter,
+  type InboxFilter,
+} from "./inbox-filters";
 
 interface ConversationListProps {
   activeConversationId: string | null;
@@ -36,15 +41,36 @@ interface ConversationListProps {
   resyncToken?: number;
 }
 
-const STATUS_COLORS: Record<ConversationStatus, string> = {
-  open: "bg-primary",
-  pending: "bg-amber-500",
-  closed: "bg-muted-foreground",
+// Semantic status tokens (success / warning / neutral) for the small dot
+// on each row. Paired with a visually-hidden label so the colour is never
+// the only signal.
+const STATUS_DOT: Record<ConversationStatus, string> = {
+  open: "bg-success",
+  pending: "bg-warning",
+  closed: "bg-muted-foreground/50",
 };
 
+const STATUS_LABEL_KEY: Record<ConversationStatus, string> = {
+  open: "statusOpen",
+  pending: "statusPending",
+  closed: "statusClosed",
+};
 
+const FILTER_LABEL_KEY: Record<InboxFilter, string> = {
+  all: "filterAll",
+  unread: "filterUnread",
+  open: "filterOpen",
+  pending: "filterPending",
+  closed: "filterClosed",
+};
 
-type InboxFilter = ConversationStatus | "all" | "unread";
+// Shared chip look for the quick filters and the Tags / Company pickers:
+// 36px on desktop, 44px on touch screens, visible keyboard focus.
+const CHIP_BASE =
+  "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[13px] font-medium whitespace-nowrap transition-colors outline-none pointer-coarse:h-11 focus-visible:ring-3 focus-visible:ring-ring/50";
+const CHIP_IDLE =
+  "border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground";
+const CHIP_ACTIVE = "border-primary/30 bg-primary-soft text-primary";
 
 export function ConversationList({
   activeConversationId,
@@ -54,14 +80,10 @@ export function ConversationList({
   resyncToken = 0,
 }: ConversationListProps) {
   const t = useTranslations("Inbox.conversationList");
-  
-  const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = useMemo(() => [
-    { label: t("filterAll"), value: "all" },
-    { label: t("filterUnread"), value: "unread" },
-    { label: t("filterOpen"), value: "open" },
-    { label: t("filterPending"), value: "pending" },
-    { label: t("filterClosed"), value: "closed" },
-  ], [t]);
+  const tThread = useTranslations("Inbox.messageThread");
+  const format = useFormatter();
+  // Re-render once a minute so "hace 2 min" keeps moving without a refetch.
+  const now = useNow({ updateInterval: 60_000 });
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<InboxFilter>("all");
@@ -161,10 +183,8 @@ export function ConversationList({
   const filtered = useMemo(() => {
     let result = conversations;
 
-    if (filter === "unread") {
-      result = result.filter((c) => c.unread_count > 0);
-    } else if (filter !== "all") {
-      result = result.filter((c) => c.status === filter);
+    if (filter !== "all") {
+      result = result.filter((c) => matchesInboxFilter(c, filter));
     }
 
     // Contact-based filters (tags via OR logic, exact company match).
@@ -217,69 +237,92 @@ export function ConversationList({
     [onSelect]
   );
 
-  const activeFilter = FILTER_OPTIONS.find((o) => o.value === filter);
+  const unreadTotal = useMemo(
+    () => countUnreadConversations(conversations),
+    [conversations],
+  );
+
+  const hasAnyFilter =
+    filter !== "all" || hasContactFilters || search.trim().length > 0;
+
+  const resetAllFilters = useCallback(() => {
+    setFilter("all");
+    setSearch("");
+    setSelectedTagIds([]);
+    setSelectedCompany(null);
+  }, []);
 
   return (
     // w-full on mobile so the list occupies the whole viewport when it's
     // the single pane showing; fixed 320px on desktop where it shares the
-    // row with the thread + contact sidebar.
-    <div className="flex h-full w-full flex-col border-r border-border bg-card lg:w-80">
+    // row with the thread + contact sidebar. `min-w-0` keeps a long
+    // preview line (nowrap + truncate) from widening the pane past the
+    // phone screen.
+    <div className="flex h-full w-full min-w-0 flex-col border-r border-border bg-card lg:w-80">
       {/* Search + Filter */}
-      <div className="space-y-2 border-b border-border p-3">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+      <div className="min-w-0 space-y-2 border-b border-border py-3">
+        <div className="relative px-3">
+          <label htmlFor="inbox-search" className="sr-only">
+            {t("searchLabel")}
+          </label>
+          <Search
+            aria-hidden="true"
+            className="pointer-events-none absolute left-6 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+          />
           <Input
+            id="inbox-search"
+            type="search"
             value={search}
             onChange={handleSearchChange}
             placeholder={t("searchPlaceholder")}
-            className="border-border bg-muted pl-9 text-sm text-foreground placeholder-muted-foreground focus:border-primary/50"
+            autoComplete="off"
+            className="bg-muted pl-9 text-foreground"
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-1">
-          <DropdownMenu>
-            <DropdownMenuTrigger className="inline-flex items-center justify-center h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-muted">
-                {activeFilter?.label ?? t("filterAll")}
-                <ChevronDown className="h-3 w-3" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="start"
-              className="border-border bg-popover"
-            >
-              {FILTER_OPTIONS.map((opt) => (
-                <DropdownMenuItem
-                  key={opt.value}
-                  onClick={() => setFilter(opt.value)}
-                  className={cn(
-                    "text-sm",
-                    filter === opt.value
-                      ? "text-primary"
-                      : "text-popover-foreground"
-                  )}
-                >
-                  {opt.label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+        {/* Quick filters as visible chips. Scrolls sideways on narrow
+            screens instead of wrapping into several rows. */}
+        <div
+          role="group"
+          aria-label={t("filtersLabel")}
+          className="flex min-w-0 items-center gap-2 overflow-x-auto px-3 pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          {INBOX_FILTERS.map((value) => {
+            const active = filter === value;
+            const showCount = value === "unread" && unreadTotal > 0;
+            return (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={active}
+                onClick={() => setFilter(value)}
+                className={cn(CHIP_BASE, active ? CHIP_ACTIVE : CHIP_IDLE)}
+              >
+                {t(FILTER_LABEL_KEY[value])}
+                {showCount && (
+                  <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-semibold tabular-nums text-primary-foreground">
+                    {unreadTotal}
+                  </span>
+                )}
+              </button>
+            );
+          })}
 
           {tags.length > 0 && (
             <DropdownMenu>
               <DropdownMenuTrigger
                 className={cn(
-                  "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
-                  selectedTagIds.length > 0
-                    ? "text-primary"
-                    : "text-muted-foreground hover:text-foreground"
+                  CHIP_BASE,
+                  selectedTagIds.length > 0 ? CHIP_ACTIVE : CHIP_IDLE,
                 )}
               >
                 {t("tags")}
                 {selectedTagIds.length > 0 && (
-                  <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
+                  <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-semibold tabular-nums text-primary-foreground">
                     {selectedTagIds.length}
                   </span>
                 )}
-                <ChevronDown className="h-3 w-3" />
+                <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />
               </DropdownMenuTrigger>
               <DropdownMenuContent
                 align="start"
@@ -309,14 +352,13 @@ export function ConversationList({
             <DropdownMenu>
               <DropdownMenuTrigger
                 className={cn(
-                  "inline-flex max-w-40 items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
-                  selectedCompany
-                    ? "text-primary"
-                    : "text-muted-foreground hover:text-foreground"
+                  CHIP_BASE,
+                  "max-w-44",
+                  selectedCompany ? CHIP_ACTIVE : CHIP_IDLE,
                 )}
               >
                 <span className="truncate">{selectedCompany ?? t("company")}</span>
-                <ChevronDown className="h-3 w-3 shrink-0" />
+                <ChevronDown aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
               </DropdownMenuTrigger>
               <DropdownMenuContent
                 align="start"
@@ -353,36 +395,43 @@ export function ConversationList({
         </div>
 
         {hasContactFilters && (
-          <div className="flex flex-wrap items-center gap-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5 px-3">
             {selectedTagIds.map((id) => {
               const tag = tagsById.get(id);
+              const name = tag?.name ?? t("tags");
               return (
                 <button
                   key={id}
+                  type="button"
                   onClick={() => toggleTag(id)}
-                  className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] text-foreground hover:bg-muted/70"
+                  aria-label={t("removeFilter", { name })}
+                  className="inline-flex h-7 max-w-full items-center gap-1 rounded-full bg-muted px-2.5 text-xs text-foreground outline-none hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:h-9"
                 >
                   <span
+                    aria-hidden="true"
                     className="h-1.5 w-1.5 shrink-0 rounded-full"
                     style={{ backgroundColor: tag?.color ?? "var(--muted-foreground)" }}
                   />
-                  <span className="max-w-24 truncate">{tag?.name ?? t("tags")}</span>
-                  <X className="h-3 w-3" />
+                  <span className="max-w-28 truncate">{name}</span>
+                  <X aria-hidden="true" className="h-3 w-3 shrink-0" />
                 </button>
               );
             })}
             {selectedCompany && (
               <button
+                type="button"
                 onClick={() => setSelectedCompany(null)}
-                className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] text-foreground hover:bg-muted/70"
+                aria-label={t("removeFilter", { name: selectedCompany })}
+                className="inline-flex h-7 max-w-full items-center gap-1 rounded-full bg-muted px-2.5 text-xs text-foreground outline-none hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:h-9"
               >
-                <span className="max-w-24 truncate">{selectedCompany}</span>
-                <X className="h-3 w-3" />
+                <span className="max-w-28 truncate">{selectedCompany}</span>
+                <X aria-hidden="true" className="h-3 w-3 shrink-0" />
               </button>
             )}
             <button
+              type="button"
               onClick={clearContactFilters}
-              className="px-1 text-[11px] text-muted-foreground hover:text-foreground"
+              className="h-7 rounded-md px-1.5 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:h-9"
             >
               {t("clearAll")}
             </button>
@@ -396,29 +445,67 @@ export function ConversationList({
           every conversation instead of shrinking to the remaining
           space — the list then overflows and gets clipped by the
           parent's overflow-hidden with no scrollbar (issue #229). */}
-      <ScrollArea className="min-h-0 flex-1">
+      <ScrollArea className="min-h-0 min-w-0 flex-1">
         {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          </div>
+          <ConversationListSkeleton />
         ) : filtered.length === 0 ? (
-          <div className="px-4 py-12 text-center">
-            <p className="text-sm text-muted-foreground">{t("noConversations")}</p>
+          <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
+            <p className="text-sm text-muted-foreground">
+              {conversations.length === 0 && !hasAnyFilter
+                ? t("emptyInbox")
+                : t("noConversations")}
+            </p>
+            {hasAnyFilter && (
+              <button
+                type="button"
+                onClick={resetAllFilters}
+                className="inline-flex h-9 items-center rounded-lg border border-border px-3 text-sm font-medium text-foreground outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:h-11"
+              >
+                {t("showAll")}
+              </button>
+            )}
           </div>
         ) : (
-          <div className="flex flex-col">
+          <ul className="flex min-w-0 flex-col">
             {filtered.map((conv) => (
-              <ConversationItem
-                key={conv.id}
-                conversation={conv}
-                isActive={conv.id === activeConversationId}
-                onSelect={handleSelect}
-                t={t}
-              />
+              <li key={conv.id} className="min-w-0">
+                <ConversationItem
+                  conversation={conv}
+                  isActive={conv.id === activeConversationId}
+                  onSelect={handleSelect}
+                  t={t}
+                  statusLabel={tThread(STATUS_LABEL_KEY[conv.status])}
+                  timeLabel={
+                    conv.last_message_at
+                      ? format.relativeTime(new Date(conv.last_message_at), {
+                          now,
+                          style: "narrow",
+                        })
+                      : ""
+                  }
+                />
+              </li>
             ))}
-          </div>
+          </ul>
         )}
       </ScrollArea>
+    </div>
+  );
+}
+
+/** Placeholder rows while the first fetch is in flight. */
+function ConversationListSkeleton() {
+  return (
+    <div aria-hidden="true" className="flex flex-col">
+      {Array.from({ length: 6 }, (_, i) => (
+        <div key={i} className="flex items-center gap-3 px-3 py-3">
+          <div className="h-10 w-10 shrink-0 animate-pulse rounded-full bg-muted" />
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="h-3 w-1/2 animate-pulse rounded bg-muted" />
+            <div className="h-3 w-4/5 animate-pulse rounded bg-muted" />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -428,6 +515,10 @@ interface ConversationItemProps {
   isActive: boolean;
   onSelect: (conversation: Conversation) => void;
   t: ReturnType<typeof useTranslations>;
+  /** Translated status name ("Abierta"), read by screen readers. */
+  statusLabel: string;
+  /** Relative time of the last message, already in the app locale. */
+  timeLabel: string;
 }
 
 function ConversationItem({
@@ -435,35 +526,42 @@ function ConversationItem({
   isActive,
   onSelect,
   t,
+  statusLabel,
+  timeLabel,
 }: ConversationItemProps) {
   const contact = conversation.contact;
   const displayName = contact?.name || contact?.phone || t("unknown");
   const initials = displayName.charAt(0).toUpperCase();
+  const unread = conversation.unread_count > 0;
 
   const handleClick = useCallback(() => {
     onSelect(conversation);
   }, [onSelect, conversation]);
 
-  const timeAgo = conversation.last_message_at
-    ? formatDistanceToNow(new Date(conversation.last_message_at), {
-        addSuffix: false,
-      })
-    : "";
-
   return (
     <button
+      type="button"
       onClick={handleClick}
+      aria-current={isActive ? "true" : undefined}
       className={cn(
-        "flex w-full items-start gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/50",
-        isActive && "border-l-2 border-primary bg-muted/70"
+        "flex w-full min-w-0 items-center gap-3 px-3 py-3 text-left transition-colors outline-none hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-inset",
+        // Inset shadow instead of a border so the active row's content
+        // doesn't shift 2px to the right.
+        isActive && "bg-accent shadow-[inset_3px_0_0_var(--primary)] hover:bg-accent",
       )}
     >
       {/* Avatar */}
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground">
+      <div
+        aria-hidden="true"
+        className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted text-sm font-medium text-foreground"
+      >
         {contact?.avatar_url ? (
+          // External WhatsApp profile URL; next/image would need every
+          // host allow-listed. Decorative: the name sits right next to it.
+          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={contact.avatar_url}
-            alt={displayName}
+            alt=""
             className="h-10 w-10 rounded-full object-cover"
           />
         ) : (
@@ -473,29 +571,55 @@ function ConversationItem({
 
       {/* Content */}
       <div className="min-w-0 flex-1">
-        <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-sm font-medium text-foreground">
+        <div className="flex min-w-0 items-center justify-between gap-2">
+          <span
+            className={cn(
+              "min-w-0 truncate text-sm text-foreground",
+              unread ? "font-semibold" : "font-medium",
+            )}
+          >
             {displayName}
           </span>
-          <span className="shrink-0 text-[10px] text-muted-foreground">{timeAgo}</span>
+          {timeLabel && (
+            <time
+              dateTime={conversation.last_message_at}
+              className={cn(
+                "shrink-0 text-[11px] tabular-nums",
+                unread ? "font-medium text-primary" : "text-muted-foreground",
+              )}
+            >
+              {timeLabel}
+            </time>
+          )}
         </div>
-        <div className="mt-0.5 flex items-center justify-between gap-2">
-          <p className="truncate text-xs text-muted-foreground">
+        <div className="mt-0.5 flex min-w-0 items-center justify-between gap-2">
+          <p
+            className={cn(
+              "min-w-0 truncate text-[13px]",
+              unread ? "text-foreground" : "text-muted-foreground",
+            )}
+          >
             {conversation.last_message_text || t("noMessagesYet")}
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
-            {conversation.unread_count > 0 && (
-              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
-                {conversation.unread_count}
+            {unread && (
+              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-semibold tabular-nums text-primary-foreground">
+                {/* aria-label is ignored on a plain span; the visible count
+                    is hidden and the full phrase goes in sr-only text. */}
+                <span aria-hidden="true">{conversation.unread_count}</span>
+                <span className="sr-only">
+                  {t("unreadMessages", {
+                    count: conversation.unread_count,
+                  })}
+                </span>
               </span>
             )}
             <span
-              className={cn(
-                "h-2 w-2 rounded-full",
-                STATUS_COLORS[conversation.status]
-              )}
-              title={conversation.status}
+              aria-hidden="true"
+              className={cn("h-2 w-2 rounded-full", STATUS_DOT[conversation.status])}
+              title={statusLabel}
             />
+            <span className="sr-only">{statusLabel}</span>
           </div>
         </div>
       </div>

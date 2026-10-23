@@ -43,7 +43,7 @@ function SettingsPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { defaultCurrency } = useAuth();
-  const { mode } = useTheme();
+  const { modePreference } = useTheme();
   const t = useTranslations('Settings');
 
   // The URL (`?tab=`) is the single source of truth for the active
@@ -63,10 +63,10 @@ function SettingsPageInner() {
   // already in context.
   const hints: Partial<Record<SettingsSection, ReactNode>> = useMemo(
     () => ({
-      appearance: mode.charAt(0).toUpperCase() + mode.slice(1),
+      appearance: t(`appearance.modes.${modePreference}`),
       deals: defaultCurrency,
     }),
-    [mode, defaultCurrency],
+    [t, modePreference, defaultCurrency],
   );
 
   const panel: Record<SettingsSection, ReactNode> = {
@@ -86,7 +86,7 @@ function SettingsPageInner() {
   return (
     <div>
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-foreground">
+        <h1 className="text-2xl font-semibold text-foreground">
           {t('pageTitle')}
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -94,7 +94,7 @@ function SettingsPageInner() {
         </p>
       </div>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[236px_minmax(0,1fr)] lg:items-start">
+      <div className="mt-6 grid min-w-0 gap-6 lg:grid-cols-[236px_minmax(0,1fr)] lg:items-start">
         <SettingsRail active={section} onSelect={go} hints={hints} />
         <div className="min-w-0">{panel[section]}</div>
       </div>

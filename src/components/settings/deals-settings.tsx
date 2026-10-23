@@ -66,7 +66,7 @@ export function DealsSettings() {
     // and every total pick it up without a full reload.
     await refreshProfile();
     setSaving(false);
-    toast.success(t("saveSuccess"));
+    toast.success(t("saveSuccess", { currency: selected }));
   }
 
   return (
@@ -77,8 +77,8 @@ export function DealsSettings() {
       />
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-foreground">
-            <Coins className="size-4 text-primary" />
+          <CardTitle className="flex items-center gap-2 text-[15px] font-semibold text-foreground">
+            <Coins className="size-4 text-primary" aria-hidden />
             {t("defaultCurrency")}
           </CardTitle>
           <CardDescription className="text-muted-foreground">
@@ -87,35 +87,31 @@ export function DealsSettings() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-2 sm:max-w-xs">
-            <Label className="text-muted-foreground">{t("currencyLabel")}</Label>
+            <Label htmlFor="deals-currency">{t("currencyLabel")}</Label>
             <select
+              id="deals-currency"
+              aria-describedby="deals-currency-hint"
               value={selected}
               onChange={(e) => setSelected(e.target.value)}
               disabled={!canEditSettings || profileLoading}
-              className="h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60"
+              className="h-10 w-full rounded-lg border border-input bg-transparent px-2.5 text-base text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60 pointer-coarse:h-11 md:text-sm dark:bg-input/30"
             >
               {CURRENCIES.map((c) => (
                 <option key={c.code} value={c.code}>
-                  {c.code} — {c.label}
+                  {c.code} · {c.label}
                 </option>
               ))}
             </select>
-            {!canEditSettings && (
-              <p className="text-xs text-muted-foreground">
-                {t("adminOnlyHint")}
-              </p>
-            )}
+            <p id="deals-currency-hint" className="text-xs text-muted-foreground">
+              {canEditSettings ? t("currencyHint") : t("adminOnlyHint")}
+            </p>
           </div>
 
           {canEditSettings && (
-            <Button
-              onClick={handleSave}
-              disabled={saving || !dirty}
-              className="bg-primary text-primary-foreground hover:bg-primary/90"
-            >
+            <Button onClick={handleSave} disabled={saving || !dirty}>
               {saving ? (
                 <>
-                  <Loader2 className="size-4 animate-spin" />
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
                   {t("saving")}
                 </>
               ) : (

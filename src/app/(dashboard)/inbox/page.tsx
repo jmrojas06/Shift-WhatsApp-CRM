@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useState, useCallback, useEffect, useRef } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { createClient } from "@/lib/supabase/client";
@@ -14,6 +15,7 @@ import { ConversationList } from "@/components/inbox/conversation-list";
 import { MessageThread } from "@/components/inbox/message-thread";
 import { ContactSidebar } from "@/components/inbox/contact-sidebar";
 import { WifiOff } from "lucide-react";
+import { useHideMobileTabBar } from "@/components/layout/shell-chrome";
 import { cn } from "@/lib/utils";
 
 // Remembers the agent's show/hide choice for the desktop contact panel
@@ -559,27 +561,44 @@ function InboxPageInner() {
   // it back to the list. On lg+ both panes render side-by-side as
   // before, unchanged.
   const hasActiveConv = !!activeConversation;
+  // An open chat needs the whole phone screen for its composer.
+  useHideMobileTabBar(hasActiveConv);
 
   return (
-    <div className="-m-4 flex h-[calc(100vh-3.5rem)] flex-col overflow-hidden sm:-m-6">
+    // Fills the shell's main area exactly: viewport minus the 3.5rem
+    // header minus the mobile tab bar (0 when hidden or on lg+).
+    <div className="-m-4 flex h-[calc(100dvh-3.5rem-var(--tabbar-h))] min-w-0 flex-col overflow-hidden sm:-m-6">
+      <h1 className="sr-only">{t("title")}</h1>
       {/* WhatsApp connection banner — in the flex column, not absolute,
           so it pushes the panels down instead of overlapping them. */}
       {whatsappConnected === false && (
-        <div className="flex shrink-0 items-center justify-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-2">
-          <WifiOff className="h-4 w-4 text-amber-400" />
-          <p className="text-xs text-amber-400">
+        <div
+          role="status"
+          className="flex shrink-0 items-center gap-3 border-b border-warning/25 bg-warning/10 px-4 py-2"
+        >
+          <WifiOff aria-hidden="true" className="h-4 w-4 shrink-0 text-warning" />
+          <p className="min-w-0 flex-1 text-[13px] text-foreground">
             {t("whatsappNotConnected")}
           </p>
+          <Link
+            href="/settings?tab=whatsapp"
+            className="inline-flex h-8 shrink-0 items-center rounded-lg border border-warning/40 px-3 text-[13px] font-medium text-warning outline-none transition-colors hover:bg-warning/10 focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:h-11"
+          >
+            {t("reconnect")}
+          </Link>
         </div>
       )}
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex min-w-0 flex-1 overflow-hidden">
         {/* Left panel: Conversation list.
             Hidden on mobile when a conversation is selected so the
-            thread can occupy the full width. Always visible on lg+. */}
+            thread can occupy the full width. Always visible on lg+.
+            `min-w-0` lets the pane shrink to the phone width; without
+            it the longest preview line (nowrap) sets its minimum width
+            and the list runs off the right edge. */}
         <div
           className={cn(
-            "flex h-full flex-1 lg:flex-none",
+            "flex h-full min-w-0 flex-1 lg:flex-none",
             hasActiveConv ? "hidden lg:flex" : "flex",
           )}
         >
@@ -628,8 +647,10 @@ function InboxPageInner() {
         {/* Right panel: Contact sidebar — desktop only, and only when the
             agent hasn't collapsed it via the thread-header toggle (#258).
             On mobile it's always hidden (the `lg:block` below), so the
-            toggle — which is itself desktop-only — never affects it. */}
-        {contactPanelOpen && (
+            toggle — which is itself desktop-only — never affects it.
+            Not rendered until a conversation is open: an empty column
+            repeating "Selecciona una conversación" only added noise. */}
+        {contactPanelOpen && activeConversation && (
           <div className="hidden lg:block">
             <ContactSidebar
               contact={activeContact}

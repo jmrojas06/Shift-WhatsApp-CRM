@@ -100,13 +100,13 @@ export const NODE_META: Record<
   start: {
     slugSeed: 'Start',
     icon: PlayCircle,
-    color: 'text-emerald-400',
+    color: 'text-emerald-700 dark:text-emerald-400',
     category: 'flow',
   },
   send_message: {
     slugSeed: 'Send message',
     icon: MessageCircle,
-    color: 'text-sky-400',
+    color: 'text-sky-700 dark:text-sky-400',
     category: 'messaging',
   },
   send_buttons: {
@@ -118,37 +118,37 @@ export const NODE_META: Record<
   send_list: {
     slugSeed: 'Send list',
     icon: ListPlus,
-    color: 'text-indigo-400',
+    color: 'text-indigo-700 dark:text-indigo-400',
     category: 'messaging',
   },
   send_media: {
     slugSeed: 'Send media',
     icon: Paperclip,
-    color: 'text-cyan-400',
+    color: 'text-cyan-700 dark:text-cyan-400',
     category: 'messaging',
   },
   collect_input: {
     slugSeed: 'Collect input',
     icon: Inbox,
-    color: 'text-teal-400',
+    color: 'text-teal-700 dark:text-teal-400',
     category: 'logic',
   },
   condition: {
     slugSeed: 'If / else',
     icon: GitFork,
-    color: 'text-fuchsia-400',
+    color: 'text-fuchsia-700 dark:text-fuchsia-400',
     category: 'logic',
   },
   set_tag: {
     slugSeed: 'Tag contact',
     icon: Tag,
-    color: 'text-pink-400',
+    color: 'text-pink-700 dark:text-pink-400',
     category: 'logic',
   },
   handoff: {
     slugSeed: 'Handoff to agent',
     icon: UserPlus,
-    color: 'text-amber-400',
+    color: 'text-amber-700 dark:text-amber-400',
     category: 'flow',
   },
   end: {

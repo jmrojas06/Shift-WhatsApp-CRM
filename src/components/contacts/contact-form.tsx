@@ -12,7 +12,10 @@ import {
   isUniqueViolation,
   type ExistingContact,
 } from '@/lib/contacts/dedupe';
-import { parseInternationalPhone } from '@/lib/whatsapp/phone-utils';
+import {
+  validateContactFields,
+  type ContactFormErrors,
+} from './contact-form-validation';
 import {
   Dialog,
   DialogContent,
@@ -24,8 +27,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Loader2, AlertTriangle } from 'lucide-react';
+import { Loader2, AlertTriangle, Check } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 
 interface ContactFormProps {
@@ -57,6 +59,8 @@ export function ContactForm({
   const [email, setEmail] = useState('');
   const [company, setCompany] = useState('');
   const [saving, setSaving] = useState(false);
+  // Inline field errors (message keys), shown under each field.
+  const [errors, setErrors] = useState<ContactFormErrors>({});
 
   // Duplicate-phone detection for NEW contacts. `exact` (same digits)
   // hard-blocks the save; a fuzzy trunk-variant match only warns. The
@@ -79,6 +83,7 @@ export function ContactForm({
       setCompany(contact?.company ?? '');
       setSelectedTagIds(contactTags.map((ct) => ct.tag_id));
       setDupMatch(null);
+      setErrors({});
       fetchTags();
     }
   }, [open, contact]);
@@ -126,11 +131,6 @@ export function ContactForm({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
-    if (!phone.trim()) {
-      toast.error(t('phoneRequired'));
-      return;
-    }
-
     // A number typed here must carry its country code (leading `+`):
     // "4155551212" reads as a US number to the person typing it but is
     // delivered to +41 (Switzerland) by Meta (issue #586). Only checked
@@ -138,8 +138,14 @@ export function ContactForm({
     // webhook store Meta's digits-only form, and editing their name must
     // not be blocked by a phone the user never touched.
     const phoneChanged = !isEdit || phone.trim() !== (contact?.phone ?? '');
-    if (phoneChanged && !parseInternationalPhone(phone)) {
-      toast.error(t('phoneNeedsCountryCode'));
+    const fieldErrors = validateContactFields({ phone, email, phoneChanged });
+    setErrors(fieldErrors);
+    if (fieldErrors.phone || fieldErrors.email) {
+      // Move focus to the first field that needs fixing so keyboard and
+      // screen-reader users land on the message.
+      document
+        .getElementById(fieldErrors.phone ? 'cf-phone' : 'cf-email')
+        ?.focus();
       return;
     }
 
@@ -247,41 +253,55 @@ export function ContactForm({
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} noValidate className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="cf-name" className="text-muted-foreground">
-              {t('nameLabel')}
-            </Label>
+            <Label htmlFor="cf-name">{t('nameLabel')}</Label>
             <Input
               id="cf-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder={t('namePlaceholder')}
+              autoComplete="off"
               className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="cf-phone" className="text-muted-foreground">
-              {t('phoneLabel')} <span className="text-red-400">*</span>
+            <Label htmlFor="cf-phone">
+              {t('phoneLabel')}
+              <span className="font-normal text-muted-foreground">
+                ({t('requiredMark')})
+              </span>
             </Label>
             <Input
               id="cf-phone"
+              type="tel"
+              inputMode="tel"
+              autoComplete="off"
+              required
               value={phone}
               onChange={(e) => {
                 setPhone(e.target.value);
                 if (dupMatch) setDupMatch(null);
+                if (errors.phone) setErrors((prev) => ({ ...prev, phone: undefined }));
               }}
               onBlur={checkDuplicate}
               placeholder={t('phonePlaceholder')}
+              aria-invalid={errors.phone ? true : undefined}
+              aria-describedby={errors.phone ? 'cf-phone-error' : 'cf-phone-hint'}
               className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
             />
-            {dupMatch ? (
+            {errors.phone ? (
+              <p id="cf-phone-error" role="alert" className="text-xs text-destructive">
+                {t(errors.phone)}
+              </p>
+            ) : dupMatch ? (
               <div
-                className={`flex items-start gap-2 rounded-md border px-2.5 py-2 text-xs ${
+                id="cf-phone-hint"
+                className={`flex items-start gap-2 rounded-lg border px-2.5 py-2 text-xs ${
                   dupMatch.exact
-                    ? 'border-red-500/40 bg-red-500/10 text-red-300'
-                    : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+                    ? 'border-destructive/40 bg-destructive/10 text-destructive'
+                    : 'border-warning/40 bg-warning/10 text-warning'
                 }`}
               >
                 <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
@@ -303,41 +323,52 @@ export function ContactForm({
                 </div>
               </div>
             ) : (
-              <p className="text-xs text-muted-foreground">
+              <p id="cf-phone-hint" className="text-xs text-muted-foreground">
                 {t('phoneHint')}
               </p>
             )}
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="cf-email" className="text-muted-foreground">
-              {t('emailLabel')}
-            </Label>
+            <Label htmlFor="cf-email">{t('emailLabel')}</Label>
             <Input
               id="cf-email"
               type="email"
+              inputMode="email"
+              autoComplete="off"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                if (errors.email) setErrors((prev) => ({ ...prev, email: undefined }));
+              }}
               placeholder={t('emailPlaceholder')}
+              aria-invalid={errors.email ? true : undefined}
+              aria-describedby={errors.email ? 'cf-email-error' : undefined}
               className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
             />
+            {errors.email && (
+              <p id="cf-email-error" role="alert" className="text-xs text-destructive">
+                {t(errors.email)}
+              </p>
+            )}
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="cf-company" className="text-muted-foreground">
-              {t('companyLabel')}
-            </Label>
+            <Label htmlFor="cf-company">{t('companyLabel')}</Label>
             <Input
               id="cf-company"
               value={company}
               onChange={(e) => setCompany(e.target.value)}
               placeholder={t('companyPlaceholder')}
+              autoComplete="off"
               className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
             />
           </div>
 
           <div className="space-y-2">
-            <Label className="text-muted-foreground">{t('tagsLabel')}</Label>
+            <p id="cf-tags-label" className="text-sm font-medium leading-none">
+              {t('tagsLabel')}
+            </p>
             {loadingTags ? (
               <div className="flex items-center gap-2 text-muted-foreground text-sm">
                 <Loader2 className="size-3 animate-spin" />
@@ -348,26 +379,41 @@ export function ContactForm({
                 {t('noTagsAvailable')}
               </p>
             ) : (
-              <div className="flex flex-wrap gap-1.5">
+              // Toggle chips. The tag name and color are user data, so
+              // they're shown exactly as stored; the color only tints the
+              // chip (dot when off, soft fill + border when on).
+              <div
+                role="group"
+                aria-labelledby="cf-tags-label"
+                className="flex flex-wrap gap-2"
+              >
                 {tags.map((tag) => {
                   const selected = selectedTagIds.includes(tag.id);
                   return (
                     <button
                       key={tag.id}
                       type="button"
+                      aria-pressed={selected}
                       onClick={() => toggleTag(tag.id)}
-                      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors cursor-pointer ${
-                        selected
-                          ? 'ring-2 ring-primary ring-offset-1 ring-offset-border'
-                          : 'opacity-60 hover:opacity-100'
+                      className={`inline-flex min-h-8 max-w-full items-center gap-1.5 rounded-full border px-3 text-sm font-medium text-foreground transition-colors outline-none cursor-pointer focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-11 ${
+                        selected ? '' : 'border-border bg-transparent hover:bg-muted'
                       }`}
-                      style={{
-                        backgroundColor: tag.color + '20',
-                        color: tag.color,
-                        borderColor: tag.color,
-                      }}
+                      style={
+                        selected
+                          ? { backgroundColor: tag.color + '26', borderColor: tag.color }
+                          : undefined
+                      }
                     >
-                      {tag.name}
+                      {selected ? (
+                        <Check className="size-3.5 shrink-0" style={{ color: tag.color }} />
+                      ) : (
+                        <span
+                          aria-hidden
+                          className="size-2.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: tag.color }}
+                        />
+                      )}
+                      <span className="truncate">{tag.name}</span>
                     </button>
                   );
                 })}
@@ -380,14 +426,13 @@ export function ContactForm({
               type="button"
               variant="outline"
               onClick={() => onOpenChange(false)}
-              className="border-border text-muted-foreground hover:bg-muted"
+              className="border-border"
             >
               {t('cancel')}
             </Button>
             <Button
               type="submit"
               disabled={saving || checkingDup || (!isEdit && !!dupMatch?.exact)}
-              className="bg-primary hover:bg-primary/90 text-primary-foreground"
             >
               {saving && <Loader2 className="size-4 animate-spin" />}
               {isEdit ? t('update') : t('create')}

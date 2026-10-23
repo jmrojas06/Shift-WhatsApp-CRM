@@ -12,7 +12,6 @@ import {
   CornerDownLeft,
   Sparkles,
 } from "lucide-react";
-import { format } from "date-fns";
 import { ReplyQuote } from "./reply-quote";
 import { MessageReactions } from "./message-reactions";
 import {
@@ -23,7 +22,7 @@ import {
   MediaVideoBubble,
 } from "./message-media";
 import { InteractivePreview } from "@/components/interactive/interactive-preview";
-import { useTranslations } from "next-intl";
+import { useFormatter, useTranslations } from "next-intl";
 
 interface MessageBubbleProps {
   message: Message;
@@ -87,11 +86,11 @@ function StatusIcon({
     case "delivered":
       return <CheckCheck className="h-3 w-3 text-muted-foreground" />;
     case "read":
-      return <CheckCheck className="h-3 w-3 text-blue-400" />;
+      return <CheckCheck className="h-3 w-3 text-info" />;
     case "failed":
       return (
         <span className="inline-flex" title={title ?? undefined}>
-          <XCircle className="h-3 w-3 text-red-400" />
+          <XCircle className="h-3 w-3 text-destructive" />
         </span>
       );
     default:
@@ -102,13 +101,10 @@ function StatusIcon({
 function MessageContent({
   message,
   t,
-  isAgent,
   onOpenMedia,
 }: {
   message: Message;
   t: ReturnType<typeof useTranslations>;
-  /** Outbound bubbles sit on the primary fill — badges must invert. */
-  isAgent: boolean;
   onOpenMedia?: (messageId: string) => void;
 }) {
   // Passed to the media bubbles as a no-arg callback; `undefined` when the
@@ -173,23 +169,13 @@ function MessageContent({
       return <MediaDocumentBubble message={message} t={t} />;
 
     case "template":
-      // Templates are almost always outbound, where the bubble fill IS
-      // `primary` — so the old `bg-primary/20 text-primary` chip was
-      // primary-on-primary and invisible. Paired with a null
-      // content_text (issue #483) that rendered a bubble with nothing
-      // in it at all. Invert on the primary fill, and fall back to the
-      // template's name when we have no stored body (legacy rows sent
-      // before the fix).
+      // Both bubble surfaces are neutral or a soft primary tint, so the
+      // primary-tinted chip reads on either. Fall back to the template's
+      // name when we have no stored body (legacy rows sent before the
+      // fix for issue #483 rendered an empty bubble).
       return (
         <div>
-          <span
-            className={cn(
-              "mb-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium",
-              isAgent
-                ? "bg-primary-foreground/20 text-primary-foreground"
-                : "bg-primary/20 text-primary",
-            )}
-          >
+          <span className="mb-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium bg-primary/15 text-primary">
             <LayoutTemplate className="h-3 w-3" />
             {t("template")}
           </span>
@@ -266,9 +252,13 @@ export function MessageBubble({
   onOpenMedia,
 }: MessageBubbleProps) {
   const t = useTranslations("Inbox.bubble");
+  const formatter = useFormatter();
 
   const isAgent = message.sender_type === "agent" || message.sender_type === "bot";
-  const time = format(new Date(message.created_at), "HH:mm");
+  const time = formatter.dateTime(new Date(message.created_at), {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
   const failure = isAgent ? failureReason(message) : null;
 
   // Row alignment + width cap are owned by <MessageActions> so its hover
@@ -280,27 +270,21 @@ export function MessageBubble({
         isAgent ? "items-end" : "items-start",
       )}
     >
+      {/* Outbound: soft primary tint (easier on the eyes than a solid
+          fill and keeps every token readable inside). Inbound: the card
+          surface with a thin border. */}
       <div
         className={cn(
-          "relative rounded-2xl px-3 py-2",
+          "relative rounded-2xl border px-3 py-2 text-foreground",
           isAgent
-            ? "rounded-br-md bg-primary text-primary-foreground"
-            : "rounded-bl-md bg-muted text-foreground",
+            ? "rounded-br-md border-primary/20 bg-primary-soft"
+            : "rounded-bl-md border-border bg-card",
         )}
       >
         {reply && (
-          <ReplyQuote
-            authorLabel={reply.authorLabel}
-            preview={reply.preview}
-            onPrimary={isAgent}
-          />
+          <ReplyQuote authorLabel={reply.authorLabel} preview={reply.preview} />
         )}
-        <MessageContent
-          message={message}
-          t={t}
-          isAgent={isAgent}
-          onOpenMedia={onOpenMedia}
-        />
+        <MessageContent message={message} t={t} onOpenMedia={onOpenMedia} />
         <div
           className={cn(
             "mt-1 flex items-center gap-1",
@@ -308,30 +292,23 @@ export function MessageBubble({
           )}
         >
           {/* AI badge — only on replies the auto-reply bot generated
-              (always outbound, so it sits on the primary fill). Lets
-              agents tell an AI reply from their own / a Flow's at a
-              glance. */}
+              (always outbound). Lets agents tell an AI reply from their
+              own / a Flow's at a glance. */}
           {message.ai_generated && (
             <span
-              className="inline-flex items-center gap-0.5 rounded-full bg-primary-foreground/20 px-1.5 py-px text-[9px] font-semibold uppercase leading-none tracking-wide text-primary-foreground"
+              className="inline-flex items-center gap-0.5 rounded-full bg-primary/15 px-1.5 py-px text-[9px] font-semibold uppercase leading-none tracking-wide text-primary"
               title={t("aiBadgeTitle")}
             >
-              <Sparkles className="h-2.5 w-2.5" />
+              <Sparkles aria-hidden="true" className="h-2.5 w-2.5" />
               {t("aiBadge")}
             </span>
           )}
-          <span
-            className={cn(
-              "text-[10px]",
-              // Outbound bubbles sit on the primary fill, so the
-              // timestamp must read against that (not the neutral
-              // foreground) — otherwise it goes low-contrast in light
-              // mode. Inbound bubbles use the muted surface.
-              isAgent ? "text-primary-foreground/70" : "text-muted-foreground",
-            )}
+          <time
+            dateTime={message.created_at}
+            className="text-[10px] tabular-nums text-muted-foreground"
           >
             {time}
-          </span>
+          </time>
           {isAgent && <StatusIcon status={message.status} title={failure} />}
         </div>
       </div>

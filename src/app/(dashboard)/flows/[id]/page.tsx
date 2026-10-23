@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
+import { useParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -23,7 +24,6 @@ import type { FlowRow, FlowNodeRow } from "@/lib/flows/types";
  * "Flow not found" state below.
  */
 export default function FlowEditorPage() {
-  const router = useRouter();
   const params = useParams<{ id: string }>();
   const t = useTranslations("Flows.edit");
 
@@ -76,13 +76,12 @@ export default function FlowEditorPage() {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3">
         <p className="text-sm text-muted-foreground">{t("notFound")}</p>
-        <button
-          type="button"
-          onClick={() => router.push("/flows")}
-          className="text-sm text-primary hover:opacity-80"
+        <Link
+          href="/flows"
+          className="inline-flex min-h-11 items-center rounded-lg px-3 text-sm text-primary outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           {t("backToFlows")}
-        </button>
+        </Link>
       </div>
     );
   }

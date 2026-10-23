@@ -28,11 +28,18 @@ import {
   X,
   Trash2,
   MessageSquare,
-  DollarSign,
   Loader2,
+  Search,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslations } from "next-intl";
+import { contactOptionLabel, filterContactOptions } from "./deal-utils";
+
+// Native selects styled like the Input primitive (40 px, 44 px on touch).
+const SELECT_CLASS =
+  "h-10 w-full min-w-0 rounded-lg border border-input bg-muted px-2.5 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-destructive pointer-coarse:h-11";
+
+type RequiredField = "title" | "contact" | "stage";
 
 interface DealFormProps {
   open: boolean;
@@ -75,6 +82,10 @@ export function DealForm({
   const [statusAction, setStatusAction] = useState<DealStatus | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Filters the contact select; doesn't change what gets saved.
+  const [contactQuery, setContactQuery] = useState("");
+  // Required-field messages show only after a save attempt.
+  const [showErrors, setShowErrors] = useState(false);
 
   // Reset the form fields every time the sheet opens or its input
   // props change. This is a legitimate prop-driven sync; the rule is
@@ -83,6 +94,8 @@ export function DealForm({
   useEffect(() => {
     if (!open) return;
     setConfirmDelete(false);
+    setContactQuery("");
+    setShowErrors(false);
     if (deal) {
       setTitle(deal.title);
       setValue(String(deal.value ?? ""));
@@ -151,9 +164,21 @@ export function DealForm({
     };
   }, [open, contactId, supabase]);
 
+  const missing: RequiredField[] = [
+    ...(!title.trim() ? (["title"] as const) : []),
+    ...(!contactId ? (["contact"] as const) : []),
+    ...(!stageId ? (["stage"] as const) : []),
+  ];
+  const fieldError = (field: RequiredField) =>
+    showErrors && missing.includes(field);
+
+  const visibleContacts = filterContactOptions(contacts, contactQuery, contactId);
+
   async function handleSave() {
-    if (!title.trim() || !contactId || !stageId) {
-      toast.error(t("toastRequired"));
+    if (missing.length > 0) {
+      // Point at the fields instead of a generic toast.
+      setShowErrors(true);
+      document.getElementById(`deal-${missing[0]}`)?.focus();
       return;
     }
     setSaving(true);
@@ -260,61 +285,111 @@ export function DealForm({
 
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
             <div className="grid gap-2">
-              <Label className="text-muted-foreground">{t("title")}</Label>
+              <Label htmlFor="deal-title">
+                {t("title")}
+                <span className="font-normal text-muted-foreground">
+                  ({t("requiredMark")})
+                </span>
+              </Label>
               <Input
+                id="deal-title"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder={t("titlePlaceholder")}
+                autoComplete="off"
+                aria-invalid={fieldError("title") || undefined}
+                aria-describedby={fieldError("title") ? "deal-title-error" : undefined}
                 className="border-border bg-muted text-foreground"
               />
+              {fieldError("title") && (
+                <p id="deal-title-error" role="alert" className="text-xs text-destructive">
+                  {t("titleRequired")}
+                </p>
+              )}
             </div>
 
             <div className="grid gap-2">
-              <Label className="text-muted-foreground">{t("contact")}</Label>
+              <Label htmlFor="deal-contact">
+                {t("contact")}
+                <span className="font-normal text-muted-foreground">
+                  ({t("requiredMark")})
+                </span>
+              </Label>
+              {/* No combobox primitive exists in the app yet, so a search
+                  box narrows the native select's options instead. */}
+              <div className="relative">
+                <Search
+                  aria-hidden
+                  className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                />
+                <Input
+                  type="search"
+                  value={contactQuery}
+                  onChange={(e) => setContactQuery(e.target.value)}
+                  placeholder={t("searchContactPlaceholder")}
+                  aria-label={t("searchContactLabel")}
+                  aria-controls="deal-contact"
+                  autoComplete="off"
+                  className="border-border bg-muted pl-8 text-foreground"
+                />
+              </div>
               <select
+                id="deal-contact"
                 value={contactId}
                 onChange={(e) => setContactId(e.target.value)}
-                className="h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                aria-invalid={fieldError("contact") || undefined}
+                aria-describedby={fieldError("contact") ? "deal-contact-error" : undefined}
+                className={SELECT_CLASS}
               >
-                <option value="">{t("selectContact")}</option>
-                {contacts.map((c) => (
+                <option value="">
+                  {contactQuery.trim() && visibleContacts.length === 0
+                    ? t("noContactMatches")
+                    : t("selectContact")}
+                </option>
+                {visibleContacts.map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.name || c.phone}
+                    {contactOptionLabel(c)}
                   </option>
                 ))}
               </select>
+              {fieldError("contact") && (
+                <p id="deal-contact-error" role="alert" className="text-xs text-destructive">
+                  {t("contactRequired")}
+                </p>
+              )}
 
               {linkedConversation && (
                 <Link
                   href="/inbox"
-                  className="mt-1 inline-flex items-center gap-1.5 self-start rounded-md bg-primary/10 px-2 py-1 text-xs text-primary hover:bg-primary/20"
+                  className="mt-1 inline-flex min-h-8 items-center gap-1.5 self-start rounded-lg bg-primary/10 px-2.5 text-xs text-primary outline-none hover:bg-primary/20 focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-11"
                 >
-                  <MessageSquare className="h-3 w-3" />
+                  <MessageSquare aria-hidden className="size-3.5" />
                   {t("linkToConversation")}
                 </Link>
               )}
             </div>
 
-            <div className="grid grid-cols-[1fr_110px] gap-3">
+            <div className="grid grid-cols-[minmax(0,1fr)_7rem] gap-3">
               <div className="grid gap-2">
-                <Label className="text-muted-foreground">{t("value")}</Label>
-                <div className="relative">
-                  <DollarSign className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    type="number"
-                    value={value}
-                    onChange={(e) => setValue(e.target.value)}
-                    placeholder="0"
-                    className="border-border bg-muted pl-7 text-foreground"
-                  />
-                </div>
+                <Label htmlFor="deal-value">{t("value")}</Label>
+                <Input
+                  id="deal-value"
+                  type="number"
+                  inputMode="decimal"
+                  min={0}
+                  value={value}
+                  onChange={(e) => setValue(e.target.value)}
+                  placeholder="0"
+                  className="border-border bg-muted text-foreground tabular-nums"
+                />
               </div>
               <div className="grid gap-2">
-                <Label className="text-muted-foreground">{t("currency")}</Label>
+                <Label htmlFor="deal-currency">{t("currency")}</Label>
                 <select
+                  id="deal-currency"
                   value={currency}
                   onChange={(e) => setCurrency(e.target.value)}
-                  className="h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary"
+                  className={SELECT_CLASS}
                 >
                   {CURRENCIES.map((c) => (
                     <option key={c.code} value={c.code}>
@@ -326,8 +401,9 @@ export function DealForm({
             </div>
 
             <div className="grid gap-2">
-              <Label className="text-muted-foreground">{t("expectedCloseDate")}</Label>
+              <Label htmlFor="deal-close-date">{t("expectedCloseDate")}</Label>
               <Input
+                id="deal-close-date"
                 type="date"
                 value={expectedCloseDate}
                 onChange={(e) => setExpectedCloseDate(e.target.value)}
@@ -336,11 +412,19 @@ export function DealForm({
             </div>
 
             <div className="grid gap-2">
-              <Label className="text-muted-foreground">{t("stage")}</Label>
+              <Label htmlFor="deal-stage">
+                {t("stage")}
+                <span className="font-normal text-muted-foreground">
+                  ({t("requiredMark")})
+                </span>
+              </Label>
               <select
+                id="deal-stage"
                 value={stageId}
                 onChange={(e) => setStageId(e.target.value)}
-                className="h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary"
+                aria-invalid={fieldError("stage") || undefined}
+                aria-describedby={fieldError("stage") ? "deal-stage-error" : undefined}
+                className={SELECT_CLASS}
               >
                 {stages.map((s) => (
                   <option key={s.id} value={s.id}>
@@ -348,14 +432,20 @@ export function DealForm({
                   </option>
                 ))}
               </select>
+              {fieldError("stage") && (
+                <p id="deal-stage-error" role="alert" className="text-xs text-destructive">
+                  {t("stageRequired")}
+                </p>
+              )}
             </div>
 
             <div className="grid gap-2">
-              <Label className="text-muted-foreground">{t("assignedTo")}</Label>
+              <Label htmlFor="deal-assignee">{t("assignedTo")}</Label>
               <select
+                id="deal-assignee"
                 value={assignedTo}
                 onChange={(e) => setAssignedTo(e.target.value)}
-                className="h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary"
+                className={SELECT_CLASS}
               >
                 <option value="">{t("unassigned")}</option>
                 {profiles.map((p) => (
@@ -367,8 +457,9 @@ export function DealForm({
             </div>
 
             <div className="grid gap-2">
-              <Label className="text-muted-foreground">{t("notes")}</Label>
+              <Label htmlFor="deal-notes">{t("notes")}</Label>
               <Textarea
+                id="deal-notes"
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder={t("notesPlaceholder")}
@@ -377,37 +468,41 @@ export function DealForm({
             </div>
 
             {deal && (
-              <div className="space-y-2 rounded-lg border border-border bg-muted/50 p-3">
-                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              <div className="space-y-2 rounded-xl border border-border bg-muted/50 p-3">
+                <p className="text-[13px] font-medium text-muted-foreground">
                   {t("status")}
                 </p>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
+                  {/* Outline/soft so the footer's save stays the only
+                      primary button in the sheet. */}
                   <Button
                     type="button"
+                    variant="outline"
                     onClick={() => handleStatusChange("won")}
                     disabled={!!statusAction || deal.status === "won"}
-                    className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                    className="min-w-32 flex-1 border-border text-success hover:text-success"
                   >
                     {statusAction === "won" ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <Loader2 className="size-4 animate-spin" />
                     ) : (
                       <>
-                        <Check className="mr-1 h-4 w-4" />
+                        <Check aria-hidden className="size-4" />
                         {t("markAsWon")}
                       </>
                     )}
                   </Button>
                   <Button
                     type="button"
+                    variant="destructive"
                     onClick={() => handleStatusChange("lost")}
                     disabled={!!statusAction || deal.status === "lost"}
-                    className="flex-1 bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+                    className="min-w-32 flex-1"
                   >
                     {statusAction === "lost" ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <Loader2 className="size-4 animate-spin" />
                     ) : (
                       <>
-                        <X className="mr-1 h-4 w-4" />
+                        <X aria-hidden className="size-4" />
                         {t("markAsLost")}
                       </>
                     )}
@@ -428,56 +523,69 @@ export function DealForm({
             )}
           </div>
 
-          <div className="border-t border-border/50 bg-popover/80 p-4">
+          <div className="border-t border-border bg-popover p-4">
+            {/* Says what's missing instead of a silently disabled button. */}
+            {showErrors && missing.length > 0 && (
+              <p role="alert" className="mb-3 text-xs text-destructive">
+                {t("missingFields", {
+                  fields: missing.map((f) => t(f)).join(", "),
+                })}
+              </p>
+            )}
             <div className="flex gap-2">
               <Button
                 variant="outline"
                 onClick={() => onOpenChange(false)}
-                className="flex-1 border-border bg-transparent text-muted-foreground hover:bg-muted"
+                className="flex-1 border-border"
               >
                 {t("cancel")}
               </Button>
               <Button
                 onClick={handleSave}
-                disabled={saving || !title.trim() || !contactId || !stageId}
-                className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
+                disabled={saving}
+                className="flex-1"
               >
+                {saving && <Loader2 className="size-4 animate-spin" />}
                 {saving ? t("saving") : deal ? t("saveChanges") : t("createDeal")}
               </Button>
             </div>
 
             {deal &&
               (confirmDelete ? (
-                <div className="mt-3 flex items-center justify-between gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs">
-                  <span className="text-red-300">{t("deletePrompt")}</span>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs">
+                  <span className="text-destructive">{t("deletePrompt")}</span>
                   <div className="flex gap-1">
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="sm"
                       onClick={() => setConfirmDelete(false)}
                       disabled={deleting}
-                      className="rounded px-2 py-1 text-muted-foreground hover:bg-muted"
                     >
                       {t("cancel")}
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
+                      variant="destructive"
+                      size="sm"
                       onClick={handleDelete}
                       disabled={deleting}
-                      className="rounded bg-red-600 px-2 py-1 font-medium text-white hover:bg-red-700 disabled:opacity-50"
                     >
-                      {deleting ? t("deleting") : t("confirm")}
-                    </button>
+                      {deleting ? t("deleting") : t("deleteDeal")}
+                    </Button>
                   </div>
                 </div>
               ) : (
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => setConfirmDelete(true)}
-                  className="mt-3 flex w-full items-center justify-center gap-1 text-xs text-red-400 hover:text-red-300"
+                  className="mt-3 w-full text-destructive hover:bg-destructive/10 hover:text-destructive"
                 >
-                  <Trash2 className="h-3 w-3" />
+                  <Trash2 aria-hidden className="size-3.5" />
                   {t("deleteDeal")}
-                </button>
+                </Button>
               ))}
           </div>
         </div>

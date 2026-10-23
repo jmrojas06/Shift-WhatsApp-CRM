@@ -14,6 +14,19 @@
 export type ColorUtility = "bg" | "stroke" | "fill" | "text"
 
 export const chartColors = {
+  // Local addition: the app's validated chart series (see globals.css).
+  series1: {
+    bg: "bg-series-1",
+    stroke: "stroke-series-1",
+    fill: "fill-series-1",
+    text: "text-series-1",
+  },
+  series2: {
+    bg: "bg-series-2",
+    stroke: "stroke-series-2",
+    fill: "fill-series-2",
+    text: "text-series-2",
+  },
   blue: {
     bg: "bg-blue-500",
     stroke: "stroke-blue-500",

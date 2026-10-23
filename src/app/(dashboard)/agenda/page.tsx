@@ -14,14 +14,18 @@
 // ============================================================
 
 import { useCallback, useEffect, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
   BellRing,
   CalendarDays,
-  ClipboardList,
+  CalendarX,
+  Check,
   Loader2,
+  MoreHorizontal,
+  RotateCcw,
   Settings2,
-  Users,
+  UserX,
 } from 'lucide-react'
 
 import { createClient } from '@/lib/supabase/client'
@@ -32,12 +36,17 @@ import { GatedButton } from '@/components/ui/gated-button'
 import { Button } from '@/components/ui/button'
 import {
   Card,
-  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import {
   Dialog,
   DialogContent,
@@ -59,7 +68,11 @@ import {
 } from '@/verticals/agenda/panel'
 import { AGENDA_TEXTS as T } from '@/verticals/agenda/texts'
 import type { AppointmentStatus } from '@/verticals/agenda/appointments'
-import { formatLongDate, formatTimeLabel } from '@/verticals/agenda/agent/format'
+import {
+  formatDayLabel,
+  formatLongDate,
+  formatTimeLabel,
+} from '@/verticals/agenda/agent/format'
 import { pickDueReminder } from '@/verticals/agenda/agent/reminders'
 import {
   addDaysToKey,
@@ -74,6 +87,7 @@ import {
 } from '@/verticals/agenda/seed'
 
 import { agendaConfigApi } from './configuracion/_components/api'
+import { ModuleNotEnabled } from './_components/module-not-enabled'
 import { SetupWizard } from './_components/setup-wizard'
 
 interface BookingServiceRow {
@@ -143,10 +157,10 @@ const STATUS_LABELS: Record<AppointmentStatus, string> = {
 
 const STATUS_BADGE_VARIANTS: Record<
   AppointmentStatus,
-  'default' | 'secondary' | 'outline' | 'destructive'
+  'success' | 'secondary' | 'outline' | 'destructive' | 'warning'
 > = {
-  pending: 'outline',
-  confirmed: 'default',
+  pending: 'warning',
+  confirmed: 'success',
   completed: 'secondary',
   no_show: 'destructive',
   cancelled: 'outline',
@@ -184,6 +198,10 @@ export default function AgendaPage() {
     appointment: AgendaAppointment
     status: AppointmentStatus
   } | null>(null)
+  // "Cancelar cita" no se puede deshacer: se confirma antes de enviar.
+  const [cancelPrompt, setCancelPrompt] = useState<AgendaAppointment | null>(
+    null,
+  )
 
   const [reminders, setReminders] = useState<ReminderItem[]>([])
   const [remindersTwoHour, setRemindersTwoHour] = useState(false)
@@ -599,15 +617,10 @@ export default function AgendaPage() {
     return (
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">{T.title}</h1>
+          <h1 className="text-2xl font-semibold text-foreground">{T.title}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{T.subtitle}</p>
         </div>
-        <Card>
-          <CardHeader>
-            <CardTitle>{T.notEnabledTitle}</CardTitle>
-            <CardDescription>{T.notEnabledBody}</CardDescription>
-          </CardHeader>
-        </Card>
+        <ModuleNotEnabled />
       </div>
     )
   }
@@ -650,12 +663,13 @@ export default function AgendaPage() {
   const remindersSent = reminders.filter(
     (r) => r.pendingKind === null && (r.sent24At || r.sent2hAt),
   )
+  const showWizard = !listsLoading && !loadFailed && !installed
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">{T.title}</h1>
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold text-foreground">{T.title}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{T.subtitle}</p>
         </div>
         <Button
@@ -667,13 +681,128 @@ export default function AgendaPage() {
         </Button>
       </div>
 
-      {/* Agenda del día */}
-      <Card>
+      {loadFailed && (
+        <Alert variant="destructive" role="alert">
+          <AlertDescription>{loadErrorText}</AlertDescription>
+        </Alert>
+      )}
+
+      {/* Sin plantilla: el asistente (tipo de negocio) es lo primero que hay que hacer. */}
+      {showWizard && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-[15px] font-semibold">
+              {T.statusTitle}
+            </CardTitle>
+            <CardDescription>{T.statusNotInstalledBody}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <SetupWizard
+              canEdit={canEditSettings}
+              currentKey={presetKey}
+              onInstalled={handleWizardInstalled}
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Resultado de la última instalación (solo justo después de instalar). */}
+      {report && (
+        <Card>
+          <CardContent className="space-y-3">
+            {/* "Tu agenda está lista" solo tras el asistente; al reinstalar basta el reporte. */}
+            {reportFromWizard && (
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[15px] font-semibold">{T.wizard.doneTitle}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {T.wizard.doneBody}
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  onClick={() => router.push('/agenda/configuracion')}
+                >
+                  <Settings2 className="h-4 w-4" />
+                  {T.wizard.goToConfig}
+                </Button>
+              </div>
+            )}
+            <p className="text-sm font-medium">{T.reportTitle}</p>
+            <div className="grid gap-x-8 gap-y-1 sm:grid-cols-2">
+              {sectionLines.map(([label, counts]) => (
+                <div
+                  key={label}
+                  className="flex items-baseline justify-between gap-4 text-sm"
+                >
+                  <span className="min-w-0 text-muted-foreground">{label}</span>
+                  <span className="shrink-0 text-right">
+                    {counts.created > 0 &&
+                      `${counts.created} ${T.createdLabel}`}
+                    {counts.created > 0 && counts.skipped > 0 && ' · '}
+                    {counts.skipped > 0 &&
+                      `${counts.skipped} ${T.skippedLabel}`}
+                    {counts.created === 0 && counts.skipped === 0 && '0'}
+                  </span>
+                </div>
+              ))}
+              <div className="flex items-baseline justify-between gap-4 text-sm sm:col-span-2">
+                <span className="text-muted-foreground">
+                  {T.sections.pipeline}
+                </span>
+                <span className="text-right">
+                  {report.pipeline.created
+                    ? T.pipelineCreated(report.pipeline.stagesCreated)
+                    : T.pipelineSkipped}
+                </span>
+              </div>
+              <div className="flex items-baseline justify-between gap-4 text-sm sm:col-span-2">
+                <span className="text-muted-foreground">
+                  {T.sections.aiAgent}
+                </span>
+                <span className="text-right">{aiPromptLine}</span>
+              </div>
+            </div>
+
+            {report.warnings.length > 0 && (
+              <Alert role="status">
+                <AlertDescription>
+                  <ul className="list-disc space-y-1 pl-4">
+                    {report.warnings.map((warning) => (
+                      <li key={warning}>{warning}</li>
+                    ))}
+                  </ul>
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {promptSuggestion && (
+              <div className="space-y-1">
+                <p className="text-sm font-medium">
+                  {T.promptSuggestionTitle}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {T.promptSuggestionHint}
+                </p>
+                <pre className="max-h-64 overflow-auto rounded-lg border border-border bg-muted/50 p-3 text-xs whitespace-pre-wrap">
+                  {promptSuggestion}
+                </pre>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-start">
+      {/* Agenda del día: lo principal de la página */}
+      <Card className="min-w-0">
         <CardHeader>
-          <CardTitle>{T.agendaTitle}</CardTitle>
-          <CardAction>
-            <span className="text-sm text-muted-foreground">{todayLabel}</span>
-          </CardAction>
+          <CardTitle className="text-lg font-semibold">{T.agendaTitle}</CardTitle>
+          <CardDescription className="first-letter:uppercase">
+            {todayLabel}
+            {!agendaLoading && !agendaFailed && appointments.length > 0 &&
+              ` · ${T.agendaCount(appointments.length, labels)}`}
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {agendaFailed && (
@@ -691,8 +820,13 @@ export default function AgendaPage() {
           {agendaLoading ? (
             <p className="text-sm text-muted-foreground">{T.loading}</p>
           ) : appointments.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <CalendarDays className="mb-2 h-8 w-8 text-muted-foreground" />
+            <div className="flex flex-col items-center justify-center py-10 text-center">
+              <span className="mb-3 flex size-12 items-center justify-center rounded-full bg-muted">
+                <CalendarDays
+                  className="size-6 text-muted-foreground"
+                  aria-hidden="true"
+                />
+              </span>
               <p className="text-sm text-muted-foreground">
                 {T.agendaEmpty(labels)}
               </p>
@@ -704,71 +838,98 @@ export default function AgendaPage() {
                 const editable =
                   canManageAppointments &&
                   EDITABLE_STATUSES.includes(appointment.status)
+                const busy = changingId === appointment.id
                 return (
                   <li
                     key={appointment.id}
-                    className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
+                    className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-center"
                   >
-                    <div className="min-w-0 break-words">
-                      <p className="text-sm font-medium">
-                        {formatTimeLabel(parts)} ·{' '}
-                        {appointment.serviceName ?? T.agendaServiceGone}
+                    <div className="flex min-w-0 flex-1 gap-3">
+                      <p className="w-[5.5rem] shrink-0 pt-px text-sm font-semibold whitespace-nowrap tabular-nums">
+                        {formatTimeLabel(parts)}
                       </p>
-                      <p className="text-xs text-muted-foreground">
-                        {appointment.staffName ?? T.agendaStaffGone} ·{' '}
-                        {appointment.contactName?.trim() ||
-                          appointment.contactPhone ||
-                          T.agendaContactFallback}
-                      </p>
-                      {appointment.answerLines.length > 0 && (
-                        <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
-                          {appointment.answerLines.map((line, index) => (
-                            <li key={index} className="break-words">
-                              {line}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
+                      <div className="min-w-0 break-words">
+                        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium">
+                          <span className="min-w-0">
+                            {appointment.serviceName ?? T.agendaServiceGone}
+                          </span>
+                          <Badge
+                            variant={STATUS_BADGE_VARIANTS[appointment.status]}
+                          >
+                            {STATUS_LABELS[appointment.status]}
+                          </Badge>
+                        </p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {appointment.staffName ?? T.agendaStaffGone} ·{' '}
+                          {appointment.contactName?.trim() ||
+                            appointment.contactPhone ||
+                            T.agendaContactFallback}
+                        </p>
+                        {appointment.answerLines.length > 0 && (
+                          <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+                            {appointment.answerLines.map((line, index) => (
+                              <li key={index} className="break-words">
+                                {line}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant={STATUS_BADGE_VARIANTS[appointment.status]}>
-                        {STATUS_LABELS[appointment.status]}
-                      </Badge>
-                      {editable && (
-                        <>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={changingId === appointment.id}
-                            onClick={() =>
-                              void changeStatus(appointment, 'completed', false)
+                    {editable && (
+                      <div className="flex items-center gap-2 sm:shrink-0">
+                        {/* Acción principal de cada fila; lo demás va en "Más". */}
+                        <Button
+                          variant="outline"
+                          className="flex-1 sm:flex-none"
+                          disabled={busy}
+                          onClick={() =>
+                            void changeStatus(appointment, 'completed', false)
+                          }
+                        >
+                          {busy ? (
+                            <Loader2 className="animate-spin" aria-hidden="true" />
+                          ) : (
+                            <Check className="text-primary" aria-hidden="true" />
+                          )}
+                          {T.agendaActionComplete}
+                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            disabled={busy}
+                            render={
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label={T.agendaActionMoreLabel}
+                                title={T.agendaActionMoreLabel}
+                              />
                             }
                           >
-                            {T.agendaActionComplete}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={changingId === appointment.id}
-                            onClick={() =>
-                              void changeStatus(appointment, 'no_show', false)
-                            }
-                          >
-                            {T.agendaActionNoShow}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={changingId === appointment.id}
-                            onClick={() =>
-                              void changeStatus(appointment, 'cancelled', false)
-                            }
-                          >
-                            {T.agendaActionCancel}
-                          </Button>
-                        </>
-                      )}
-                    </div>
+                            <MoreHorizontal aria-hidden="true" />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-auto min-w-44">
+                            <DropdownMenuItem
+                              className="pointer-coarse:min-h-11"
+                              onClick={() =>
+                                void changeStatus(appointment, 'no_show', false)
+                              }
+                            >
+                              <UserX aria-hidden="true" />
+                              {T.agendaActionNoShow}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              variant="destructive"
+                              className="pointer-coarse:min-h-11"
+                              onClick={() => setCancelPrompt(appointment)}
+                            >
+                              <CalendarX aria-hidden="true" />
+                              {T.agendaActionCancel(labels)}
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    )}
                   </li>
                 )
               })}
@@ -777,52 +938,44 @@ export default function AgendaPage() {
         </CardContent>
       </Card>
 
-      {/* Recordatorios de citas */}
-      <Card>
+      {/* Columna secundaria: recordatorios, servicios, equipo y plantilla */}
+      <div className="min-w-0 space-y-6">
+      {/* Recordatorios: resumen en una línea + lo por enviar / enviado */}
+      <Card size="sm">
         <CardHeader>
-          <CardTitle>{T.remindersTitle}</CardTitle>
-          <CardAction>
-            <Badge variant={remindersTwoHour ? 'default' : 'outline'}>
-              {remindersTwoHour ? T.remindersTwoHourOn : T.remindersTwoHourOff}
-            </Badge>
-          </CardAction>
+          <CardTitle className="flex items-center gap-2 text-[15px] font-semibold">
+            <BellRing className="size-4 text-muted-foreground" aria-hidden="true" />
+            {T.remindersTitle}
+          </CardTitle>
+          <CardDescription>
+            {remindersLoading
+              ? T.loading
+              : T.remindersSummary(remindersOn, remindersTwoHour)}{' '}
+            <Link
+              href="/agenda/configuracion"
+              className="font-medium text-primary underline-offset-4 hover:underline focus-visible:rounded-sm focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+            >
+              {T.remindersConfigLink}
+            </Link>
+          </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-1">
-            <p className="text-xs text-muted-foreground">
-              {T.remindersHint(labels)}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              {T.remindersWindowNote}
-            </p>
-          </div>
-
+        <CardContent className="space-y-3">
           {remindersFailed && (
             <Alert variant="destructive" role="alert">
               <AlertDescription>{T.remindersLoadFailed}</AlertDescription>
             </Alert>
           )}
 
-          {!remindersOn && !remindersLoading && !remindersFailed && (
-            <Alert role="status">
-              <AlertDescription>{T.remindersOffNote}</AlertDescription>
-            </Alert>
-          )}
-
-          {remindersLoading ? (
-            <p className="text-sm text-muted-foreground">{T.loading}</p>
-          ) : remindersPending.length === 0 && remindersSent.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <BellRing className="mb-2 h-8 w-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">
-                {T.remindersEmpty}
-              </p>
-            </div>
+          {remindersLoading ? null : remindersPending.length === 0 &&
+            remindersSent.length === 0 ? (
+            !remindersFailed && (
+              <p className="text-sm text-muted-foreground">{T.remindersEmpty}</p>
+            )
           ) : (
-            <div className="space-y-5">
+            <div className="space-y-4">
               {remindersPending.length > 0 && (
                 <div>
-                  <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                  <p className="text-xs font-medium text-muted-foreground">
                     {T.remindersPendingTitle}
                   </p>
                   <ul className="divide-y divide-border">
@@ -831,22 +984,21 @@ export default function AgendaPage() {
                       return (
                         <li
                           key={item.id}
-                          className="flex flex-wrap items-center justify-between gap-3 py-3"
+                          className="flex items-start justify-between gap-3 py-2.5"
                         >
                           <div className="min-w-0 break-words">
-                            <p className="text-sm font-medium">
-                              {formatLongDate(parts.dateKey)} ·{' '}
-                              {formatTimeLabel(parts)} ·{' '}
-                              {item.serviceName ?? T.agendaServiceGone}
+                            <p className="text-sm">
+                              {formatDayLabel(parts.dateKey)} ·{' '}
+                              {formatTimeLabel(parts)}
                             </p>
                             <p className="text-xs text-muted-foreground">
-                              {item.staffName ?? T.agendaStaffGone} ·{' '}
+                              {item.serviceName ?? T.agendaServiceGone} ·{' '}
                               {item.contactName?.trim() ||
                                 item.contactPhone ||
                                 T.agendaContactFallback}
                             </p>
                           </div>
-                          <Badge variant="outline">
+                          <Badge variant="info" className="shrink-0">
                             {item.pendingKind === 'h2'
                               ? T.remindersPending2h
                               : T.remindersPending24h}
@@ -860,7 +1012,7 @@ export default function AgendaPage() {
 
               {remindersSent.length > 0 && (
                 <div>
-                  <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                  <p className="text-xs font-medium text-muted-foreground">
                     {T.remindersSentTitle}
                   </p>
                   <ul className="divide-y divide-border">
@@ -873,27 +1025,26 @@ export default function AgendaPage() {
                       return (
                         <li
                           key={item.id}
-                          className="flex flex-wrap items-center justify-between gap-3 py-3"
+                          className="flex items-start justify-between gap-3 py-2.5"
                         >
                           <div className="min-w-0 break-words">
-                            <p className="text-sm font-medium">
-                              {formatLongDate(parts.dateKey)} ·{' '}
-                              {formatTimeLabel(parts)} ·{' '}
-                              {item.serviceName ?? T.agendaServiceGone}
+                            <p className="text-sm">
+                              {formatDayLabel(parts.dateKey)} ·{' '}
+                              {formatTimeLabel(parts)}
                             </p>
                             <p className="text-xs text-muted-foreground">
-                              {item.staffName ?? T.agendaStaffGone} ·{' '}
+                              {item.serviceName ?? T.agendaServiceGone} ·{' '}
                               {item.contactName?.trim() ||
                                 item.contactPhone ||
                                 T.agendaContactFallback}
                               {sentParts &&
                                 ` · ${T.remindersSentAt(
-                                  formatLongDate(sentParts.dateKey),
+                                  formatDayLabel(sentParts.dateKey),
                                   formatTimeLabel(sentParts),
                                 )}`}
                             </p>
                           </div>
-                          <div className="flex flex-wrap items-center gap-2">
+                          <div className="flex shrink-0 flex-col items-end gap-1">
                             {item.sent24At && (
                               <Badge variant="secondary">
                                 {T.remindersSent24h}
@@ -916,252 +1067,140 @@ export default function AgendaPage() {
         </CardContent>
       </Card>
 
-      {/* Estado de instalación + botón */}
-      <Card>
+      {/* Servicios y equipo: listas compactas (se editan en Configuración) */}
+      <Card size="sm">
         <CardHeader>
-          <CardTitle>{T.statusTitle}</CardTitle>
-          <CardDescription>
-            {listsLoading
-              ? T.loading
-              : loadFailed
-                ? loadErrorText
-                : installed
-                  ? T.statusInstalledBody
-                  : T.statusNotInstalledBody}
-          </CardDescription>
-          {!listsLoading && (
-            <CardAction>
-              <Badge variant={installed ? 'default' : 'outline'}>
-                {installed ? T.statusInstalled : T.statusNotInstalled}
-              </Badge>
-            </CardAction>
+          <CardTitle className="text-[15px] font-semibold">
+            {T.servicesTitle(labels)}
+          </CardTitle>
+          {!listsLoading && services.length > 0 && (
+            <CardDescription>
+              {T.servicesCount(services.length, labels)}
+            </CardDescription>
           )}
         </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Sin plantilla: el asistente (tipo de negocio) reemplaza al botón único. */}
-          {!listsLoading && !loadFailed && !installed ? (
-            <SetupWizard
-              canEdit={canEditSettings}
-              currentKey={presetKey}
-              onInstalled={handleWizardInstalled}
-            />
+        <CardContent>
+          {listsLoading ? (
+            <p className="text-sm text-muted-foreground">{T.loading}</p>
+          ) : services.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              {T.servicesEmpty(labels)}
+            </p>
           ) : (
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="text-sm text-muted-foreground">
-                {T.servicesCount(services.length, labels)} ·{' '}
-                {T.staffCount(staff.length, labels)}
-              </span>
-              <div className="ml-auto">
-                <GatedButton
-                  canAct={canEditSettings}
-                  gateReason={T.gateReason}
-                  onClick={handleInstall}
-                  disabled={installing || listsLoading}
+            <ul className="divide-y divide-border">
+              {services.map((service) => (
+                <li
+                  key={service.id}
+                  className="flex items-start justify-between gap-3 py-2 first:pt-0 last:pb-0"
                 >
-                  {installing && (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  )}
-                  {installing ? T.installing : T.reinstallButton}
-                </GatedButton>
-              </div>
-            </div>
-          )}
-
-          {installError && (
-            <Alert variant="destructive" role="alert">
-              <AlertDescription>{installError}</AlertDescription>
-            </Alert>
-          )}
-
-          {loadFailed && (
-            <Alert variant="destructive" role="alert">
-              <AlertDescription>{loadErrorText}</AlertDescription>
-            </Alert>
-          )}
-
-          {/* Resultado de la última instalación */}
-          {report && (
-            <div className="space-y-3 rounded-lg border border-border p-4">
-              {/* "Tu agenda está lista" solo tras el asistente; al reinstalar basta el reporte. */}
-              {reportFromWizard && (
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-medium">{T.wizard.doneTitle}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {T.wizard.doneBody}
+                  <div className="min-w-0">
+                    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm break-words">
+                      <span className="min-w-0">{service.name}</span>
+                      {!service.is_active && (
+                        <Badge variant="outline">{T.inactiveLabel}</Badge>
+                      )}
+                    </p>
+                    {service.description && (
+                      <p className="line-clamp-1 text-xs text-muted-foreground">
+                        {service.description}
+                      </p>
+                    )}
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="text-sm tabular-nums">
+                      {formatCurrency(Number(service.price), defaultCurrency)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {T.minutes(service.duration_minutes)}
                     </p>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => router.push('/agenda/configuracion')}
-                  >
-                    <Settings2 className="h-4 w-4" />
-                    {T.wizard.goToConfig}
-                  </Button>
-                </div>
-              )}
-              <p className="text-sm font-medium">{T.reportTitle}</p>
-              <div className="grid gap-x-8 gap-y-1 sm:grid-cols-2">
-                {sectionLines.map(([label, counts]) => (
-                  <div
-                    key={label}
-                    className="flex items-baseline justify-between gap-4 text-sm"
-                  >
-                    <span className="text-muted-foreground">{label}</span>
-                    <span>
-                      {counts.created > 0 &&
-                        `${counts.created} ${T.createdLabel}`}
-                      {counts.created > 0 && counts.skipped > 0 && ' · '}
-                      {counts.skipped > 0 &&
-                        `${counts.skipped} ${T.skippedLabel}`}
-                      {counts.created === 0 && counts.skipped === 0 && '—'}
-                    </span>
-                  </div>
-                ))}
-                <div className="flex items-baseline justify-between gap-4 text-sm sm:col-span-2">
-                  <span className="text-muted-foreground">
-                    {T.sections.pipeline}
-                  </span>
-                  <span>
-                    {report.pipeline.created
-                      ? T.pipelineCreated(report.pipeline.stagesCreated)
-                      : T.pipelineSkipped}
-                  </span>
-                </div>
-                <div className="flex items-baseline justify-between gap-4 text-sm sm:col-span-2">
-                  <span className="text-muted-foreground">
-                    {T.sections.aiAgent}
-                  </span>
-                  <span>{aiPromptLine}</span>
-                </div>
-              </div>
-
-              {report.warnings.length > 0 && (
-                <Alert role="status">
-                  <AlertDescription>
-                    <ul className="list-disc space-y-1 pl-4">
-                      {report.warnings.map((warning) => (
-                        <li key={warning}>{warning}</li>
-                      ))}
-                    </ul>
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              {promptSuggestion && (
-                <div className="space-y-1">
-                  <p className="text-sm font-medium">
-                    {T.promptSuggestionTitle}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {T.promptSuggestionHint}
-                  </p>
-                  <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-muted/50 p-3 text-xs">
-                    {promptSuggestion}
-                  </pre>
-                </div>
-              )}
-            </div>
+                </li>
+              ))}
+            </ul>
           )}
         </CardContent>
       </Card>
 
-      {/* Servicios y equipo (con las palabras del negocio) */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>{T.servicesTitle(labels)}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {listsLoading ? (
-              <p className="text-sm text-muted-foreground">{T.loading}</p>
-            ) : services.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 text-center">
-                <ClipboardList className="mb-2 h-8 w-8 text-muted-foreground" />
-                <p className="text-sm text-muted-foreground">
-                  {T.servicesEmpty(labels)}
-                </p>
-              </div>
-            ) : (
-              <ul className="divide-y divide-border">
-                {services.map((service) => (
-                  <li
-                    key={service.id}
-                    className="flex items-start justify-between gap-4 py-3 first:pt-0 last:pb-0"
-                  >
-                    <div className="min-w-0 break-words">
-                      <p className="text-sm font-medium">
-                        {service.name}
-                        {!service.is_active && (
-                          <Badge variant="outline" className="ml-2">
-                            {T.inactiveLabel}
-                          </Badge>
-                        )}
-                      </p>
-                      {service.description && (
-                        <p className="text-xs text-muted-foreground">
-                          {service.description}
-                        </p>
-                      )}
-                    </div>
-                    <div className="shrink-0 text-right">
-                      <p className="text-sm font-medium">
-                        {formatCurrency(Number(service.price), defaultCurrency)}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {T.minutes(service.duration_minutes)}
-                      </p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
+      <Card size="sm">
+        <CardHeader>
+          <CardTitle className="text-[15px] font-semibold">
+            {T.staffTitle(labels)}
+          </CardTitle>
+          {!listsLoading && staff.length > 0 && (
+            <CardDescription>{T.staffCount(staff.length, labels)}</CardDescription>
+          )}
+        </CardHeader>
+        <CardContent>
+          {listsLoading ? (
+            <p className="text-sm text-muted-foreground">{T.loading}</p>
+          ) : staff.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              {T.staffEmpty(labels)}
+            </p>
+          ) : (
+            <ul className="divide-y divide-border">
+              {staff.map((member) => (
+                <li key={member.id} className="py-2 first:pt-0 last:pb-0">
+                  <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm break-words">
+                    <span className="min-w-0">{member.name}</span>
+                    {!member.is_active && (
+                      <Badge variant="outline">{T.inactiveLabel}</Badge>
+                    )}
+                  </p>
+                  {member.bio && (
+                    <p className="line-clamp-1 text-xs text-muted-foreground">
+                      {member.bio}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
 
-        <Card>
+      {/* Estado de la plantilla: información de instalación, no trabajo
+          diario. Va al final, sin sombra y con la acción en segundo plano. */}
+      {installed && !loadFailed && (
+        <Card
+          size="sm"
+          className="bg-muted/40 shadow-none"
+        >
           <CardHeader>
-            <CardTitle>{T.staffTitle(labels)}</CardTitle>
+            <CardTitle className="flex flex-wrap items-center gap-2 text-sm font-medium text-muted-foreground">
+              {T.statusTitle}
+              <Badge variant="secondary">{T.statusInstalled}</Badge>
+            </CardTitle>
+            <CardDescription className="text-xs">
+              {T.statusInstalledBody}
+            </CardDescription>
           </CardHeader>
-          <CardContent>
-            {listsLoading ? (
-              <p className="text-sm text-muted-foreground">{T.loading}</p>
-            ) : staff.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 text-center">
-                <Users className="mb-2 h-8 w-8 text-muted-foreground" />
-                <p className="text-sm text-muted-foreground">
-                  {T.staffEmpty(labels)}
-                </p>
-              </div>
-            ) : (
-              <ul className="divide-y divide-border">
-                {staff.map((member) => (
-                  <li
-                    key={member.id}
-                    className="flex items-start justify-between gap-4 py-3 first:pt-0 last:pb-0"
-                  >
-                    <div className="min-w-0 break-words">
-                      <p className="text-sm font-medium">
-                        {member.name}
-                        {!member.is_active && (
-                          <Badge variant="outline" className="ml-2">
-                            {T.inactiveLabel}
-                          </Badge>
-                        )}
-                      </p>
-                      {member.bio && (
-                        <p className="text-xs text-muted-foreground">
-                          {member.bio}
-                        </p>
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ul>
+          <CardContent className="space-y-3">
+            <GatedButton
+              variant="ghost"
+              size="sm"
+              canAct={canEditSettings}
+              gateReason={T.gateReason}
+              onClick={handleInstall}
+              disabled={installing || listsLoading}
+              className="-ml-2.5 text-muted-foreground hover:text-foreground"
+            >
+              {installing ? (
+                <Loader2 className="animate-spin" aria-hidden="true" />
+              ) : (
+                <RotateCcw aria-hidden="true" />
+              )}
+              {installing ? T.installing : T.reinstallButton}
+            </GatedButton>
+            {installError && (
+              <Alert variant="destructive" role="alert">
+                <AlertDescription>{installError}</AlertDescription>
+              </Alert>
             )}
           </CardContent>
         </Card>
+      )}
+      </div>
       </div>
 
       {/* Confirmación explícita para editar una cita que ya pasó */}
@@ -1204,6 +1243,52 @@ export default function AgendaPage() {
               }}
             >
               {T.agendaPastConfirm}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Confirmación para cancelar (cerrar una cita no tiene vuelta atrás) */}
+      <Dialog
+        open={cancelPrompt !== null}
+        onOpenChange={(open) => {
+          if (!open) setCancelPrompt(null)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{T.agendaCancelTitle(labels)}</DialogTitle>
+            <DialogDescription>
+              {cancelPrompt &&
+                T.agendaCancelBody(
+                  [
+                    formatTimeLabel(
+                      zonedParts(new Date(cancelPrompt.starts_at)),
+                    ),
+                    cancelPrompt.serviceName ?? T.agendaServiceGone,
+                    cancelPrompt.contactName?.trim() ||
+                      cancelPrompt.contactPhone ||
+                      T.agendaContactFallback,
+                  ].join(' · '),
+                )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCancelPrompt(null)}>
+              {T.agendaCancelBack}
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={changingId !== null}
+              onClick={() => {
+                if (cancelPrompt) {
+                  const appointment = cancelPrompt
+                  setCancelPrompt(null)
+                  void changeStatus(appointment, 'cancelled', false)
+                }
+              }}
+            >
+              {T.agendaCancelConfirm(labels)}
             </Button>
           </DialogFooter>
         </DialogContent>

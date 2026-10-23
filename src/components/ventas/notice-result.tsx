@@ -28,8 +28,8 @@ export function NoticeResultAlert({
       data-tone={result.tone}
       className={cn(
         success
-          ? 'border-emerald-500/40 text-emerald-800 dark:text-emerald-300'
-          : 'border-amber-500/50 text-amber-800 dark:text-amber-300',
+          ? 'border-success/30 bg-success/10 text-success'
+          : 'border-warning/30 bg-warning/10 text-warning',
         className,
       )}
     >

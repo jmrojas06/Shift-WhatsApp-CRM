@@ -5,13 +5,14 @@ import { useState } from 'react'
 import {
   MessageSquare,
   UserPlus,
-  Briefcase,
-  Radio,
+  Columns3,
+  Megaphone,
   Zap,
   Inbox,
 } from 'lucide-react'
 import type { ComponentType } from 'react'
 import type { ActivityItem, ActivityKind } from '@/lib/dashboard/types'
+import { groupActivity } from '@/lib/dashboard/group-activity'
 import { cn } from '@/lib/utils'
 import { EmptyState } from './empty-state'
 import { Skeleton } from './skeleton'
@@ -26,29 +27,30 @@ type PageSize = (typeof PAGE_SIZES)[number]
 
 interface KindTheme {
   icon: ComponentType<{ className?: string }>
-  /** Tailwind classes for the round icon badge + label color. */
-  badge: string
 }
 
 const KIND_THEME: Record<ActivityKind, KindTheme> = {
-  message: { icon: MessageSquare, badge: 'bg-blue-500/10 text-blue-400' },
-  contact: { icon: UserPlus, badge: 'bg-primary/10 text-primary' },
-  deal: { icon: Briefcase, badge: 'bg-primary/10 text-primary' },
-  broadcast: { icon: Radio, badge: 'bg-amber-500/10 text-amber-400' },
-  automation: { icon: Zap, badge: 'bg-rose-500/10 text-rose-400' },
+  message: { icon: MessageSquare },
+  contact: { icon: UserPlus },
+  deal: { icon: Columns3 },
+  broadcast: { icon: Megaphone },
+  automation: { icon: Zap },
 }
 
-import { useTranslations } from 'next-intl'
+import { useLocale, useTranslations } from 'next-intl'
 
 export function ActivityFeed({ items, loading }: ActivityFeedProps) {
   const t = useTranslations('Dashboard.activityFeed')
+  const locale = useLocale()
   // Start at 5 — a quick scan of the most recent events without
   // dominating vertical real estate. User expands explicitly via the
   // footer control when they want deeper history.
   const [pageSize, setPageSize] = useState<PageSize>(5)
 
-  const totalLoaded = items?.length ?? 0
-  const visible = items?.slice(0, pageSize) ?? []
+  // Back-to-back identical events (one chatty customer) fold into one row.
+  const groups = items ? groupActivity(items) : []
+  const totalLoaded = groups.length
+  const visible = groups.slice(0, pageSize)
   // A size option is "useful" if picking it would reveal rows the
   // smaller option doesn't already show. With PAGE_SIZES=[5,10,20,50]:
   // "10" is useful only once we've loaded ≥6 items, "20" once ≥11, etc.
@@ -57,7 +59,7 @@ export function ActivityFeed({ items, loading }: ActivityFeedProps) {
     i === 0 || totalLoaded > PAGE_SIZES[i - 1]
 
   return (
-    <section className="rounded-xl border border-border bg-card">
+    <section className="flex h-full flex-col rounded-xl border border-border bg-card shadow-(--shadow-card)">
       <header className="flex items-center justify-between border-b border-border px-5 py-4">
         <h2 className="text-sm font-semibold text-foreground">{t('title')}</h2>
         <Link
@@ -85,33 +87,28 @@ export function ActivityFeed({ items, loading }: ActivityFeedProps) {
       ) : (
         <>
           <ul className="divide-y divide-border">
-            {visible.map((it, i) => {
-              const theme = KIND_THEME[it.kind]
-              const Icon = theme.icon
-              // Alternating row background for scanability. bg-muted/40
-              // keeps the stripe visible in both light and dark modes
-              // (bg-card/40 vanishes against a white card surface in light).
-              const stripe = i % 2 === 0 ? 'bg-transparent' : 'bg-muted/40'
+            {visible.map(({ item: it, count }) => {
+              const Icon = KIND_THEME[it.kind].icon
               const row = (
-                <div className="flex items-center gap-3 px-5 py-2.5">
-                  <span
-                    className={cn(
-                      'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full',
-                      theme.badge,
-                    )}
-                  >
-                    <Icon className="h-3.5 w-3.5" />
+                <div className="flex min-h-12 items-center gap-3 px-5 py-2.5">
+                  <span className="flex size-8 flex-shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                    <Icon className="size-4" />
                   </span>
                   <span className="min-w-0 flex-1 truncate text-sm text-foreground">
                     {it.text}
+                    {count > 1 && (
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        {t('repeated', { count })}
+                      </span>
+                    )}
                   </span>
                   <span className="flex-shrink-0 text-xs text-muted-foreground tabular-nums">
-                    {relativeTime(it.at, t)}
+                    {relativeTime(it.at, t, locale)}
                   </span>
                 </div>
               )
               return (
-                <li key={it.id} className={cn(stripe, 'transition-colors hover:bg-muted/40')}>
+                <li key={it.id} className="transition-colors hover:bg-muted/50">
                   {it.href ? (
                     <Link href={it.href} className="block">
                       {row}
@@ -123,9 +120,9 @@ export function ActivityFeed({ items, loading }: ActivityFeedProps) {
               )
             })}
           </ul>
-          <footer className="flex items-center justify-between border-t border-border px-5 py-3 text-xs">
+          <footer className="mt-auto flex items-center justify-between border-t border-border px-5 py-3 text-xs">
             <span className="text-muted-foreground tabular-nums">
-              {t('showingOf', { visible: visible.length, totalLoaded, plus: totalLoaded === 50 ? '+' : '' })}
+              {t('showingOf', { visible: visible.length, totalLoaded, plus: (items?.length ?? 0) === 50 ? '+' : '' })}
             </span>
             <div className="flex items-center gap-1">
               <span className="mr-1 text-muted-foreground">{t('show')}</span>
@@ -137,8 +134,9 @@ export function ActivityFeed({ items, loading }: ActivityFeedProps) {
                     type="button"
                     onClick={() => setPageSize(size)}
                     disabled={disabled}
+                    aria-pressed={pageSize === size}
                     className={cn(
-                      'rounded-md px-2 py-1 font-medium tabular-nums transition-colors',
+                      'min-h-8 min-w-8 rounded-md px-2 py-1 font-medium tabular-nums transition-colors pointer-coarse:min-h-11 pointer-coarse:min-w-11',
                       pageSize === size
                         ? 'bg-secondary text-secondary-foreground'
                         : 'text-muted-foreground hover:bg-muted hover:text-foreground',
@@ -157,7 +155,11 @@ export function ActivityFeed({ items, loading }: ActivityFeedProps) {
   )
 }
 
-function relativeTime(iso: string, t: ReturnType<typeof useTranslations>): string {
+function relativeTime(
+  iso: string,
+  t: ReturnType<typeof useTranslations>,
+  locale: string,
+): string {
   const then = new Date(iso).getTime()
   if (Number.isNaN(then)) return ''
   const diffSec = Math.round((Date.now() - then) / 1000)
@@ -165,5 +167,5 @@ function relativeTime(iso: string, t: ReturnType<typeof useTranslations>): strin
   if (diffSec < 3600) return t('timeM', { min: Math.floor(diffSec / 60) })
   if (diffSec < 86400) return t('timeH', { hr: Math.floor(diffSec / 3600) })
   if (diffSec < 2_592_000) return t('timeD', { day: Math.floor(diffSec / 86400) })
-  return new Date(iso).toLocaleDateString()
+  return new Date(iso).toLocaleDateString(locale)
 }

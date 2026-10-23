@@ -224,10 +224,11 @@ function Banner({
   return (
     <div
       className={cn(
-        "flex items-center gap-3 border-b px-3 py-2 text-xs sm:px-4",
+        // Sits above the composer, so the line is on top (border-t).
+        "flex items-center gap-3 border-t px-3 py-2 text-xs sm:px-4",
         tone === "primary"
-          ? "border-primary/20 bg-primary/5"
-          : "border-border bg-muted/40",
+          ? "border-primary/20 bg-primary-soft"
+          : "border-border bg-muted",
       )}
     >
       {children}
@@ -251,12 +252,12 @@ function BannerButton({
       type="button"
       onClick={onClick}
       disabled={busy}
-      className="inline-flex flex-shrink-0 items-center gap-1 rounded-md border border-border bg-card px-2.5 py-1 font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-60"
+      className="inline-flex h-8 flex-shrink-0 items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 font-medium text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-60 pointer-coarse:h-11"
     >
       {busy ? (
-        <Loader2 className="h-3 w-3 animate-spin" />
+        <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin" />
       ) : (
-        <Icon className="h-3 w-3" />
+        <Icon aria-hidden="true" className="h-3.5 w-3.5" />
       )}
       {children}
     </button>

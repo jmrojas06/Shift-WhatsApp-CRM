@@ -24,7 +24,7 @@
  * renders the advanced rows.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import {
   Loader2,
   Paperclip,
@@ -64,6 +64,7 @@ export function NodeConfigForm({
   onUpdateConfig,
 }: NodeConfigFormProps) {
   const t = useTranslations("Flows.builder.form");
+  const varKeyId = useId();
   const cfg = node.config;
   switch (node.node_type) {
     case "start":
@@ -141,10 +142,11 @@ export function NodeConfigForm({
             rows={2}
           />
           <div>
-            <label className="mb-1 block text-xs text-muted-foreground">
+            <label htmlFor={varKeyId} className="mb-1 block text-xs text-muted-foreground">
               {t("varKeyLabel")}
             </label>
             <Input
+              id={varKeyId}
               value={(cfg as { var_key?: string }).var_key ?? ""}
               onChange={(e) =>
                 onUpdateConfig({
@@ -152,9 +154,12 @@ export function NodeConfigForm({
                 })
               }
               placeholder={t("varKeyPlaceholder")}
-              className="bg-muted font-mono text-xs"
+              autoComplete="off"
+              spellCheck={false}
+              aria-describedby={`${varKeyId}-help`}
+              className="bg-muted font-mono md:text-xs"
             />
-            <p className="mt-1 text-[10px] text-muted-foreground">
+            <p id={`${varKeyId}-help`} className="mt-1 text-[10px] text-muted-foreground">
               {t("varKeyHelp")}{" "}
               <code className="rounded bg-muted px-1">
                 {"{{vars."}
@@ -278,9 +283,9 @@ function SendButtonsForm({
       />
       <div>
         <div className="mb-2 flex items-center justify-between">
-          <label className="text-xs text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             {t("buttonsHelp")}
-          </label>
+          </p>
         </div>
         <div className="flex flex-col gap-3">
           {buttons.map((b, i) => (
@@ -302,13 +307,17 @@ function SendButtonsForm({
                     })
                   }
                   placeholder="reply_id"
-                  className="bg-muted font-mono text-xs"
+                  aria-label={t("buttonReplyIdAria", { n: i + 1 })}
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="bg-muted font-mono md:text-xs"
                 />
               )}
               <Input
                 value={b.title}
                 onChange={(e) => updateButton(i, { title: e.target.value })}
                 placeholder={t("optionTitlePlaceholder")}
+                aria-label={t("buttonTitleAria", { n: i + 1 })}
                 className="bg-muted"
                 maxLength={20}
               />
@@ -318,12 +327,14 @@ function SendButtonsForm({
                 excludeKey={currentKey}
                 onChange={(v) => updateButton(i, { next_node_key: v ?? "" })}
                 placeholder={t("nextNodePlaceholder")}
+                aria-label={t("buttonNextAria", { n: i + 1 })}
               />
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => removeButton(i)}
-                className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
+                aria-label={t("removeButtonN", { n: i + 1 })}
+                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
@@ -476,9 +487,9 @@ function SendListForm({
       </div>
 
       <div className="mt-2">
-        <label className="mb-2 block text-xs text-muted-foreground">
+        <p className="mb-2 text-xs text-muted-foreground">
           {t("rowsHelp")}
-        </label>
+        </p>
         {sections.map((section, sIdx) => (
           <div
             key={sIdx}
@@ -491,15 +502,16 @@ function SendListForm({
                   updateSection(sIdx, { title: e.target.value })
                 }
                 placeholder={t("sectionTitlePlaceholder", { count: sIdx + 1 })}
-                className="bg-muted text-xs"
+                aria-label={t("sectionTitleAria", { n: sIdx + 1 })}
+                className="bg-muted md:text-xs"
               />
               {sections.length > 1 && (
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => removeSection(sIdx)}
-                  className="shrink-0 text-red-400 hover:bg-red-500/10 hover:text-red-300"
-                  aria-label={t("removeSection")}
+                  className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  aria-label={t("removeSectionN", { n: sIdx + 1 })}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
@@ -527,7 +539,10 @@ function SendListForm({
                       })
                     }
                     placeholder="reply_id"
-                    className="bg-muted font-mono text-xs"
+                    aria-label={t("rowReplyIdAria", { n: rIdx + 1 })}
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="bg-muted font-mono md:text-xs"
                   />
                 )}
                 <Input
@@ -536,6 +551,7 @@ function SendListForm({
                     updateRow(sIdx, rIdx, { title: e.target.value })
                   }
                   placeholder={t("rowTitlePlaceholder")}
+                  aria-label={t("rowTitleAria", { n: rIdx + 1 })}
                   className="bg-muted"
                   maxLength={24}
                 />
@@ -547,12 +563,14 @@ function SendListForm({
                     updateRow(sIdx, rIdx, { next_node_key: v ?? "" })
                   }
                   placeholder={t("nextNodePlaceholder")}
+                  aria-label={t("rowNextAria", { n: rIdx + 1 })}
                 />
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => removeRow(sIdx, rIdx)}
-                  className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
+                  aria-label={t("removeRowN", { n: rIdx + 1 })}
+                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
@@ -618,6 +636,11 @@ function ConditionForm({
   t: ReturnType<typeof useTranslations>;
 }) {
   const tags = useUserTags();
+  const uid = useId();
+  const subjectId = `${uid}-subject`;
+  const keyId = `${uid}-key`;
+  const operatorId = `${uid}-operator`;
+  const valueId = `${uid}-value`;
 
   const subject = cfg.subject ?? "var";
   const operator = cfg.operator ?? "equals";
@@ -627,14 +650,14 @@ function ConditionForm({
     <>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <div>
-          <label className="mb-1 block text-xs text-muted-foreground">{t("ifLabel")}</label>
+          <label htmlFor={subjectId} className="mb-1 block text-xs text-muted-foreground">{t("ifLabel")}</label>
           <Select
             value={subject}
             onValueChange={(v) =>
               onUpdateConfig({ subject: v as ConditionCfg["subject"] })
             }
           >
-            <SelectTrigger className="bg-muted">
+            <SelectTrigger id={subjectId} className="bg-muted">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -645,7 +668,7 @@ function ConditionForm({
           </Select>
         </div>
         <div className="md:col-span-2">
-          <label className="mb-1 block text-xs text-muted-foreground">
+          <label htmlFor={keyId} className="mb-1 block text-xs text-muted-foreground">
             {subject === "var"
               ? t("varName")
               : subject === "tag"
@@ -657,7 +680,7 @@ function ConditionForm({
               value={cfg.subject_key ?? ""}
               onValueChange={(v) => onUpdateConfig({ subject_key: v })}
             >
-              <SelectTrigger className="bg-muted">
+              <SelectTrigger id={keyId} className="bg-muted">
                 <SelectValue placeholder={t("pickTag")} />
               </SelectTrigger>
               <SelectContent>
@@ -673,7 +696,7 @@ function ConditionForm({
               value={cfg.subject_key ?? ""}
               onValueChange={(v) => onUpdateConfig({ subject_key: v })}
             >
-              <SelectTrigger className="bg-muted">
+              <SelectTrigger id={keyId} className="bg-muted">
                 <SelectValue placeholder={t("pickField")} />
               </SelectTrigger>
               <SelectContent>
@@ -685,12 +708,15 @@ function ConditionForm({
             </Select>
           ) : (
             <Input
+              id={keyId}
               value={cfg.subject_key ?? ""}
               onChange={(e) =>
                 onUpdateConfig({ subject_key: e.target.value })
               }
               placeholder={subject === "var" ? t("varKeyPlaceholder") : t("tagUuidPlaceholder")}
-              className="bg-muted font-mono text-xs"
+              autoComplete="off"
+              spellCheck={false}
+              className="bg-muted font-mono md:text-xs"
             />
           )}
         </div>
@@ -703,14 +729,14 @@ function ConditionForm({
         )}
       >
         <div>
-          <label className="mb-1 block text-xs text-muted-foreground">{t("operatorLabel")}</label>
+          <label htmlFor={operatorId} className="mb-1 block text-xs text-muted-foreground">{t("operatorLabel")}</label>
           <Select
             value={operator}
             onValueChange={(v) =>
               onUpdateConfig({ operator: v as ConditionCfg["operator"] })
             }
           >
-            <SelectTrigger className="bg-muted">
+            <SelectTrigger id={operatorId} className="bg-muted">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -723,8 +749,9 @@ function ConditionForm({
         </div>
         {showValue && (
           <div>
-            <label className="mb-1 block text-xs text-muted-foreground">{t("valueLabel")}</label>
+            <label htmlFor={valueId} className="mb-1 block text-xs text-muted-foreground">{t("valueLabel")}</label>
             <Input
+              id={valueId}
               value={cfg.value ?? ""}
               onChange={(e) => onUpdateConfig({ value: e.target.value })}
               className="bg-muted"
@@ -777,19 +804,22 @@ function SetTagForm({
   t: ReturnType<typeof useTranslations>;
 }) {
   const tags = useUserTags();
+  const uid = useId();
+  const modeId = `${uid}-mode`;
+  const tagId = `${uid}-tag`;
 
   return (
     <>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <div>
-          <label className="mb-1 block text-xs text-muted-foreground">{t("actionLabel")}</label>
+          <label htmlFor={modeId} className="mb-1 block text-xs text-muted-foreground">{t("actionLabel")}</label>
           <Select
             value={cfg.mode ?? "add"}
             onValueChange={(v) =>
               onUpdateConfig({ mode: v as SetTagCfg["mode"] })
             }
           >
-            <SelectTrigger className="bg-muted">
+            <SelectTrigger id={modeId} className="bg-muted">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -799,13 +829,13 @@ function SetTagForm({
           </Select>
         </div>
         <div>
-          <label className="mb-1 block text-xs text-muted-foreground">{t("tagLabel")}</label>
+          <label htmlFor={tagId} className="mb-1 block text-xs text-muted-foreground">{t("tagLabel")}</label>
           {tags.length > 0 ? (
             <Select
               value={cfg.tag_id ?? ""}
               onValueChange={(v) => onUpdateConfig({ tag_id: v })}
             >
-              <SelectTrigger className="bg-muted">
+              <SelectTrigger id={tagId} className="bg-muted">
                 <SelectValue placeholder={t("pickTag")} />
               </SelectTrigger>
               <SelectContent>
@@ -818,10 +848,13 @@ function SetTagForm({
             </Select>
           ) : (
             <Input
+              id={tagId}
               value={cfg.tag_id ?? ""}
               onChange={(e) => onUpdateConfig({ tag_id: e.target.value })}
               placeholder={t("tagUuidPlaceholder")}
-              className="bg-muted font-mono text-xs"
+              autoComplete="off"
+              spellCheck={false}
+              className="bg-muted font-mono md:text-xs"
             />
           )}
         </div>
@@ -903,6 +936,10 @@ function SendMediaForm({
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const uid = useId();
+  const typeId = `${uid}-type`;
+  const fileLabelId = `${uid}-file`;
+  const filenameId = `${uid}-filename`;
 
   const mediaType = cfg.media_type ?? "image";
   const isDocument = mediaType === "document";
@@ -947,7 +984,7 @@ function SendMediaForm({
   return (
     <>
       <div>
-        <label className="mb-1 block text-xs text-muted-foreground">{t("mediaTypeLabel")}</label>
+        <label htmlFor={typeId} className="mb-1 block text-xs text-muted-foreground">{t("mediaTypeLabel")}</label>
         <Select
           value={mediaType}
           onValueChange={(v) => {
@@ -961,7 +998,7 @@ function SendMediaForm({
             });
           }}
         >
-          <SelectTrigger className="bg-muted">
+          <SelectTrigger id={typeId} className="bg-muted">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -975,15 +1012,19 @@ function SendMediaForm({
       </div>
 
       <div>
-        <label className="mb-1 block text-xs text-muted-foreground">{t("fileLabel")}</label>
+        <p id={fileLabelId} className="mb-1 block text-xs text-muted-foreground">{t("fileLabel")}</p>
         {cfg.media_url ? (
-          <div className="flex items-center gap-2 rounded-md border border-border bg-muted px-3 py-2 text-xs">
-            <Paperclip className="h-3.5 w-3.5 shrink-0 text-cyan-400" />
+          <div
+            role="group"
+            aria-labelledby={fileLabelId}
+            className="flex items-center gap-2 rounded-md border border-border bg-muted px-3 py-2 text-xs"
+          >
+            <Paperclip className="h-3.5 w-3.5 shrink-0 text-info" aria-hidden />
             <a
               href={cfg.media_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="min-w-0 flex-1 truncate text-foreground hover:text-cyan-300"
+              className="min-w-0 flex-1 truncate text-foreground hover:text-info"
               title={displayName || cfg.media_url}
             >
               {displayName || cfg.media_url}
@@ -991,11 +1032,11 @@ function SendMediaForm({
             <button
               type="button"
               onClick={handleClear}
-              className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="flex items-center justify-center rounded p-1 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:size-11"
               aria-label={t("removeFile")}
               disabled={uploading}
             >
-              <X className="h-3.5 w-3.5" />
+              <X className="h-3.5 w-3.5" aria-hidden />
             </button>
           </div>
         ) : (
@@ -1003,7 +1044,8 @@ function SendMediaForm({
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
-            className="flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-border bg-card px-3 py-4 text-xs text-muted-foreground transition-colors hover:border-border hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+            aria-describedby={fileLabelId}
+            className="flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-border bg-card px-3 py-4 text-xs text-muted-foreground outline-none transition-colors hover:border-border hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {uploading ? (
               <>
@@ -1041,14 +1083,16 @@ function SendMediaForm({
 
       {isDocument && (
         <div>
-          <label className="mb-1 block text-xs text-muted-foreground">
+          <label htmlFor={filenameId} className="mb-1 block text-xs text-muted-foreground">
             {t("filenameLabel")}
           </label>
           <Input
+            id={filenameId}
             value={cfg.filename ?? ""}
             onChange={(e) => onUpdateConfig({ filename: e.target.value })}
             placeholder={t("filenamePlaceholder")}
-            className="bg-muted text-xs"
+            autoComplete="off"
+            className="bg-muted md:text-xs"
           />
         </div>
       )}

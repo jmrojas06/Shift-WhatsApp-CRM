@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { cn } from '@/lib/utils';
 import { Contact, CustomField, MessageTemplate } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -55,14 +56,17 @@ const contactFields = [
   { value: 'email', labelKey: 'email' },
 ];
 
+// Shape of the preview's stand-in contact. The visible values (name,
+// phone, email, company) come from i18n so the sample reads neutral in
+// every language; see `personalize.sample*`.
 const SAMPLE_CONTACT: Contact = {
   id: 'sample',
   user_id: '',
   account_id: '',
-  name: 'John Doe',
-  phone: '+1234567890',
-  email: 'john@example.com',
-  company: 'Acme Corp',
+  name: '',
+  phone: '',
+  email: '',
+  company: '',
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
 };
@@ -77,6 +81,7 @@ export function Step3Personalize({
   onBack,
 }: Step3Props) {
   const t = useTranslations('Broadcasts.wizard');
+  const uid = useId();
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
   const [loadingFields, setLoadingFields] = useState(true);
   const [firstContact, setFirstContact] = useState<Contact | null>(null);
@@ -195,6 +200,8 @@ export function Step3Personalize({
     const contact = firstContact ?? {
       ...SAMPLE_CONTACT,
       name: t('personalize.sampleName'),
+      phone: t('personalize.samplePhone'),
+      email: t('personalize.sampleEmail'),
       company: t('personalize.sampleCompany'),
     };
     const customValues = firstContact
@@ -256,17 +263,30 @@ export function Step3Personalize({
               {mediaHeaderType}
             </span>
           </div>
-          <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+          <label
+            htmlFor={`${uid}-media-url`}
+            className="mb-1.5 block text-xs font-medium text-muted-foreground"
+          >
             {t('personalize.imageUrl')}
           </label>
           <Input
+            id={`${uid}-media-url`}
             type="url"
+            inputMode="url"
+            autoComplete="off"
+            spellCheck={false}
             value={headerMediaUrl}
             onChange={(e) => onHeaderMediaUrlChange(e.target.value)}
             placeholder={t('personalize.imageUrlPlaceholder')}
+            aria-invalid={headerMediaError === 'invalid' || undefined}
+            aria-describedby={
+              headerMediaError
+                ? `${uid}-media-desc ${uid}-media-error`
+                : `${uid}-media-desc`
+            }
             className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
           />
-          <p className="mt-1.5 text-xs text-muted-foreground">
+          <p id={`${uid}-media-desc`} className="mt-1.5 text-xs text-muted-foreground">
             {t('personalize.headerImageDesc')}
           </p>
           {mediaHeaderType === 'image' &&
@@ -276,11 +296,19 @@ export function Step3Personalize({
               <img
                 src={headerMediaUrl.trim()}
                 alt={t('personalize.headerPreviewAlt')}
-                className="mt-3 max-h-40 rounded-lg border border-border object-contain"
+                width={320}
+                height={160}
+                className="mt-3 h-auto max-h-40 w-auto max-w-full rounded-lg border border-border object-contain"
               />
             )}
           {headerMediaError && (
-            <p className="mt-1.5 text-xs text-amber-300">
+            <p
+              id={`${uid}-media-error`}
+              className={cn(
+                'mt-1.5 text-xs',
+                headerMediaError === 'invalid' ? 'text-destructive' : 'text-warning',
+              )}
+            >
               {headerMediaError === 'missing'
                 ? t('personalize.mediaUrlRequired')
                 : t('personalize.mediaUrlInvalid')}
@@ -300,6 +328,8 @@ export function Step3Personalize({
           {placeholders.map((placeholder) => {
             const key = placeholder.replace(/^\{\{|\}\}$/g, '');
             const mapping = variables[key] ?? { type: 'static', value: '' };
+            const typeId = `${uid}-var-${key}-type`;
+            const valueId = `${uid}-var-${key}-value`;
 
             return (
               <div
@@ -314,7 +344,10 @@ export function Step3Personalize({
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
-                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                    <label
+                      htmlFor={typeId}
+                      className="mb-1.5 block text-xs font-medium text-muted-foreground"
+                    >
                       {t('personalize.type')}
                     </label>
                     <Select
@@ -326,7 +359,7 @@ export function Step3Personalize({
                         })
                       }
                     >
-                      <SelectTrigger className="w-full border-border bg-muted text-foreground">
+                      <SelectTrigger id={typeId} className="w-full border-border bg-muted text-foreground">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent className="border-border bg-popover">
@@ -340,11 +373,19 @@ export function Step3Personalize({
                   </div>
 
                   <div>
-                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                      {mapping.type === 'static' ? t('personalize.staticValue') : t('personalize.contactField')}
+                    <label
+                      htmlFor={valueId}
+                      className="mb-1.5 block text-xs font-medium text-muted-foreground"
+                    >
+                      {mapping.type === 'static'
+                        ? t('personalize.staticValue')
+                        : mapping.type === 'field'
+                          ? t('personalize.contactField')
+                          : t('personalize.customField')}
                     </label>
                     {mapping.type === 'static' ? (
                       <Input
+                        id={valueId}
                         value={mapping.value}
                         onChange={(e) =>
                           updateVariable(key, { value: e.target.value })
@@ -359,7 +400,7 @@ export function Step3Personalize({
                           updateVariable(key, { value: val || '' })
                         }
                       >
-                        <SelectTrigger className="w-full border-border bg-muted text-foreground">
+                        <SelectTrigger id={valueId} className="w-full border-border bg-muted text-foreground">
                           <SelectValue placeholder={t('personalize.selectContactField')} />
                         </SelectTrigger>
                         <SelectContent className="border-border bg-popover">
@@ -377,7 +418,7 @@ export function Step3Personalize({
                           updateVariable(key, { value: val || '' })
                         }
                       >
-                        <SelectTrigger className="w-full border-border bg-muted text-foreground">
+                        <SelectTrigger id={valueId} className="w-full border-border bg-muted text-foreground">
                           <SelectValue
                             placeholder={
                               loadingFields
@@ -416,9 +457,9 @@ export function Step3Personalize({
             <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
           )}
         </div>
-        <div className="rounded-lg bg-[#0e1a12] p-3">
-          <div className="ml-auto max-w-[85%] rounded-lg bg-primary/30 px-3 py-2 shadow-sm">
-            <p className="whitespace-pre-wrap text-sm text-primary">
+        <div className="rounded-lg bg-muted p-3">
+          <div className="ml-auto max-w-[85%] rounded-lg bg-primary/15 px-3 py-2 shadow-sm">
+            <p className="text-sm break-words whitespace-pre-wrap text-foreground">
               {previewText}
             </p>
           </div>
@@ -426,7 +467,7 @@ export function Step3Personalize({
       </div>
 
       {unmappedKeys.length > 0 && (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+        <div className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
           {t.rich('personalize.unmappedWarning', {
             keys: unmappedKeys.join(', '),
             mono: (chunks) => <span className="font-mono font-semibold">{chunks}</span>,

@@ -41,8 +41,8 @@ export default function AgentsPage() {
   return (
     <div>
       <div className="flex items-center gap-2">
-        <Bot className="h-6 w-6 text-primary" />
-        <h1 className="text-2xl font-bold tracking-tight text-foreground">
+        <Bot className="size-6 text-muted-foreground" aria-hidden />
+        <h1 className="text-2xl font-semibold text-foreground">
           {t('title')}
         </h1>
       </div>
@@ -56,7 +56,7 @@ export default function AgentsPage() {
           onValueChange={(v) => setTab(v as Tab)}
           className="mt-6"
         >
-          <TabsList>
+          <TabsList className="max-w-full overflow-x-auto">
             <TabsTrigger value="playground">
               <Sparkles className="mr-1.5 h-4 w-4" /> {t('tabPlayground')}
             </TabsTrigger>

@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 
 import type { AccountRole } from '@/lib/auth/roles';
-import type { ChipVariant } from './settings-chip';
+import { CHIP_VARIANTS, type ChipVariant } from './settings-chip';
 
 /**
  * Single source of truth for per-role chip metadata across settings
@@ -16,7 +16,9 @@ import type { ChipVariant } from './settings-chip';
  * icon, or colour change lands once.
  *
  * `variant` drives the token-based <SettingsChip>; `className` is the
- * inline Tailwind string the Members tab applies to its own spans.
+ * same token colours as a plain string for the Members tab's own spans
+ * (derived from CHIP_VARIANTS so the two can't drift). All of them are
+ * theme tokens with AA contrast in light and dark mode.
  */
 export const ROLE_META: Record<
   AccountRole,
@@ -26,19 +28,19 @@ export const ROLE_META: Record<
     icon: Crown,
     label: 'owner',
     variant: 'owner',
-    className: 'border-amber-500/40 bg-amber-500/10 text-amber-300',
+    className: CHIP_VARIANTS.owner,
   },
   admin: {
     icon: Shield,
     label: 'admin',
     variant: 'admin',
-    className: 'border-primary/40 bg-primary/10 text-primary',
+    className: CHIP_VARIANTS.admin,
   },
   agent: {
     icon: UserCog,
     label: 'agent',
     variant: 'muted',
-    className: 'border-border bg-muted text-muted-foreground',
+    className: CHIP_VARIANTS.muted,
   },
   viewer: {
     icon: UserIcon,

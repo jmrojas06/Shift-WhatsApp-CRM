@@ -606,26 +606,26 @@ export function ImportModal({
               <p className="text-sm font-medium text-popover-foreground">{t('importComplete')}</p>
               <div className="mt-3 flex flex-wrap gap-3">
                 {result.imported > 0 && (
-                  <div className="text-primary flex items-center gap-1.5 text-sm">
+                  <div className="text-success flex items-center gap-1.5 text-sm">
                     <CheckCircle className="size-4 shrink-0" />
                     {t('resultImported', { count: result.imported })}
                   </div>
                 )}
                 {result.tagsAssigned > 0 && (
-                  <div className="flex items-center gap-1.5 text-sm text-cyan-400">
+                  <div className="flex items-center gap-1.5 text-sm text-info">
                     <CheckCircle className="size-4 shrink-0" />
                     {t('resultTags', { count: result.tagsAssigned })}
                   </div>
                 )}
                 {result.skipped > 0 && (
-                  <div className="flex items-center gap-1.5 text-sm text-amber-400">
+                  <div className="flex items-center gap-1.5 text-sm text-warning">
                     <AlertTriangle className="size-4 shrink-0" />
                     {t('resultSkipped', { count: result.skipped })}
                   </div>
                 )}
                 {result.invalidPhone > 0 && (
                   <div className="space-y-0.5">
-                    <div className="flex items-center gap-1.5 text-sm text-amber-400">
+                    <div className="flex items-center gap-1.5 text-sm text-warning">
                       <AlertTriangle className="size-4 shrink-0" />
                       {t('resultInvalidPhone', { count: result.invalidPhone })}
                     </div>
@@ -635,7 +635,7 @@ export function ImportModal({
                   </div>
                 )}
                 {result.failed > 0 && (
-                  <div className="flex items-center gap-1.5 text-sm text-red-400">
+                  <div className="flex items-center gap-1.5 text-sm text-destructive">
                     <XCircle className="size-4 shrink-0" />
                     {t('resultFailed', { count: result.failed })}
                   </div>

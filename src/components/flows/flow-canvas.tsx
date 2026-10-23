@@ -173,7 +173,7 @@ function FlowNodeCard({ data, selected }: NodeProps) {
         // Flash overrides hover/selected colors briefly. Tailwind's
         // built-in `animate-pulse` is too gentle; a ring with the
         // amber accent matches the list view's flash semantics.
-        isFlashed && '!border-amber-400 ring-2 ring-amber-400/60'
+        isFlashed && '!border-warning ring-2 ring-warning/50'
       )}
     >
       {hasTarget && (
@@ -638,7 +638,7 @@ function NodeEditSheet({
             <SheetTitle className="flex items-center gap-2 text-[11px] font-semibold tracking-wider uppercase">
               <span style={{ color: c.text }}>{t(`nodes.${node.node_type}.label`)}</span>
               {isEntry && (
-                <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-emerald-300 uppercase">
+                <span className="rounded bg-success/12 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-success uppercase">
                   {t('badgeEntry')}
                 </span>
               )}
@@ -673,7 +673,7 @@ function NodeEditSheet({
             variant="ghost"
             size="sm"
             onClick={onDelete}
-            className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
+            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
           >
             <Trash2 className="h-3.5 w-3.5" />
             {t('deleteNode')}

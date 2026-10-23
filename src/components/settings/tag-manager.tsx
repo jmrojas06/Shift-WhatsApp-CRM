@@ -153,7 +153,7 @@ export function TagManager() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-foreground">
+        <CardTitle className="flex items-center gap-2 text-[15px] font-semibold text-foreground">
           <TagIcon className="size-4 text-primary" />
           {t('tagsTitle')}
         </CardTitle>
@@ -163,8 +163,17 @@ export function TagManager() {
       </CardHeader>
       <CardContent className="space-y-4">
         {loading ? (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="size-6 animate-spin text-primary" />
+          // Skeleton chips shaped like the tag list.
+          <div role="status" className="flex flex-wrap gap-2">
+            <span className="sr-only">{t('loadingTags')}</span>
+            {[20, 28, 16, 24].map((w) => (
+              <span
+                key={w}
+                aria-hidden
+                className="h-8 animate-pulse rounded-full bg-muted"
+                style={{ width: `${w * 4}px` }}
+              />
+            ))}
           </div>
         ) : (
           <>
@@ -189,9 +198,9 @@ export function TagManager() {
                       type="button"
                       onClick={() => confirmDelete(tag)}
                       aria-label={t('deleteAria', { name: tag.name })}
-                      className="ml-0.5 rounded-full p-0.5 opacity-60 transition-opacity hover:bg-black/10 hover:opacity-100 dark:hover:bg-white/10"
+                      className="ml-0.5 rounded-full p-0.5 opacity-70 outline-none transition-opacity hover:bg-foreground/10 hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:p-1.5"
                     >
-                      <X className="size-3" />
+                      <X className="size-3" aria-hidden />
                     </button>
                   </span>
                 ))}
@@ -205,6 +214,7 @@ export function TagManager() {
             {/* Inline create row */}
             <div className="flex flex-wrap items-center gap-2.5">
               <Input
+                aria-label={t('newTagLabel')}
                 placeholder={t('placeholder')}
                 value={newTagName}
                 onChange={(e) => setNewTagName(e.target.value)}
@@ -215,7 +225,7 @@ export function TagManager() {
                 maxLength={40}
                 className="min-w-[180px] flex-1"
               />
-              <div className="flex gap-1.5">
+              <div role="group" aria-label={t('colorGroupLabel')} className="flex gap-1.5">
                 {PRESET_COLORS.map((color) => (
                   <button
                     key={color.value}
@@ -224,7 +234,7 @@ export function TagManager() {
                     aria-label={t('useColor', { color: t(`colors.${color.name}` as Parameters<typeof t>[0]) })}
                     aria-pressed={selectedColor === color.value}
                     className={cn(
-                      'size-6 rounded-md transition-transform hover:scale-110',
+                      'size-6 rounded-md transition-transform hover:scale-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring pointer-coarse:size-8',
                       selectedColor === color.value &&
                         'outline outline-2 outline-offset-2 outline-primary',
                     )}

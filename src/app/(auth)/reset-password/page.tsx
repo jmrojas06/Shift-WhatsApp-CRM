@@ -18,23 +18,26 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
+import { CheckCircle, KeyRound, Loader2, MailX } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { CardContent } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { CheckCircle, KeyRound, Loader2, MailX } from "lucide-react";
+  AuthAlert,
+  AuthCard,
+  AuthCardHeader,
+  AuthShell,
+} from "@/components/auth/auth-shell";
+import { authErrorKey } from "@/components/auth/auth-error";
 
 type Status = "checking" | "ready" | "expired" | "done";
 
 export default function ResetPasswordPage() {
   const t = useTranslations("ResetPasswordPage");
+  const tErrors = useTranslations("AuthErrors");
   const supabase = createClient();
 
   const [status, setStatus] = useState<Status>("checking");
@@ -74,7 +77,7 @@ export default function ResetPasswordPage() {
     setSaving(false);
 
     if (error) {
-      setError(error.message);
+      setError(tErrors(authErrorKey(error)));
       return;
     }
     setStatus("done");
@@ -82,68 +85,63 @@ export default function ResetPasswordPage() {
 
   if (status === "checking") {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          {t("checking")}
-        </div>
-      </div>
+      <AuthShell>
+        <AuthCard>
+          <CardContent
+            role="status"
+            className="flex flex-col items-center gap-3 px-6 py-8 text-sm text-muted-foreground"
+          >
+            <Loader2 className="size-6 animate-spin text-primary" aria-hidden />
+            {t("checking")}
+          </CardContent>
+        </AuthCard>
+      </AuthShell>
     );
   }
 
   if (status === "expired") {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4">
-        <Card className="w-full max-w-md border-border bg-card">
-          <CardHeader className="items-center text-center">
-            <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-amber-500/10">
-              <MailX className="h-6 w-6 text-amber-400" />
-            </div>
-            <CardTitle className="text-xl text-foreground">
-              {t("expiredTitle")}
-            </CardTitle>
-            <CardDescription className="text-muted-foreground">
-              {t("expiredDesc")}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            <Link href="/forgot-password">
-              <Button className="h-10 w-full bg-primary text-primary-foreground hover:bg-primary/90">
-                {t("requestNewLink")}
-              </Button>
+      <AuthShell>
+        <AuthCard>
+          <AuthCardHeader
+            icon={MailX}
+            tone="warning"
+            title={t("expiredTitle")}
+            description={t("expiredDesc")}
+          />
+          <CardContent className="flex flex-col gap-2 px-6">
+            <Link
+              href="/forgot-password"
+              className={cn(buttonVariants({ size: "lg" }), "w-full")}
+            >
+              {t("requestNewLink")}
             </Link>
-            <Link href="/login">
-              <Button
-                variant="outline"
-                className="w-full border-border text-muted-foreground hover:bg-muted hover:text-foreground"
-              >
-                {t("backToSignIn")}
-              </Button>
+            <Link
+              href="/login"
+              className={cn(buttonVariants({ variant: "outline", size: "lg" }), "w-full")}
+            >
+              {t("backToSignIn")}
             </Link>
           </CardContent>
-        </Card>
-      </div>
+        </AuthCard>
+      </AuthShell>
     );
   }
 
   if (status === "done") {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4">
-        <Card className="w-full max-w-md border-border bg-card">
-          <CardHeader className="items-center text-center">
-            <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-              <CheckCircle className="h-6 w-6 text-primary" />
-            </div>
-            <CardTitle className="text-xl text-foreground">
-              {t("successTitle")}
-            </CardTitle>
-            <CardDescription className="text-muted-foreground">
-              {t("successDesc")}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
+      <AuthShell>
+        <AuthCard>
+          <AuthCardHeader
+            icon={CheckCircle}
+            tone="success"
+            title={t("successTitle")}
+            description={t("successDesc")}
+          />
+          <CardContent className="px-6">
             <Button
-              className="h-10 w-full bg-primary text-primary-foreground hover:bg-primary/90"
+              size="lg"
+              className="w-full"
               onClick={() => {
                 // Full-page navigation, like /login: the middleware
                 // gating /dashboard must see the session cookies on a
@@ -156,35 +154,21 @@ export default function ResetPasswordPage() {
               {t("continueToDashboard")}
             </Button>
           </CardContent>
-        </Card>
-      </div>
+        </AuthCard>
+      </AuthShell>
     );
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-md border-border bg-card">
-        <CardHeader className="items-center text-center">
-          <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-            <KeyRound className="h-6 w-6 text-primary" />
-          </div>
-          <CardTitle className="text-xl text-foreground">{t("title")}</CardTitle>
-          <CardDescription className="text-muted-foreground">
-            {t("desc")}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+    <AuthShell>
+      <AuthCard>
+        <AuthCardHeader icon={KeyRound} title={t("title")} description={t("desc")} />
+        <CardContent className="px-6">
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            {error && (
-              <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">
-                {error}
-              </div>
-            )}
+            {error && <AuthAlert>{error}</AuthAlert>}
 
             <div className="flex flex-col gap-2">
-              <Label htmlFor="password" className="text-muted-foreground">
-                {t("passwordLabel")}
-              </Label>
+              <Label htmlFor="password">{t("passwordLabel")}</Label>
               <Input
                 id="password"
                 type="password"
@@ -193,14 +177,11 @@ export default function ResetPasswordPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
               />
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label htmlFor="confirmPassword" className="text-muted-foreground">
-                {t("confirmPasswordLabel")}
-              </Label>
+              <Label htmlFor="confirmPassword">{t("confirmPasswordLabel")}</Label>
               <Input
                 id="confirmPassword"
                 type="password"
@@ -209,20 +190,22 @@ export default function ResetPasswordPage() {
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
               />
             </div>
 
-            <Button
-              type="submit"
-              disabled={saving}
-              className="mt-2 h-10 w-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-            >
-              {saving ? t("saving") : t("submit")}
+            <Button type="submit" size="lg" disabled={saving} className="mt-2 w-full">
+              {saving ? (
+                <>
+                  <Loader2 className="animate-spin" aria-hidden />
+                  {t("saving")}
+                </>
+              ) : (
+                t("submit")
+              )}
             </Button>
           </form>
         </CardContent>
-      </Card>
-    </div>
+      </AuthCard>
+    </AuthShell>
   );
 }

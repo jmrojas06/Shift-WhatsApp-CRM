@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useEffect, useId, useState } from "react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
 import {
   ArrowLeft,
   Loader2,
@@ -15,11 +16,11 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
-import { format, formatDistanceToNow } from "date-fns";
 
-import { useTranslations } from "next-intl";
+import { useFormatter, useLocale, useTranslations } from "next-intl";
 
 import { Badge } from "@/components/ui/badge";
+import { formatRunDuration } from "@/components/flows/run-duration";
 import { cn } from "@/lib/utils";
 
 /**
@@ -64,7 +65,7 @@ const STATUS_META: Record<
   { classes: string; icon: typeof Clock }
 > = {
   active: {
-    classes: "border-emerald-600/40 bg-emerald-500/10 text-emerald-300",
+    classes: "border-success/40 bg-success/10 text-success",
     icon: PlayCircle,
   },
   completed: {
@@ -72,7 +73,7 @@ const STATUS_META: Record<
     icon: CircleCheck,
   },
   handed_off: {
-    classes: "border-amber-600/40 bg-amber-500/10 text-amber-300",
+    classes: "border-warning/40 bg-warning/10 text-warning",
     icon: UserPlus,
   },
   timed_out: {
@@ -84,13 +85,12 @@ const STATUS_META: Record<
     icon: PauseCircle,
   },
   failed: {
-    classes: "border-red-600/40 bg-red-500/10 text-red-300",
+    classes: "border-destructive/40 bg-destructive/10 text-destructive",
     icon: CircleAlert,
   },
 };
 
 export default function FlowRunsPage() {
-  const router = useRouter();
   const params = useParams<{ id: string }>();
   const t = useTranslations("Flows.logs");
   const tEdit = useTranslations("Flows.edit");
@@ -148,8 +148,9 @@ export default function FlowRunsPage() {
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      <div className="flex h-full items-center justify-center" role="status">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden />
+        <span className="sr-only">{t("loading")}</span>
       </div>
     );
   }
@@ -157,28 +158,26 @@ export default function FlowRunsPage() {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3">
         <p className="text-sm text-muted-foreground">{tEdit("notFound")}</p>
-        <button
-          type="button"
-          onClick={() => router.push("/flows")}
-          className="text-sm text-primary hover:opacity-80"
+        <Link
+          href="/flows"
+          className="inline-flex min-h-11 items-center rounded-lg px-3 text-sm text-primary outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           {tEdit("backToFlows")}
-        </button>
+        </Link>
       </div>
     );
   }
 
   return (
     <div className="mx-auto max-w-4xl p-6">
-      <button
-        type="button"
-        onClick={() => router.push(`/flows/${flow.id}`)}
-        className="mb-2 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+      <Link
+        href={`/flows/${flow.id}`}
+        className="mb-2 inline-flex items-center gap-1 rounded text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-11"
       >
-        <ArrowLeft className="h-3 w-3" />
+        <ArrowLeft className="h-3 w-3" aria-hidden />
         {flow.name}
-      </button>
-      <h1 className="text-xl font-semibold text-foreground">{t("title")}</h1>
+      </Link>
+      <h1 className="text-2xl font-semibold text-foreground">{t("title")}</h1>
       <p className="mt-1 text-sm text-muted-foreground">
         {t("description")}
       </p>
@@ -218,26 +217,29 @@ function RunCard({
   onToggle: () => void;
   t: ReturnType<typeof useTranslations>;
 }) {
+  const format = useFormatter();
+  const locale = useLocale();
+  const uid = useId();
+  const panelId = `${uid}-events`;
   const meta = STATUS_META[run.status];
   const StatusIcon = meta.icon;
   const contactLabel =
     run.contact?.name?.trim() || run.contact?.phone || t("unknownContact");
-  const duration = run.ended_at
-    ? formatDistanceToNow(new Date(run.ended_at), {
-        addSuffix: false,
-      })
-    : null;
+  // How long the run lasted (start → end), not how long ago it ended.
+  const duration = formatRunDuration(run.started_at, run.ended_at, locale);
   return (
     <div className="rounded-lg border border-border bg-card">
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left"
+        aria-expanded={expanded}
+        aria-controls={panelId}
+        className="flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50"
       >
         {expanded ? (
-          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
         ) : (
-          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
         )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -245,7 +247,7 @@ function RunCard({
               {contactLabel}
             </span>
             <Badge variant="outline" className={cn("gap-1", meta.classes)}>
-              <StatusIcon className="h-3 w-3" />
+              <StatusIcon className="h-3 w-3" aria-hidden />
               {t(
                 run.status === "active"
                   ? "statusActive"
@@ -267,16 +269,23 @@ function RunCard({
             )}
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-            <span>{t("started", { time: format(new Date(run.started_at), "PP p") })}</span>
+            <span>
+              {t("started", {
+                time: format.dateTime(new Date(run.started_at), {
+                  dateStyle: "medium",
+                  timeStyle: "short",
+                }),
+              })}
+            </span>
             {run.reprompt_count > 0 && (
               <span>· {t("reprompts", { count: run.reprompt_count })}</span>
             )}
-            {duration && <span>· {t("ranFor", { duration })}</span>}
+            {duration && <span className="tabular-nums">· {t("ranFor", { duration })}</span>}
           </div>
         </div>
       </button>
       {expanded && (
-        <div className="border-t border-border px-4 py-3">
+        <div id={panelId} className="border-t border-border px-4 py-3">
           {Object.keys(run.vars).length > 0 && (
             <details className="mb-3">
               <summary className="cursor-pointer text-xs text-muted-foreground">
@@ -303,23 +312,28 @@ function RunCard({
 }
 
 const EVENT_COLOR: Record<string, string> = {
-  started: "text-emerald-300",
+  started: "text-success",
   node_entered: "text-muted-foreground",
-  message_sent: "text-sky-300",
+  message_sent: "text-info",
   reply_received: "text-primary",
-  fallback_fired: "text-amber-300",
-  handoff: "text-amber-300",
+  fallback_fired: "text-warning",
+  handoff: "text-warning",
   timeout: "text-muted-foreground",
-  error: "text-red-300",
-  completed: "text-emerald-300",
+  error: "text-destructive",
+  completed: "text-success",
 };
 
 function EventLine({ ev }: { ev: EventRow }) {
+  const format = useFormatter();
   const cls = EVENT_COLOR[ev.event_type] ?? "text-muted-foreground";
   return (
     <div className="flex items-start gap-2 rounded-md px-2 py-1 text-xs">
-      <span className="w-32 shrink-0 text-[10px] text-muted-foreground">
-        {format(new Date(ev.created_at), "HH:mm:ss")}
+      <span className="w-32 shrink-0 text-[10px] text-muted-foreground tabular-nums">
+        {format.dateTime(new Date(ev.created_at), {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        })}
       </span>
       <span className={cn("w-32 shrink-0 font-mono text-[10px]", cls)}>
         {ev.event_type}

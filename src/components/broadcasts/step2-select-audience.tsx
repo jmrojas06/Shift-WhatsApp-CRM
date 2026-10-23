@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useEffect, useState, useCallback, useId, useMemo, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { cn } from '@/lib/utils';
 import { countAudience } from '@/lib/broadcast-audience';
 import { parseBroadcastCsv } from '@/lib/broadcast-csv';
 import { CustomField, Tag } from '@/types';
@@ -18,7 +19,7 @@ import {
   ArrowLeft,
   X,
 } from 'lucide-react';
-import { useTranslations } from 'next-intl';
+import { useFormatter, useTranslations } from 'next-intl';
 
 type AudienceType = 'all' | 'tags' | 'custom_field' | 'csv';
 type CustomFieldOperator = 'is' | 'is_not' | 'contains';
@@ -37,6 +38,10 @@ interface AudienceConfig {
   excludeTagIds?: string[];
 }
 
+// text-base below sm keeps iOS from zooming in on focus (under 16px).
+const FIELD_CLASS =
+  'h-10 w-full min-w-0 rounded-lg border border-border bg-muted px-2.5 text-base text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:h-11 sm:text-sm';
+
 interface Step2Props {
   audience: AudienceConfig;
   onUpdate: (audience: AudienceConfig) => void;
@@ -51,6 +56,8 @@ export function Step2SelectAudience({
   onBack,
 }: Step2Props) {
   const t = useTranslations('Broadcasts.wizard');
+  const format = useFormatter();
+  const fieldUid = useId();
 
   const OPERATOR_OPTIONS = useMemo<{ value: CustomFieldOperator; label: string }[]>(() => [
     { value: 'is', label: t('selectAudience.operatorIs') },
@@ -254,6 +261,8 @@ export function Step2SelectAudience({
           return (
             <button
               key={option.type}
+              type="button"
+              aria-pressed={isSelected}
               onClick={() =>
                 onUpdate({
                   ...audience,
@@ -269,10 +278,10 @@ export function Step2SelectAudience({
                     option.type === 'csv' ? audience.csvContacts : undefined,
                 })
               }
-              className={`flex items-start gap-3 rounded-xl border p-4 text-left transition-all ${
+              className={`flex min-w-0 items-start gap-3 rounded-xl border p-4 text-left transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50 ${
                 isSelected
                   ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
-                  : 'border-border bg-card/50 hover:border-border'
+                  : 'border-border bg-card hover:border-input hover:bg-muted/40'
               }`}
             >
               <div
@@ -311,8 +320,10 @@ export function Step2SelectAudience({
                 return (
                   <button
                     key={tag.id}
+                    type="button"
+                    aria-pressed={Boolean(isSelected)}
                     onClick={() => toggleTag(tag.id)}
-                    className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-all ${
+                    className={`inline-flex min-h-8 items-center rounded-full border px-3 py-1 text-xs font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-11 ${
                       isSelected
                         ? 'border-primary/30 bg-primary/10 text-primary'
                         : 'border-border bg-muted text-muted-foreground hover:border-border'
@@ -342,40 +353,58 @@ export function Step2SelectAudience({
             </p>
           ) : (
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_140px_minmax(0,1fr)]">
-              <select
-                value={audience.customField?.fieldId ?? ''}
-                onChange={(e) => updateCustomField({ fieldId: e.target.value })}
-                className="h-9 rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-              >
-                <option value="">{t('selectAudience.selectField')}</option>
-                {customFields.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.field_name}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={audience.customField?.operator ?? 'is'}
-                onChange={(e) =>
-                  updateCustomField({
-                    operator: e.target.value as CustomFieldOperator,
-                  })
-                }
-                className="h-9 rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-              >
-                {OPERATOR_OPTIONS.map((op: { value: CustomFieldOperator; label: string }) => (
-                  <option key={op.value} value={op.value}>
-                    {op.label}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="text"
-                value={audience.customField?.value ?? ''}
-                onChange={(e) => updateCustomField({ value: e.target.value })}
-                placeholder={t('selectAudience.valuePlaceholder')}
-                className="h-9 rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
-              />
+              <div className="flex min-w-0 flex-col gap-1">
+                <label htmlFor={`${fieldUid}-field`} className="text-xs text-muted-foreground">
+                  {t('selectAudience.field')}
+                </label>
+                <select
+                  id={`${fieldUid}-field`}
+                  value={audience.customField?.fieldId ?? ''}
+                  onChange={(e) => updateCustomField({ fieldId: e.target.value })}
+                  className={FIELD_CLASS}
+                >
+                  <option value="">{t('selectAudience.selectField')}</option>
+                  {customFields.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.field_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex min-w-0 flex-col gap-1">
+                <label htmlFor={`${fieldUid}-operator`} className="text-xs text-muted-foreground">
+                  {t('selectAudience.operator')}
+                </label>
+                <select
+                  id={`${fieldUid}-operator`}
+                  value={audience.customField?.operator ?? 'is'}
+                  onChange={(e) =>
+                    updateCustomField({
+                      operator: e.target.value as CustomFieldOperator,
+                    })
+                  }
+                  className={FIELD_CLASS}
+                >
+                  {OPERATOR_OPTIONS.map((op: { value: CustomFieldOperator; label: string }) => (
+                    <option key={op.value} value={op.value}>
+                      {op.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex min-w-0 flex-col gap-1">
+                <label htmlFor={`${fieldUid}-value`} className="text-xs text-muted-foreground">
+                  {t('selectAudience.value')}
+                </label>
+                <input
+                  id={`${fieldUid}-value`}
+                  type="text"
+                  value={audience.customField?.value ?? ''}
+                  onChange={(e) => updateCustomField({ value: e.target.value })}
+                  placeholder={t('selectAudience.valuePlaceholder')}
+                  className={cn(FIELD_CLASS, 'placeholder:text-muted-foreground')}
+                />
+              </div>
             </div>
           )}
         </div>
@@ -395,7 +424,7 @@ export function Step2SelectAudience({
           <button
             type="button"
             onClick={() => csvInputRef.current?.click()}
-            className="group flex w-full flex-col items-center gap-2 rounded-lg border border-dashed border-border bg-muted/40 px-4 py-6 text-center transition-colors hover:border-primary/40 hover:bg-muted/70"
+            className="group flex w-full flex-col items-center gap-2 rounded-lg border border-dashed border-border bg-muted/40 px-4 py-6 text-center outline-none transition-colors hover:border-primary/40 hover:bg-muted/70 focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-muted-foreground group-hover:text-foreground">
               {csvFileName ? (
@@ -427,7 +456,7 @@ export function Step2SelectAudience({
       {/* Exclude list — applies regardless of audience type */}
       <div className="rounded-xl border border-border bg-card/50 p-4">
         <div className="mb-3 flex items-center gap-2">
-          <X className="h-4 w-4 text-red-400" />
+          <X className="h-4 w-4 text-destructive" aria-hidden="true" />
           <p className="text-sm font-medium text-foreground">
             {t('selectAudience.excludeTags')}
           </p>
@@ -441,10 +470,12 @@ export function Step2SelectAudience({
               return (
                 <button
                   key={tag.id}
+                  type="button"
+                  aria-pressed={Boolean(isExcluded)}
                   onClick={() => toggleExcludeTag(tag.id)}
-                  className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-all ${
+                  className={`inline-flex min-h-8 items-center rounded-full border px-3 py-1 text-xs font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-11 ${
                     isExcluded
-                      ? 'border-red-500/30 bg-red-500/10 text-red-300'
+                      ? 'border-destructive/30 bg-destructive/10 text-destructive'
                       : 'border-border bg-muted text-muted-foreground hover:border-border'
                   }`}
                 >
@@ -472,7 +503,7 @@ export function Step2SelectAudience({
           <div className="flex items-center gap-2">
             <Users className="h-4 w-4 text-primary" />
             <span className="text-sm text-foreground">
-              {estimatedCount.toLocaleString()}
+              {format.number(estimatedCount)}
             </span>
             <span className="text-xs text-muted-foreground">{t('selectAudience.estimatedRecipients')}</span>
           </div>

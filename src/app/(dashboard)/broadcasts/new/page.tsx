@@ -133,7 +133,7 @@ export default function NewBroadcastPage() {
     <div className="mx-auto max-w-3xl space-y-8">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-foreground">{t('title')}</h1>
+        <h1 className="text-2xl font-semibold text-foreground">{t('title')}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {t('subtitle')}
         </p>
@@ -146,10 +146,14 @@ export default function NewBroadcastPage() {
           const isCompleted = index < currentStep;
 
           return (
-            <div key={step.key} className="flex flex-1 items-center">
-              <div className="flex items-center gap-2">
+            <div
+              key={step.key}
+              className="flex min-w-0 flex-1 items-center"
+              aria-current={isActive ? 'step' : undefined}
+            >
+              <div className="flex min-w-0 items-center gap-2">
                 <div
-                  className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-medium transition-all ${
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-medium transition-colors ${
                     isCompleted
                       ? 'bg-primary text-primary-foreground'
                       : isActive
@@ -160,7 +164,10 @@ export default function NewBroadcastPage() {
                   {isCompleted ? <Check className="h-4 w-4" /> : index + 1}
                 </div>
                 <span
-                  className={`hidden text-sm font-medium sm:block ${
+                  // En móvil solo se ve el nombre del paso actual.
+                  className={`truncate text-sm font-medium sm:block ${
+                    isActive ? 'block' : 'hidden'
+                  } ${
                     isActive ? 'text-foreground' : isCompleted ? 'text-primary' : 'text-muted-foreground'
                   }`}
                 >
@@ -182,7 +189,8 @@ export default function NewBroadcastPage() {
       {/* Step Content */}
       <div className="relative min-h-[400px]">
         <div
-          className="transition-all duration-300 ease-in-out"
+          className="transition-opacity duration-200 ease-out"
+          aria-busy={isProcessing || undefined}
           style={{
             opacity: isProcessing ? 0.6 : 1,
             pointerEvents: isProcessing ? 'none' : 'auto',

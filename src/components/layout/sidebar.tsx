@@ -2,70 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
+import { LogOut, Settings, User, X } from "lucide-react";
+import { useTranslations } from "next-intl";
+
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
-import { useTotalUnread } from "@/hooks/use-total-unread";
-import { useUnreadNotifications } from "@/hooks/use-unread-notifications";
-import {
-  Bell,
-  Bot,
-  Crown,
-  GitBranch,
-  LayoutDashboard,
-  LogOut,
-  MessageSquare,
-  Radio,
-  Settings,
-  Shield,
-  User,
-  UserCog,
-  Users,
-  UsersRound,
-  Workflow,
-  X,
-  Zap,
-} from "lucide-react";
 import type { AccountRole } from "@/lib/auth/roles";
-import { getModulesNav } from "@/lib/verticals/registry";
-
-// Per-role chip metadata used in the sidebar's account strip + the
-// Members tab roster. Keeping this near both consumers in a single
-// place avoids drift between the two surfaces — when a designer
-// wants to recolour "agent" rows, this is the one diff.
-const ROLE_CHIP: Record<
-  AccountRole,
-  { icon: typeof Crown; labelKey: string; className: string }
-> = {
-  owner: {
-    icon: Crown,
-    labelKey: "roleOwner",
-    // Amber: scarce, immutable, "the boss" — gets visual emphasis.
-    className:
-      "border-amber-500/40 bg-amber-500/10 text-amber-300",
-  },
-  admin: {
-    icon: Shield,
-    labelKey: "roleAdmin",
-    // Primary-tinted: significant but not as scarce as owner.
-    className:
-      "border-primary/40 bg-primary/10 text-primary",
-  },
-  agent: {
-    icon: UserCog,
-    labelKey: "roleAgent",
-    // Neutral slate: the operational default.
-    className:
-      "border-border bg-muted text-foreground",
-  },
-  viewer: {
-    icon: User,
-    labelKey: "roleViewer",
-    // Muted slate: read-only role; visually quieter than agent.
-    className:
-      "border-border bg-card text-muted-foreground",
-  },
-};
 import {
   Avatar,
   AvatarFallback,
@@ -78,69 +21,47 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ModeToggle } from "@/components/layout/mode-toggle";
 
-interface NavItem {
-  href: string;
-  labelKey: string;
-  icon: typeof LayoutDashboard;
-  /**
-   * When true, the nav row renders a small "Beta" chip after the label.
-   * Purely informational — doesn't affect routing or access.
-   */
-  beta?: boolean;
+import { getNavGroups, isNavActive, SETTINGS_ITEM, type NavItem } from "./nav-config";
+import { useShellChrome } from "./shell-chrome";
+import { WorkspaceBadge } from "./workspace-badge";
+
+const ROLE_LABEL_KEY: Record<AccountRole, string> = {
+  owner: "roleOwner",
+  admin: "roleAdmin",
+  agent: "roleAgent",
+  viewer: "roleViewer",
+};
+
+const DESKTOP_QUERY = "(min-width: 1024px)";
+
+/** True at Tailwind's `lg` breakpoint and up (false during SSR). */
+function useIsDesktop(): boolean {
+  return useSyncExternalStore(
+    (onChange) => {
+      const media = window.matchMedia(DESKTOP_QUERY);
+      media.addEventListener("change", onChange);
+      return () => media.removeEventListener("change", onChange);
+    },
+    () => window.matchMedia(DESKTOP_QUERY).matches,
+    () => false,
+  );
 }
 
-const navItems: NavItem[] = [
-  { href: "/dashboard", labelKey: "dashboard", icon: LayoutDashboard },
-  { href: "/inbox", labelKey: "inbox", icon: MessageSquare },
-  { href: "/notifications", labelKey: "notifications", icon: Bell },
-  { href: "/contacts", labelKey: "contacts", icon: Users },
-  { href: "/pipelines", labelKey: "pipelines", icon: GitBranch },
-  { href: "/broadcasts", labelKey: "broadcasts", icon: Radio },
-  { href: "/automations", labelKey: "automations", icon: Zap },
-  { href: "/flows", labelKey: "flows", icon: Workflow, beta: true },
-  { href: "/agents", labelKey: "aiAgents", icon: Bot },
-];
-
-const bottomNavItems = [
-  { href: "/settings", labelKey: "settings", icon: Settings },
-];
-
 interface SidebarProps {
-  /** Controlled on mobile by the Header's hamburger button. Ignored on lg+. */
+  /** Controlled on mobile by the tab bar's "Más" button. Ignored on lg+. */
   open?: boolean;
   onClose?: () => void;
 }
 
-import { useTranslations } from "next-intl";
-
 export function Sidebar({ open = false, onClose }: SidebarProps) {
   const t = useTranslations("Sidebar");
   const pathname = usePathname();
-  const { profile, profileLoading, account, accountRole, signOut } = useAuth();
-  const totalUnread = useTotalUnread();
-  const unreadNotifications = useUnreadNotifications();
-  // Only surface the account-name strip when it actually carries
-  // information. A solo user's personal account is named after them
-  // (the 017 signup trigger seeds it from `full_name`), so showing it
-  // here would just duplicate the user name in the footer below. Once
-  // the account is renamed or the user joins a shared account, the
-  // name diverges and the strip becomes meaningful — that's the signal
-  // we gate on. Wait for the profile fetch to settle first, otherwise
-  // the strip flashes in once the row resolves (a layout jump).
-  const showAccountStrip =
-    !profileLoading &&
-    !!account?.name &&
-    account.name !== profile?.full_name;
-
-  // Modules active for this account (agenda, ventas…) render inline
-  // with the primary nav, one entry each. Empty for classic accounts —
-  // `getModulesNav` reads `modules` (migration 053) and falls back to
-  // `vertical_key` (047) while `modules` is empty.
-  const navItemsWithVerticals: NavItem[] = [
-    ...navItems,
-    ...getModulesNav(account),
-  ];
+  const { profile, account, accountRole, signOut } = useAuth();
+  const { unreadConversations } = useShellChrome();
+  const workspaceName = account?.name || profile?.full_name || "";
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   // Close the drawer when route changes — users opened it to navigate,
   // so once they pick a destination the drawer should get out of the way.
@@ -152,8 +73,11 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
 
   // Lock body scroll and allow Escape to close while the drawer is open on
   // mobile. No-ops on desktop because the sidebar isn't positioned there.
+  // Focus moves into the drawer on open and back to the opener on close.
   useEffect(() => {
     if (!open) return;
+    const opener = document.activeElement as HTMLElement | null;
+    closeButtonRef.current?.focus();
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const onKey = (e: KeyboardEvent) => {
@@ -163,8 +87,53 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
     return () => {
       document.body.style.overflow = prev;
       window.removeEventListener("keydown", onKey);
+      opener?.focus?.();
     };
   }, [open, onClose]);
+
+  // Below lg the closed drawer is off-screen: make it inert so its links
+  // leave the tab order and the accessibility tree.
+  const isDesktop = useIsDesktop();
+  const inert = !open && !isDesktop;
+
+  const renderItem = (item: NavItem) => {
+    const active = isNavActive(item.href, pathname);
+    const showUnread = item.href === "/inbox" && unreadConversations > 0;
+    return (
+      <li key={item.href}>
+        <Link
+          href={item.href}
+          aria-current={active ? "page" : undefined}
+          className={cn(
+            // ≥44px rows in the touch drawer, a denser 36px on desktop.
+            "flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors lg:min-h-9",
+            active
+              ? "bg-muted text-foreground"
+              : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+          )}
+        >
+          <item.icon
+            className={cn("size-[18px] shrink-0", active && "text-primary")}
+            strokeWidth={1.75}
+          />
+          <span className="flex-1 truncate">{t(item.labelKey)}</span>
+          {item.beta && (
+            <span className="rounded-full border border-border px-1.5 text-[11px] leading-[18px] font-medium text-muted-foreground">
+              {t("beta")}
+            </span>
+          )}
+          {showUnread && (
+            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-bold text-primary-foreground">
+              <span aria-hidden>{unreadConversations > 99 ? "99+" : unreadConversations}</span>
+              <span className="sr-only">
+                {t("unreadConversations", { count: unreadConversations })}
+              </span>
+            </span>
+          )}
+        </Link>
+      </li>
+    );
+  };
 
   return (
     <>
@@ -174,9 +143,10 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
       <button
         type="button"
         aria-label={t("closeMenu")}
+        tabIndex={open ? 0 : -1}
         onClick={onClose}
         className={cn(
-          "fixed inset-0 z-30 bg-background/70 backdrop-blur-sm transition-opacity lg:hidden",
+          "fixed inset-0 z-40 bg-background/70 backdrop-blur-sm transition-opacity lg:hidden",
           open
             ? "pointer-events-auto opacity-100"
             : "pointer-events-none opacity-0",
@@ -184,226 +154,129 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
       />
 
       <aside
+        id="app-sidebar"
+        inert={inert}
         className={cn(
           // Mobile: fixed drawer that slides in from the left.
-          "fixed inset-y-0 left-0 z-40 flex h-full w-64 flex-col border-r border-border bg-card",
+          "fixed inset-y-0 left-0 z-50 flex h-full w-72 max-w-[85vw] flex-col border-r border-border bg-background",
           "transition-transform duration-200 ease-out will-change-transform",
           open ? "translate-x-0" : "-translate-x-full",
           // Desktop: static, always visible — reset all the mobile framing.
-          "lg:static lg:z-0 lg:w-60 lg:translate-x-0 lg:transition-none",
+          "lg:static lg:z-0 lg:w-62 lg:translate-x-0 lg:transition-none",
         )}
         aria-label={t("primaryNav")}
       >
-        {/* Logo row. On mobile we put a close button here; on desktop the
-            close button is hidden since the sidebar is always-visible. */}
-        <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
-          <Link href="/dashboard" className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <MessageSquare className="h-4 w-4" />
-            </div>
-            <span className="text-sm font-semibold text-foreground">
-              {t("title")}
+        {/* Workspace — the business the user is working in, with the
+            product name underneath. Close button only in the drawer. */}
+        <div className="flex h-14 shrink-0 items-center gap-2.5 px-4 lg:h-16">
+          <Link href="/dashboard" className="flex min-w-0 flex-1 items-center gap-2.5">
+            <WorkspaceBadge name={workspaceName} />
+            <span className="flex min-w-0 flex-col leading-tight">
+              <span className="truncate text-sm font-semibold text-foreground" title={workspaceName}>
+                {workspaceName}
+              </span>
+              <span className="text-xs text-muted-foreground">{t("title")}</span>
             </span>
           </Link>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={onClose}
             aria-label={t("closeMenu")}
-            className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
+            className="flex size-11 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none lg:hidden"
           >
-            <X className="h-5 w-5" />
+            <X className="size-5" />
           </button>
         </div>
 
-        {/* Main navigation */}
-        <nav className="flex-1 overflow-y-auto px-3 py-4">
-          <ul className="flex flex-col gap-1">
-            {navItemsWithVerticals.map((item) => {
-              const isActive =
-                pathname === item.href ||
-                (item.href !== "/dashboard" && pathname.startsWith(item.href));
-
-              const showUnreadDot =
-                item.href === "/inbox" && totalUnread > 0 && !isActive;
-
-              // Unlike the inbox dot, the notifications count stays visible
-              // even while the page is active — it reflects unread state
-              // (cleared by marking notifications read), not "currently
-              // viewing this section".
-              const showNotificationBadge =
-                item.href === "/notifications" && unreadNotifications > 0;
-
-              return (
-                <li key={item.href}>
-                  <Link
-                    href={item.href}
-                    className={cn(
-                      // Taller on mobile so fingers can hit the row reliably (≥44px).
-                      "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors lg:py-2",
-                      isActive
-                        ? "bg-primary/10 text-primary"
-                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                    )}
-                  >
-                    <item.icon className="h-4 w-4" />
-                    <span className="flex-1">{t(item.labelKey as string)}</span>
-                    {item.beta && (
-                      <span
-                        aria-label={t("beta")}
-                        className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-300"
-                      >
-                        {t("beta")}
-                      </span>
-                    )}
-                    {showUnreadDot && (
-                      <span
-                        aria-label={t("unreadConversations", { count: totalUnread })}
-                        className="relative flex h-2 w-2"
-                      >
-                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
-                        <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
-                      </span>
-                    )}
-                    {showNotificationBadge && (
-                      <span
-                        aria-label={t("unreadNotifications", { count: unreadNotifications })}
-                        className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground"
-                      >
-                        {unreadNotifications > 9 ? "9+" : unreadNotifications}
-                      </span>
-                    )}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-
-          <div className="my-4 border-t border-border" />
-
-          <ul className="flex flex-col gap-1">
-            {bottomNavItems.map((item) => {
-              const isActive = pathname.startsWith(item.href);
-              return (
-                <li key={item.href}>
-                  <Link
-                    href={item.href}
-                    className={cn(
-                      "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors lg:py-2",
-                      isActive
-                        ? "bg-primary/10 text-primary"
-                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                    )}
-                  >
-                    <item.icon className="h-4 w-4" />
-                    {t(item.labelKey as string)}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
+        <nav className="flex-1 overflow-y-auto overscroll-contain px-3 pb-4">
+          {getNavGroups(account).map((group) => (
+            <div key={group.labelKey} className="mt-3 first:mt-1">
+              <p className="px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground">
+                {t(group.labelKey)}
+              </p>
+              <ul className="flex flex-col gap-0.5">{group.items.map(renderItem)}</ul>
+            </div>
+          ))}
         </nav>
 
-        {/* User section */}
         <div className="shrink-0 border-t border-border p-3">
-          {/* Account name display — surfaced only when the account
-              name differs from the user's own name (see
-              `showAccountStrip`). For a default solo account the two
-              match, so we hide it to avoid duplicating the user name
-              below; for renamed or shared accounts it tells the user
-              which account they're acting in. */}
-          {showAccountStrip && account?.name ? (
-            <div className="mb-2 flex items-center gap-2 px-3 text-xs text-muted-foreground">
-              <UsersRound className="size-3.5 shrink-0" />
-              {/* `title=` exposes the full name on hover when it
-                  gets truncated (long account names + narrow
-                  sidebars). Cheap a11y win. */}
-              <span className="truncate" title={account.name}>
-                {account.name}
-              </span>
-              {accountRole ? (
-                // Always render the chip — owners used to be
-                // invisible here, which made them indistinguishable
-                // from admins at a glance. Now everyone sees their
-                // role (with a colour cue) regardless of tier.
-                (() => {
-                  const meta = ROLE_CHIP[accountRole];
-                  const Icon = meta.icon;
-                  return (
-                    <span
-                      className={`ml-auto inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${meta.className}`}
-                    >
-                      <Icon className="size-3" />
-                      {t(meta.labelKey as string)}
-                    </span>
-                  );
-                })()
-              ) : null}
-            </div>
-          ) : null}
-          <DropdownMenu>
-            <DropdownMenuTrigger className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-muted/60 focus:bg-muted/60 focus:outline-none data-popup-open:bg-muted/60">
-              <Avatar className="size-8 shrink-0">
-                {profile?.avatar_url ? (
-                  <AvatarImage
-                    src={profile.avatar_url}
-                    alt={profile.full_name ?? t("defaultAvatar")}
-                  />
-                ) : null}
-                <AvatarFallback className="bg-primary/10 text-sm font-medium text-primary">
-                  {profile?.full_name?.charAt(0)?.toUpperCase() ??
-                    profile?.email?.charAt(0)?.toUpperCase() ??
-                    "U"}
-                </AvatarFallback>
-              </Avatar>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-foreground">
-                  {profile?.full_name ?? t("defaultUser")}
-                </p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {profile?.email ?? ""}
-                </p>
-              </div>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              side="top"
-              sideOffset={6}
-              className="min-w-56 bg-popover text-popover-foreground ring-border"
-            >
-              <DropdownMenuItem
-                render={
-                  <Link
-                    href="/settings?tab=profile"
-                    onClick={onClose}
-                    className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
-                  />
-                }
+          <ul className="mb-2 flex flex-col gap-0.5">{renderItem(SETTINGS_ITEM)}</ul>
+          <div className="flex items-center gap-1">
+            <DropdownMenu>
+              <DropdownMenuTrigger className="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-lg px-2 text-left transition-colors hover:bg-muted/60 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none data-popup-open:bg-muted/60">
+                <Avatar className="size-8 shrink-0">
+                  {profile?.avatar_url ? (
+                    <AvatarImage
+                      src={profile.avatar_url}
+                      alt={profile.full_name ?? t("defaultAvatar")}
+                    />
+                  ) : null}
+                  <AvatarFallback className="bg-muted text-sm font-medium text-foreground">
+                    {profile?.full_name?.charAt(0)?.toUpperCase() ??
+                      profile?.email?.charAt(0)?.toUpperCase() ??
+                      ""}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-foreground">
+                    {profile?.full_name ?? profile?.email ?? ""}
+                  </p>
+                  {accountRole ? (
+                    <p className="truncate text-xs text-muted-foreground">
+                      {t(ROLE_LABEL_KEY[accountRole])}
+                    </p>
+                  ) : null}
+                </div>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                side="top"
+                sideOffset={6}
+                className="min-w-56 bg-popover text-popover-foreground ring-border"
               >
-                <User className="size-4" />
-                {t("menuProfile")}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                render={
-                  <Link
-                    href="/settings?tab=whatsapp"
-                    onClick={onClose}
-                    className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
-                  />
-                }
-              >
-                <Settings className="size-4" />
-                {t("menuSettings")}
-              </DropdownMenuItem>
-              <DropdownMenuSeparator className="bg-border" />
-              <DropdownMenuItem
-                onClick={signOut}
-                className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
-              >
-                <LogOut className="size-4" />
-                {t("menuSignOut")}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                <div className="px-2 py-1.5">
+                  <p className="truncate text-xs text-muted-foreground">
+                    {profile?.email ?? ""}
+                  </p>
+                </div>
+                <DropdownMenuSeparator className="bg-border" />
+                <DropdownMenuItem
+                  render={
+                    <Link
+                      href="/settings?tab=profile"
+                      onClick={onClose}
+                      className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
+                    />
+                  }
+                >
+                  <User className="size-4" />
+                  {t("menuProfile")}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  render={
+                    <Link
+                      href="/settings"
+                      onClick={onClose}
+                      className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
+                    />
+                  }
+                >
+                  <Settings className="size-4" />
+                  {t("menuSettings")}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator className="bg-border" />
+                <DropdownMenuItem
+                  onClick={signOut}
+                  className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
+                >
+                  <LogOut className="size-4" />
+                  {t("menuSignOut")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <ModeToggle className="size-11 shrink-0 lg:size-9" />
+          </div>
         </div>
       </aside>
     </>

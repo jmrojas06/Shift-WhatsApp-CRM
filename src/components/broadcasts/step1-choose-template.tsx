@@ -8,9 +8,9 @@ import { Loader2, FileText, ArrowRight } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 
 const categoryColors: Record<string, string> = {
-  Marketing: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
-  Utility: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-  Authentication: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
+  Marketing: 'bg-primary/10 text-primary border-primary/20',
+  Utility: 'bg-info/10 text-info border-info/20',
+  Authentication: 'bg-warning/10 text-warning border-warning/20',
 };
 
 interface Step1Props {
@@ -62,7 +62,7 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
   if (error) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2">
-        <p className="text-sm text-red-400">{error}</p>
+        <p className="text-sm text-destructive">{error}</p>
       </div>
     );
   }
@@ -77,8 +77,10 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
       </div>
 
       {templates.length === 0 ? (
-        <div className="flex h-48 flex-col items-center justify-center rounded-xl border border-border bg-card/50">
-          <FileText className="mb-2 h-8 w-8 text-muted-foreground" />
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card px-6 py-10 text-center">
+          <span className="mb-3 flex size-12 items-center justify-center rounded-full bg-muted">
+            <FileText className="size-6 text-muted-foreground" aria-hidden="true" />
+          </span>
           <p className="text-sm text-muted-foreground">{t('chooseTemplate.noTemplates')}</p>
           <p className="mt-1 text-xs text-muted-foreground">{t('chooseTemplate.createFirst')}</p>
         </div>
@@ -91,17 +93,19 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
             return (
               <button
                 key={template.id}
+                type="button"
+                aria-pressed={isSelected}
                 onClick={() => onSelect(template)}
-                className={`flex flex-col gap-3 rounded-xl border p-4 text-left transition-all ${
+                className={`flex min-w-0 flex-col gap-3 rounded-xl border p-4 text-left transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50 ${
                   isSelected
                     ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
-                    : 'border-border bg-card/50 hover:border-border hover:bg-card'
+                    : 'border-border bg-card hover:border-input hover:bg-muted/40'
                 }`}
               >
-                <div className="flex items-start justify-between">
-                  <h3 className="text-sm font-medium text-foreground">{template.name}</h3>
+                <div className="flex items-start justify-between gap-2">
+                  <h3 className="min-w-0 text-sm font-medium break-words text-foreground">{template.name}</h3>
                   <span
-                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${catColor}`}
+                    className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${catColor}`}
                   >
                     {template.category}
                   </span>

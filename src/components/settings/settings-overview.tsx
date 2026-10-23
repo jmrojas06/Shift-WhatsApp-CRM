@@ -1,13 +1,12 @@
 'use client';
 
 import { useEffect, useState, type ReactNode } from 'react';
-import { ChevronRight, Loader2 } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { useTheme } from '@/hooks/use-theme';
-import { THEMES } from '@/lib/themes';
 import { CURRENCIES } from '@/lib/currency';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Card } from '@/components/ui/card';
@@ -38,8 +37,9 @@ export function SettingsOverview({
 }) {
   const { user, profile, accountId, accountRole, defaultCurrency, canManageMembers } =
     useAuth();
-  const { mode, theme } = useTheme();
+  const { modePreference, theme } = useTheme();
   const t = useTranslations('Settings.overview');
+  const tAppearance = useTranslations('Settings.appearance');
   const tRoles = useTranslations('Settings.roles');
   const tSections = useTranslations('Settings.sections');
 
@@ -148,8 +148,7 @@ export function SettingsOverview({
 
   const currencyLabel =
     CURRENCIES.find((c) => c.code === defaultCurrency)?.label ?? defaultCurrency;
-  const themeName = THEMES.find((t) => t.id === theme)?.name ?? theme;
-  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+  const themeName = tAppearance(`themes.${theme}.name`);
 
   // Per-tile loading + subtitle. `null` counts render as a graceful
   // fallback so a single failed query never blanks a tile.
@@ -168,9 +167,9 @@ export function SettingsOverview({
           <StatusDot tone="ok" /> {t('connected')}
         </>
       ) : (
-        <>
-          <StatusDot tone="muted" /> {t('needsReconnecting')}
-        </>
+        <span className="inline-flex items-center gap-1.5 font-medium text-warning">
+          <StatusDot tone="warn" /> {t('needsReconnecting')}
+        </span>
       ),
     },
     {
@@ -200,7 +199,7 @@ export function SettingsOverview({
     {
       section: 'deals',
       loading: false,
-      subtitle: `${defaultCurrency} — ${currencyLabel}`,
+      subtitle: `${defaultCurrency} · ${currencyLabel}`,
     },
     {
       section: 'fields',
@@ -215,7 +214,10 @@ export function SettingsOverview({
     {
       section: 'appearance',
       loading: false,
-      subtitle: t('appearance', { mode: cap(mode), theme: themeName }),
+      subtitle: t('appearance', {
+        mode: tAppearance(`modes.${modePreference}`),
+        theme: themeName,
+      }),
     },
   ];
 
@@ -260,7 +262,7 @@ export function SettingsOverview({
               type="button"
               onClick={() => onSelect(section)}
               className={cn(
-                'group flex items-start gap-3.5 rounded-xl border border-border bg-card p-4 text-left transition-colors',
+                'group flex min-w-0 items-start gap-3.5 rounded-xl border border-border bg-card p-4 text-left shadow-(--shadow-card) transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50',
                 'hover:border-primary-soft-2 hover:bg-card-2',
               )}
             >
@@ -271,15 +273,21 @@ export function SettingsOverview({
                 <span className="block text-sm font-semibold text-foreground">
                   {tSections(section)}
                 </span>
-                <span className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-                  {loading ? (
-                    <>
-                      <Loader2 className="size-3 animate-spin" /> {t('loading')}
-                    </>
-                  ) : (
-                    subtitle
-                  )}
-                </span>
+                {loading ? (
+                  // Skeleton shaped like the one-line subtitle it stands
+                  // in for; the label is kept for screen readers.
+                  <span className="mt-1.5 flex h-4 items-center">
+                    <span
+                      aria-hidden
+                      className="block h-3 w-32 max-w-full animate-pulse rounded-full bg-muted"
+                    />
+                    <span className="sr-only">{t('loading')}</span>
+                  </span>
+                ) : (
+                  <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+                    {subtitle}
+                  </span>
+                )}
               </span>
               <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
             </button>

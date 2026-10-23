@@ -10,9 +10,10 @@
 // visitors through its login redirect. A dedicated layout
 // avoids both.
 //
-// Styling matches the login / signup pages — centered card on a
-// slate-950 background — so the join experience feels like a
-// natural step in the auth funnel rather than a foreign page.
+// Styling matches the login / signup pages — the shared <AuthShell>
+// (brand + centred card on the soft page background) — so the join
+// experience feels like a natural step in the auth funnel rather than
+// a foreign page.
 //
 // Referrer-Policy: no-referrer
 //   The plaintext invite token lives in the URL path. Without
@@ -28,6 +29,8 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 
+import { AuthShell } from '@/components/auth/auth-shell';
+
 export const metadata: Metadata = {
   referrer: 'no-referrer',
   // Belt-and-braces against an invite URL ending up in search
@@ -36,9 +39,5 @@ export const metadata: Metadata = {
 };
 
 export default function JoinLayout({ children }: { children: ReactNode }) {
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      {children}
-    </div>
-  );
+  return <AuthShell>{children}</AuthShell>;
 }

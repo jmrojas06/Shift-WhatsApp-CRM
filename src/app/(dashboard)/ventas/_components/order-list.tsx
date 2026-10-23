@@ -35,7 +35,8 @@ const ACTION_META: Record<
   cancel: { label: T.actions.cancel, icon: Ban, variant: 'ghost' },
 }
 
-const TOUCH = 'h-11 sm:h-8'
+// 44 px en pantallas angostas y en cualquier pantalla táctil.
+const TOUCH = 'max-sm:h-11 pointer-coarse:h-11'
 
 /** Id del título de un pedido en la lista (para devolverle el foco tras una acción). */
 export const orderTitleId = (orderId: string): string => `order-title-${orderId}`
@@ -78,7 +79,7 @@ export function OrderToolbar({
           onChange={(e) => onQueryChange(e.target.value)}
           placeholder={T.searchPlaceholder}
           autoComplete="off"
-          className="h-11 pl-9 sm:h-9"
+          className="pl-9"
         />
       </div>
 
@@ -141,7 +142,9 @@ export function OrderList({
   if (orders.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-10 text-center">
-        <ShoppingBag className="mb-3 h-8 w-8 text-muted-foreground" aria-hidden="true" />
+        <span className="mb-3 flex size-12 items-center justify-center rounded-full bg-muted">
+          <ShoppingBag className="size-6 text-muted-foreground" aria-hidden="true" />
+        </span>
         {hasAny ? (
           <p className="text-sm text-muted-foreground">
             {hasQuery ? T.empty.search : T.empty.filtered}

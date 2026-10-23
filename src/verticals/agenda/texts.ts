@@ -50,7 +50,7 @@ export const AGENDA_TEXTS = {
   statusInstalledBody:
     'La plantilla está instalada. Reinstalar es seguro: no duplica ni sobrescribe lo que ya editaste.',
   statusNotInstalledBody:
-    'Aún no has elegido tu tipo de negocio. Con tu elección creamos servicios de ejemplo, un horario, etiquetas, pipeline, respuestas rápidas y documentos para tu agente de IA.',
+    'Aún no has elegido tu tipo de negocio. Con tu elección creamos servicios de ejemplo, un horario, etiquetas, un embudo, respuestas rápidas y documentos para tu agente de IA.',
   reinstallButton: 'Reinstalar plantilla',
   installing: 'Instalando…',
   gateReason: 'instalar la plantilla',
@@ -77,8 +77,8 @@ export const AGENDA_TEXTS = {
   createdLabel: 'creados',
   skippedLabel: 'ya existían',
   pipelineCreated: (stages: number) =>
-    `Pipeline de la agenda creado con ${stages} etapas`,
-  pipelineSkipped: 'El pipeline de la agenda ya existía',
+    `Embudo de la agenda creado con ${stages} etapas`,
+  pipelineSkipped: 'El embudo de la agenda ya existía',
   aiPromptWritten: 'Prompt creado (estaba vacío)',
   aiPromptAlreadySet: 'Prompt ya configurado; no se modificó',
   aiPromptNoConfig: 'Aún sin configurar',
@@ -113,9 +113,20 @@ export const AGENDA_TEXTS = {
   agendaStatusCompleted: 'Completado',
   agendaStatusNoShow: 'No asistió',
   agendaStatusCancelled: 'Cancelado',
-  agendaActionComplete: 'Completado',
+  /** "8 citas" / "1 turno" junto a la fecha de hoy. */
+  agendaCount: (n: number, l: AgendaLabels) =>
+    n === 1 ? `1 ${l.cita}` : `${n} ${l.citas}`,
+  // Sin género: cada negocio llama distinto a la cita ("turno", "reserva").
+  agendaActionComplete: 'Asistió',
+  agendaActionMore: 'Más',
+  agendaActionMoreLabel: 'Más acciones',
   agendaActionNoShow: 'No asistió',
-  agendaActionCancel: 'Cancelar',
+  agendaActionCancel: (l: AgendaLabels) => `Cancelar ${l.cita}`,
+  agendaCancelTitle: (l: AgendaLabels) => `¿Cancelar ${l.cita}?`,
+  agendaCancelBody: (summary: string) =>
+    `${summary}. Después no se puede volver a cambiar su estado. Al cliente no se le envía ningún mensaje.`,
+  agendaCancelConfirm: (l: AgendaLabels) => `Sí, cancelar ${l.cita}`,
+  agendaCancelBack: 'Volver',
   agendaChangeFailed:
     'No se pudo actualizar. Recarga la agenda e inténtalo de nuevo.',
   agendaPastTitle: 'Ya pasó',
@@ -128,17 +139,15 @@ export const AGENDA_TEXTS = {
   // Recordatorios (Fase 3)
   // ----------------------------------------------------------
   remindersTitle: 'Recordatorios',
-  remindersHint: (l: AgendaLabels) =>
-    `Cada ${l.cita} recibe un recordatorio 24 horas antes; la segunda señal (2 horas antes) se activa en Configuración.`,
-  remindersWindowNote:
-    'Con la conversación abierta (el cliente escribió en las últimas 24 h) se envía un mensaje con botones; si no, la plantilla aprobada de Meta.',
-  remindersOffNote:
-    'Los recordatorios están apagados. Puedes prenderlos en Configuración, en la pestaña Piezas.',
-  remindersTwoHourOn: '2 h activado',
-  remindersTwoHourOff: '2 h desactivado',
+  /** Resumen en una línea de las dos señales (ver Configuración > Piezas). */
+  remindersSummary: (on: boolean, twoHour: boolean) =>
+    on
+      ? `24 h antes: activo. 2 h antes: ${twoHour ? 'activo' : 'apagado'}.`
+      : 'Recordatorios apagados.',
+  remindersConfigLink: 'Cambiar en Configuración',
   remindersPendingTitle: 'Por enviar',
   remindersSentTitle: 'Enviados',
-  remindersEmpty: 'No hay recordatorios pendientes ni enviados en este momento.',
+  remindersEmpty: 'Nada por enviar ni enviado en este momento.',
   remindersPending24h: 'Pendiente 24 h',
   remindersPending2h: 'Pendiente 2 h',
   remindersSent24h: 'Enviado 24 h',
@@ -159,7 +168,7 @@ export const AGENDA_TEXTS = {
     knowledge: 'Documentos de conocimiento',
     questions: 'Preguntas extra',
     aiAgent: 'Agente de IA',
-    pipeline: 'Pipeline',
+    pipeline: 'Embudo',
   },
 
   // ----------------------------------------------------------
@@ -258,7 +267,7 @@ export const AGENDA_TEXTS = {
         `Se aplican las palabras y cómo se muestran los servicios (quién atiende, precios, duración). Se agregan los servicios, el horario de ejemplo y las preguntas que aún no tengas. Tus ${l.citas}, servicios, equipo y preguntas actuales se quedan activos: desactiva lo que no uses. La bienvenida solo cambia si no la personalizaste.`,
       sameTitle: (name: string) => `Ya usas "${name}"`,
       sameBody:
-        'Ya usas este tipo de negocio. Volver a aplicarlo no cambia tus servicios ni tu equipo: solo rellena las etiquetas, el pipeline, las respuestas rápidas y los documentos que falten.',
+        'Ya usas este tipo de negocio. Volver a aplicarlo no cambia tus servicios ni tu equipo: solo rellena las etiquetas, el embudo, las respuestas rápidas y los documentos que falten.',
       cancel: 'Cancelar',
       apply: 'Sí, usar este tipo',
       reapply: 'Volver a aplicar',

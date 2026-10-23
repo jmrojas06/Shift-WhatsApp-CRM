@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useMemo, useRef } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Broadcast } from '@/types';
@@ -17,7 +18,7 @@ import { Radio, Plus, Loader2 } from 'lucide-react';
 import { useCan } from '@/hooks/use-can';
 import { GatedButton } from '@/components/ui/gated-button';
 import { getBroadcastStatus } from '@/lib/broadcast-status';
-import { useTranslations } from 'next-intl';
+import { useFormatter, useTranslations } from 'next-intl';
 
 /**
  * Poll cadence while any broadcast is sending. Kept modest so we don't
@@ -62,6 +63,7 @@ export default function BroadcastsPage() {
   const t = useTranslations('Broadcasts.page');
   const tStatus = useTranslations('Broadcasts.status');
   const tGate = useTranslations('GatedButton');
+  const format = useFormatter();
   const canCreate = useCan('send-messages');
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [loading, setLoading] = useState(true);
@@ -143,7 +145,7 @@ export default function BroadcastsPage() {
   if (error) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2">
-        <p className="text-sm text-red-400">{error}</p>
+        <p className="text-sm text-destructive">{error}</p>
         <Button variant="outline" onClick={() => window.location.reload()}>
           {t('retry')}
         </Button>
@@ -181,18 +183,18 @@ export default function BroadcastsPage() {
         </div>
       )}
 
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">{t('title')}</h1>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold text-foreground">{t('title')}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {t('subtitle')}
           </p>
         </div>
+        {/* Único CTA primario de la vista (el estado vacío solo explica). */}
         <GatedButton
           canAct={canCreate}
           gateReason={tGate('reasons.createBroadcasts')}
           onClick={() => router.push('/broadcasts/new')}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
         >
           <Plus className="h-4 w-4" />
           {t('newBroadcast')}
@@ -200,21 +202,17 @@ export default function BroadcastsPage() {
       </div>
 
       {broadcasts.length === 0 ? (
-        <div className="flex h-64 flex-col items-center justify-center rounded-xl border border-border bg-card">
-          <Radio className="mb-3 h-10 w-10 text-muted-foreground" />
-          <p className="text-sm font-medium text-foreground">{t('noBroadcastsYet')}</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {t('createFirst')}
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card px-6 py-12 text-center">
+          <span className="mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
+            <Radio className="size-6 text-muted-foreground" aria-hidden="true" />
+          </span>
+          <h2 className="text-[15px] font-semibold text-foreground">{t('noBroadcastsYet')}</h2>
+          <p className="mt-1 max-w-md text-sm text-muted-foreground">
+            {t('emptyBody')}
           </p>
-          <GatedButton
-            canAct={canCreate}
-            gateReason={tGate('reasons.createBroadcasts')}
-            onClick={() => router.push('/broadcasts/new')}
-            className="mt-4 bg-primary text-primary-foreground hover:bg-primary/90"
-          >
-            <Plus className="h-4 w-4" />
-            {t('newBroadcast')}
-          </GatedButton>
+          <p className="mt-3 max-w-md text-xs text-muted-foreground">
+            {t('emptyRequirement')}
+          </p>
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-border bg-card">
@@ -241,8 +239,15 @@ export default function BroadcastsPage() {
                     className="cursor-pointer border-border hover:bg-muted/50"
                     onClick={() => router.push(`/broadcasts/${broadcast.id}`)}
                   >
-                    <TableCell className="font-medium text-foreground">
-                      {broadcast.name}
+                    <TableCell className="max-w-[12rem] truncate font-medium text-foreground sm:max-w-xs">
+                      {/* Enlace real para teclado y lectores; la fila sigue siendo clicable. */}
+                      <Link
+                        href={`/broadcasts/${broadcast.id}`}
+                        onClick={(event) => event.stopPropagation()}
+                        className="rounded-sm focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+                      >
+                        {broadcast.name}
+                      </Link>
                     </TableCell>
                     <TableCell className="hidden text-muted-foreground md:table-cell">
                       {broadcast.template_name}
@@ -254,14 +259,14 @@ export default function BroadcastsPage() {
                       <RateCell
                         value={broadcast.delivered_count}
                         total={broadcast.total_recipients}
-                        color="bg-primary"
+                        color="bg-series-1"
                       />
                     </TableCell>
                     <TableCell className="hidden lg:table-cell">
                       <RateCell
                         value={broadcast.read_count}
                         total={broadcast.total_recipients}
-                        color="bg-blue-500"
+                        color="bg-series-2"
                       />
                     </TableCell>
                     <TableCell>
@@ -270,15 +275,17 @@ export default function BroadcastsPage() {
                       >
                         {status.pulse && (
                           <span className="relative flex h-1.5 w-1.5">
-                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-yellow-400 opacity-75" />
-                            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-yellow-400" />
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-warning opacity-75" />
+                            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-warning" />
                           </span>
                         )}
                         {tStatus(status.label)}
                       </span>
                     </TableCell>
                     <TableCell className="hidden text-muted-foreground sm:table-cell">
-                      {new Date(broadcast.created_at).toLocaleDateString()}
+                      {format.dateTime(new Date(broadcast.created_at), {
+                        dateStyle: 'medium',
+                      })}
                     </TableCell>
                   </TableRow>
                 );

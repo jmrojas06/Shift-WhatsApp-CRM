@@ -40,7 +40,7 @@ import {
   SCOPE_DESCRIPTIONS,
   type ApiScope,
 } from '@/lib/api-keys/scopes';
-import { useTranslations } from 'next-intl';
+import { useFormatter, useTranslations } from 'next-intl';
 import { SettingsPanelHead } from './settings-panel-head';
 
 interface ApiKey {
@@ -54,8 +54,11 @@ interface ApiKey {
   created_at: string;
 }
 
-function fmtDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
+type DateFormatter = ReturnType<typeof useFormatter>;
+
+// In the app's language (next-intl), not the browser's.
+function fmtDate(iso: string, format: DateFormatter): string {
+  return format.dateTime(new Date(iso), {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
@@ -72,6 +75,7 @@ function keyStatus(k: ApiKey): 'active' | 'revoked' | 'expired' {
 export function ApiKeysSettings() {
   const { canEditSettings } = useAuth();
   const t = useTranslations('Settings.apiKeys');
+  const format = useFormatter();
 
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
@@ -128,9 +132,22 @@ export function ApiKeysSettings() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="text-primary size-6 animate-spin" />
-      </div>
+      <section className="space-y-6">
+        <SettingsPanelHead title={t('title')} />
+        {/* Skeleton rows shaped like the key list (name, prefix, scopes). */}
+        <Card role="status">
+          <span className="sr-only">{t('loadingKeys')}</span>
+          <CardContent aria-hidden className="divide-y divide-border p-0">
+            {[0, 1].map((i) => (
+              <div key={i} className="space-y-2 px-4 py-3">
+                <div className="h-3 w-36 animate-pulse rounded-full bg-muted" />
+                <div className="h-3 w-24 animate-pulse rounded-full bg-muted" />
+                <div className="h-4 w-40 max-w-full animate-pulse rounded-full bg-muted" />
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </section>
     );
   }
 
@@ -230,13 +247,13 @@ export function ApiKeysSettings() {
                         )}
                       </div>
                       <p className="text-muted-foreground mt-1.5 text-xs">
-                        {t('created', { date: fmtDate(k.created_at) })}
+                        {t('created', { date: fmtDate(k.created_at, format) })}
                         {' · '}
                         {k.last_used_at
-                          ? t('lastUsed', { date: fmtDate(k.last_used_at) })
+                          ? t('lastUsed', { date: fmtDate(k.last_used_at, format) })
                           : t('neverUsed')}
                         {k.expires_at && status !== 'expired'
-                          ? ` · ${t('expires', { date: fmtDate(k.expires_at) })}`
+                          ? ` · ${t('expires', { date: fmtDate(k.expires_at, format) })}`
                           : ''}
                       </p>
                     </div>
@@ -244,16 +261,21 @@ export function ApiKeysSettings() {
                     {status === 'active' && (
                       <RequireRole min="admin">
                         <Button
-                          variant="outline"
+                          variant="destructive"
                           size="sm"
-                          onClick={() => handleRevoke(k)}
+                          onClick={() => {
+                            // Revoking breaks every integration using
+                            // this key, so it asks first.
+                            if (!window.confirm(t('revokeConfirm', { name: k.name }))) return;
+                            void handleRevoke(k);
+                          }}
                           disabled={revoking === k.id}
-                          className="self-start border-red-500/40 bg-red-500/10 text-red-300 hover:border-red-500/60 hover:bg-red-500/20 hover:text-red-200 sm:self-auto"
+                          className="self-start sm:self-auto"
                         >
                           {revoking === k.id ? (
-                            <Loader2 className="size-4 animate-spin" />
+                            <Loader2 className="size-4 animate-spin" aria-hidden />
                           ) : (
-                            <Trash2 className="size-4" />
+                            <Trash2 className="size-4" aria-hidden />
                           )}
                           {t('revoke')}
                         </Button>
@@ -368,9 +390,10 @@ function CreateKeyDialog({
             </DialogHeader>
 
             <div className="space-y-1.5">
-              <Label className="text-muted-foreground">{t('apiKeyLabel')}</Label>
+              <Label htmlFor="api-key-created">{t('apiKeyLabel')}</Label>
               <div className="flex gap-2">
                 <Input
+                  id="api-key-created"
                   readOnly
                   value={createdKey}
                   className="font-mono text-xs"
@@ -420,8 +443,14 @@ function CreateKeyDialog({
               </div>
 
               <div className="space-y-2">
-                <Label className="text-muted-foreground">{t('scopesLabel')}</Label>
-                <div className="border-border space-y-2 rounded-md border p-3">
+                <p id="api-key-scopes" className="text-sm leading-none font-medium">
+                  {t('scopesLabel')}
+                </p>
+                <div
+                  role="group"
+                  aria-labelledby="api-key-scopes"
+                  className="border-border space-y-2 rounded-lg border p-3"
+                >
                   {API_SCOPES.map((scope) => (
                     <label
                       key={scope}

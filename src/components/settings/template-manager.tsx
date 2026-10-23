@@ -62,10 +62,11 @@ const CATEGORIES = ['Marketing', 'Utility', 'Authentication'] as const;
 type HeaderFormat = 'none' | 'text' | 'image' | 'video' | 'document';
 const HEADER_FORMATS: HeaderFormat[] = ['none', 'text', 'image', 'video', 'document'];
 
+// Theme tokens (AA in light and dark), not fixed palette colours.
 const categoryColors: Record<string, string> = {
-  Marketing: 'bg-purple-600/20 text-purple-400 border-purple-600/30',
-  Utility: 'bg-blue-600/20 text-blue-400 border-blue-600/30',
-  Authentication: 'bg-amber-600/20 text-amber-400 border-amber-600/30',
+  Marketing: 'bg-primary-soft text-primary border-primary-soft-2',
+  Utility: 'bg-info/12 text-info border-info/30',
+  Authentication: 'bg-warning/12 text-warning border-warning/30',
 };
 
 interface TemplateFormData {
@@ -458,9 +459,27 @@ export function TemplateManager() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="size-6 animate-spin text-primary" />
-      </div>
+      <section className="space-y-6">
+        <SettingsPanelHead title={t('title')} />
+        {/* Skeleton cards shaped like the template grid. */}
+        <div role="status" className="grid gap-3 xl:grid-cols-2">
+          <span className="sr-only">{t('loadingTemplates')}</span>
+          {[0, 1, 2, 3].map((i) => (
+            <div
+              key={i}
+              aria-hidden
+              className="space-y-3 rounded-xl border border-border bg-card p-4"
+            >
+              <div className="flex gap-2">
+                <div className="h-4 w-32 animate-pulse rounded-full bg-muted" />
+                <div className="h-4 w-16 animate-pulse rounded-full bg-muted" />
+              </div>
+              <div className="h-3 w-full animate-pulse rounded-full bg-muted" />
+              <div className="h-3 w-2/3 animate-pulse rounded-full bg-muted" />
+            </div>
+          ))}
+        </div>
+      </section>
     );
   }
 
@@ -581,10 +600,10 @@ export function TemplateManager() {
                         <span
                           className={`text-[10px] uppercase font-medium ${
                             template.quality_score === 'GREEN'
-                              ? 'text-emerald-400'
+                              ? 'text-success'
                               : template.quality_score === 'YELLOW'
-                                ? 'text-yellow-400'
-                                : 'text-red-400'
+                                ? 'text-warning'
+                                : 'text-destructive'
                           }`}
                           title={t('qualityScoreTitle')}
                         >
@@ -601,7 +620,7 @@ export function TemplateManager() {
                       </p>
                     )}
                     {(template.rejection_reason || template.submission_error) && (
-                      <div className="flex items-start gap-1.5 text-xs text-red-400 bg-red-950/20 border border-red-900/40 rounded px-2 py-1.5">
+                      <div className="flex items-start gap-1.5 text-xs text-destructive bg-destructive/10 border border-destructive/25 rounded-lg px-2 py-1.5">
                         <AlertCircle className="size-3.5 mt-0.5 shrink-0" />
                         <span>
                           {template.rejection_reason || template.submission_error}
@@ -651,7 +670,7 @@ export function TemplateManager() {
                           ? t('deleteMetaLocallyTitle')
                           : t('deleteLocallyTitle')
                       }
-                      className="text-muted-foreground hover:text-red-400 hover:bg-red-950/30 h-8 w-8"
+                      className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                     >
                       {deletingId === template.id ? (
                         <Loader2 className="size-4 animate-spin" />
@@ -690,7 +709,7 @@ export function TemplateManager() {
           </DialogHeader>
 
           {form.category === 'Authentication' && (
-            <div className="flex items-start gap-2 rounded border border-amber-700/40 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">
+            <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
               <AlertCircle className="size-4 mt-0.5 shrink-0" />
               <p>{t.rich('authWarning', { bold: (chunks) => <strong>{chunks}</strong> })}</p>
             </div>
@@ -698,8 +717,9 @@ export function TemplateManager() {
 
           <div className="space-y-4 py-2">
             <div className="space-y-2">
-              <Label className="text-muted-foreground">{t('templateName')}</Label>
+              <Label htmlFor="tpl-name">{t('templateName')}</Label>
               <Input
+                id="tpl-name"
                 placeholder={t('namePlaceholder')}
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -715,7 +735,7 @@ export function TemplateManager() {
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label className="text-muted-foreground">{t('category')}</Label>
+                <Label htmlFor="tpl-category">{t('category')}</Label>
                 <Select
                   value={form.category}
                   onValueChange={(val) =>
@@ -725,7 +745,7 @@ export function TemplateManager() {
                     })
                   }
                 >
-                  <SelectTrigger className="w-full bg-muted border-border text-foreground">
+                  <SelectTrigger id="tpl-category" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="bg-popover border-border">
@@ -743,8 +763,9 @@ export function TemplateManager() {
               </div>
 
               <div className="space-y-2">
-                <Label className="text-muted-foreground">{t('language')}</Label>
+                <Label htmlFor="tpl-language">{t('language')}</Label>
                 <Input
+                  id="tpl-language"
                   list="template-language-codes"
                   placeholder="en_US"
                   value={form.language}
@@ -770,7 +791,7 @@ export function TemplateManager() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-muted-foreground">{t('header')}</Label>
+              <Label htmlFor="tpl-header">{t('header')}</Label>
               <Select
                 value={form.header_format}
                 onValueChange={(val) =>
@@ -786,7 +807,7 @@ export function TemplateManager() {
                   })
                 }
               >
-                <SelectTrigger className="w-full bg-muted border-border text-foreground">
+                <SelectTrigger id="tpl-header" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="bg-popover border-border">
@@ -902,8 +923,9 @@ export function TemplateManager() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-muted-foreground">{t('bodyText')}</Label>
+              <Label htmlFor="tpl-body">{t('bodyText')}</Label>
               <Textarea
+                id="tpl-body"
                 placeholder={t.raw('bodyPlaceholder')}
                 value={form.body_text}
                 onChange={(e) =>
@@ -945,8 +967,9 @@ export function TemplateManager() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-muted-foreground">{t('footer')}</Label>
+              <Label htmlFor="tpl-footer">{t('footer')}</Label>
               <Input
+                id="tpl-footer"
                 placeholder={t('footerPlaceholder')}
                 value={form.footer_text}
                 onChange={(e) =>
@@ -966,9 +989,8 @@ export function TemplateManager() {
                   size="sm"
                   onClick={addButton}
                   disabled={form.buttons.length >= TEMPLATE_LIMITS.maxButtonsTotal}
-                  className="border-border bg-transparent text-muted-foreground hover:bg-muted h-7 text-xs"
                 >
-                  <Plus className="size-3" />
+                  <Plus className="size-3" aria-hidden />
                   {t('addButton')}
                 </Button>
               </div>
@@ -1038,9 +1060,10 @@ export function TemplateManager() {
                           variant="ghost"
                           size="icon"
                           onClick={() => removeButton(i)}
-                          className="text-muted-foreground hover:text-red-400 hover:bg-red-950/30 size-7"
+                          aria-label={t('removeButtonLabel')}
+                          className="shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                         >
-                          <X className="size-3.5" />
+                          <X className="size-3.5" aria-hidden />
                         </Button>
                       </div>
                       {btn.type === 'URL' && (
@@ -1148,9 +1171,9 @@ export function TemplateManager() {
               {t('cancel')}
             </Button>
             <Button
+              variant="destructive"
               onClick={confirmDelete}
               disabled={deletingId !== null}
-              className="bg-red-600 hover:bg-red-700 text-white"
             >
               {deletingId !== null ? (
                 <>

@@ -9,32 +9,21 @@ export interface TriggerMeta {
  * The user-visible trigger name lives in the message catalogue
  * (`Automations.builder.triggers.<id>.label`); this module only carries
  * the styling so it stays free of React and of locale.
+ *
+ * Calm, token-based pills: the trigger name already says what it is, so
+ * every pill shares one neutral style (no rainbow of hues).
  */
+const NEUTRAL_PILL = 'border-border bg-muted text-muted-foreground'
+
 export const TRIGGER_META: Record<AutomationTriggerType, TriggerMeta> = {
-  new_message_received: {
-    pillClass: 'border-blue-500/30 bg-blue-500/10 text-blue-300',
-  },
-  first_inbound_message: {
-    pillClass: 'border-teal-500/30 bg-teal-500/10 text-teal-300',
-  },
-  keyword_match: {
-    pillClass: 'border-purple-500/30 bg-purple-500/10 text-purple-300',
-  },
-  new_contact_created: {
-    pillClass: 'border-primary/30 bg-primary/10 text-primary',
-  },
-  conversation_assigned: {
-    pillClass: 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300',
-  },
-  tag_added: {
-    pillClass: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
-  },
-  time_based: {
-    pillClass: 'border-slate-500/30 bg-slate-500/10 text-muted-foreground',
-  },
-  interactive_reply: {
-    pillClass: 'border-pink-500/30 bg-pink-500/10 text-pink-300',
-  },
+  new_message_received: { pillClass: NEUTRAL_PILL },
+  first_inbound_message: { pillClass: NEUTRAL_PILL },
+  keyword_match: { pillClass: NEUTRAL_PILL },
+  new_contact_created: { pillClass: NEUTRAL_PILL },
+  conversation_assigned: { pillClass: NEUTRAL_PILL },
+  tag_added: { pillClass: NEUTRAL_PILL },
+  time_based: { pillClass: NEUTRAL_PILL },
+  interactive_reply: { pillClass: NEUTRAL_PILL },
 }
 
 export function isKnownTrigger(t: string): t is AutomationTriggerType {
@@ -42,11 +31,7 @@ export function isKnownTrigger(t: string): t is AutomationTriggerType {
 }
 
 export function triggerMeta(t: AutomationTriggerType | string): TriggerMeta {
-  return (
-    TRIGGER_META[t as AutomationTriggerType] ?? {
-      pillClass: 'border-slate-500/30 bg-slate-500/10 text-muted-foreground',
-    }
-  )
+  return TRIGGER_META[t as AutomationTriggerType] ?? { pillClass: NEUTRAL_PILL }
 }
 
 export type RelativeTimeKey = 'never' | 'justNow' | 'minutesAgo' | 'hoursAgo' | 'daysAgo'
