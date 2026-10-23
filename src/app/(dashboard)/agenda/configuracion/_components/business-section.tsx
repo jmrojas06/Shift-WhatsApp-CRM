@@ -104,7 +104,10 @@ export function BusinessSection({
           <Input
             id="business-name"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setSaved(false)
+              setName(e.target.value)
+            }}
             disabled={!canEdit || saving}
             maxLength={80}
           />
@@ -120,7 +123,10 @@ export function BusinessSection({
           <Input
             id="business-address"
             value={address}
-            onChange={(e) => setAddress(e.target.value)}
+            onChange={(e) => {
+              setSaved(false)
+              setAddress(e.target.value)
+            }}
             placeholder={T.config.business.addressPlaceholder}
             disabled={!canEdit || saving}
             maxLength={200}
@@ -132,8 +138,12 @@ export function BusinessSection({
 
         <div className="grid gap-5 sm:grid-cols-2">
           <div className="space-y-2">
-            <Label>{T.config.business.timezone}</Label>
-            <Input value={T.config.business.timezoneValue} disabled />
+            <Label htmlFor="business-timezone">{T.config.business.timezone}</Label>
+            <Input
+              id="business-timezone"
+              value={T.config.business.timezoneValue}
+              disabled
+            />
             <p className="text-xs text-muted-foreground">
               {T.config.business.timezoneHint}
             </p>
@@ -146,7 +156,10 @@ export function BusinessSection({
             <Select
               value={currency}
               onValueChange={(value) => {
-                if (value) setCurrency(value)
+                if (value) {
+                  setSaved(false)
+                  setCurrency(value)
+                }
               }}
               disabled={!canEdit || saving}
             >
@@ -180,7 +193,7 @@ export function BusinessSection({
           </Alert>
         )}
         {saved && !error && (
-          <Alert>
+          <Alert role="status">
             <AlertDescription>{T.config.saved}</AlertDescription>
           </Alert>
         )}

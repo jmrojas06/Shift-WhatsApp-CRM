@@ -87,7 +87,7 @@ export function OrderToolbar({
       <div
         role="group"
         aria-label={T.filtersLabel}
-        className="-mx-4 flex gap-2 overflow-x-auto overscroll-x-contain px-4 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0"
+        className="-mx-4 -my-1 flex gap-2 overflow-x-auto overscroll-x-contain px-4 py-1 sm:mx-0 sm:my-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:py-0"
       >
         {ORDER_FILTERS.map((key) => {
           const active = key === filter

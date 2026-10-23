@@ -14,7 +14,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Radio, Plus, Loader2 } from 'lucide-react';
+import { Radio, Plus } from 'lucide-react';
+import { Skeleton } from '@/components/dashboard/skeleton';
 import { useCan } from '@/hooks/use-can';
 import { GatedButton } from '@/components/ui/gated-button';
 import { getBroadcastStatus } from '@/lib/broadcast-status';
@@ -71,6 +72,7 @@ export default function BroadcastsPage() {
 
   // Used to kick off polling only while something is actively sending.
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const hasLoaded = useRef(false);
 
   async function fetchBroadcasts() {
     try {
@@ -82,8 +84,14 @@ export default function BroadcastsPage() {
 
       if (fetchError) throw fetchError;
       setBroadcasts(data ?? []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t('errorLoad'));
+      hasLoaded.current = true;
+    } catch {
+      // A failed background poll must not replace an already-loaded list
+      // with the full-page error; only the first load can do that.
+      if (!hasLoaded.current) {
+        // Friendly, actionable copy instead of the raw database message.
+        setError(t('errorLoad'));
+      }
     } finally {
       setLoading(false);
     }
@@ -135,9 +143,25 @@ export default function BroadcastsPage() {
   }, [anySending]);
 
   if (loading) {
+    // Skeleton shaped like the final table instead of a bare spinner.
     return (
-      <div className="flex h-64 items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+      <div className="space-y-6" role="status" aria-busy="true">
+        <span className="sr-only">{t('loading')}</span>
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-48" />
+          <Skeleton className="h-4 w-full max-w-md" />
+        </div>
+        <div
+          className="divide-y divide-border rounded-xl border border-border bg-card"
+          aria-hidden
+        >
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="flex items-center gap-4 px-4 py-4">
+              <Skeleton className="h-4 w-1/3" />
+              <Skeleton className="ml-auto h-5 w-20 rounded-full" />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -145,7 +169,7 @@ export default function BroadcastsPage() {
   if (error) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2">
-        <p className="text-sm text-destructive">{error}</p>
+        <p role="alert" className="text-sm text-destructive">{error}</p>
         <Button variant="outline" onClick={() => window.location.reload()}>
           {t('retry')}
         </Button>

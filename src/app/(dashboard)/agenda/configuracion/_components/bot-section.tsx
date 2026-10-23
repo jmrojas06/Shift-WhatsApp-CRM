@@ -182,11 +182,12 @@ export function BotSection({ settings, canEdit, reload }: BotSectionProps) {
           {EDITABLE_BOT_TEXT_KEYS.map((key) => (
             <div key={key} className="space-y-2">
               <Label htmlFor={`bot-${key}`}>{T.config.bot.labels[key]}</Label>
-              <p className="text-xs text-muted-foreground">
+              <p id={`bot-${key}-hint`} className="text-xs text-muted-foreground">
                 {T.config.bot.hints[key](settings.labels)}
               </p>
               <Textarea
                 id={`bot-${key}`}
+                aria-describedby={`bot-${key}-hint`}
                 value={texts[key]}
                 onChange={(e) => {
                   setTextsSaved(false)
@@ -204,6 +205,7 @@ export function BotSection({ settings, canEdit, reload }: BotSectionProps) {
                 <Button
                   variant="ghost"
                   size="sm"
+                  className="pointer-coarse:h-11"
                   onClick={() => {
                     setTextsSaved(false)
                     setTexts((prev) => ({ ...prev, [key]: '' }))

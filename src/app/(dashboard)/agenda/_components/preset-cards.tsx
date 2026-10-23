@@ -51,6 +51,9 @@ export function PresetCards({
               'hover:border-primary disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border',
               'focus-visible:border-ring focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50',
               active ? 'border-primary bg-primary/5' : 'border-border',
+              // While one card is being applied all of them are disabled, but
+              // the one in progress must not look dimmed like the rest.
+              busyKey === key && 'disabled:opacity-100',
             )}
           >
             <span className="flex items-center justify-between gap-2">

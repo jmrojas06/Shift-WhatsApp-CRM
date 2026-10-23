@@ -7,7 +7,7 @@ import { Loader2, KeyRound } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/auth/password-input';
 import { Label } from '@/components/ui/label';
 import {
   Card,
@@ -100,9 +100,8 @@ export function PasswordForm() {
             <Label htmlFor="current-password" className="text-foreground">
               {t('currentPassword')}
             </Label>
-            <Input
+            <PasswordInput
               id="current-password"
-              type="password"
               value={current}
               onChange={(e) => setCurrent(e.target.value)}
               autoComplete="current-password"
@@ -116,14 +115,15 @@ export function PasswordForm() {
               <Label htmlFor="new-password" className="text-foreground">
                 {t('newPassword')}
               </Label>
-              <Input
+              <PasswordInput
                 id="new-password"
-                type="password"
                 value={next}
                 onChange={(e) => setNext(e.target.value)}
                 autoComplete="new-password"
                 minLength={MIN_PASSWORD}
                 disabled={saving}
+                aria-invalid={confirmError ? true : undefined}
+                aria-describedby={confirmError ? 'password-form-error' : undefined}
                 required
               />
             </div>
@@ -131,21 +131,26 @@ export function PasswordForm() {
               <Label htmlFor="confirm-password" className="text-foreground">
                 {t('confirmPassword')}
               </Label>
-              <Input
+              <PasswordInput
                 id="confirm-password"
-                type="password"
                 value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}
                 autoComplete="new-password"
                 minLength={MIN_PASSWORD}
                 disabled={saving}
+                aria-invalid={confirmError ? true : undefined}
+                aria-describedby={confirmError ? 'password-form-error' : undefined}
                 required
               />
             </div>
           </div>
 
           {confirmError && (
-            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <p
+              id="password-form-error"
+              role="alert"
+              className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            >
               {confirmError}
             </p>
           )}

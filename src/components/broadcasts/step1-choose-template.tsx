@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { MessageTemplate } from '@/types';
-import { Button } from '@/components/ui/button';
+import Link from 'next/link';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Loader2, FileText, ArrowRight } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 
@@ -41,8 +42,9 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
 
         if (fetchError) throw fetchError;
         setTemplates(data ?? []);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : t('chooseTemplate.errorLoad'));
+      } catch {
+        // Friendly, actionable copy instead of the raw database message.
+        setError(t('chooseTemplate.errorLoad'));
       } finally {
         setLoading(false);
       }
@@ -53,8 +55,9 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
 
   if (loading) {
     return (
-      <div className="flex h-64 items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+      <div className="flex h-64 items-center justify-center" role="status">
+        <Loader2 className="h-6 w-6 animate-spin text-primary" aria-hidden />
+        <span className="sr-only">{t('chooseTemplate.loading')}</span>
       </div>
     );
   }
@@ -62,7 +65,7 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
   if (error) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2">
-        <p className="text-sm text-destructive">{error}</p>
+        <p role="alert" className="text-sm text-destructive">{error}</p>
       </div>
     );
   }
@@ -83,6 +86,12 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
           </span>
           <p className="text-sm text-muted-foreground">{t('chooseTemplate.noTemplates')}</p>
           <p className="mt-1 text-xs text-muted-foreground">{t('chooseTemplate.createFirst')}</p>
+          <Link
+            href="/settings?tab=templates"
+            className={`${buttonVariants({ variant: 'outline' })} mt-4`}
+          >
+            {t('chooseTemplate.goToTemplates')}
+          </Link>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -105,13 +114,13 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
                 <div className="flex items-start justify-between gap-2">
                   <h3 className="min-w-0 text-sm font-medium break-words text-foreground">{template.name}</h3>
                   <span
-                    className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${catColor}`}
+                    className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${catColor}`}
                   >
                     {template.category}
                   </span>
                 </div>
                 <p className="line-clamp-3 text-xs text-muted-foreground">{template.body_text}</p>
-                <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
                   <span>{template.language ?? 'en_US'}</span>
                   {/* Status is omitted on purpose — every template
                       shown here is already filtered to APPROVED,

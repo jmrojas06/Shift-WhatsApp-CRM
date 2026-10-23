@@ -43,10 +43,12 @@ const PROVIDER_LABEL: Record<Exclude<AiProvider, 'openai_compatible'>, string> =
   anthropic: 'Anthropic (Claude)',
 };
 
-const KEY_PLACEHOLDER: Record<AiProvider, string> = {
+// Key prefixes are literal, so these are not translated. The generic
+// provider has no known shape, so it uses the `keyPlaceholderGeneric`
+// message instead.
+const KEY_PLACEHOLDER: Record<Exclude<AiProvider, 'openai_compatible'>, string> = {
   openai: 'sk-...',
   anthropic: 'sk-ant-...',
-  openai_compatible: 'your-api-key',
 };
 
 export function AiConfig() {
@@ -243,9 +245,11 @@ export function AiConfig() {
 
   if (loading || profileLoading) {
     return (
-      <div className="flex items-center justify-center py-16 text-muted-foreground">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {t('loadFailed')} {/* Re-using label or a global one, wait, loading is better. Let's use useTranslations from overview or just hardcode Loading... actually I should add loading to aiConfig */}
-        {/* Wait, I didn't add loading to aiConfig. I'll just use loading. */}
+      <div
+        role="status"
+        className="flex items-center justify-center py-16 text-muted-foreground"
+      >
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden /> {t('loading')}
       </div>
     );
   }
@@ -278,14 +282,20 @@ export function AiConfig() {
           <CardContent className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label>{t('provider')}</Label>
+                <Label htmlFor="ai-provider">{t('provider')}</Label>
                 <Select
                   value={provider}
                   onValueChange={(v) => handleProviderChange(v as AiProvider)}
                   disabled={disabled}
                 >
-                  <SelectTrigger>
-                    <SelectValue />
+                  <SelectTrigger id="ai-provider">
+                    {/* Explicit label: a bare SelectValue prints the raw
+                        value ("openai_compatible"). */}
+                    <SelectValue>
+                      {provider === 'openai_compatible'
+                        ? t('providerOpenAiCompatible')
+                        : PROVIDER_LABEL[provider]}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="openai">{PROVIDER_LABEL.openai}</SelectItem>
@@ -344,20 +354,26 @@ export function AiConfig() {
                         setKeyEdited(true);
                       }
                     }}
-                    placeholder={KEY_PLACEHOLDER[provider]}
+                    placeholder={
+                      provider === 'openai_compatible'
+                        ? t('keyPlaceholderGeneric')
+                        : KEY_PLACEHOLDER[provider]
+                    }
                     disabled={disabled}
                     autoComplete="off"
+                    className="pr-11"
                   />
                   <button
                     type="button"
                     onClick={() => setShowKey((s) => !s)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    tabIndex={-1}
+                    aria-label={showKey ? t('hideKey') : t('showKey')}
+                    aria-pressed={showKey}
+                    className="absolute right-0.5 top-1/2 flex size-9 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:size-10"
                   >
                     {showKey ? (
-                      <EyeOff className="h-4 w-4" />
+                      <EyeOff className="h-4 w-4" aria-hidden />
                     ) : (
-                      <Eye className="h-4 w-4" />
+                      <Eye className="h-4 w-4" aria-hidden />
                     )}
                   </button>
                 </div>
@@ -498,7 +514,16 @@ export function AiConfig() {
                 disabled={disabled || !autoReplyEnabled}
               >
                 <SelectTrigger id="ai-handoff">
-                  <SelectValue />
+                  {/* Explicit label: a bare SelectValue prints the raw
+                      value — "__queue__" or the member's user id. */}
+                  <SelectValue>
+                    {handoffAgentId
+                      ? (() => {
+                          const target = members.find((m) => m.user_id === handoffAgentId);
+                          return target ? memberLabel(target) : t('handoffQueue');
+                        })()
+                      : t('handoffQueue')}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={HANDOFF_QUEUE}>

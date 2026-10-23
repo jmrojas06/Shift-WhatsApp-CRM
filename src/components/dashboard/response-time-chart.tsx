@@ -1,6 +1,6 @@
 "use client"
 
-import { Clock } from 'lucide-react'
+import { Clock, TriangleAlert } from 'lucide-react'
 import { DOW_SHORT_MON_FIRST } from '@/lib/dashboard/date-utils'
 import type { ResponseTimeSummary } from '@/lib/dashboard/types'
 import { BarChart } from '@/components/tremor/bar-chart'
@@ -34,6 +34,7 @@ export function ResponseTimeChart({
   thresholdMinutes = 5,
 }: ResponseTimeChartProps) {
   const t = useTranslations('Dashboard.responseTimeChart')
+  const tEmpty = useTranslations('Dashboard.emptyState')
   const format = useFormatter()
   const locale = useLocale()
   const category = t('avgMinutes')
@@ -57,7 +58,7 @@ export function ResponseTimeChart({
     })) ?? []
 
   return (
-    <section className="rounded-xl border border-border bg-card">
+    <section className="flex h-full flex-col rounded-xl border border-border bg-card shadow-(--shadow-card)">
       <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 border-b border-border px-5 py-4">
         <div className="min-w-0 flex-1 basis-60">
           <h2 className="text-sm font-semibold text-foreground">
@@ -90,9 +91,15 @@ export function ResponseTimeChart({
         </div>
       </header>
 
-      <div className="p-5">
-        {loading || !data ? (
+      <div className="flex-1 p-5">
+        {loading ? (
           <Skeleton className="h-[260px] w-full" />
+        ) : !data ? (
+          <EmptyState
+            icon={TriangleAlert}
+            title={tEmpty('loadError')}
+            hint={tEmpty('loadErrorHint')}
+          />
         ) : !hasData ? (
           <EmptyState
             icon={Clock}
@@ -104,8 +111,7 @@ export function ResponseTimeChart({
             data={chartData}
             index="day"
             categories={[category]}
-            // 'violet' maps to Tailwind's `fill-violet-500` — matches
-            // the brand accent the hand-rolled bars used (#7c3aed).
+            // `series1` is the validated aqua of the chart palette (--series-1).
             colors={['series1']}
             valueFormatter={(value) => formatMinutes(value, locale)}
             showLegend={false}

@@ -151,7 +151,7 @@ export function InteractiveBuilder({
             )}
           </Field>
 
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 gap-2 @md:grid-cols-2">
             <Field
               label={t("header")}
               counter={`${(value.header ?? "").length}/${INTERACTIVE_LIMITS.headerTextMaxLength}`}
@@ -303,7 +303,7 @@ function ButtonsEditor({
         {buttons.map((b, i) => (
           <div
             key={i}
-            className="flex items-center gap-2 rounded-md border border-border bg-muted/40 p-2"
+            className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/40 p-2"
           >
             {advanced && (
               <Input
@@ -320,20 +320,20 @@ function ButtonsEditor({
               onChange={(e) => update(i, { title: e.target.value })}
               placeholder={t("buttonLabelPlaceholder")}
               aria-label={t("buttonTitleAria", { n: i + 1 })}
-              className="flex-1 bg-muted"
+              className="min-w-32 flex-1 bg-muted"
             />
-            <span className="w-10 shrink-0 text-right text-[10px] text-muted-foreground tabular-nums">
+            <span className="w-10 shrink-0 text-right text-[11px] text-muted-foreground tabular-nums">
               {b.title.length}/{INTERACTIVE_LIMITS.buttonTitleMaxLength}
             </span>
             {buttons.length > 1 && (
               <Button
                 variant="ghost"
-                size="sm"
+                size="icon-sm"
                 onClick={() => remove(i)}
                 aria-label={t("removeButton", { n: i + 1 })}
                 className="text-destructive hover:bg-destructive/10 hover:text-destructive"
               >
-                <Trash2 className="h-3.5 w-3.5" />
+                <Trash2 className="h-3.5 w-3.5" aria-hidden />
               </Button>
             )}
           </div>
@@ -341,7 +341,7 @@ function ButtonsEditor({
       </div>
       {buttons.length < INTERACTIVE_LIMITS.maxButtons && (
         <Button variant="ghost" size="sm" onClick={add} className="mt-2">
-          <Plus className="h-3.5 w-3.5" />
+          <Plus className="h-3.5 w-3.5" aria-hidden />
           {t("addButton")}
         </Button>
       )}
@@ -443,19 +443,19 @@ function ListEditor({
             {sections.length > 1 && (
               <Button
                 variant="ghost"
-                size="sm"
+                size="icon-sm"
                 onClick={() => removeSection(sIdx)}
                 aria-label={t("removeSection", { n: sIdx + 1 })}
                 className="text-destructive hover:bg-destructive/10 hover:text-destructive"
               >
-                <Trash2 className="h-3.5 w-3.5" />
+                <Trash2 className="h-3.5 w-3.5" aria-hidden />
               </Button>
             )}
           </div>
           <div className="flex flex-col gap-2">
             {section.rows.map((row, rIdx) => (
               <div key={rIdx} className="rounded border border-border bg-card p-2">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   {advanced && (
                     <Input
                       value={row.id}
@@ -473,20 +473,20 @@ function ListEditor({
                     onChange={(e) => updateRow(sIdx, rIdx, { title: e.target.value })}
                     placeholder={t("rowTitlePlaceholder")}
                     aria-label={t("rowTitleAria", { n: rIdx + 1 })}
-                    className="flex-1 bg-muted"
+                    className="min-w-32 flex-1 bg-muted"
                   />
-                  <span className="w-10 shrink-0 text-right text-[10px] text-muted-foreground tabular-nums">
+                  <span className="w-10 shrink-0 text-right text-[11px] text-muted-foreground tabular-nums">
                     {row.title.length}/{INTERACTIVE_LIMITS.listRowTitleMaxLength}
                   </span>
                   {totalRows > 1 && (
                     <Button
                       variant="ghost"
-                      size="sm"
+                      size="icon-sm"
                       onClick={() => removeRow(sIdx, rIdx)}
                       aria-label={t("removeRow", { n: rIdx + 1 })}
                       className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
+                      <Trash2 className="h-3.5 w-3.5" aria-hidden />
                     </Button>
                   )}
                 </div>
@@ -503,7 +503,7 @@ function ListEditor({
           </div>
           {totalRows < INTERACTIVE_LIMITS.maxListRowsTotal && (
             <Button variant="ghost" size="sm" onClick={() => addRow(sIdx)} className="mt-2">
-              <Plus className="h-3.5 w-3.5" />
+              <Plus className="h-3.5 w-3.5" aria-hidden />
               {t("addRow")}
             </Button>
           )}
@@ -513,7 +513,7 @@ function ListEditor({
       {sections.length < INTERACTIVE_LIMITS.maxListSections &&
         totalRows < INTERACTIVE_LIMITS.maxListRowsTotal && (
           <Button variant="ghost" size="sm" onClick={addSection}>
-            <Plus className="h-3.5 w-3.5" />
+            <Plus className="h-3.5 w-3.5" aria-hidden />
             {t("addSection")}
           </Button>
         )}
@@ -568,7 +568,7 @@ function Field({
       <div className="mb-1 flex items-center justify-between">
         <label htmlFor={id} className="text-xs text-muted-foreground">{label}</label>
         {counter && (
-          <span className="text-[10px] text-muted-foreground tabular-nums">{counter}</span>
+          <span className="text-[11px] text-muted-foreground tabular-nums">{counter}</span>
         )}
       </div>
       {children(id)}

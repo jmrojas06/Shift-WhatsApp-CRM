@@ -50,6 +50,33 @@ export const CURRENCIES: CurrencyOption[] = [
 ];
 
 /**
+ * Locale used for number/currency formatting.
+ *
+ * The app locale is fixed at build time (NEXT_PUBLIC_APP_LOCALE, see
+ * src/i18n/request.ts and src/lib/i18n/translate.ts). Next inlines
+ * NEXT_PUBLIC_* values into both the server and the client bundle, so
+ * the server render and the browser always agree — unlike
+ * `Intl.NumberFormat(undefined)`, which follows the runtime's default
+ * locale (server ICU vs. the visitor's browser) and can break hydration.
+ *
+ * Spanish is formatted as Colombian Spanish (es-CO): plain "es" does not
+ * group 4-digit numbers ("1234") and puts the symbol last ("1234 US$"),
+ * while es-CO gives "US$ 1.234" like the rest of the Colombian copy.
+ * Resolved per call (cheap) so tests can switch it with `vi.stubEnv`.
+ */
+const NUMBER_LOCALES: Record<string, string> = {
+  en: "en-US",
+  es: "es-CO",
+  pt: "pt-BR",
+  ko: "ko-KR",
+};
+
+export function numberLocale(): string {
+  const env = process.env.NEXT_PUBLIC_APP_LOCALE ?? "";
+  return NUMBER_LOCALES[env] ?? NUMBER_LOCALES.en;
+}
+
+/**
  * Format a deal value as a currency string. Whole-number output
  * (no minor units) — deal values are tracked to the dollar across
  * the app. `currency` defaults to USD so callers with nothing better
@@ -68,8 +95,9 @@ export function formatCurrency(
 ): string {
   const code = (currency || DEFAULT_CURRENCY).trim();
   const amount = Number(value) || 0;
+  const locale = numberLocale();
   try {
-    return new Intl.NumberFormat(undefined, {
+    return new Intl.NumberFormat(locale, {
       style: "currency",
       currency: code,
       minimumFractionDigits: 0,
@@ -78,7 +106,7 @@ export function formatCurrency(
   } catch {
     // Invalid ISO code — show the raw code + grouped number so the
     // value is still legible instead of throwing.
-    return `${code} ${new Intl.NumberFormat(undefined, {
+    return `${code} ${new Intl.NumberFormat(locale, {
       maximumFractionDigits: 0,
     }).format(amount)}`;
   }

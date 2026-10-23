@@ -1,6 +1,6 @@
 "use client"
 
-import { GitBranch } from 'lucide-react'
+import { GitBranch, TriangleAlert } from 'lucide-react'
 import type { PipelineDonutData } from '@/lib/dashboard/types'
 import { formatCurrencyShort } from '@/lib/currency'
 import { EmptyState } from './empty-state'
@@ -17,8 +17,9 @@ import { useTranslations } from 'next-intl'
 
 export function PipelineDonut({ data, loading, currency }: PipelineDonutProps) {
   const t = useTranslations('Dashboard.pipelineDonut')
+  const tEmpty = useTranslations('Dashboard.emptyState')
   return (
-    <section className="flex h-full flex-col rounded-xl border border-border bg-card">
+    <section className="flex h-full flex-col rounded-xl border border-border bg-card shadow-(--shadow-card)">
       <header className="border-b border-border px-5 py-4">
         <h2 className="text-sm font-semibold text-foreground">{t('title')}</h2>
         <p className="mt-0.5 text-xs text-muted-foreground">
@@ -27,8 +28,14 @@ export function PipelineDonut({ data, loading, currency }: PipelineDonutProps) {
       </header>
 
       <div className="flex flex-1 flex-col p-5">
-        {loading || !data ? (
+        {loading ? (
           <Skeleton className="h-56 w-full" />
+        ) : !data ? (
+          <EmptyState
+            icon={TriangleAlert}
+            title={tEmpty('loadError')}
+            hint={tEmpty('loadErrorHint')}
+          />
         ) : data.stages.length === 0 ? (
           <EmptyState
             icon={GitBranch}
@@ -103,16 +110,30 @@ function Donut({ data, currency }: { data: PipelineDonutData; currency: string }
       <svg viewBox={`0 0 ${size} ${size}`} className="h-48 w-48" role="img" aria-label={t('ariaLabel')}>
         {/* background ring */}
         <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--muted)" strokeWidth={ringWidth} />
-        {segments.map((seg) => (
-          <path
-            key={seg.id}
-            d={seg.path}
-            fill="none"
-            stroke={seg.color}
-            strokeWidth={ringWidth}
-            strokeLinecap="butt"
-          />
-        ))}
+        {segments.map((seg) =>
+          // An arc whose end point equals its start draws nothing, so a lone
+          // stage (all open deals in one column) is drawn as a full circle.
+          segments.length === 1 ? (
+            <circle
+              key={seg.id}
+              cx={cx}
+              cy={cy}
+              r={r}
+              fill="none"
+              stroke={seg.color}
+              strokeWidth={ringWidth}
+            />
+          ) : (
+            <path
+              key={seg.id}
+              d={seg.path}
+              fill="none"
+              stroke={seg.color}
+              strokeWidth={ringWidth}
+              strokeLinecap="butt"
+            />
+          ),
+        )}
         {/* center label */}
         <text
           x={cx}

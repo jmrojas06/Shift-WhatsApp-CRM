@@ -61,7 +61,8 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
   const { profile, account, accountRole, signOut } = useAuth();
   const { unreadConversations } = useShellChrome();
   const workspaceName = account?.name || profile?.full_name || "";
-  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
+  const asideRef = useRef<HTMLElement>(null);
 
   // Close the drawer when route changes — users opened it to navigate,
   // so once they pick a destination the drawer should get out of the way.
@@ -81,7 +82,32 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose?.();
+      if (e.key === "Escape") {
+        onClose?.();
+        return;
+      }
+      // Keep Tab inside the drawer while it is a modal (below lg) so focus
+      // never lands on the page hidden behind the backdrop.
+      if (e.key !== "Tab" || window.matchMedia(DESKTOP_QUERY).matches) return;
+      const aside = asideRef.current;
+      if (!aside) return;
+      const focusable = Array.from(
+        aside.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (!aside.contains(active)) return; // a menu popup owns focus right now
+      if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => {
@@ -106,7 +132,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
           aria-current={active ? "page" : undefined}
           className={cn(
             // ≥44px rows in the touch drawer, a denser 36px on desktop.
-            "flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors lg:min-h-9",
+            "flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset lg:min-h-9",
             active
               ? "bg-muted text-foreground"
               : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
@@ -144,6 +170,8 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
         type="button"
         aria-label={t("closeMenu")}
         tabIndex={open ? 0 : -1}
+        // Closed: out of the accessibility tree too, not just the tab order.
+        inert={!open}
         onClick={onClose}
         className={cn(
           "fixed inset-0 z-40 bg-background/70 backdrop-blur-sm transition-opacity lg:hidden",
@@ -155,7 +183,11 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
 
       <aside
         id="app-sidebar"
+        ref={asideRef}
         inert={inert}
+        // Below lg an open drawer behaves as a modal dialog.
+        role={open && !isDesktop ? "dialog" : undefined}
+        aria-modal={open && !isDesktop ? true : undefined}
         className={cn(
           // Mobile: fixed drawer that slides in from the left.
           "fixed inset-y-0 left-0 z-50 flex h-full w-72 max-w-[85vw] flex-col border-r border-border bg-background",
@@ -169,7 +201,10 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
         {/* Workspace — the business the user is working in, with the
             product name underneath. Close button only in the drawer. */}
         <div className="flex h-14 shrink-0 items-center gap-2.5 px-4 lg:h-16">
-          <Link href="/dashboard" className="flex min-w-0 flex-1 items-center gap-2.5">
+          <Link
+            href="/dashboard"
+            className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          >
             <WorkspaceBadge name={workspaceName} />
             <span className="flex min-w-0 flex-col leading-tight">
               <span className="truncate text-sm font-semibold text-foreground" title={workspaceName}>

@@ -32,18 +32,26 @@ export function QuickReplyPicker({
   const t = useTranslations("Inbox.composer");
   const [items, setItems] = useState<QuickReply[]>([]);
   const [loading, setLoading] = useState(false);
+  // A failed load must not read as "you have no quick replies".
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     setLoading(true);
+    setFailed(false);
     void (async () => {
       try {
         const res = await fetch("/api/quick-replies", { cache: "no-store" });
         const data = await res.json().catch(() => ({}));
-        if (!cancelled && res.ok) {
+        if (cancelled) return;
+        if (res.ok) {
           setItems((data.quick_replies as QuickReply[]) ?? []);
+        } else {
+          setFailed(true);
         }
+      } catch {
+        if (!cancelled) setFailed(true);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -59,11 +67,15 @@ export function QuickReplyPicker({
         <DialogHeader>
           <DialogTitle>{t("quickReplies")}</DialogTitle>
         </DialogHeader>
-        <div className="max-h-[60vh] overflow-y-auto">
+        <div className="max-h-[60dvh] overflow-y-auto overscroll-contain">
           {loading ? (
             <div className="flex justify-center py-8">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              <Loader2 aria-hidden="true" className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
+          ) : failed ? (
+            <p role="alert" className="py-8 text-center text-sm text-destructive">
+              {t("quickRepliesLoadFailed")}
+            </p>
           ) : items.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">
               {t("quickRepliesEmpty")}
@@ -75,12 +87,12 @@ export function QuickReplyPicker({
                   <button
                     type="button"
                     onClick={() => onPick(qr)}
-                    className="flex w-full items-start gap-2 rounded-md border border-border bg-muted/40 p-2.5 text-left hover:border-primary/50 hover:bg-muted"
+                    className="flex w-full items-start gap-2 rounded-md border border-border bg-muted/40 p-2.5 text-left outline-none hover:border-primary/50 hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-11"
                   >
                     {qr.kind === "interactive" ? (
-                      <Zap className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                      <Zap aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
                     ) : (
-                      <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                      <MessageSquare aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                     )}
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium text-foreground">

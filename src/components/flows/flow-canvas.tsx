@@ -97,6 +97,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useFlowEditor } from './flow-editor-state';
 import { NodeConfigForm } from './forms/node-config-form';
+import { ConfirmRemoveNode } from './confirm-remove-node';
 
 // React-Flow node `data` payload — the bits our custom renderer needs.
 interface NodeData extends Record<string, unknown> {
@@ -198,7 +199,7 @@ function FlowNodeCard({ data, selected }: NodeProps) {
           {t(`nodes.${node.node_type}.label`)}
         </span>
         {isEntry && (
-          <span className="border-border text-muted-foreground ml-auto rounded border px-1.5 py-0.5 text-[8.5px] font-bold tracking-[0.1em] uppercase">
+          <span className="border-border text-muted-foreground ml-auto rounded border px-1.5 py-0.5 text-[10px] font-bold tracking-[0.1em] uppercase">
             {t('badgeEntry')}
           </span>
         )}
@@ -617,6 +618,7 @@ function NodeEditSheet({
   // Sheet is controlled — opens when a node is selected, closes via
   // Esc / overlay / close button (all delegated to onClose).
   const open = node !== null;
+  const [confirmRemove, setConfirmRemove] = useState(false);
   if (!node) {
     return (
       <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
@@ -638,7 +640,7 @@ function NodeEditSheet({
             <SheetTitle className="flex items-center gap-2 text-[11px] font-semibold tracking-wider uppercase">
               <span style={{ color: c.text }}>{t(`nodes.${node.node_type}.label`)}</span>
               {isEntry && (
-                <span className="rounded bg-success/12 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-success uppercase">
+                <span className="rounded bg-success/12 px-1.5 py-0.5 text-[11px] font-semibold tracking-wide text-success uppercase">
                   {t('badgeEntry')}
                 </span>
               )}
@@ -647,7 +649,7 @@ function NodeEditSheet({
               {t(`nodes.${node.node_type}.blurb`)}
             </SheetDescription>
           </div>
-          <code className="bg-muted text-muted-foreground shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px]">
+          <code className="bg-muted text-muted-foreground max-w-[40%] shrink-0 truncate rounded px-1.5 py-0.5 font-mono text-[11px]">
             {node.node_key}
           </code>
         </SheetHeader>
@@ -672,14 +674,20 @@ function NodeEditSheet({
           <Button
             variant="ghost"
             size="sm"
-            onClick={onDelete}
+            onClick={() => setConfirmRemove(true)}
             className="text-destructive hover:bg-destructive/10 hover:text-destructive"
           >
-            <Trash2 className="h-3.5 w-3.5" />
+            <Trash2 className="h-3.5 w-3.5" aria-hidden />
             {t('deleteNode')}
           </Button>
         </SheetFooter>
       </SheetContent>
+      <ConfirmRemoveNode
+        nodeKey={node.node_key}
+        open={confirmRemove}
+        onOpenChange={setConfirmRemove}
+        onConfirm={onDelete}
+      />
     </Sheet>
   );
 }
@@ -735,10 +743,9 @@ function CanvasAddNodeButton({ t }: { t: ReturnType<typeof useTranslations> }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        className="bg-primary text-primary-foreground hover:bg-primary-hover inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-[13px] font-medium shadow-[0_6px_20px_-8px_rgba(0,0,0,0.5)] transition-colors"
-        aria-label={t('addNode')}
+        className="bg-primary text-primary-foreground hover:bg-primary-hover focus-visible:ring-ring/50 inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-[13px] font-medium shadow-[0_6px_20px_-8px_rgba(0,0,0,0.5)] outline-none transition-colors focus-visible:ring-3"
       >
-        <Plus className="h-4 w-4" />
+        <Plus className="h-4 w-4" aria-hidden />
         {t('addNode')}
       </DropdownMenuTrigger>
       <DropdownMenuContent

@@ -98,9 +98,15 @@ function CardLabel({ icon: Icon, children }: { icon: typeof MessageSquare; child
   )
 }
 
-function BigNumber({ children }: { children: ReactNode }) {
+function BigNumber({ children, compact = false }: { children: ReactNode; compact?: boolean }) {
   return (
-    <span className="font-heading text-[32px] leading-none font-semibold tracking-tight text-foreground tabular-nums">
+    <span
+      className={cn(
+        'font-heading leading-none font-semibold tracking-tight text-foreground tabular-nums [overflow-wrap:anywhere]',
+        // Several currencies ("$1.200.000 COP + US$300 USD") would overflow the card at full size.
+        compact ? 'text-2xl' : 'text-[32px]',
+      )}
+    >
       {children}
     </span>
   )
@@ -202,7 +208,8 @@ function AppointmentsCard({ data }: { data: Loadable<TodayAppointments> }) {
             <ul className="space-y-1 text-sm">
               {data.upcoming.map((a) => (
                 <li key={a.id} className="flex gap-2">
-                  <span className="w-14 shrink-0 font-medium text-foreground tabular-nums">
+                  {/* "10:30 a. m." is wider than 3.5rem and never wraps, so it needs a real minimum width. */}
+                  <span className="min-w-[4.75rem] shrink-0 font-medium whitespace-nowrap text-foreground tabular-nums">
                     {format.dateTime(new Date(a.startsAt), {
                       hour: 'numeric',
                       minute: '2-digit',
@@ -240,7 +247,7 @@ function SalesCard({ data }: { data: Loadable<SalesAttention> }) {
         <CardError />
       ) : (
         <>
-          <BigNumber>{data.pendingToCollect}</BigNumber>
+          <BigNumber compact={data.pendingToCollect.length > 12}>{data.pendingToCollect}</BigNumber>
           <p className="text-sm text-muted-foreground">
             {t('soldThisMonth', { amount: data.soldThisMonth })}
           </p>

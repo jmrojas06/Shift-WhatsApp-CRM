@@ -9,7 +9,7 @@ import {
 } from "@/lib/inbox/conversations";
 import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus, Tag } from "@/types";
-import { Search, ChevronDown, X } from "lucide-react";
+import { Search, ChevronDown, User, X } from "lucide-react";
 import { useFormatter, useNow, useTranslations } from "next-intl";
 import { Input } from "@/components/ui/input";
 import {
@@ -20,10 +20,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { contactHandle } from "@/lib/whatsapp/wa-identity";
 import {
   INBOX_FILTERS,
   countUnreadConversations,
   matchesInboxFilter,
+  matchesSearch,
   type InboxFilter,
 } from "./inbox-filters";
 
@@ -88,6 +90,10 @@ export function ConversationList({
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<InboxFilter>("all");
   const [loading, setLoading] = useState(true);
+  // The first fetch failed: say so (with a retry) instead of passing it off
+  // as an empty inbox. `retryKey` re-runs the fetch effect.
+  const [loadError, setLoadError] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
   // Contact-based filters (issue #272). Tags use OR logic (a conversation
   // matches if its contact carries any selected tag), consistent with
   // Broadcast audience filtering. Company is an exact match on the field.
@@ -132,11 +138,13 @@ export function ConversationList({
           hint: error.hint,
           code: error.code,
         });
+        setLoadError(true);
         setLoading(false);
         return;
       }
 
       onConversationsLoadedRef.current(normalizeConversations(data ?? []));
+      setLoadError(false);
       setLoading(false);
     })();
 
@@ -146,7 +154,13 @@ export function ConversationList({
     // `resyncToken` is included so the parent can force a refetch when
     // the realtime channel reconnects or the tab regains focus — catches
     // up on any events sent while the WS was disconnected or throttled.
-  }, [resyncToken]);
+  }, [resyncToken, retryKey]);
+
+  const handleRetry = useCallback(() => {
+    setLoadError(false);
+    setLoading(true);
+    setRetryKey((n) => n + 1);
+  }, []);
 
   // Tag definitions for the filter picker — loaded once so labels/colours
   // stay stable regardless of which conversations happen to be loaded.
@@ -198,13 +212,7 @@ export function ConversationList({
     }
 
     if (search.trim()) {
-      const q = search.toLowerCase();
-      result = result.filter((c) => {
-        const name = c.contact?.name?.toLowerCase() ?? "";
-        const phone = c.contact?.phone?.toLowerCase() ?? "";
-        const lastMsg = c.last_message_text?.toLowerCase() ?? "";
-        return name.includes(q) || phone.includes(q) || lastMsg.includes(q);
-      });
+      result = result.filter((c) => matchesSearch(c, search));
     }
 
     return result;
@@ -448,6 +456,20 @@ export function ConversationList({
       <ScrollArea className="min-h-0 min-w-0 flex-1">
         {loading ? (
           <ConversationListSkeleton />
+        ) : loadError && conversations.length === 0 ? (
+          <div
+            role="alert"
+            className="flex flex-col items-center gap-3 px-6 py-12 text-center"
+          >
+            <p className="text-sm text-muted-foreground">{t("loadFailed")}</p>
+            <button
+              type="button"
+              onClick={handleRetry}
+              className="inline-flex h-9 items-center rounded-lg border border-border px-3 text-sm font-medium text-foreground outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:h-11"
+            >
+              {t("retry")}
+            </button>
+          </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
             <p className="text-sm text-muted-foreground">
@@ -530,7 +552,10 @@ function ConversationItem({
   timeLabel,
 }: ConversationItemProps) {
   const contact = conversation.contact;
-  const displayName = contact?.name || contact?.phone || t("unknown");
+  // Same fallback chain as the thread header: name, phone, @username.
+  const hasName = Boolean(contact?.name?.trim());
+  const displayName =
+    contact?.name || (contact ? contactHandle(contact) : "") || t("unknown");
   const initials = displayName.charAt(0).toUpperCase();
   const unread = conversation.unread_count > 0;
 
@@ -564,8 +589,11 @@ function ConversationItem({
             alt=""
             className="h-10 w-10 rounded-full object-cover"
           />
-        ) : (
+        ) : hasName ? (
           initials
+        ) : (
+          // No name: a "+" or "5" as the initial reads like a glitch.
+          <User aria-hidden="true" className="h-5 w-5 text-muted-foreground" />
         )}
       </div>
 

@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogDescription,
+  DialogFooter,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -64,6 +65,8 @@ export function CustomFieldsPanel() {
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Field waiting for the user to confirm its deletion.
+  const [fieldToDelete, setFieldToDelete] = useState<CustomField | null>(null);
 
   const fetchFields = useCallback(async () => {
     if (!accountId) return;
@@ -151,13 +154,6 @@ export function CustomFieldsPanel() {
   }
 
   async function handleDelete(field: CustomField) {
-    if (
-      !window.confirm(
-        t('deleteConfirm', { name: field.field_name })
-      )
-    ) {
-      return;
-    }
     setBusyId(field.id);
     const { error } = await supabase
       .from('custom_fields')
@@ -221,12 +217,44 @@ export function CustomFieldsPanel() {
                 field={field}
                 busy={busyId === field.id}
                 onRename={handleRename}
-                onDelete={handleDelete}
+                onDelete={setFieldToDelete}
               />
             ))}
           </ul>
         )}
       </div>
+
+      {/* Same confirmation pattern as the rest of the app (no native confirm). */}
+      <Dialog
+        open={fieldToDelete !== null}
+        onOpenChange={(next) => {
+          if (!next) setFieldToDelete(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t('deleteTitle')}</DialogTitle>
+            <DialogDescription>
+              {t('deleteConfirm', { name: fieldToDelete?.field_name ?? '' })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFieldToDelete(null)}>
+              {t('cancel')}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                const target = fieldToDelete;
+                setFieldToDelete(null);
+                if (target) void handleDelete(target);
+              }}
+            >
+              {t('deleteBtn')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -267,7 +295,7 @@ function FieldRow({
           if (e.key === 'Enter') e.currentTarget.blur();
         }}
         aria-label={t('renameAria', { name: field.field_name })}
-        className="focus:border-primary h-8 border-transparent bg-transparent text-foreground hover:border-border"
+        className="focus:border-primary h-8 border-transparent bg-transparent text-foreground hover:border-border pointer-coarse:h-11"
       />
       <Button
         variant="ghost"
@@ -275,12 +303,13 @@ function FieldRow({
         disabled={busy}
         onClick={() => onDelete(field)}
         title={t('deleteTitle')}
-        className="shrink-0 text-muted-foreground hover:text-destructive"
+        aria-label={t('deleteAria', { name: field.field_name })}
+        className="shrink-0 text-muted-foreground hover:text-destructive pointer-coarse:size-11"
       >
         {busy ? (
-          <Loader2 className="size-4 animate-spin" />
+          <Loader2 aria-hidden className="size-4 animate-spin" />
         ) : (
-          <Trash2 className="size-4" />
+          <Trash2 aria-hidden className="size-4" />
         )}
       </Button>
     </li>

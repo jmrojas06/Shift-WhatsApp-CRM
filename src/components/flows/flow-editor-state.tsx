@@ -404,9 +404,9 @@ export function FlowEditorProvider({
   );
 
   // ---- Delete ----
+  // The confirmation lives in the header (an accessible dialog instead of
+  // `window.confirm`); by the time this runs the person already said yes.
   const deleteFlow = useCallback(async () => {
-    const yes = window.confirm(t("deleteConfirm", { name: state.name }));
-    if (!yes) return;
     try {
       const res = await fetch(`/api/flows/${initialFlow.id}`, {
         method: "DELETE",
@@ -417,7 +417,7 @@ export function FlowEditorProvider({
       const msg = err instanceof Error ? err.message : t("deleteFailed");
       toast.error(msg);
     }
-  }, [initialFlow.id, router, state.name, t]);
+  }, [initialFlow.id, router, t]);
 
   // ---- Node mutations ----
   const updateNode = useCallback(

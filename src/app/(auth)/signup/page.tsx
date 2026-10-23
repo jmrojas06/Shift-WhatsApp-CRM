@@ -19,6 +19,7 @@ import {
   authLinkClass,
 } from "@/components/auth/auth-shell";
 import { authErrorKey } from "@/components/auth/auth-error";
+import { PasswordInput } from "@/components/auth/password-input";
 
 // `useSearchParams` opts the component out of static prerendering
 // unless wrapped in Suspense — same pattern as /login.
@@ -166,6 +167,8 @@ function SignupPageInner() {
                 type="email"
                 autoComplete="email"
                 inputMode="email"
+                autoCapitalize="none"
+                spellCheck={false}
                 placeholder={t("emailPlaceholder")}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -175,9 +178,8 @@ function SignupPageInner() {
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="password">{t("passwordLabel")}</Label>
-              <Input
+              <PasswordInput
                 id="password"
-                type="password"
                 autoComplete="new-password"
                 placeholder={t("passwordPlaceholder")}
                 value={password}
@@ -188,9 +190,8 @@ function SignupPageInner() {
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="confirmPassword">{t("confirmPasswordLabel")}</Label>
-              <Input
+              <PasswordInput
                 id="confirmPassword"
-                type="password"
                 autoComplete="new-password"
                 placeholder={t("confirmPasswordPlaceholder")}
                 value={confirmPassword}

@@ -5,6 +5,7 @@ import {
   useRef,
   useCallback,
   useEffect,
+  useSyncExternalStore,
   KeyboardEvent,
 } from "react";
 import {
@@ -128,6 +129,26 @@ function formatDuration(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+// True on phones/tablets (touch is the primary pointer). Used only to pick a
+// shorter placeholder: "Shift+Enter" means nothing without a keyboard, and the
+// long text is cut off in a ~200px field anyway. Server snapshot is false; the
+// composer only renders after a conversation is opened, so nothing hydrates
+// with the mismatch.
+function subscribeCoarsePointer(onChange: () => void) {
+  const query = window.matchMedia("(pointer: coarse)");
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+const getCoarsePointer = () => window.matchMedia("(pointer: coarse)").matches;
+const getServerCoarsePointer = () => false;
+
+/** True while the user is composing text with an IME (Korean, Japanese,
+ *  Chinese…). Enter then confirms the composition and must not send. Safari
+ *  reports the confirming Enter with keyCode 229 after `isComposing` flips. */
+function isImeEnter(e: KeyboardEvent<HTMLElement>): boolean {
+  return e.nativeEvent.isComposing || e.keyCode === 229;
+}
+
 /** Rows of the composer's "+" menu: roomier, and 44px on touch screens. */
 const MENU_ITEM = "gap-2.5 px-2 py-2 pointer-coarse:min-h-11";
 
@@ -153,6 +174,18 @@ export function MessageComposer({
   const [sending, setSending] = useState(false);
   const [drafting, setDrafting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const coarsePointer = useSyncExternalStore(
+    subscribeCoarsePointer,
+    getCoarsePointer,
+    getServerCoarsePointer,
+  );
+
+  // Choosing "Reply" on a message puts the cursor in the box (and opens the
+  // keyboard on a phone) so the agent can just type.
+  const replyId = replyTo?.id;
+  useEffect(() => {
+    if (replyId) textareaRef.current?.focus();
+  }, [replyId]);
 
   // Interactive-message builder dialog + quick-reply picker.
   const [interactiveOpen, setInteractiveOpen] = useState(false);
@@ -236,6 +269,9 @@ export function MessageComposer({
       setText("");
       if (textareaRef.current) {
         textareaRef.current.style.height = "auto";
+        // Keep the cursor (and the phone keyboard) in place after tapping
+        // Send, so the next message can be typed right away.
+        textareaRef.current.focus();
       }
     } finally {
       setSending(false);
@@ -244,7 +280,7 @@ export function MessageComposer({
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === "Enter" && !e.shiftKey) {
+      if (e.key === "Enter" && !e.shiftKey && !isImeEnter(e)) {
         e.preventDefault();
         handleSend();
       }
@@ -547,7 +583,7 @@ export function MessageComposer({
     // Bottom padding respects the phone's home-indicator area: the mobile
     // tab bar is hidden while a chat is open, so the composer is the
     // last thing on screen.
-    <div className="border-t border-border bg-card p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:p-3">
+    <div className="border-t border-border bg-card p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:p-3 sm:pb-[max(0.75rem,env(safe-area-inset-bottom))]">
       {replyTo && (
         <div className="mb-2">
           <ReplyQuote
@@ -765,7 +801,9 @@ export function MessageComposer({
                 ? t("readOnlyPlaceholder")
                 : sessionExpired
                   ? t("sessionExpiredPlaceholder")
-                  : t("typeMessagePlaceholder")
+                  : coarsePointer
+                    ? t("typeMessagePlaceholderTouch")
+                    : t("typeMessagePlaceholder")
             }
             disabled={sessionExpired || readOnly}
             rows={1}
@@ -922,7 +960,7 @@ function MediaDraftPreview({
             maxLength={MEDIA_CAPTION_MAX}
             onChange={(e) => onCaptionChange(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              if (e.key === "Enter" && !e.shiftKey && !isImeEnter(e)) {
                 e.preventDefault();
                 onSend();
               }
