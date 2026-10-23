@@ -37,7 +37,7 @@ type FilterKind = 'eq' | 'in' | 'lt' | 'lte' | 'gt' | 'gte' | 'is' | 'or'
 
 /**
  * `.or(...)` como PostgREST: una fila pasa si cumple alguna condición.
- * Soporta `col.cs.{a}` (array contiene) y
+ * Soporta `col.cs.{a}` (array contiene), `col.in.(a,b)` y
  * `and(modules.eq.{},col.in.(a,b))` (modules vacío y col en la lista).
  */
 function matchesOr(row: Row, expr: string): boolean {
@@ -55,6 +55,9 @@ function matchesOr(row: Row, expr: string): boolean {
   for (const m of rest.matchAll(/(\w+)\.cs\.\{([^}]*)\}/g)) {
     const have = Array.isArray(row[m[1]]) ? (row[m[1]] as string[]) : []
     conditions.push(m[2].split(',').every((k) => have.includes(k)))
+  }
+  for (const m of rest.matchAll(/(\w+)\.in\.\(([^)]*)\)/g)) {
+    conditions.push(m[2].split(',').includes(String(row[m[1]])))
   }
   return conditions.some(Boolean)
 }
@@ -717,7 +720,7 @@ describe('runAgendaReminders', () => {
 
     it('modules con la clave vieja barberia cuenta como agenda', async () => {
       const seed = baseSeed()
-      seed.accounts[0].vertical_key = null
+      seed.accounts[0].vertical_key = 'barberia'
       seed.accounts[0].modules = ['barberia']
       const { summary } = await run(seed)
       expect(summary.accounts).toBe(1)
@@ -729,6 +732,15 @@ describe('runAgendaReminders', () => {
       seed.accounts[0].vertical_key = 'agenda'
       seed.accounts[0].modules = ['ventas']
       const { summary } = await run(seed, { orMatchesEverything: true })
+      expect(summary.accounts).toBe(0)
+      expect(summary.sent).toBe(0)
+    })
+
+    it('barberia en vertical_key pero modules = {ventas}: la base la trae y hasModule la descarta', async () => {
+      const seed = baseSeed()
+      seed.accounts[0].vertical_key = 'barberia'
+      seed.accounts[0].modules = ['ventas']
+      const { summary } = await run(seed)
       expect(summary.accounts).toBe(0)
       expect(summary.sent).toBe(0)
     })
@@ -749,11 +761,9 @@ describe('runAgendaReminders', () => {
       expect(db._ors).toHaveLength(1)
     })
 
-    it('el filtro de la base sigue la regla de getAccountModules', async () => {
+    it('el filtro de la base es amplio y simple; la regla exacta la pone hasModule', async () => {
       const { db } = await run(baseSeed())
-      expect(db._ors).toEqual([
-        'modules.cs.{agenda},modules.cs.{barberia},and(modules.eq.{},vertical_key.in.(agenda,barberia))',
-      ])
+      expect(db._ors).toEqual(['modules.cs.{agenda},vertical_key.in.(agenda,barberia)'])
     })
   })
 

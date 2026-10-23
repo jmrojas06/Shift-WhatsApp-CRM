@@ -40,7 +40,6 @@ import { VENTAS_TEXTS as T } from '@/modules/ventas/texts'
 const PROPS = {
   contactId: '11111111-1111-4111-8111-111111111111',
   contactName: 'Valentina Restrepo',
-  contactPhone: '+57 300 123 4567',
   conversationId: null,
 }
 
@@ -76,7 +75,9 @@ describe('<ContactOrders />', () => {
     const html = render()
     expect(html).toContain(T.createOrder.open)
     expect(html).toContain(T.contactOrders.title)
-    expect(html).toContain('href="/ventas?q=%2B57%20300%20123%204567"')
+    expect(html).toContain('href="/ventas?contacto=11111111-1111-4111-8111-111111111111"')
+    // Ley 1581: el teléfono nunca viaja en la URL.
+    expect(html).not.toMatch(/href="[^"]*(q=|300|%2B57)/)
     // Antes de que responda la base (los efectos no corren aquí) se ve "cargando".
     expect(html).toContain(T.loading)
   })
@@ -98,13 +99,10 @@ describe('<ContactOrders />', () => {
 })
 
 describe('salesLinkForContact', () => {
-  it('con teléfono: /ventas buscando ese teléfono', () => {
-    expect(salesLinkForContact('+57 300 123 4567')).toBe('/ventas?q=%2B57%20300%20123%204567')
-  })
-
-  it('sin teléfono (solo usuario de WhatsApp): /ventas a secas', () => {
-    expect(salesLinkForContact(null)).toBe('/ventas')
-    expect(salesLinkForContact('  ')).toBe('/ventas')
+  it('enlaza por el id del contacto (nunca por teléfono ni nombre)', () => {
+    expect(salesLinkForContact('11111111-1111-4111-8111-111111111111')).toBe(
+      '/ventas?contacto=11111111-1111-4111-8111-111111111111',
+    )
   })
 })
 

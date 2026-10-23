@@ -190,7 +190,6 @@ export function ContactSidebar({ contact, conversationId = null }: ContactSideba
             key={contact.id}
             contactId={contact.id}
             contactName={displayName}
-            contactPhone={contact.phone}
             conversationId={conversationId}
           />
 

@@ -36,8 +36,6 @@ const CONTACT_ORDERS_LIMIT = 5
 export interface ContactOrdersProps {
   contactId: string
   contactName: string
-  /** Teléfono del contacto: "Ver en Ventas" abre /ventas filtrado por él. */
-  contactPhone?: string | null
   conversationId: string | null
   /** Separador superior propio (panel lateral). En la hoja móvil no va. */
   withDivider?: boolean
@@ -54,16 +52,17 @@ export function nextLoadState(current: LoadState, silent: boolean): LoadState {
   return silent && current === 'ready' ? 'ready' : 'loading'
 }
 
-/** Enlace a /ventas con la búsqueda puesta en el teléfono del contacto. */
-export function salesLinkForContact(phone: string | null | undefined): string {
-  const q = phone?.trim()
-  return q ? `/ventas?q=${encodeURIComponent(q)}` : '/ventas'
+/**
+ * Enlace a /ventas filtrado por el contacto. Va su id, nunca el teléfono
+ * ni el nombre: la URL queda en el historial y en los logs (Ley 1581).
+ */
+export function salesLinkForContact(contactId: string): string {
+  return `/ventas?contacto=${encodeURIComponent(contactId)}`
 }
 
 export function ContactOrders({
   contactId,
   contactName,
-  contactPhone = null,
   conversationId,
   withDivider = true,
 }: ContactOrdersProps) {
@@ -167,7 +166,7 @@ export function ContactOrders({
 
           {state !== 'migration' && (
             <Link
-              href={salesLinkForContact(contactPhone)}
+              href={salesLinkForContact(contactId)}
               className={cn(
                 'inline-flex min-h-11 items-center gap-1 px-1 text-xs font-medium text-primary underline-offset-4 hover:underline',
                 withDivider && 'lg:min-h-0',

@@ -195,9 +195,6 @@ export const ORDER_FILTERS = [
 ] as const
 export type OrderFilter = (typeof ORDER_FILTERS)[number]
 
-export const isOrderFilter = (value: unknown): value is OrderFilter =>
-  typeof value === 'string' && (ORDER_FILTERS as readonly string[]).includes(value)
-
 export function matchesOrderFilter(
   order: Pick<PanelOrder, 'status' | 'payment_status'>,
   filter: OrderFilter,
@@ -308,11 +305,17 @@ export interface SalesApiFailure {
 }
 
 /**
- * Mensaje para la pantalla. Los de datos (400) y de transición los
- * escribe el dominio en español y se muestran tal cual; el resto se
- * traduce por código. Nunca se muestra un detalle técnico de un 500.
+ * Mensaje para la pantalla. Los de datos (400), de transición y de "no
+ * existe" los escribe el dominio en español y se muestran tal cual (al
+ * crear, el 404 habla del contacto o la conversación, no del pedido); el
+ * resto se traduce por código. Nunca se muestra un detalle técnico de un
+ * 500. `context` elige el respaldo de un 404 sin mensaje.
  */
-export function salesErrorMessage(failure: SalesApiFailure): string {
+export function salesErrorMessage(
+  failure: SalesApiFailure,
+  context: 'create' | 'update' = 'update',
+): string {
+  const notFound = context === 'create' ? T.errors.contactGone : T.errors.notFound
   const { status, code } = failure
   const message = failure.error?.trim() || null
   if (status === 0) return T.errors.network
@@ -326,7 +329,7 @@ export function salesErrorMessage(failure: SalesApiFailure): string {
     case 'forbidden':
       return T.errors.forbidden
     case 'not_found':
-      return T.errors.notFound
+      return message ?? notFound
     case 'module_inactive':
       return T.errors.moduleOff
     case 'unauthorized':
@@ -334,7 +337,7 @@ export function salesErrorMessage(failure: SalesApiFailure): string {
   }
   if (status === 401) return T.errors.session
   if (status === 403) return T.errors.forbidden
-  if (status === 404) return T.errors.notFound
+  if (status === 404) return notFound
   // toModuleErrorResponse responde 409 sin `code` si el módulo está apagado.
   if (status === 409 && message && /no está activo/i.test(message)) return T.errors.moduleOff
   if (status === 400) return message ?? T.errors.invalid
@@ -467,4 +470,25 @@ export function ventasUrlWithout(
   next.delete(key)
   const query = next.toString()
   return query ? `/ventas?${query}` : '/ventas'
+}
+
+const CONTACT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
+/**
+ * Contacto por el que se filtra /ventas (`?contacto=<uuid>`, enlace desde
+ * el inbox). Solo un uuid válido: nunca un teléfono ni un nombre en la
+ * URL (datos personales, Ley 1581).
+ */
+export function contactFilterFrom(params: string | URLSearchParams | { toString(): string }): string | null {
+  const raw = new URLSearchParams(params.toString()).get('contacto')?.trim().toLowerCase() ?? ''
+  return CONTACT_UUID_RE.test(raw) ? raw : null
+}
+
+/** Texto del chip del filtro: el nombre del pedido más reciente cargado. */
+export function contactFilterLabel(
+  orders: readonly Pick<PanelOrder, 'customer_name' | 'created_at' | 'number'>[],
+): string {
+  const newest = [...orders].sort((a, b) => createdMs(b) - createdMs(a) || b.number - a.number)[0]
+  const name = newest?.customer_name?.trim()
+  return name ? T.contactFilter.chip(name) : T.contactFilter.fallback
 }

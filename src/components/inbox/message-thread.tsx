@@ -949,7 +949,6 @@ export function MessageThread({
           <MobileOrdersButton
             contactId={contact.id}
             contactName={displayName}
-            contactPhone={contact.phone}
             conversationId={conversation.id}
           />
 

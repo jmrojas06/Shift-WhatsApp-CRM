@@ -119,7 +119,7 @@ CREATE TRIGGER accounts_sync_modules
 --     PATCH /rest/v1/accounts?id=eq.<propia> { "modules": ["ventas"] }
 --   Como ADMIN debe seguir funcionando:
 --     PATCH /rest/v1/accounts?id=eq.<propia> { "default_currency": "COP" }
---   Como operador (SQL Editor), activar Ventas en una cuenta:
---     UPDATE accounts SET modules = array_append(modules, 'ventas')
---     WHERE id = '<cuenta>' AND NOT ('ventas' = ANY(modules));
+--   Como operador (SQL Editor), activar Ventas en una cuenta: usar la
+--   sentencia única de docs/ventas.md, sección «Activar» (conserva la
+--   agenda aunque `modules` esté vacío).
 -- ============================================================

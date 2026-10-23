@@ -567,9 +567,20 @@ BEGIN
       'trigger accounts_sync_modules is missing on accounts — migration 053 did not apply';
   END IF;
 
-  IF 'accounts_sync_modules' >= 'enforce_account_protected_columns' COLLATE "C" THEN
+  -- Compare the real trigger names on accounts, byte order (COLLATE "C"),
+  -- the order Postgres fires BEFORE triggers in. NULL (one missing) fails.
+  IF (
+    SELECT bool_or(s.tgname COLLATE "C" >= g.tgname COLLATE "C")
+    FROM pg_trigger s, pg_trigger g
+    WHERE s.tgrelid = 'public.accounts'::regclass
+      AND g.tgrelid = 'public.accounts'::regclass
+      AND s.tgname = 'accounts_sync_modules'
+      AND g.tgname = 'enforce_account_protected_columns'
+      AND NOT s.tgisinternal
+      AND NOT g.tgisinternal
+  ) IS NOT FALSE THEN
     RAISE EXCEPTION
-      'accounts_sync_modules must sort before enforce_account_protected_columns';
+      'accounts_sync_modules must fire before enforce_account_protected_columns (or one of them is missing)';
   END IF;
 
   -- 053: the backfill — an agenda account must list the agenda in
@@ -582,6 +593,15 @@ BEGIN
   ) THEN
     RAISE EXCEPTION
       'an agenda account has no agenda in modules — migration 053 did not apply';
+  END IF;
+
+  -- 054: a cancelled order is final for payment too (ledger guard).
+  IF to_regprocedure('public.orders_ledger_guard()') IS NULL
+     OR pg_get_functiondef('public.orders_ledger_guard()'::regprocedure)
+       NOT LIKE '%OLD.status = ''cancelled'' AND NEW.payment_status IS DISTINCT FROM OLD.payment_status%'
+  THEN
+    RAISE EXCEPTION
+      'orders_ledger_guard lets a cancelled order change its payment — migration 054 did not apply';
   END IF;
 
   -- 054: Ventas A. Same failure mode as every migration here: a typo'd

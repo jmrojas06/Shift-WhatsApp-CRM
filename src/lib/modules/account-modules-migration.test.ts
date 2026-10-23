@@ -138,7 +138,11 @@ describe('verify-schema.sql (053)', () => {
   it('comprueba el trigger de sincronía vertical_key → modules y que corre antes del guardia', () => {
     expect(sql).toContain("to_regprocedure('public.sync_account_modules_from_vertical()')")
     expect(sql).toContain("tgname = 'accounts_sync_modules'")
-    expect(sql).toContain("'accounts_sync_modules' >= 'enforce_account_protected_columns'")
+    // El orden se mide con los tgname reales de pg_trigger, no con literales.
+    expect(sql).not.toContain("'accounts_sync_modules' >= 'enforce_account_protected_columns'")
+    expect(sql).toMatch(/s\.tgname COLLATE "C" >= g\.tgname COLLATE "C"/)
+    expect(sql).toMatch(/s\.tgrelid = 'public\.accounts'::regclass/)
+    expect(sql).toMatch(/g\.tgname = 'enforce_account_protected_columns'/)
     expect(sql).toContain('sync_account_modules_from_vertical is SECURITY DEFINER')
   })
 
@@ -150,5 +154,13 @@ describe('verify-schema.sql (053)', () => {
     const noComments = sql.replace(/--[^\r\n]*/g, '')
     expect(noComments.match(/\bDO\s+\$\$/g)).toHaveLength(1)
     expect(noComments.match(/\bEND\s*\$\$;/g)).toHaveLength(1)
+  })
+})
+
+describe('053: activación', () => {
+  it('apunta a la sentencia única de docs/ventas.md («Activar»)', () => {
+    expect(raw).toContain('docs/ventas.md')
+    expect(raw).toContain('«Activar»')
+    expect(raw).not.toContain("array_append(modules, 'ventas')")
   })
 })

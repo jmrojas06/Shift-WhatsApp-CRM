@@ -176,6 +176,8 @@ export const VENTAS_TEXTS = {
   /** Mensajes del servidor que llegan a la pantalla. */
   errors: {
     notFound: 'No encontramos ese pedido.',
+    /** 404 al crear: el contacto o la conversación se borró mientras tanto. */
+    contactGone: 'El contacto o la conversación ya no existe en tu cuenta.',
     moduleOff: 'El módulo de ventas no está activo para esta cuenta.',
     forbidden: 'Tu rol no puede hacer esto.',
     generic: 'No pudimos completar la acción. Inténtalo de nuevo.',
@@ -354,6 +356,13 @@ export const VENTAS_TEXTS = {
     empty: 'Este contacto todavía no tiene pedidos.',
     viewAll: 'Ver en Ventas',
     loadFailed: 'No pudimos cargar los pedidos de este contacto.',
+  },
+
+  /** Chip de /ventas?contacto=<id> (el nombre sale de los pedidos, no de la URL). */
+  contactFilter: {
+    chip: (name: string) => `Pedidos de ${name}`,
+    fallback: 'Pedidos de este contacto',
+    remove: 'Quitar el filtro del contacto',
   },
 
   /** Botón y hoja "Pedido" del encabezado de la conversación (móvil). */

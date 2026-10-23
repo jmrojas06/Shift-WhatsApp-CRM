@@ -247,8 +247,20 @@ describe('054_ventas.sql — libro de pedidos (orders_ledger_guard)', () => {
   })
 
   it('delivered y cancelled son finales: no hay transición que salga de ellos', () => {
-    expect(fn).not.toMatch(/OLD\.status = 'delivered'/)
-    expect(fn).not.toMatch(/OLD\.status = 'cancelled'/)
+    expect(fn).not.toMatch(/OLD\.status = 'delivered' AND NEW\.status/)
+    expect(fn).not.toMatch(/OLD\.status = 'cancelled' AND NEW\.status/)
+  })
+
+  it('un pedido cancelado no cambia su estado de pago (42501)', () => {
+    const block = fn.match(
+      /IF OLD\.status = 'cancelled' AND NEW\.payment_status IS DISTINCT FROM OLD\.payment_status THEN[\s\S]*?END IF;/,
+    )?.[0]
+    expect(block).toBeDefined()
+    expect(block).toContain("ERRCODE = 'insufficient_privilege'")
+  })
+
+  it('documenta que last_notice, last_notice_error e id_number quedan editables (solo los CHECK)', () => {
+    expect(raw).toMatch(/last_notice`?,[\s-]*`?last_notice_error`? e `?id_number`?[\s\S]{0,400}aceptado por diseño/)
   })
 
   it('al fijar una marca de tiempo desde el navegador se fuerza now() (sin fechas atrasadas)', () => {
@@ -427,5 +439,24 @@ describe('verify-schema.sql (054)', () => {
     const noComments = sql.replace(/--[^\r\n]*/g, '')
     expect(noComments.match(/\bDO\s+\$\$/g)).toHaveLength(1)
     expect(noComments.match(/\bEND\s*\$\$;/g)).toHaveLength(1)
+  })
+})
+
+describe('054_ventas.sql — activación', () => {
+  it('apunta a la sentencia única de docs/ventas.md («Activar»), sin repetir una que pueda quitar la agenda', () => {
+    expect(raw).toContain('docs/ventas.md')
+    expect(raw).toContain('«Activar»')
+    expect(raw).not.toContain("array_append(modules, 'ventas')")
+  })
+})
+
+describe('verify-schema.sql (054): cancelado sin cambios de pago', () => {
+  const verify = readFileSync(join(SUPABASE_DIR, 'ci', 'verify-schema.sql'), 'utf8')
+
+  it('comprueba la guarda en el cuerpo de orders_ledger_guard', () => {
+    expect(verify).toContain("pg_get_functiondef('public.orders_ledger_guard()'::regprocedure)")
+    expect(verify).toContain(
+      "NOT LIKE '%OLD.status = ''cancelled'' AND NEW.payment_status IS DISTINCT FROM OLD.payment_status%'",
+    )
   })
 })

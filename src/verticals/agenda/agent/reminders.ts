@@ -303,26 +303,21 @@ export async function hasRecentCustomerMessage(
 }
 
 /**
- * Cuentas con el módulo agenda, con la misma regla que
- * `getAccountModules`: `modules` decide cuando trae algo (contiene
- * 'agenda' o su alias 'barberia'); `vertical_key` ('agenda' / 'barberia')
- * solo cuenta cuando `modules` está vacío.
+ * Cuentas con el módulo agenda. La base trae un superconjunto simple
+ * (`modules` contiene 'agenda', o `vertical_key` es 'agenda' / 'barberia')
+ * y la regla exacta la pone `hasModule` en código, la misma de
+ * `getAccountModules`: `modules` decide cuando trae algo y `vertical_key`
+ * solo cuenta con `modules` vacío. Así una cuenta 'barberia' con
+ * `modules = {ventas}` llega de la base pero se descarta aquí.
  *
- * Una consulta con `.or(...)` y, por seguridad, las filas se vuelven a
- * filtrar en código con `hasModule` (así el filtro de la base nunca
- * puede ampliar la regla). Si la columna `modules` no existe todavía
- * (migración 053 sin aplicar) repite con `vertical_key`, para que el
- * cron siga recordando.
+ * Si la columna `modules` no existe todavía (migración 053 sin aplicar)
+ * repite con `vertical_key`, para que el cron siga recordando.
  */
 async function readAgendaAccounts(db: SupabaseClient) {
-  const verticalKeys = AGENDA_VERTICAL_KEYS.join(',')
   const result = await db
     .from('accounts')
     .select('id, name, owner_user_id, modules, vertical_key')
-    .or(
-      `${AGENDA_VERTICAL_KEYS.map((k) => `modules.cs.{${k}}`).join(',')},` +
-        `and(modules.eq.{},vertical_key.in.(${verticalKeys}))`,
-    )
+    .or(`modules.cs.{agenda},vertical_key.in.(${AGENDA_VERTICAL_KEYS.join(',')})`)
   const fallback = isUndefinedColumnError(result.error)
     ? await db
         .from('accounts')

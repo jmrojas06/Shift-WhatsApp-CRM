@@ -12,12 +12,15 @@
 // /api/modules/ventas/*. La cédula no se lee en la lista: solo en el
 // detalle.
 //
-// Enlaces: `?pedido=1001` abre el detalle de ese pedido; `?q=…` llena la
-// búsqueda (el inbox enlaza con el teléfono del contacto).
+// Enlaces: `?pedido=1001` abre el detalle de ese pedido; `?contacto=<uuid>`
+// muestra solo los pedidos de ese contacto (el inbox enlaza así, nunca con
+// el teléfono en la URL). `?q=` todavía llena la búsqueda si llega, pero
+// ningún enlace lo genera.
 // ============================================================
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { X } from 'lucide-react'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -30,6 +33,8 @@ import { ventasApi } from '@/modules/ventas/api-client'
 import type { OrderAction } from '@/modules/ventas/orders'
 import {
   actionOutcome,
+  contactFilterFrom,
+  contactFilterLabel,
   filterOrders,
   ventasUrlWithout,
   salesSummary,
@@ -96,6 +101,7 @@ function VentasPageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const deepLinkNumber = Number(searchParams.get('pedido')) || null
+  const contactId = contactFilterFrom(searchParams)
   const supabase = useMemo(() => createClient(), [])
 
   const isVentas = hasModule(account, 'ventas')
@@ -129,10 +135,15 @@ function VentasPageInner() {
   const summaryReq = useRef(0)
   const settingsReq = useRef(0)
 
-  const loadOrders = useCallback(async () => {
+  /** `reset`: la lista cambia de alcance (entrar o salir del filtro de contacto). */
+  const loadOrders = useCallback(async (opts: { reset?: boolean } = {}) => {
     if (!accountId || !isVentas) return
     const request = ++ordersReq.current
-    const { data, error } = await fetchPanelOrders(supabase, accountId, { limit: LIST_LIMIT })
+    if (opts.reset) setLoadState('loading')
+    const { data, error } = await fetchPanelOrders(supabase, accountId, {
+      limit: LIST_LIMIT,
+      ...(contactId ? { contactId } : {}),
+    })
     if (request !== ordersReq.current) return
     if (error) {
       setLoadState(isMissingMigrationError(error) ? 'migration' : 'failed')
@@ -140,7 +151,7 @@ function VentasPageInner() {
     }
     setOrders(data ?? [])
     setLoadState('ready')
-  }, [accountId, isVentas, supabase])
+  }, [accountId, isVentas, supabase, contactId])
 
   const loadSummary = useCallback(async () => {
     if (!accountId || !isVentas) return
@@ -163,10 +174,14 @@ function VentasPageInner() {
   useEffect(() => {
     // Los setState corren tras las respuestas asíncronas de Supabase.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    void loadOrders()
+    void loadOrders({ reset: true })
+  }, [loadOrders])
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadSummary()
     void loadSettings()
-  }, [loadOrders, loadSummary, loadSettings])
+  }, [loadSummary, loadSettings])
 
   // `?pedido=1001`: abre el detalle una sola vez cuando la lista cargó; si
   // el pedido no está entre los cargados, se busca por su número.
@@ -198,8 +213,8 @@ function VentasPageInner() {
 
   const closeDetail = useCallback(() => {
     setDetailId(null)
-    // Cerrar el detalle quita `?pedido=` (y solo eso: `q` se queda) para
-    // que recargar no lo vuelva a abrir.
+    // Cerrar el detalle quita `?pedido=` (y solo eso: `contacto` y `q` se
+    // quedan) para que recargar no lo vuelva a abrir.
     if (searchParams.get('pedido')) router.replace(ventasUrlWithout(searchParams, 'pedido'))
   }, [router, searchParams])
 
@@ -313,6 +328,27 @@ function VentasPageInner() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {contactId && (
+            <div className="flex">
+              <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted py-1 pr-1 pl-3 text-sm text-foreground">
+                <span className="truncate">
+                  {loadState === 'ready' ? contactFilterLabel(orders) : T.contactFilter.fallback}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-11 shrink-0 rounded-full sm:size-7"
+                  aria-label={T.contactFilter.remove}
+                  title={T.contactFilter.remove}
+                  onClick={() => router.replace(ventasUrlWithout(searchParams, 'contacto'))}
+                >
+                  <X aria-hidden="true" />
+                </Button>
+              </span>
+            </div>
+          )}
+
           <OrderToolbar
             orders={orders}
             filter={filter}

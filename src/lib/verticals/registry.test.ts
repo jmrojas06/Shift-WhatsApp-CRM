@@ -3,10 +3,7 @@ import {
   getAccountModules,
   getModulesNav,
   getVerticalManifest,
-  getVerticalNav,
   hasModule,
-  isAgendaVerticalKey,
-  listVerticals,
   normalizeVerticalKey,
 } from './registry'
 
@@ -24,18 +21,10 @@ describe('vertical registry', () => {
     expect(getVerticalManifest(undefined)).toBeNull()
   })
 
-  it('lists the installed verticals', () => {
-    expect(listVerticals().map((v) => v.key)).toEqual(['agenda', 'ventas'])
-  })
-
-  it('exposes the nav entry only for the matching vertical key', () => {
-    const nav = getVerticalNav('agenda')
-    expect(nav).toHaveLength(1)
-    expect(nav[0].href).toBe('/agenda')
-    expect(nav[0].labelKey).toBe('agenda')
-
-    expect(getVerticalNav('salon')).toEqual([])
-    expect(getVerticalNav(null)).toEqual([])
+  it('the agenda manifest carries its nav entry', () => {
+    const nav = getVerticalManifest('agenda')?.nav
+    expect(nav?.href).toBe('/agenda')
+    expect(nav?.labelKey).toBe('agenda')
   })
 })
 
@@ -43,16 +32,15 @@ describe('alias de la agenda', () => {
   it('la clave vieja barberia resuelve a la agenda', () => {
     expect(normalizeVerticalKey('barberia')).toBe('agenda')
     expect(getVerticalManifest('barberia')?.key).toBe('agenda')
-    expect(isAgendaVerticalKey('barberia')).toBe(true)
-    expect(isAgendaVerticalKey('agenda')).toBe(true)
+    expect(normalizeVerticalKey('agenda')).toBe('agenda')
   })
 
   it('claves desconocidas o vacías no son agenda', () => {
     expect(normalizeVerticalKey('tienda')).toBeNull()
     expect(normalizeVerticalKey('constructor')).toBeNull()
     expect(normalizeVerticalKey('__proto__')).toBeNull()
-    expect(isAgendaVerticalKey(null)).toBe(false)
-    expect(isAgendaVerticalKey('')).toBe(false)
+    expect(normalizeVerticalKey(null)).toBeNull()
+    expect(normalizeVerticalKey('')).toBeNull()
   })
 })
 

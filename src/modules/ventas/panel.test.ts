@@ -6,6 +6,8 @@ import {
   SUMMARY_LIMIT,
   SUMMARY_ORDER_COLUMNS,
   actionOutcome,
+  contactFilterFrom,
+  contactFilterLabel,
   ventasUrlWithout,
   availableOrderActions,
   isSummaryTruncated,
@@ -410,9 +412,27 @@ describe('salesErrorMessage', () => {
   it('traduce los códigos conocidos a mensajes amables', () => {
     expect(salesErrorMessage({ status: 403, code: 'forbidden', error: 'x' })).toBe(T.errors.forbidden)
     expect(salesErrorMessage({ status: 409, code: 'module_inactive', error: 'x' })).toBe(T.errors.moduleOff)
-    expect(salesErrorMessage({ status: 404, code: 'not_found', error: 'x' })).toBe(T.errors.notFound)
     expect(salesErrorMessage({ status: 409, code: 'stale', error: 'x' })).toBe(T.errors.stale)
     expect(salesErrorMessage({ status: 401, code: 'unauthorized', error: 'x' })).toBe(T.errors.session)
+  })
+
+  it('not_found: el mensaje del servidor dice qué falta (pedido, o contacto al crear)', () => {
+    expect(
+      salesErrorMessage({
+        status: 404,
+        code: 'not_found',
+        error: 'El contacto o la conversación no existe en tu cuenta.',
+      }),
+    ).toBe('El contacto o la conversación no existe en tu cuenta.')
+    expect(salesErrorMessage({ status: 404, code: 'not_found', error: 'No encontramos ese pedido.' })).toBe(
+      'No encontramos ese pedido.',
+    )
+  })
+
+  it('not_found sin mensaje: al crear habla del contacto; si no, del pedido', () => {
+    expect(salesErrorMessage({ status: 404, code: 'not_found' }, 'create')).toBe(T.errors.contactGone)
+    expect(salesErrorMessage({ status: 404, code: 'not_found' })).toBe(T.errors.notFound)
+    expect(T.errors.contactGone).toBe('El contacto o la conversación ya no existe en tu cuenta.')
   })
 
   it('el módulo apagado también llega sin código (guarda genérica)', () => {
@@ -498,6 +518,36 @@ describe('orderNoticeLine: estado del último aviso en el pedido', () => {
 
   it('un valor raro en la base no rompe la pantalla', () => {
     expect(orderNoticeLine(order({ last_notice: 'otro' as never }))).toBeNull()
+  })
+})
+
+describe('filtro por contacto (?contacto=<uuid>)', () => {
+  const ID = '11111111-1111-4111-8111-111111111111'
+
+  it('lee solo un uuid válido', () => {
+    expect(contactFilterFrom(`contacto=${ID}`)).toBe(ID)
+    expect(contactFilterFrom(new URLSearchParams(`q=ana&contacto=${ID.toUpperCase()}`))).toBe(ID)
+    expect(contactFilterFrom('contacto=%2B573001234567')).toBeNull()
+    expect(contactFilterFrom('contacto=')).toBeNull()
+    expect(contactFilterFrom('')).toBeNull()
+  })
+
+  it('el nombre del chip sale de los pedidos cargados, nunca de la URL', () => {
+    const rows = [
+      order({ id: 'b', customer_name: 'Mariana Ospina', created_at: '2026-10-20T12:00:00Z' }),
+      order({ id: 'a', customer_name: 'Mariana O.', created_at: '2026-10-01T12:00:00Z' }),
+    ]
+    expect(contactFilterLabel(rows)).toBe(T.contactFilter.chip('Mariana Ospina'))
+    expect(contactFilterLabel([])).toBe(T.contactFilter.fallback)
+    expect(contactFilterLabel([order({ customer_name: '   ' })])).toBe(T.contactFilter.fallback)
+  })
+
+  it('cerrar el detalle conserva el filtro del contacto', () => {
+    expect(ventasUrlWithout(`contacto=${ID}&pedido=1001`, 'pedido')).toBe(`/ventas?contacto=${ID}`)
+  })
+
+  it('quitar el chip deja el resto', () => {
+    expect(ventasUrlWithout(`contacto=${ID}&pedido=1001`, 'contacto')).toBe('/ventas?pedido=1001')
   })
 })
 

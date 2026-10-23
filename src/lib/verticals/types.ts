@@ -12,12 +12,6 @@ import type { LucideIcon } from 'lucide-react'
 export type ModuleKey = 'agenda' | 'ventas'
 
 /**
- * Alias de `ModuleKey` para el código anterior a los módulos
- * combinables (migración 047: `accounts.vertical_key`, un solo valor).
- */
-export type VerticalKey = ModuleKey
-
-/**
  * Valores de `accounts.vertical_key` que cuentan como la agenda. 'barberia'
  * es la clave anterior a la migración 051: se acepta mientras el código
  * nuevo convive con cuentas aún sin migrar.

@@ -21,7 +21,12 @@ export interface OrderMutationResponse {
   notice: NoticeOutcome | null
 }
 
-async function call<T>(url: string, method: 'POST' | 'PATCH', body: unknown): Promise<SalesApiResult<T>> {
+async function call<T>(
+  url: string,
+  method: 'POST' | 'PATCH',
+  body: unknown,
+  context: 'create' | 'update' = 'update',
+): Promise<SalesApiResult<T>> {
   let res: Response
   try {
     res = await fetch(url, {
@@ -41,7 +46,7 @@ async function call<T>(url: string, method: 'POST' | 'PATCH', body: unknown): Pr
       ok: false,
       status: res.status,
       code,
-      message: salesErrorMessage({ status: res.status, code, error: payload?.error ?? null }),
+      message: salesErrorMessage({ status: res.status, code, error: payload?.error ?? null }, context),
     }
   }
   return { ok: true, data: payload }
@@ -49,7 +54,7 @@ async function call<T>(url: string, method: 'POST' | 'PATCH', body: unknown): Pr
 
 export const ventasApi = {
   createOrder: (body: ValidOrderCreate) =>
-    call<OrderMutationResponse>('/api/modules/ventas/orders', 'POST', body),
+    call<OrderMutationResponse>('/api/modules/ventas/orders', 'POST', body, 'create'),
 
   updateOrder: (
     id: string,

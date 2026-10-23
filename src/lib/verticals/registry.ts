@@ -32,10 +32,6 @@ export function normalizeVerticalKey(
   return Object.hasOwn(MANIFESTS, key) ? (key as ModuleKey) : null
 }
 
-export function isAgendaVerticalKey(key: string | null | undefined): boolean {
-  return normalizeVerticalKey(key) === 'agenda'
-}
-
 /**
  * Manifest for a `accounts.vertical_key` value. Unknown, empty, or
  * absent keys resolve to null — the account simply has no vertical.
@@ -46,22 +42,6 @@ export function getVerticalManifest(
 ): VerticalManifest | null {
   const normalized = normalizeVerticalKey(key)
   return normalized ? MANIFESTS[normalized] : null
-}
-
-export function listVerticals(): VerticalManifest[] {
-  return MODULE_ORDER.map((key) => MANIFESTS[key])
-}
-
-/**
- * Sidebar entries for the account's installed vertical. Empty when no
- * vertical is installed or the key is unknown — classic accounts render
- * no vertical nav at all.
- */
-export function getVerticalNav(
-  verticalKey: string | null | undefined,
-): VerticalNavItem[] {
-  const manifest = getVerticalManifest(verticalKey)
-  return manifest?.nav ? [manifest.nav] : []
 }
 
 /** Lo que se necesita de una cuenta para saber qué módulos tiene. */

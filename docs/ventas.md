@@ -131,9 +131,11 @@ Qué pasa al desactivar:
 - Desaparece el menú **Ventas**, el botón **Crear pedido** del inbox y
   la lista de pedidos del contacto. Si alguien entra a `/ventas` por URL
   ve «Módulo no habilitado».
-- La API responde **409** («El módulo de ventas no está activo para esta
-  cuenta.») y la función `create_order()` de la base también rechaza
-  pedidos nuevos.
+- La API responde **409** con el mensaje «El módulo Ventas no está
+  activo para esta cuenta.» y la función `create_order()` de la base
+  también rechaza pedidos nuevos. En pantalla, si una acción choca con
+  eso, el panel muestra su propio texto: «El módulo de ventas no está
+  activo para esta cuenta.»
 - **No se borra nada**: pedidos, líneas, ajustes y el pipeline «Ventas»
   se quedan. Si se vuelve a activar, todo aparece como estaba.
 - Los pedidos que estaban a medio camino no se pueden mover de estado
@@ -153,8 +155,10 @@ sección **«Pedidos de este contacto»**:
 - botón **Crear pedido**;
 - los **5 pedidos más recientes** del contacto, con número, total y
   estados. Cada uno abre su detalle en `/ventas?pedido=<número>`;
-- enlace **«Ver en Ventas»**, que abre `/ventas` con la búsqueda puesta
-  en el teléfono del contacto (`/ventas?q=<teléfono>`).
+- enlace **«Ver en Ventas»**, que abre `/ventas` mostrando solo los
+  pedidos de ese contacto (`/ventas?contacto=<id del contacto>`). En la
+  URL va el id interno del contacto, nunca su teléfono ni su nombre
+  (datos personales, Ley 1581).
 
 Un viewer ve la lista de pedidos, pero no el botón.
 
@@ -269,8 +273,13 @@ Búsqueda («Buscar por número, nombre o teléfono»):
 
 Enlaces directos:
 
-- `/ventas?q=<texto>` abre la pestaña con la búsqueda llena (lo usa
-  «Ver en Ventas» del inbox, con el teléfono del contacto).
+- `/ventas?contacto=<id del contacto>` muestra solo los pedidos de ese
+  contacto (lo usa «Ver en Ventas» del inbox). Arriba aparece un chip
+  «Pedidos de <nombre>» con una ✕ para quitar el filtro; el nombre sale
+  de los pedidos cargados, no de la URL. Al cerrar un detalle el filtro
+  se conserva.
+- `/ventas?q=<texto>` todavía llena la búsqueda si alguien lo escribe,
+  pero ningún enlace de la app lo genera.
 - `/ventas?pedido=<número>` abre el detalle de ese pedido, aunque no
   esté entre los 500 cargados. Al cerrar el detalle se quita del enlace.
 

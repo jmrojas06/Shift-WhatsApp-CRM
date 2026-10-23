@@ -183,6 +183,12 @@ CREATE POLICY sales_settings_delete ON sales_settings
 -- Los escritores del servidor (service_role / postgres, y las acciones
 -- de las FK como el SET NULL del contacto) no se afectan: current_user
 -- nunca es authenticated / anon ahí.
+--
+-- Aceptado a propósito: un agente puede escribir `last_notice`,
+-- `last_notice_error` e `id_number` de sus pedidos por PostgREST, sin
+-- más límite que los CHECK de la tabla. Son datos operativos (el estado
+-- del aviso y la cédula que el mismo agente captura), no afectan montos,
+-- estados ni el libro; es un riesgo aceptado por diseño.
 
 -- 6a) Importes, número, dueño, contacto y cliente: congelados. Un pedido
 -- mal armado se cancela y se crea otro.
@@ -249,6 +255,13 @@ BEGIN
 
     IF OLD.payment_status = 'paid' AND NEW.payment_status <> 'paid' THEN
       RAISE EXCEPTION 'a paid order cannot go back to pending'
+        USING ERRCODE = 'insufficient_privilege';
+    END IF;
+
+    -- Un pedido cancelado es final también para el pago: cobrarlo
+    -- después lo haría contar en "vendido este mes" sin ser venta.
+    IF OLD.status = 'cancelled' AND NEW.payment_status IS DISTINCT FROM OLD.payment_status THEN
+      RAISE EXCEPTION 'a cancelled order cannot change its payment status'
         USING ERRCODE = 'insufficient_privilege';
     END IF;
 
@@ -510,9 +523,9 @@ GRANT EXECUTE ON FUNCTION public.create_order(uuid,uuid,uuid,jsonb,numeric,boole
 -- ============================================================
 -- Validación manual (además de supabase/ci/verify-schema.sql):
 --
---   Activar Ventas en una cuenta (operador, SQL Editor):
---     UPDATE accounts SET modules = array_append(modules, 'ventas')
---     WHERE id = '<cuenta>' AND NOT ('ventas' = ANY(modules));
+--   Activar Ventas en una cuenta: usar la sentencia única de
+--   docs/ventas.md, sección «Activar» (conserva la agenda aunque
+--   `modules` esté vacío). No se repite aquí para que haya una sola.
 --
 --   Como AGENT (JWT vía PostgREST):
 --     POST /rest/v1/rpc/create_order { p_account_id, p_contact_id, … }

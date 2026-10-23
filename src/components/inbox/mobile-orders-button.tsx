@@ -32,14 +32,12 @@ const T = VENTAS_TEXTS.mobileOrders
 export interface MobileOrdersButtonProps {
   contactId: string
   contactName: string
-  contactPhone?: string | null
   conversationId: string | null
 }
 
 export function MobileOrdersButton({
   contactId,
   contactName,
-  contactPhone = null,
   conversationId,
 }: MobileOrdersButtonProps) {
   const { account, canSendMessages } = useAuth()
@@ -77,7 +75,6 @@ export function MobileOrdersButton({
               key={contactId}
               contactId={contactId}
               contactName={contactName}
-              contactPhone={contactPhone}
               conversationId={conversationId}
               withDivider={false}
             />
