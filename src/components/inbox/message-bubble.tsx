@@ -73,25 +73,47 @@ function failureReason(message: Message): string | null {
 function StatusIcon({
   status,
   title,
+  t,
 }: {
   status: Message["status"];
   /** Tooltip for the failed state — Meta's reason, when we have one. */
   title?: string | null;
+  t: ReturnType<typeof useTranslations>;
 }) {
+  // The ticks are the only delivery signal, so each carries a text label
+  // for screen readers (and a tooltip on desktop).
+  const icon = (label: string, node: React.ReactNode, tooltip?: string) => (
+    <span className="inline-flex" title={tooltip ?? label}>
+      {node}
+      <span className="sr-only">{label}</span>
+    </span>
+  );
   switch (status) {
     case "sending":
-      return <Clock className="h-3 w-3 text-muted-foreground" />;
+      return icon(
+        t("statusSending"),
+        <Clock aria-hidden="true" className="h-3 w-3 text-muted-foreground" />,
+      );
     case "sent":
-      return <Check className="h-3 w-3 text-muted-foreground" />;
+      return icon(
+        t("statusSent"),
+        <Check aria-hidden="true" className="h-3 w-3 text-muted-foreground" />,
+      );
     case "delivered":
-      return <CheckCheck className="h-3 w-3 text-muted-foreground" />;
+      return icon(
+        t("statusDelivered"),
+        <CheckCheck aria-hidden="true" className="h-3 w-3 text-muted-foreground" />,
+      );
     case "read":
-      return <CheckCheck className="h-3 w-3 text-info" />;
+      return icon(
+        t("statusRead"),
+        <CheckCheck aria-hidden="true" className="h-3 w-3 text-info" />,
+      );
     case "failed":
-      return (
-        <span className="inline-flex" title={title ?? undefined}>
-          <XCircle className="h-3 w-3 text-destructive" />
-        </span>
+      return icon(
+        t("notDelivered"),
+        <XCircle aria-hidden="true" className="h-3 w-3 text-destructive" />,
+        title ?? undefined,
       );
     default:
       return null;
@@ -175,8 +197,8 @@ function MessageContent({
       // fix for issue #483 rendered an empty bubble).
       return (
         <div>
-          <span className="mb-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium bg-primary/15 text-primary">
-            <LayoutTemplate className="h-3 w-3" />
+          <span className="mb-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium bg-primary/15 text-primary">
+            <LayoutTemplate aria-hidden="true" className="h-3 w-3" />
             {t("template")}
           </span>
           {message.content_text ? (
@@ -305,16 +327,16 @@ export function MessageBubble({
           )}
           <time
             dateTime={message.created_at}
-            className="text-[10px] tabular-nums text-muted-foreground"
+            className="text-[11px] tabular-nums text-muted-foreground"
           >
             {time}
           </time>
-          {isAgent && <StatusIcon status={message.status} title={failure} />}
+          {isAgent && <StatusIcon status={message.status} title={failure} t={t} />}
         </div>
       </div>
       {failure && (
         <p
-          className="mt-0.5 px-1 text-[10px] leading-tight text-muted-foreground"
+          className="mt-0.5 px-1 text-[11px] leading-tight text-muted-foreground"
           title={failure}
         >
           {t("notDelivered")}: {failure}

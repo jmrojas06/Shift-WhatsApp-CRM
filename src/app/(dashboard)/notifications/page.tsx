@@ -25,7 +25,7 @@ export default function NotificationsPage() {
   const [notifications, setNotifications] = useState<Notification[] | null>(
     null,
   );
-  const [error, setError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [markingAll, setMarkingAll] = useState(false);
 
   const load = useCallback(async () => {
@@ -38,9 +38,12 @@ export default function NotificationsPage() {
       .order("created_at", { ascending: false })
       .limit(100);
     if (fetchErr) {
-      setError(fetchErr.message);
+      // The database's own message is for logs, not for the person.
+      console.error("Failed to fetch notifications:", fetchErr.message);
+      setLoadFailed(true);
       return;
     }
+    setLoadFailed(false);
     setNotifications((data ?? []) as Notification[]);
   }, [accountId]);
 
@@ -144,11 +147,22 @@ export default function NotificationsPage() {
     }
   }, [unreadIds.length, load, t]);
 
-  if (error) {
+  // A failed refresh keeps the list that is already on screen; the full-page
+  // error is only for when there is nothing to show.
+  if (loadFailed && notifications === null) {
     return (
-      <div className="flex h-64 flex-col items-center justify-center gap-2">
-        <p className="text-sm text-destructive">{error}</p>
-        <Button variant="outline" onClick={() => window.location.reload()}>
+      <div
+        role="alert"
+        className="flex h-64 flex-col items-center justify-center gap-3 px-4 text-center"
+      >
+        <p className="text-sm text-destructive">{t("loadFailed")}</p>
+        <Button
+          variant="outline"
+          onClick={() => {
+            setLoadFailed(false);
+            void load();
+          }}
+        >
           {t("retry")}
         </Button>
       </div>
@@ -253,10 +267,14 @@ export default function NotificationsPage() {
                         {n.title}
                       </span>
                       {isUnread && (
-                        <span
-                          aria-label={t("unread")}
-                          className="h-2 w-2 flex-shrink-0 rounded-full bg-primary"
-                        />
+                        <>
+                          <span
+                            aria-hidden="true"
+                            className="h-2 w-2 flex-shrink-0 rounded-full bg-primary"
+                          />
+                          {/* aria-label is ignored on a plain span. */}
+                          <span className="sr-only">{t("unread")}</span>
+                        </>
                       )}
                     </div>
                     {n.body && (

@@ -186,7 +186,9 @@ export function AiThreadBanner({
             {botOnly ? t("botPausedTitle") : t("pausedTitle")}
           </p>
           {handoffSummary && (
-            <p className="truncate text-muted-foreground" title={handoffSummary}>
+            // The note says why the bot stopped: up to 3 lines (a tooltip
+            // does not exist on a phone), not one cut-off line.
+            <p className="line-clamp-3 break-words text-muted-foreground" title={handoffSummary}>
               {handoffSummary}
             </p>
           )}
@@ -202,7 +204,7 @@ export function AiThreadBanner({
   return (
     <Banner tone="primary">
       <div className="flex min-w-0 flex-1 items-center gap-1.5">
-        <Sparkles className="h-3.5 w-3.5 flex-shrink-0 text-primary" />
+        <Sparkles aria-hidden="true" className="h-3.5 w-3.5 flex-shrink-0 text-primary" />
         <span className="truncate font-medium text-foreground">
           {t("activeText")}
         </span>

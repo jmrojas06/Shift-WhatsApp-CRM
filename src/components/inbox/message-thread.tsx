@@ -24,6 +24,7 @@ import {
   Check,
   Clock,
   ArrowLeft,
+  ChevronRight,
   RefreshCw,
   PanelRightOpen,
   PanelRightClose,
@@ -31,6 +32,12 @@ import {
 import { format, isToday, isYesterday, differenceInHours } from "date-fns";
 import { useFormatter, useTranslations } from "next-intl";
 import { Badge } from "@/components/ui/badge";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -51,6 +58,7 @@ import { deleteAccountMedia } from "@/lib/storage/upload-media";
 import { TemplatePicker } from "./template-picker";
 import { AiThreadBanner } from "./ai-thread-banner";
 import { MobileOrdersButton } from "./mobile-orders-button";
+import { ContactSidebar } from "./contact-sidebar";
 import { buildReplyPreview } from "./reply-quote";
 import { renderTemplateBody } from "@/lib/whatsapp/template-body";
 import { contactHandle } from "@/lib/whatsapp/wa-identity";
@@ -198,12 +206,21 @@ export function MessageThread({
   const t = useTranslations("Inbox.messageThread");
   const tTimer = useTranslations("Inbox.sessionTimer");
   const tQuote = useTranslations("Inbox.replyQuote");
+  const tSidebar = useTranslations("Inbox.sidebar");
   const formatter = useFormatter();
 
   const { user } = useAuth();
   const { getPresence, getRow, now } = usePresence();
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  // Whether the reader is parked at the end of the thread. Only then do new
+  // messages (or images finishing their load, or the keyboard resizing the
+  // box) pull the view down; someone reading older messages is left alone.
+  const stickToBottomRef = useRef(true);
+  const lastMessageIdRef = useRef<string | null>(null);
+  // Phones have no side panel: the contact's info opens as a bottom sheet.
+  const [contactSheetOpen, setContactSheetOpen] = useState(false);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [reactions, setReactions] = useState<MessageReaction[]>([]);
@@ -487,13 +504,58 @@ export function MessageThread({
       });
   }, [conversationId, hasUnread]);
 
-  // Auto-scroll to bottom on new messages
+  // ---- Scroll: follow the end of the thread, but never fight the reader ----
+  //
+  // Before, every change to `messages` (including a delivery tick flipping
+  // from "sent" to "read") jumped to the bottom, so scrolling up to read
+  // history got yanked back. Now the view only follows when the reader is
+  // already at (or near) the bottom, when they just sent something, and
+  // when a thread is first opened.
+  const scrollToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, []);
+
+  const handleMessagesScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    stickToBottomRef.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight < 96;
+  }, []);
+
+  // A different thread starts pinned to its last message.
   useEffect(() => {
-    if (scrollRef.current) {
-      const el = scrollRef.current;
-      el.scrollTop = el.scrollHeight;
+    stickToBottomRef.current = true;
+    lastMessageIdRef.current = null;
+  }, [conversationId]);
+
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    const lastId = last?.id ?? null;
+    // The agent just sent something (optimistic bubble): show it even if
+    // they had scrolled up.
+    if (last && lastId !== lastMessageIdRef.current && last.id.startsWith("temp-")) {
+      stickToBottomRef.current = true;
     }
-  }, [messages]);
+    lastMessageIdRef.current = lastId;
+    if (stickToBottomRef.current) scrollToBottom();
+  }, [messages, scrollToBottom]);
+
+  // Content can grow after the message list rendered (an image or video
+  // finishing its load) and the box can shrink (the on-screen keyboard):
+  // keep the last message in view in both cases while pinned.
+  const hasMessages = messages.length > 0;
+  useEffect(() => {
+    const content = contentRef.current;
+    const box = scrollRef.current;
+    if (!content || !box || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (stickToBottomRef.current) scrollToBottom();
+    });
+    observer.observe(content);
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [conversationId, hasMessages, scrollToBottom]);
 
   const handleSend = useCallback(
     async (text: string, replyToId?: string) => {
@@ -955,8 +1017,28 @@ export function MessageThread({
           >
             {displayName.charAt(0).toUpperCase()}
           </div>
-          <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold text-foreground">{displayName}</h2>
+          <div className="relative min-w-0">
+            {/* On phones the name opens the contact's info (there is no side
+                panel below lg); `after:` stretches the tap area to ~52px.
+                From lg up the panel exists, so it is plain text. */}
+            <h2 className="text-sm font-semibold text-foreground lg:hidden">
+              <button
+                type="button"
+                onClick={() => setContactSheetOpen(true)}
+                aria-haspopup="dialog"
+                aria-label={t("openContactInfo", { name: displayName })}
+                className="inline-flex max-w-full items-center gap-0.5 rounded-md text-left outline-none after:absolute after:-inset-y-2 after:inset-x-0 focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                <span className="min-w-0 truncate">{displayName}</span>
+                <ChevronRight
+                  aria-hidden="true"
+                  className="size-3.5 shrink-0 text-muted-foreground"
+                />
+              </button>
+            </h2>
+            <h2 className="hidden truncate text-sm font-semibold text-foreground lg:block">
+              {displayName}
+            </h2>
             <p className="truncate text-xs text-muted-foreground">
               {contactHandle(contact)}
             </p>
@@ -1149,8 +1231,18 @@ export function MessageThread({
       </div>
 
       {/* Messages Area */}
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-4">
-        {loading ? (
+      <div
+        ref={scrollRef}
+        onScroll={handleMessagesScroll}
+        role="log"
+        aria-label={t("messagesLabel")}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-4 sm:px-4"
+      >
+        {/* Full-area spinner only while there is nothing to show yet. A
+            refetch of a thread that is already on screen (tab regains focus,
+            realtime reconnect, manual refresh) swaps in the new rows silently
+            instead of blanking the list and losing the scroll position. */}
+        {loading && messages.length === 0 ? (
           <div className="flex items-center justify-center py-12" role="status">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
             <span className="sr-only">{t("loadingMessages")}</span>
@@ -1163,7 +1255,7 @@ export function MessageThread({
             </p>
           </div>
         ) : (
-          <div className="space-y-4">
+          <div ref={contentRef} className="space-y-4">
             {messageGroups.map((group) => (
               <div key={group.date}>
                 {/* Date separator */}
@@ -1180,10 +1272,9 @@ export function MessageThread({
                       : null;
                     const reply = parent
                       ? {
-                          authorLabel:
-                            parent.sender_type === "agent" || parent.sender_type === "bot"
-                              ? t("me") 
-                              : contact?.name || contact?.phone || t("unknown"),
+                          // "Tú" for our own messages (the "me" string is the
+                          // " (yo)" suffix for the assignee list, not a label).
+                          authorLabel: authorLabelFor(parent),
                           preview: buildReplyPreview(parent, tQuote),
                         }
                       : null;
@@ -1259,6 +1350,23 @@ export function MessageThread({
         onOpenChange={setTemplateModalOpen}
         onSelect={handleSendTemplate}
       />
+
+      {/* Contact info as a bottom sheet — phones only (lg+ has the panel). */}
+      <Sheet open={contactSheetOpen} onOpenChange={setContactSheetOpen}>
+        <SheetContent
+          side="bottom"
+          className="max-h-[85dvh] overflow-y-auto overscroll-contain rounded-t-xl pb-[max(1rem,env(safe-area-inset-bottom))] lg:hidden"
+        >
+          <SheetHeader className="pr-14">
+            <SheetTitle>{tSidebar("contactInfo")}</SheetTitle>
+          </SheetHeader>
+          <ContactSidebar
+            variant="sheet"
+            contact={contact}
+            conversationId={conversation.id}
+          />
+        </SheetContent>
+      </Sheet>
 
       {/* Full-size viewer for the thread's images/videos. Renders nothing
           until a bubble opens it. */}

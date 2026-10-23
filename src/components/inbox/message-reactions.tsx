@@ -60,7 +60,9 @@ export function MessageReactions({
           onClick={() => onToggle(g.emoji)}
           aria-pressed={g.byCurrentUser}
           className={cn(
-            "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px] leading-none transition-colors",
+            // 36px minimum on touch: a pill of this size is the most that
+            // fits under a bubble without crowding the next message.
+            "inline-flex items-center justify-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px] leading-none outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-9 pointer-coarse:min-w-9 pointer-coarse:px-2.5",
             g.byCurrentUser
               ? "border-primary/60 bg-primary/15 text-primary hover:bg-primary/25"
               : "border-border bg-muted/80 text-foreground hover:bg-muted",
