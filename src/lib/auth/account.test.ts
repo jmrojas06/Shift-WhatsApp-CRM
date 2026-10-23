@@ -66,9 +66,9 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: () => createClient(),
 }));
 
-const { getCurrentAccount, UnauthorizedError, ForbiddenError } = await import(
-  "./account"
-);
+const { getCurrentAccount, toErrorResponse, UnauthorizedError, ForbiddenError } =
+  await import("./account");
+const { ModuleNotActiveError } = await import("@/lib/modules/errors");
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -172,5 +172,31 @@ describe("getCurrentAccount", () => {
     await expect(getCurrentAccount()).rejects.toThrow(
       "Profile is not linked to an account",
     );
+  });
+});
+
+describe("toErrorResponse", () => {
+  it("answers 401 / 403 for the typed auth errors", async () => {
+    const unauthorized = toErrorResponse(new UnauthorizedError());
+    expect(unauthorized.status).toBe(401);
+    const forbidden = toErrorResponse(new ForbiddenError("no"));
+    expect(forbidden.status).toBe(403);
+    expect(await forbidden.json()).toEqual({ error: "no" });
+  });
+
+  it("answers 409 with the Spanish message for an inactive module, even if the route forgot toModuleErrorResponse", async () => {
+    const res = toErrorResponse(new ModuleNotActiveError("ventas"));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: "El módulo Ventas no está activo para esta cuenta.",
+    });
+  });
+
+  it("still hides the message of unclassified errors", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = toErrorResponse(new Error("secret internals"));
+    expect(res.status).toBe(500);
+    expect(JSON.stringify(await res.json())).not.toContain("secret");
+    consoleError.mockRestore();
   });
 });

@@ -36,15 +36,23 @@ interface FakeDb {
 type FilterKind = 'eq' | 'in' | 'lt' | 'lte' | 'gt' | 'gte' | 'is' | 'or'
 
 /**
- * `.or('vertical_key.in.(a,b),modules.cs.{a}')` como PostgREST: una fila
- * pasa si cumple alguna condición. Solo soporta `in` y `cs` (array contiene).
+ * `.or(...)` como PostgREST: una fila pasa si cumple alguna condición.
+ * Soporta `col.cs.{a}` (array contiene) y
+ * `and(modules.eq.{},col.in.(a,b))` (modules vacío y col en la lista).
  */
 function matchesOr(row: Row, expr: string): boolean {
   const conditions: boolean[] = []
-  for (const m of expr.matchAll(/(\w+)\.in\.\(([^)]*)\)/g)) {
-    conditions.push(m[2].split(',').includes(String(row[m[1]])))
-  }
-  for (const m of expr.matchAll(/(\w+)\.cs\.\{([^}]*)\}/g)) {
+  const rest = expr.replace(
+    /and\(modules\.eq\.\{\},(\w+)\.in\.\(([^)]*)\)\)/g,
+    (_all, col: string, list: string) => {
+      const modules = Array.isArray(row.modules) ? (row.modules as string[]) : []
+      conditions.push(
+        modules.length === 0 && list.split(',').includes(String(row[col])),
+      )
+      return ''
+    },
+  )
+  for (const m of rest.matchAll(/(\w+)\.cs\.\{([^}]*)\}/g)) {
     const have = Array.isArray(row[m[1]]) ? (row[m[1]] as string[]) : []
     conditions.push(m[2].split(',').every((k) => have.includes(k)))
   }
@@ -54,6 +62,8 @@ function matchesOr(row: Row, expr: string): boolean {
 interface FakeDbOptions {
   /** Simula una base sin la migración 053: filtrar por `modules` falla. */
   modulesColumnMissing?: boolean
+  /** El `.or(...)` no filtra nada: prueba el refiltrado en código. */
+  orMatchesEverything?: boolean
 }
 
 function makeFakeDb(
@@ -95,7 +105,9 @@ function makeFakeDb(
           case 'is':
             return v === value
           case 'or':
-            return matchesOr(row, value as string)
+            return options.orMatchesEverything
+              ? true
+              : matchesOr(row, value as string)
         }
       })
 
@@ -694,6 +706,33 @@ describe('runAgendaReminders', () => {
       expect(summary.sent).toBe(1)
     })
 
+    it('modules manda sobre vertical_key: ventas + vertical_key agenda no es agenda', async () => {
+      const seed = baseSeed()
+      seed.accounts[0].vertical_key = 'agenda'
+      seed.accounts[0].modules = ['ventas']
+      const { summary } = await run(seed)
+      expect(summary.accounts).toBe(0)
+      expect(summary.sent).toBe(0)
+    })
+
+    it('modules con la clave vieja barberia cuenta como agenda', async () => {
+      const seed = baseSeed()
+      seed.accounts[0].vertical_key = null
+      seed.accounts[0].modules = ['barberia']
+      const { summary } = await run(seed)
+      expect(summary.accounts).toBe(1)
+      expect(summary.sent).toBe(1)
+    })
+
+    it('aunque el filtro de la base dejara pasar de más, el código refiltra con la misma regla', async () => {
+      const seed = baseSeed()
+      seed.accounts[0].vertical_key = 'agenda'
+      seed.accounts[0].modules = ['ventas']
+      const { summary } = await run(seed, { orMatchesEverything: true })
+      expect(summary.accounts).toBe(0)
+      expect(summary.sent).toBe(0)
+    })
+
     it('no toca una cuenta que solo tiene ventas', async () => {
       const seed = baseSeed()
       seed.accounts[0].vertical_key = null
@@ -708,6 +747,13 @@ describe('runAgendaReminders', () => {
       expect(summary.accounts).toBe(1)
       expect(summary.sent).toBe(1)
       expect(db._ors).toHaveLength(1)
+    })
+
+    it('el filtro de la base sigue la regla de getAccountModules', async () => {
+      const { db } = await run(baseSeed())
+      expect(db._ors).toEqual([
+        'modules.cs.{agenda},modules.cs.{barberia},and(modules.eq.{},vertical_key.in.(agenda,barberia))',
+      ])
     })
   })
 

@@ -522,13 +522,21 @@ BEGIN
   IF NOT public.valid_module_keys(ARRAY['agenda', 'ventas'])
      OR public.valid_module_keys(ARRAY['Ventas'])
      OR public.valid_module_keys(ARRAY['con espacio'])
+     OR NOT public.valid_module_keys(ARRAY[]::text[])
   THEN
     RAISE EXCEPTION
       'valid_module_keys does not enforce the module key shape — migration 053 did not apply';
   END IF;
 
+  -- bool_and ignores NULLs, so a NULL element would slip through a naive
+  -- check: the function must reject it explicitly.
+  IF public.valid_module_keys(ARRAY[NULL]::text[]) IS DISTINCT FROM false THEN
+    RAISE EXCEPTION
+      'valid_module_keys accepts a NULL element — migration 053 did not apply';
+  END IF;
+
   IF pg_get_functiondef('public.enforce_account_protected_columns()'::regprocedure)
-       NOT LIKE '%modules%'
+       NOT LIKE '%NEW.modules IS DISTINCT FROM OLD.modules%'
   THEN
     RAISE EXCEPTION
       'enforce_account_protected_columns does not protect accounts.modules — migration 053 did not apply';

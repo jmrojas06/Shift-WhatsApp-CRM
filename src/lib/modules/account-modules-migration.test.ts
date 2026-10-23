@@ -39,6 +39,16 @@ describe('053_account_modules.sql', () => {
     )
   })
 
+  it('la función rechaza elementos NULL y no depende del search_path', () => {
+    const fn = code.match(
+      /CREATE OR REPLACE FUNCTION public\.valid_module_keys[\s\S]*?\$\$;/,
+    )?.[0]
+    expect(fn).toBeDefined()
+    expect(fn).toMatch(/bool_and\(k IS NOT NULL AND k ~ '\^\[a-z0-9_-\]\{1,40\}\$'\)/)
+    expect(fn).toMatch(/SET search_path = pg_catalog/)
+    expect(fn).toMatch(/IMMUTABLE/)
+  })
+
   it('el backfill pasa agenda/barberia a modules sin duplicar al re-correr', () => {
     expect(code).toMatch(
       /UPDATE accounts SET modules = array_append\(modules, 'agenda'\)\s*WHERE vertical_key IN \('agenda', 'barberia'\) AND NOT \('agenda' = ANY\(modules\)\)/,
@@ -85,7 +95,11 @@ describe('verify-schema.sql (053)', () => {
     expect(sql).toContain("conname = 'accounts_modules_check'")
     expect(sql).toContain("to_regprocedure('public.valid_module_keys(text[])')")
     expect(sql).toContain("pg_get_functiondef('public.enforce_account_protected_columns()'::regprocedure)")
-    expect(sql).toContain("NOT LIKE '%modules%'")
+    expect(sql).toContain("NOT LIKE '%NEW.modules IS DISTINCT FROM OLD.modules%'")
+  })
+
+  it('comprueba que valid_module_keys rechaza un elemento NULL', () => {
+    expect(sql).toContain('public.valid_module_keys(ARRAY[NULL]::text[]) IS DISTINCT FROM false')
   })
 
   it('sigue siendo UN solo statement (un único bloque DO)', () => {

@@ -25,6 +25,8 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { isUndefinedColumnError } from '@/lib/modules/undefined-column'
+import { hasModule, type AccountModulesSource } from '@/lib/verticals/registry'
 import { AGENDA_VERTICAL_KEYS } from '@/lib/verticals/types'
 
 import { DEFAULT_LABELS, readLabels, type AgendaLabels } from '../labels'
@@ -297,28 +299,40 @@ async function hasRecentCustomerMessage(
   return ((data ?? []) as unknown[]).length > 0
 }
 
-/** Postgres `undefined_column`: la migración de esa columna aún no corre. */
-const UNDEFINED_COLUMN = '42703'
-
 /**
- * Cuentas con el módulo agenda: `modules` contiene 'agenda' **o**
- * `vertical_key` es 'agenda' / 'barberia' (cuentas sin `modules`, sea
- * porque 053 backfilleó solo parte o porque aún no corre). Una sola
- * consulta con `.or(...)`; si la columna `modules` no existe todavía
- * (42703) repite con `vertical_key`, para que el cron siga recordando
- * antes de aplicar 053.
+ * Cuentas con el módulo agenda, con la misma regla que
+ * `getAccountModules`: `modules` decide cuando trae algo (contiene
+ * 'agenda' o su alias 'barberia'); `vertical_key` ('agenda' / 'barberia')
+ * solo cuenta cuando `modules` está vacío.
+ *
+ * Una consulta con `.or(...)` y, por seguridad, las filas se vuelven a
+ * filtrar en código con `hasModule` (así el filtro de la base nunca
+ * puede ampliar la regla). Si la columna `modules` no existe todavía
+ * (migración 053 sin aplicar) repite con `vertical_key`, para que el
+ * cron siga recordando.
  */
 async function readAgendaAccounts(db: SupabaseClient) {
   const verticalKeys = AGENDA_VERTICAL_KEYS.join(',')
   const result = await db
     .from('accounts')
-    .select('id, name, owner_user_id')
-    .or(`vertical_key.in.(${verticalKeys}),modules.cs.{agenda}`)
-  if (result.error?.code !== UNDEFINED_COLUMN) return result
-  return db
-    .from('accounts')
-    .select('id, name, owner_user_id')
-    .in('vertical_key', [...AGENDA_VERTICAL_KEYS])
+    .select('id, name, owner_user_id, modules, vertical_key')
+    .or(
+      `${AGENDA_VERTICAL_KEYS.map((k) => `modules.cs.{${k}}`).join(',')},` +
+        `and(modules.eq.{},vertical_key.in.(${verticalKeys}))`,
+    )
+  const fallback = isUndefinedColumnError(result.error)
+    ? await db
+        .from('accounts')
+        .select('id, name, owner_user_id, vertical_key')
+        .in('vertical_key', [...AGENDA_VERTICAL_KEYS])
+    : result
+  if (fallback.error) return { data: null, error: fallback.error }
+  const rows = (fallback.data ?? []) as (AccountRow &
+    AccountModulesSource)[]
+  return {
+    data: rows.filter((row) => hasModule(row, 'agenda')),
+    error: null,
+  }
 }
 
 export interface ReminderRunSummary {

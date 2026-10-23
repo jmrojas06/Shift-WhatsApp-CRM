@@ -13,6 +13,7 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import type { User } from "@supabase/supabase-js";
 import { DEFAULT_CURRENCY } from "@/lib/currency";
+import { selectAccountWithFallback } from "@/lib/modules/account-select";
 import {
   canEditSettings as canEditSettingsFor,
   canManageMembers as canManageMembersFor,
@@ -252,31 +253,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // account name lookup itself can't.
         let accountRow: AccountSummary | null = null;
         if (data.account_id) {
-          // Column lists from newest to oldest schema. A deployment that
-          // lags its migration (053 adds `modules`, 047 `vertical_key`)
-          // retries with the next shorter list on 42703 so the account
-          // strip keeps working until the migration is applied.
-          const accountSelects = [
-            "id, name, default_currency, vertical_key, modules",
-            "id, name, default_currency, vertical_key",
-            "id, name, default_currency",
-          ];
-          let accountRes = await supabase
-            .from("accounts")
-            .select(accountSelects[0])
-            .eq("id", data.account_id)
-            .maybeSingle();
-          for (
-            let i = 1;
-            accountRes.error?.code === "42703" && i < accountSelects.length;
-            i++
-          ) {
-            accountRes = await supabase
-              .from("accounts")
-              .select(accountSelects[i])
-              .eq("id", data.account_id)
-              .maybeSingle();
-          }
+          // Falls back to shorter column lists while a deployment lags
+          // its migration (053 `modules`, 047 `vertical_key`).
+          const accountRes = await selectAccountWithFallback(
+            supabase,
+            data.account_id,
+          );
           const account = accountRes.data as unknown as AccountRow | null;
           const accountErr = accountRes.error;
           if (accountErr) {

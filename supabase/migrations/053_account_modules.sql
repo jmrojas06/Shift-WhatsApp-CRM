@@ -26,10 +26,14 @@
 -- el candado de la tabla: reintentar más tarde.
 SET LOCAL lock_timeout = '5s';
 
--- Clave de módulo válida (misma forma que vertical_key).
+-- Clave de módulo válida (misma forma que vertical_key). Un elemento NULL
+-- no es válido (bool_and ignora los NULL, por eso se pregunta aparte), y
+-- el search_path fijo evita que la función dependa de la sesión.
 CREATE OR REPLACE FUNCTION public.valid_module_keys(keys text[])
-RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
-  SELECT coalesce(bool_and(k ~ '^[a-z0-9_-]{1,40}$'), true) FROM unnest(keys) AS k
+RETURNS boolean LANGUAGE sql IMMUTABLE
+SET search_path = pg_catalog
+AS $$
+  SELECT coalesce(bool_and(k IS NOT NULL AND k ~ '^[a-z0-9_-]{1,40}$'), true) FROM unnest(keys) AS k
 $$;
 
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS modules text[] NOT NULL DEFAULT '{}';

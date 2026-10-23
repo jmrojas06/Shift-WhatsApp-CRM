@@ -1,10 +1,15 @@
 import { NextResponse } from 'next/server'
 
 import { toErrorResponse, type AccountContext } from '@/lib/auth/account'
-import { getVerticalManifest, hasModule } from '@/lib/verticals/registry'
+import { hasModule } from '@/lib/verticals/registry'
 import type { ModuleKey } from '@/lib/verticals/types'
 
+import { ModuleNotActiveError, moduleNotActiveMessage } from './errors'
 import { readAccountModules } from './read-account-modules'
+
+// El error y el mensaje viven en ./errors (para que toErrorResponse los
+// reconozca sin ciclo); se reexportan aquí porque es lo que importan las rutas.
+export { ModuleNotActiveError, moduleNotActiveMessage }
 
 // ============================================================
 // Guarda server-side: la cuenta del que llama tiene un módulo activo.
@@ -24,22 +29,6 @@ import { readAccountModules } from './read-account-modules'
 // no activo (nunca se actúa a ciegas).
 // ============================================================
 
-/** "El módulo Ventas no está activo para esta cuenta." */
-export function moduleNotActiveMessage(key: ModuleKey): string {
-  const name = getVerticalManifest(key)?.name ?? key
-  return `El módulo ${name} no está activo para esta cuenta.`
-}
-
-export class ModuleNotActiveError extends Error {
-  readonly status = 409 as const
-  readonly moduleKey: ModuleKey
-  constructor(moduleKey: ModuleKey) {
-    super(moduleNotActiveMessage(moduleKey))
-    this.name = 'ModuleNotActiveError'
-    this.moduleKey = moduleKey
-  }
-}
-
 export async function requireModule(
   ctx: Pick<AccountContext, 'supabase' | 'accountId'>,
   key: ModuleKey,
@@ -57,7 +46,8 @@ export async function requireModule(
 
 /**
  * Como `toErrorResponse`, pero un módulo inactivo responde 409 con su
- * mensaje en español. Todo lo demás se delega.
+ * mensaje en español. Todo lo demás se delega. (`toErrorResponse` ya
+ * reconoce este error; esta función lo deja explícito en la ruta.)
  */
 export function toModuleErrorResponse(err: unknown): NextResponse {
   if (err instanceof ModuleNotActiveError) {

@@ -348,6 +348,55 @@ describe('dispatchInboundToVertical', () => {
       expect(dbState.handlerCalls).toHaveLength(0)
     })
 
+    it('con modules [agenda, ventas] un hilo con humano llega al bot como humanOwned y no reclama el resto', async () => {
+      const humanThread = {
+        data: { assigned_agent_id: 'agent-9', ai_autoreply_disabled: false },
+        error: null,
+      }
+      dbState.responses = {
+        accounts: {
+          data: { modules: ['agenda', 'ventas'], vertical_key: null },
+          error: null,
+        },
+        conversations: humanThread,
+        booking_sessions: {
+          data: {
+            id: 'sess-1',
+            state: {},
+            expires_at: '2099-01-01T00:00:00.000Z',
+          },
+          error: null,
+        },
+      }
+      await expect(dispatchInboundToVertical(baseArgs)).resolves.toEqual({
+        consumed: false,
+      })
+      expect(dbState.handlerCalls).toHaveLength(1)
+      expect(dbState.handlerCalls[0].humanOwned).toBe(true)
+
+      dbState.handlerResult = { consumed: true }
+      await expect(dispatchInboundToVertical(baseArgs)).resolves.toEqual({
+        consumed: true,
+      })
+    })
+
+    it('una cuenta solo con ventas y un hilo con humano tampoco consume', async () => {
+      dbState.responses = {
+        accounts: {
+          data: { modules: ['ventas'], vertical_key: null },
+          error: null,
+        },
+        conversations: {
+          data: { assigned_agent_id: 'agent-9', ai_autoreply_disabled: false },
+          error: null,
+        },
+      }
+      await expect(dispatchInboundToVertical(baseArgs)).resolves.toEqual({
+        consumed: false,
+      })
+      expect(dbState.handlerCalls).toHaveLength(0)
+    })
+
     it('modules vacío cae a vertical_key', async () => {
       dbState.responses = {
         accounts: {

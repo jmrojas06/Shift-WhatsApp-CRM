@@ -2,8 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import type { AccountModulesSource } from '@/lib/verticals/registry'
 
-/** Postgres `undefined_column`: la migración de esa columna aún no corre. */
-const UNDEFINED_COLUMN = '42703'
+import { isUndefinedColumnError } from './undefined-column'
 
 export interface AccountModulesRead {
   account: AccountModulesSource | null
@@ -16,7 +15,7 @@ export interface AccountModulesRead {
  * `vertical_key`) con el cliente recibido.
  *
  * Tolera una base sin la migración 053: si `modules` no existe todavía
- * (42703), repite la lectura solo con `vertical_key` — el código nuevo
+ * (columna ausente), repite la lectura solo con `vertical_key` — el código nuevo
  * puede desplegarse antes que la migración sin romper la agenda.
  */
 export async function readAccountModules(
@@ -28,7 +27,7 @@ export async function readAccountModules(
     .select('modules, vertical_key')
     .eq('id', accountId)
     .maybeSingle()
-  if (first.error?.code !== UNDEFINED_COLUMN) {
+  if (!isUndefinedColumnError(first.error)) {
     return {
       account: (first.data as AccountModulesSource | null) ?? null,
       error: first.error ?? null,
