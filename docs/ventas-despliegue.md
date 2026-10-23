@@ -296,7 +296,32 @@ Qué cambia en la práctica:
 Cuenta de pruebas: **Barbería Élite**,
 `206d8a50-1fb4-44ab-9633-a02a2e07185b` (tiene agenda).
 
-1. Mira cómo está:
+0. **Chequeo previo: ninguna cuenta con `vertical_key` y `modules`
+   vacío.** El código lee `modules` primero y solo mira `vertical_key`
+   si `modules` está vacío; una cuenta así es la que podría perder la
+   agenda al recibir otro módulo. Esta consulta debe devolver **0
+   filas** antes de activar Ventas en cualquier cuenta:
+
+   ```sql
+   select id, name, vertical_key, modules
+   from accounts
+   where vertical_key is not null
+     and modules = '{}';
+   ```
+
+   Si devuelve filas de agenda (`agenda` o `barberia`), corrige con la
+   misma regla del relleno de la 053 (idempotente) y repite la consulta:
+
+   ```sql
+   update accounts set modules = array_append(modules, 'agenda')
+   where vertical_key in ('agenda', 'barberia')
+     and not ('agenda' = any(modules));
+   ```
+
+   Si devuelve una fila con otro `vertical_key`, no sigas: revisa esa
+   cuenta a mano.
+
+1. Mira cómo está la cuenta smoke:
 
    ```sql
    select id, name, vertical_key, modules, default_currency
@@ -304,23 +329,23 @@ Cuenta de pruebas: **Barbería Élite**,
    where id = '206d8a50-1fb4-44ab-9633-a02a2e07185b';
    ```
 
-   `modules` debe traer `agenda` (del relleno de la 053). Si sale `{}`,
-   corre primero esto, o la cuenta **perdería la agenda** al activar
-   Ventas (ver `docs/ventas.md` → «Activar»):
+   `modules` debe traer `agenda` (del relleno de la 053).
+
+2. Activa Ventas con la sentencia que conserva la agenda (explicada en
+   `docs/ventas.md` → «Activar»; es idempotente):
 
    ```sql
-   update accounts set modules = array_append(modules, 'agenda')
-   where id = '206d8a50-1fb4-44ab-9633-a02a2e07185b'
-     and vertical_key in ('agenda', 'barberia')
-     and not ('agenda' = any(modules));
-   ```
-
-2. Activa Ventas:
-
-   ```sql
-   update accounts set modules = array_append(modules, 'ventas')
-   where id = '206d8a50-1fb4-44ab-9633-a02a2e07185b'
-     and not ('ventas' = any(modules));
+   update accounts
+   set modules = (
+     select array_agg(distinct m order by m)
+     from unnest(
+       modules
+       || case when modules = '{}' and vertical_key in ('agenda', 'barberia')
+               then array['agenda'] else '{}'::text[] end
+       || array['ventas']
+     ) as m
+   )
+   where id = '206d8a50-1fb4-44ab-9633-a02a2e07185b';
    ```
 
 3. Repite la consulta del punto 1: `modules` = `{agenda,ventas}`.

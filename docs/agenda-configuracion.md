@@ -18,8 +18,8 @@ qué toca cada pestaña, qué garantiza el servidor y cómo probarlo.
 
 - Solo cuentas con el vertical de la agenda ven la página; el resto
   recibe el aviso de módulo no habilitado. El operador lo activa una vez
-  por cuenta con `vertical_key = 'agenda'` (ver
-  `docs/onboarding-cliente.md`).
+  por cuenta con `vertical_key = 'agenda'` y `agenda` en la lista
+  `modules` (ver `docs/onboarding-cliente.md`).
 - Una cuenta recién activada ve primero el **asistente de arranque**
   («Elige tu tipo de negocio») en `/agenda`: una tarjeta por punto de
   partida. Elegir una instala la plantilla y deja la agenda lista para
@@ -334,6 +334,7 @@ cuenta.
 ## Cómo probar el onboarding completo
 
 1. Crea una cuenta, que el operador le ponga `vertical_key = 'agenda'` y
+   `agenda` en `modules` (SQL de `docs/onboarding-cliente.md`) y
    entra como owner. En `/agenda` elige un tipo de negocio en el
    asistente.
 2. **Negocio**: cambia el nombre, guarda dirección y moneda.

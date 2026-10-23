@@ -148,12 +148,13 @@ curl -s -H "x-cron-secret: $AUTOMATION_CRON_SECRET" \
 ## 9. Multi-cliente en una instancia
 
 Cada negocio es una `account` (login propio, RLS por `account_id`). El
-runner recorre todas las cuentas con el vertical de la agenda
-(`vertical_key = 'agenda'`, o `'barberia'` mientras no se aplique la
-migración 052) en una sola corrida; el webhook enruta por número. Alta
-de un negocio nuevo: `docs/onboarding-cliente.md` (el operador fija
-`vertical_key = 'agenda'` y el dueño elige el tipo de negocio con el
-asistente de `/agenda`).
+runner recorre todas las cuentas con el módulo de la agenda en una sola
+corrida: `agenda` en `accounts.modules` (migración 053) o, si `modules`
+está vacío, `vertical_key = 'agenda'` (o `'barberia'` mientras no se
+aplique la migración 052). El webhook enruta por número. Alta de un
+negocio nuevo: `docs/onboarding-cliente.md` (el operador fija
+`vertical_key = 'agenda'` y `agenda` en `modules`, y el dueño elige el
+tipo de negocio con el asistente de `/agenda`).
 
 ## Apéndice: VPS con Docker (alternativa)
 

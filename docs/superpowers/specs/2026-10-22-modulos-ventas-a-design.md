@@ -181,3 +181,39 @@ Bajo `src/app/api/modules/ventas/`:
 - Pagos en Ventas A: el asesor marca "pagado" (transferencia, Nequi, efectivo, etc.).
 - Se construye después de la Fase 1 de la Agenda, en su propia rama, empezando por la migración a
   módulos.
+
+## 8. Cambios durante la implementación
+
+Registro de lo que cambió respecto a las secciones de arriba (22/10/2026). Manda el código; la guía
+de uso es `docs/ventas.md` y el despliegue `docs/ventas-despliegue.md`.
+
+- **Pipeline «Ventas» (§3.2):** no lo crea un instalador al activar el módulo. Lo crea
+  `ensureSalesPipeline` (`src/modules/ventas/repo.ts`) con el **primer pedido**, y lo vuelve a crear
+  con el siguiente pedido si el dueño lo **renombró o lo borró** (busca uno llamado «Ventas»).
+  También agrega al final las etapas que falten.
+- **Etapa «Nuevo» (§3.2):** ya no se crea. Ningún pedido la usaba (un pedido nace en «Pago
+  pendiente» o «Pagado»). Etapas: Pago pendiente → Pagado → Enviado → Entregado, más Cancelado.
+  (Cambio en curso en el código al escribir esto.)
+- **Plantilla no aprobada (§3.5):** fuera de la ventana de 24 h el aviso **se intenta igual** por
+  plantilla; si Meta lo rechaza (por ejemplo, plantilla no aprobada), el pedido guarda el fallo con
+  su motivo. Nunca se omite en silencio. Solo un interruptor apagado deja de intentar el aviso.
+- **Etiqueta de fallo (§3.5):** es **«Aviso sin mandar»** (no «aviso no enviado»: en Ventas
+  «enviado» es el estado del paquete). Solo se guarda el **último** aviso intentado
+  (`last_notice`, `last_notice_error`) y **no hay reintento automático**.
+- **Aviso de pago (§3.5):** ya no dice «te avisamos cuando salga», porque el pago puede llegar
+  después del envío (contraentrega: «Marcar pagado» vale en cualquier estado no cancelado). El texto
+  libre y la plantilla `pedido_pagado` comparten la misma redacción. El texto exacto de las tres
+  plantillas vive en `NOTICE_TEMPLATE_BODIES` (`src/modules/ventas/texts.ts`); la tabla de §3.5
+  queda solo como referencia de las variables.
+- **Plantilla `pedido_enviado` (§3.5):** lleva más texto fijo alrededor de sus 3 variables para
+  bajar el riesgo de que Meta la rechace por «demasiadas variables para la longitud».
+- **Retiro en tienda (§3.2):** además de `new → shipped → delivered`, se permite
+  `new → delivered` (retiro en tienda o entrega local sin guía), con aviso de entrega.
+- **Activación (§2.1):** como el código lee `modules` antes que `vertical_key`, activar Ventas con
+  un `array_append` a secas en una cuenta con `modules` vacío le quitaría la agenda. La activación
+  usa una sentencia única que conserva la agenda (`docs/ventas.md` → «Activar») y el onboarding de
+  la agenda fija `vertical_key` y `modules` a la vez (`docs/onboarding-cliente.md`).
+- **Límites conocidos:** la transportadora y la guía **no se pueden corregir** desde la pantalla
+  después de marcar enviado; la lista y la búsqueda de `/ventas` cubren solo los **500 pedidos más
+  recientes** (uno más viejo se abre con `?pedido=<número>`), y el resumen lee como máximo 1.000
+  filas (avisa si se llega al tope).

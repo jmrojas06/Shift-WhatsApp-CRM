@@ -75,26 +75,31 @@ Supabase → **SQL Editor** de producción.
    'agenda'` (o `'barberia'`) pero `modules` vacío (`{}`) perdería la
    Agenda (menú y bot) al quedar `modules = {ventas}`. Esto pasa, por
    ejemplo, con una cuenta activada después de la 053 con el SQL de
-   `docs/onboarding-cliente.md`, que solo fija `vertical_key`. Por eso,
-   **antes** de Ventas, asegura la agenda en la lista (no hace nada si ya
-   está o si la cuenta no usa agenda):
+   una versión vieja de `docs/onboarding-cliente.md`, que solo fijaba
+   `vertical_key`.
+
+3. Activa Ventas con **una sola sentencia que conserva la agenda**:
 
    ```sql
-   update accounts set modules = array_append(modules, 'agenda')
-   where id = '<uuid-de-la-cuenta>'
-     and vertical_key in ('agenda', 'barberia')
-     and not ('agenda' = any(modules));
+   update accounts
+   set modules = (
+     select array_agg(distinct m order by m)
+     from unnest(
+       modules
+       || case when modules = '{}' and vertical_key in ('agenda', 'barberia')
+               then array['agenda'] else '{}'::text[] end
+       || array['ventas']
+     ) as m
+   )
+   where id = '<uuid-de-la-cuenta>';
    ```
 
-3. Activa Ventas:
-
-   ```sql
-   update accounts set modules = array_append(modules, 'ventas')
-   where id = '<uuid-de-la-cuenta>' and not ('ventas' = any(modules));
-   ```
-
-   Las dos sentencias son **idempotentes**: si las repites, no duplican
-   nada.
+   Qué hace: toma los módulos que ya tiene; si la lista está vacía y la
+   cuenta usa la agenda por `vertical_key` (`agenda` o su clave vieja
+   `barberia`), agrega `agenda` (la misma regla del relleno de la 053);
+   suma `ventas` y quita repetidos. Es **idempotente**: si la repites,
+   queda igual. Las claves resultantes (`agenda`, `ventas`) cumplen la
+   restricción `valid_module_keys` de la 053.
 
 4. Vuelve a correr la consulta del paso 1: `modules` debe traer
    `ventas` (y `agenda` si la cuenta tiene agenda).
