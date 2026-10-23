@@ -17,7 +17,7 @@
     "linkInvalid": "Não foi possível entrar com esse link. Se estava confirmando seu e-mail, ele já pode estar verificado — basta entrar abaixo. Para redefinir a senha, peça um novo link e abra-o no mesmo navegador em que o solicitou."
   },
   "Sidebar": {
-    "title": "Modelo de CRM para WhatsApp",
+    "title": "Shift CRM",
     "primaryNav": "Principal",
     "dashboard": "Painel",
     "inbox": "Caixa de entrada",
@@ -39,11 +39,14 @@
     "roleAgent": "Agente",
     "roleViewer": "Visualizador",
     "closeMenu": "Fechar menu",
-    "defaultUser": "Usuário",
     "defaultAvatar": "Avatar",
     "menuProfile": "Perfil",
     "menuSettings": "Configurações",
-    "menuSignOut": "Sair"
+    "menuSignOut": "Sair",
+    "groupDaily": "Dia a dia",
+    "groupGrowth": "Crescimento",
+    "inboxShort": "Caixa",
+    "more": "Mais"
   },
   "Header": {
     "dashboard": "Painel",
@@ -56,13 +59,14 @@
     "agenda": "Agenda",
     "ventas": "Vendas",
     "settings": "Configurações",
-    "openMenu": "Abrir menu",
-    "openAccountMenu": "Abrir menu da conta",
-    "defaultUser": "Usuário",
-    "defaultAvatar": "Avatar",
-    "menuProfile": "Perfil",
-    "menuSettings": "Configurações",
-    "menuSignOut": "Sair"
+    "flows": "Fluxos",
+    "aiAgents": "Agentes de IA",
+    "create": "Criar",
+    "createContact": "Contato",
+    "createDeal": "Negócio",
+    "createBroadcast": "Disparo",
+    "createAutomation": "Automação",
+    "notificationsWithCount": "Notificações: {count} não lidas"
   },
   "ModeToggle": {
     "toLight": "Mudar para o modo claro",
@@ -163,7 +167,8 @@
   },
   "Inbox": {
     "page": {
-      "whatsappNotConnected": "O WhatsApp® não está conectado. Vá em Configurações para conectar sua conta."
+      "whatsappNotConnected": "O WhatsApp® não está conectado. Vá em Configurações para conectar sua conta.",
+      "title": "Caixa de entrada"
     },
     "conversationList": {
       "searchPlaceholder": "Buscar conversas...",

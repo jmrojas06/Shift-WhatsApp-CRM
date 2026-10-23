@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { useOpenOnNewParam } from "@/hooks/use-open-on-new-param";
 import type { Pipeline, PipelineStage, Deal } from "@/types";
 import { PipelineBoard } from "@/components/pipelines/pipeline-board";
 import { PipelineSettings } from "@/components/pipelines/pipeline-settings";
@@ -243,6 +244,10 @@ export default function PipelinesPage() {
     },
     [stages],
   );
+
+  // Header "Crear → Oportunidad" lands here with ?new=1; wait for the
+  // stages so the form opens on the first one.
+  useOpenOnNewParam(() => handleAddDeal(), stages.length > 0);
 
   const handleEditDeal = useCallback((deal: Deal) => {
     setEditingDeal(deal);

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { useOpenOnNewParam } from '@/hooks/use-open-on-new-param';
 import { toast } from 'sonner';
 import type { Contact, Tag, ContactTag } from '@/types';
 import { Button } from '@/components/ui/button';
@@ -229,6 +230,9 @@ export default function ContactsPage() {
     setEditContactTags([]);
     setFormOpen(true);
   }
+
+  // Header "Crear → Contacto" lands here with ?new=1.
+  useOpenOnNewParam(openAddForm);
 
   async function openEditForm(contact: Contact) {
     const { data } = await supabase

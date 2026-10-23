@@ -17,7 +17,7 @@
     "linkInvalid": "That link couldn’t be used to sign you in. If you were confirming your email, it may already be verified — just sign in below. For a password reset, request a new link and open it in the same browser you requested it from."
   },
   "Sidebar": {
-    "title": "CRM Template for WhatsApp",
+    "title": "Shift CRM",
     "primaryNav": "Primary",
     "dashboard": "Dashboard",
     "inbox": "Inbox",
@@ -39,11 +39,14 @@
     "roleAgent": "Agent",
     "roleViewer": "Viewer",
     "closeMenu": "Close menu",
-    "defaultUser": "User",
     "defaultAvatar": "Avatar",
     "menuProfile": "Profile",
     "menuSettings": "Settings",
-    "menuSignOut": "Sign out"
+    "menuSignOut": "Sign out",
+    "groupDaily": "Day to day",
+    "groupGrowth": "Growth",
+    "inboxShort": "Inbox",
+    "more": "More"
   },
   "Header": {
     "dashboard": "Dashboard",
@@ -56,13 +59,14 @@
     "agenda": "Schedule",
     "ventas": "Sales",
     "settings": "Settings",
-    "openMenu": "Open menu",
-    "openAccountMenu": "Open account menu",
-    "defaultUser": "User",
-    "defaultAvatar": "Avatar",
-    "menuProfile": "Profile",
-    "menuSettings": "Settings",
-    "menuSignOut": "Sign out"
+    "flows": "Flows",
+    "aiAgents": "AI agents",
+    "create": "Create",
+    "createContact": "Contact",
+    "createDeal": "Deal",
+    "createBroadcast": "Broadcast",
+    "createAutomation": "Automation",
+    "notificationsWithCount": "Notifications: {count} unread"
   },
   "ModeToggle": {
     "toLight": "Switch to light mode",
@@ -163,7 +167,8 @@
   },
   "Inbox": {
     "page": {
-      "whatsappNotConnected": "WhatsApp® is not connected. Go to Settings to connect your account."
+      "whatsappNotConnected": "WhatsApp® is not connected. Go to Settings to connect your account.",
+      "title": "Inbox"
     },
     "conversationList": {
       "searchPlaceholder": "Search conversations...",

@@ -14,6 +14,7 @@ import { ConversationList } from "@/components/inbox/conversation-list";
 import { MessageThread } from "@/components/inbox/message-thread";
 import { ContactSidebar } from "@/components/inbox/contact-sidebar";
 import { WifiOff } from "lucide-react";
+import { useHideMobileTabBar } from "@/components/layout/shell-chrome";
 import { cn } from "@/lib/utils";
 
 // Remembers the agent's show/hide choice for the desktop contact panel
@@ -559,9 +560,14 @@ function InboxPageInner() {
   // it back to the list. On lg+ both panes render side-by-side as
   // before, unchanged.
   const hasActiveConv = !!activeConversation;
+  // An open chat needs the whole phone screen for its composer.
+  useHideMobileTabBar(hasActiveConv);
 
   return (
-    <div className="-m-4 flex h-[calc(100vh-3.5rem)] flex-col overflow-hidden sm:-m-6">
+    // Fills the shell's main area exactly: viewport minus the 3.5rem
+    // header minus the mobile tab bar (0 when hidden or on lg+).
+    <div className="-m-4 flex h-[calc(100dvh-3.5rem-var(--tabbar-h))] flex-col overflow-hidden sm:-m-6">
+      <h1 className="sr-only">{t("title")}</h1>
       {/* WhatsApp connection banner — in the flex column, not absolute,
           so it pushes the panels down instead of overlapping them. */}
       {whatsappConnected === false && (
