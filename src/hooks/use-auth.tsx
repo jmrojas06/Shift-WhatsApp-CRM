@@ -13,6 +13,7 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import type { User } from "@supabase/supabase-js";
 import { DEFAULT_CURRENCY } from "@/lib/currency";
+import { selectAccountWithFallback } from "@/lib/modules/account-select";
 import {
   canEditSettings as canEditSettingsFor,
   canManageMembers as canManageMembersFor,
@@ -46,6 +47,10 @@ interface AccountSummary {
   /** Installed vertical module key (migration 047). Null for classic
    *  accounts without a vertical; drives per-vertical navigation. */
   vertical_key: string | null;
+  /** Active module keys (migration 053). Empty for classic accounts or
+   *  while the column doesn't exist yet; `getAccountModules` falls back
+   *  to `vertical_key` then. */
+  modules: string[];
 }
 
 /**
@@ -157,6 +162,16 @@ interface ProfileRow {
   account_role: string | null;
 }
 
+/** Shape of the `accounts` select below; later columns are absent on
+ *  deployments that lag their migration. */
+interface AccountRow {
+  id: string;
+  name: string;
+  default_currency?: string | null;
+  vertical_key?: string | null;
+  modules?: string[] | null;
+}
+
 /**
  * AuthProvider — wrap this around the dashboard layout.
  * Makes ONE getSession() call for the whole tree instead of one per
@@ -238,24 +253,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // account name lookup itself can't.
         let accountRow: AccountSummary | null = null;
         if (data.account_id) {
-          let accountRes = await supabase
-            .from("accounts")
-            // default_currency added in migration 021; vertical_key in
-            // 047. Both are narrowed below for older schemas where they
-            // read null — and a schema without the 047 column retries
-            // once without it so the account strip keeps working while
-            // a deployment lags its migration.
-            .select("id, name, default_currency, vertical_key")
-            .eq("id", data.account_id)
-            .maybeSingle();
-          if (accountRes.error?.code === "42703") {
-            accountRes = await supabase
-              .from("accounts")
-              .select("id, name, default_currency")
-              .eq("id", data.account_id)
-              .maybeSingle();
-          }
-          const account = accountRes.data;
+          // Falls back to shorter column lists while a deployment lags
+          // its migration (053 `modules`, 047 `vertical_key`).
+          const accountRes = await selectAccountWithFallback(
+            supabase,
+            data.account_id,
+          );
+          const account = accountRes.data as unknown as AccountRow | null;
           const accountErr = accountRes.error;
           if (accountErr) {
             console.error("[AuthProvider] fetchAccount error:", {
@@ -270,6 +274,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               name: account.name,
               default_currency: account.default_currency ?? DEFAULT_CURRENCY,
               vertical_key: account.vertical_key ?? null,
+              modules: account.modules ?? [],
             };
           }
         }

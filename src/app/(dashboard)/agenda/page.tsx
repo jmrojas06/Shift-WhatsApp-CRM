@@ -3,8 +3,8 @@
 // ============================================================
 // /agenda — página del vertical de la agenda (citas).
 //
-// Solo visible para cuentas de la agenda (`vertical_key` 'agenda' o la
-// clave anterior 'barberia'); el sidebar ya la oculta para el resto y
+// Solo visible para cuentas con el módulo agenda (`modules` o, mientras
+// esté vacío, `vertical_key` 'agenda' / 'barberia'); el sidebar ya la oculta para el resto y
 // aquí además se bloquea el contenido por si alguien entra por URL
 // directa.
 //
@@ -25,7 +25,7 @@ import {
 } from 'lucide-react'
 
 import { createClient } from '@/lib/supabase/client'
-import { isAgendaVerticalKey } from '@/lib/verticals/registry'
+import { hasModule } from '@/lib/verticals/registry'
 import { useAuth } from '@/hooks/use-auth'
 import { formatCurrency } from '@/lib/currency'
 import { GatedButton } from '@/components/ui/gated-button'
@@ -191,7 +191,7 @@ export default function AgendaPage() {
   const [remindersLoading, setRemindersLoading] = useState(true)
   const [remindersFailed, setRemindersFailed] = useState(false)
 
-  const isAgenda = isAgendaVerticalKey(account?.vertical_key)
+  const isAgenda = hasModule(account, 'agenda')
   /** Owner/admin/agent mueven citas; viewer es solo-lectura. */
   const canManageAppointments = canSendMessages
 

@@ -491,6 +491,363 @@ BEGIN
       'an account still has vertical_key = barberia — migration 052 did not apply';
   END IF;
 
+  -- 053: combinable account modules. A column or constraint that
+  -- silently failed to add would only surface at runtime (every account
+  -- read selects `modules`), and the trigger must keep the client away
+  -- from it.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'accounts'
+      AND column_name = 'modules' AND data_type = 'ARRAY' AND is_nullable = 'NO'
+  ) THEN
+    RAISE EXCEPTION
+      'accounts.modules (text[] NOT NULL) is missing — migration 053 did not apply';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.accounts'::regclass
+      AND conname = 'accounts_modules_check'
+      AND contype = 'c'
+  ) THEN
+    RAISE EXCEPTION
+      'accounts_modules_check constraint is missing — migration 053 did not apply';
+  END IF;
+
+  IF to_regprocedure('public.valid_module_keys(text[])') IS NULL THEN
+    RAISE EXCEPTION
+      'public.valid_module_keys(text[]) is missing — migration 053 did not apply';
+  END IF;
+
+  IF NOT public.valid_module_keys(ARRAY['agenda', 'ventas'])
+     OR public.valid_module_keys(ARRAY['Ventas'])
+     OR public.valid_module_keys(ARRAY['con espacio'])
+     OR NOT public.valid_module_keys(ARRAY[]::text[])
+  THEN
+    RAISE EXCEPTION
+      'valid_module_keys does not enforce the module key shape — migration 053 did not apply';
+  END IF;
+
+  -- bool_and ignores NULLs, so a NULL element would slip through a naive
+  -- check: the function must reject it explicitly.
+  IF public.valid_module_keys(ARRAY[NULL]::text[]) IS DISTINCT FROM false THEN
+    RAISE EXCEPTION
+      'valid_module_keys accepts a NULL element — migration 053 did not apply';
+  END IF;
+
+  IF pg_get_functiondef('public.enforce_account_protected_columns()'::regprocedure)
+       NOT LIKE '%NEW.modules IS DISTINCT FROM OLD.modules%'
+  THEN
+    RAISE EXCEPTION
+      'enforce_account_protected_columns does not protect accounts.modules — migration 053 did not apply';
+  END IF;
+
+  -- 053: vertical_key → modules sync. The trigger must exist, run as the
+  -- invoker, and sort BEFORE the 050 protected-columns guard (BEFORE
+  -- triggers fire in name order) so the guard sees the filled modules.
+  IF to_regprocedure('public.sync_account_modules_from_vertical()') IS NULL THEN
+    RAISE EXCEPTION
+      'public.sync_account_modules_from_vertical() is missing — migration 053 did not apply';
+  END IF;
+
+  IF (SELECT prosecdef FROM pg_proc
+      WHERE oid = to_regprocedure('public.sync_account_modules_from_vertical()'))
+  THEN
+    RAISE EXCEPTION
+      'sync_account_modules_from_vertical is SECURITY DEFINER — it must run as the invoker';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid = 'public.accounts'::regclass
+      AND tgname = 'accounts_sync_modules'
+      AND NOT tgisinternal
+  ) THEN
+    RAISE EXCEPTION
+      'trigger accounts_sync_modules is missing on accounts — migration 053 did not apply';
+  END IF;
+
+  -- Compare the real trigger names on accounts, byte order (COLLATE "C"),
+  -- the order Postgres fires BEFORE triggers in. NULL (one missing) fails.
+  IF (
+    SELECT bool_or(s.tgname COLLATE "C" >= g.tgname COLLATE "C")
+    FROM pg_trigger s, pg_trigger g
+    WHERE s.tgrelid = 'public.accounts'::regclass
+      AND g.tgrelid = 'public.accounts'::regclass
+      AND s.tgname = 'accounts_sync_modules'
+      AND g.tgname = 'enforce_account_protected_columns'
+      AND NOT s.tgisinternal
+      AND NOT g.tgisinternal
+  ) IS NOT FALSE THEN
+    RAISE EXCEPTION
+      'accounts_sync_modules must fire before enforce_account_protected_columns (or one of them is missing)';
+  END IF;
+
+  -- 053: the backfill — an agenda account must list the agenda in
+  -- modules. Like the 052 check, only meaningful against PRODUCTION
+  -- after 053 ran (the CI database has no accounts).
+  IF EXISTS (
+    SELECT 1 FROM accounts
+    WHERE vertical_key IN ('agenda', 'barberia')
+      AND NOT ('agenda' = ANY(modules))
+  ) THEN
+    RAISE EXCEPTION
+      'an agenda account has no agenda in modules — migration 053 did not apply';
+  END IF;
+
+  -- 054: a cancelled order is final for payment too (ledger guard).
+  IF to_regprocedure('public.orders_ledger_guard()') IS NULL
+     OR pg_get_functiondef('public.orders_ledger_guard()'::regprocedure)
+       NOT LIKE '%OLD.status = ''cancelled'' AND NEW.payment_status IS DISTINCT FROM OLD.payment_status%'
+  THEN
+    RAISE EXCEPTION
+      'orders_ledger_guard lets a cancelled order change its payment — migration 054 did not apply';
+  END IF;
+
+  -- 054: Ventas A. Same failure mode as every migration here: a typo'd
+  -- object name under IF NOT EXISTS is a green no-op. Orders are the
+  -- sales ledger, so the "nobody deletes" and "totals add up" rules are
+  -- asserted explicitly.
+  IF to_regclass('public.orders') IS NULL THEN
+    RAISE EXCEPTION 'public.orders is missing — migration 054 did not apply';
+  END IF;
+  IF to_regclass('public.order_items') IS NULL THEN
+    RAISE EXCEPTION 'public.order_items is missing — migration 054 did not apply';
+  END IF;
+  IF to_regclass('public.sales_settings') IS NULL THEN
+    RAISE EXCEPTION 'public.sales_settings is missing — migration 054 did not apply';
+  END IF;
+
+  FOREACH v_table IN ARRAY ARRAY['orders', 'order_items', 'sales_settings'] LOOP
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_class
+      WHERE oid = to_regclass('public.' || v_table)
+        AND relrowsecurity
+    ) THEN
+      RAISE EXCEPTION '% RLS is not enabled — migration 054 did not apply', v_table;
+    END IF;
+
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_policies
+      WHERE schemaname = 'public'
+        AND tablename = v_table
+        AND cmd = 'SELECT'
+        AND coalesce(qual, '') NOT LIKE '%''admin''%'
+        AND coalesce(qual, '') NOT LIKE '%''agent''%'
+    ) THEN
+      RAISE EXCEPTION
+        '% SELECT policy is missing or no longer open to every member — migration 054 did not apply',
+        v_table;
+    END IF;
+  END LOOP;
+
+  -- Nobody deletes an order or its lines through the API: they are
+  -- cancelled. Neither a DELETE policy nor a catch-all (ALL) may exist.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename IN ('orders', 'order_items')
+      AND cmd IN ('DELETE', 'ALL')
+  ) THEN
+    RAISE EXCEPTION
+      'orders/order_items have a DELETE or ALL policy — migration 054 did not apply';
+  END IF;
+
+  -- New orders and lines are born ONLY in create_order(): no INSERT
+  -- policy on either table, and no UPDATE policy on the lines.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename IN ('orders', 'order_items')
+      AND cmd = 'INSERT'
+  ) THEN
+    RAISE EXCEPTION
+      'orders/order_items have an INSERT policy — migration 054 did not apply';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'order_items'
+      AND cmd = 'UPDATE'
+  ) THEN
+    RAISE EXCEPTION
+      'order_items have an UPDATE policy — migration 054 did not apply';
+  END IF;
+
+  -- Agents (and up) change the state of their orders, with WITH CHECK so
+  -- a row cannot be moved to another account or linked to a foreign deal.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'orders'
+      AND cmd = 'UPDATE'
+      AND coalesce(qual, '') LIKE '%''agent''%'
+      AND coalesce(with_check, '') LIKE '%''agent''%'
+      AND coalesce(with_check, '') LIKE '%deals%'
+      AND coalesce(qual, '') || coalesce(with_check, '') NOT LIKE '%''admin''%'
+  ) THEN
+    RAISE EXCEPTION
+      'orders UPDATE policy is missing, not agent-level or has no deal WITH CHECK — migration 054 did not apply';
+  END IF;
+
+  -- Orders keep the customer's name and phone and survive the contact.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.orders'::regclass
+      AND contype = 'f'
+      AND confrelid = 'public.contacts'::regclass
+      AND confdeltype = 'n'
+  ) THEN
+    RAISE EXCEPTION
+      'orders.contact_id must reference contacts ON DELETE SET NULL — migration 054 did not apply';
+  END IF;
+  IF (
+    SELECT count(*) FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'orders'
+      AND column_name IN ('customer_name', 'customer_phone')
+      AND is_nullable = 'NO'
+  ) <> 2 THEN
+    RAISE EXCEPTION
+      'orders.customer_name / customer_phone (NOT NULL) are missing — migration 054 did not apply';
+  END IF;
+
+  -- The sales settings (notice switches) are owner/admin only.
+  FOR v_cmd IN SELECT unnest(ARRAY['INSERT', 'UPDATE', 'DELETE']) LOOP
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_policies
+      WHERE schemaname = 'public'
+        AND tablename = 'sales_settings'
+        AND cmd = v_cmd
+        AND coalesce(qual, '') || coalesce(with_check, '') LIKE '%''admin''%'
+        AND coalesce(qual, '') || coalesce(with_check, '') NOT LIKE '%''agent''%'
+    ) THEN
+      RAISE EXCEPTION
+        'sales_settings % policy is missing or not admin-only — migration 054 did not apply',
+        v_cmd;
+    END IF;
+  END LOOP;
+
+  -- Per-account consecutive numbers: the UNIQUE is the last net under
+  -- the advisory lock in create_order.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.orders'::regclass
+      AND contype = 'u'
+      AND pg_get_constraintdef(oid) = 'UNIQUE (account_id, number)'
+  ) THEN
+    RAISE EXCEPTION
+      'orders UNIQUE (account_id, number) is missing — migration 054 did not apply';
+  END IF;
+
+  -- total = subtotal + shipping is enforced by the database, not trusted
+  -- from the client.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.orders'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) LIKE '%subtotal + shipping%'
+  ) THEN
+    RAISE EXCEPTION
+      'orders total CHECK (total = subtotal + shipping) is missing — migration 054 did not apply';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid = 'public.orders'::regclass
+      AND tgname IN ('set_updated_at', 'orders_freeze_columns', 'orders_ledger_guard')
+      AND NOT tgisinternal
+    GROUP BY tgrelid
+    HAVING count(*) = 3
+  ) THEN
+    RAISE EXCEPTION
+      'orders set_updated_at / orders_freeze_columns / orders_ledger_guard triggers are missing — migration 054 did not apply';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid = 'public.order_items'::regclass
+      AND tgname = 'order_items_freeze'
+      AND NOT tgisinternal
+  ) THEN
+    RAISE EXCEPTION
+      'order_items_freeze trigger is missing — migration 054 did not apply';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid = 'public.sales_settings'::regclass
+      AND tgname = 'set_updated_at'
+      AND NOT tgisinternal
+  ) THEN
+    RAISE EXCEPTION
+      'sales_settings set_updated_at trigger is missing — migration 054 did not apply';
+  END IF;
+
+  -- create_order is the ONLY way to create an order, and it runs without
+  -- RLS: SECURITY DEFINER owned by postgres, search_path pinned, callable
+  -- by the signed-in user and the service role but NEVER by anon
+  -- (Supabase grants anon EXECUTE by default; 054 revokes it), and its
+  -- own guard (service_role or an agent of the account), the ventas
+  -- module check and the contact/conversation ownership check must be in
+  -- the body.
+  IF to_regprocedure('public.create_order(uuid,uuid,uuid,jsonb,numeric,boolean,jsonb)') IS NULL THEN
+    RAISE EXCEPTION 'public.create_order(...) is missing — migration 054 did not apply';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_proc
+    WHERE oid = to_regprocedure('public.create_order(uuid,uuid,uuid,jsonb,numeric,boolean,jsonb)')
+      AND (NOT prosecdef
+           OR pg_get_userbyid(proowner) <> 'postgres'
+           OR proconfig IS NULL
+           OR NOT ('search_path=public, pg_temp' = ANY(proconfig)))
+  ) THEN
+    RAISE EXCEPTION
+      'create_order must be SECURITY DEFINER owned by postgres with search_path=public, pg_temp — migration 054 did not apply';
+  END IF;
+
+  -- The earlier signature (with p_currency) must be gone: two versions of
+  -- create_order would leave the old, currency-trusting one callable.
+  IF to_regprocedure('public.create_order(uuid,uuid,uuid,jsonb,numeric,text,boolean,jsonb)') IS NOT NULL THEN
+    RAISE EXCEPTION
+      'the old create_order(..., p_currency, ...) still exists — migration 054 did not apply';
+  END IF;
+
+  IF has_function_privilege('anon', 'public.create_order(uuid,uuid,uuid,jsonb,numeric,boolean,jsonb)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'anon can execute create_order — migration 054 did not apply';
+  END IF;
+  IF NOT has_function_privilege('authenticated', 'public.create_order(uuid,uuid,uuid,jsonb,numeric,boolean,jsonb)', 'EXECUTE')
+     OR NOT has_function_privilege('service_role', 'public.create_order(uuid,uuid,uuid,jsonb,numeric,boolean,jsonb)', 'EXECUTE')
+  THEN
+    RAISE EXCEPTION
+      'authenticated / service_role cannot execute create_order — migration 054 did not apply';
+  END IF;
+
+  IF pg_get_functiondef('public.create_order(uuid,uuid,uuid,jsonb,numeric,boolean,jsonb)'::regprocedure)
+       NOT LIKE '%is_account_member%'
+     OR pg_get_functiondef('public.create_order(uuid,uuid,uuid,jsonb,numeric,boolean,jsonb)'::regprocedure)
+       NOT LIKE '%service_role%'
+  THEN
+    RAISE EXCEPTION
+      'create_order has no access guard (service_role or account agent) — migration 054 did not apply';
+  END IF;
+
+  IF pg_get_functiondef('public.create_order(uuid,uuid,uuid,jsonb,numeric,boolean,jsonb)'::regprocedure)
+       NOT LIKE '%''ventas''%'
+  THEN
+    RAISE EXCEPTION
+      'create_order does not require the ventas module — migration 054 did not apply';
+  END IF;
+
+  IF pg_get_functiondef('public.create_order(uuid,uuid,uuid,jsonb,numeric,boolean,jsonb)'::regprocedure)
+       NOT LIKE '%account_id = p_account_id%'
+     OR pg_get_functiondef('public.create_order(uuid,uuid,uuid,jsonb,numeric,boolean,jsonb)'::regprocedure)
+       NOT LIKE '%pg_advisory_xact_lock%'
+  THEN
+    RAISE EXCEPTION
+      'create_order does not check account ownership / take the numbering lock — migration 054 did not apply';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

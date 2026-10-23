@@ -31,6 +31,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { hasMinRole, isAccountRole, type AccountRole } from "./roles";
 import { getT } from "@/lib/i18n/translate";
+import { ModuleNotActiveError } from "@/lib/modules/errors";
 
 const t = getT("LibErrors.auth");
 
@@ -71,6 +72,11 @@ export class ForbiddenError extends Error {
  */
 export function toErrorResponse(err: unknown): NextResponse {
   if (err instanceof UnauthorizedError || err instanceof ForbiddenError) {
+    return NextResponse.json({ error: err.message }, { status: err.status });
+  }
+  // A route that requires a module but forgot toModuleErrorResponse
+  // still answers 409 with the Spanish message (not a 500).
+  if (err instanceof ModuleNotActiveError) {
     return NextResponse.json({ error: err.message }, { status: err.status });
   }
   console.error("[toErrorResponse] uncategorized error:", err);

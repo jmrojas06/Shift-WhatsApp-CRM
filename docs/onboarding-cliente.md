@@ -22,9 +22,18 @@ plantilla de recordatorio.
 ## 2. Activar el vertical y la moneda (COP)
 
 Hoy no hay UI para activar el vertical: lo hace el **operador** en la
-base, una sola vez por cuenta, con `vertical_key = 'agenda'`. Desde la migración 050, `vertical_key` (y `owner_user_id`)
-**no se pueden cambiar desde la app** ni con la sesión de un admin: se
-hace en Supabase → SQL Editor, que corre como `postgres`.
+base, una sola vez por cuenta, con `vertical_key = 'agenda'` **y**
+`'agenda'` en la lista `modules`. Desde la migración 050, `vertical_key`
+(y `owner_user_id`) **no se pueden cambiar desde la app** ni con la
+sesión de un admin, y desde la 053 tampoco `modules`: se hace en
+Supabase → SQL Editor, que corre como `postgres`.
+
+Por qué los dos: desde la migración 053 una cuenta puede tener varios
+módulos (`accounts.modules`, por ejemplo `{agenda,ventas}`), y el código
+lee `modules` primero; solo mira `vertical_key` si `modules` está vacío.
+Una cuenta con la agenda solo en `vertical_key` funciona, pero la
+perdería (menú y bot) el día que se le active otro módulo, como Ventas
+(`docs/ventas.md`). `vertical_key` se mantiene por compatibilidad.
 
 > **Zona horaria:** el vertical asume `America/Bogota` para todas las
 > cuentas (ver `docs/agenda-configuracion.md`). No lo actives para un
@@ -35,9 +44,23 @@ En Supabase → SQL Editor:
 ```sql
 update public.accounts
 set vertical_key = 'agenda',
+    modules = case when 'agenda' = any(modules) then modules
+                   else array_append(modules, 'agenda') end,
     default_currency = 'COP'
 where id = '<uuid-de-la-cuenta>';
 ```
+
+Es idempotente: si la repites, `agenda` no se duplica y los demás
+módulos de la cuenta se conservan. Necesita la migración 053 aplicada
+(si no, falla con «column "modules" does not exist»). Verifica:
+
+```sql
+select id, name, vertical_key, modules, default_currency
+from public.accounts
+where id = '<uuid-de-la-cuenta>';
+```
+
+`modules` debe traer `agenda`.
 
 Qué tipo de negocio es (barbería, salón, consultorio…) y su vocabulario
 **no** se fijan aquí: el dueño los elige después con el asistente de
@@ -170,7 +193,7 @@ pueden enviar (dentro de la ventana salen igual, como mensaje libre).
 | Paso | Verificación | Si falla |
 | --- | --- | --- |
 | 1. Cuenta | Login OK | revisar `/signup` y el correo |
-| 2. Vertical | menú **Agenda** visible | SQL (`vertical_key = 'agenda'`) aplicado sobre la cuenta correcta |
+| 2. Vertical | menú **Agenda** visible | SQL (`vertical_key = 'agenda'` y `agenda` en `modules`) aplicado sobre la cuenta correcta |
 | 3. Tipo de negocio | servicios visibles | reintentar el asistente (es idempotente) |
 | 4. Configuración | agenda con horarios reales | `docs/agenda-configuracion.md` |
 | 5. WhatsApp | «Verificar con Meta» OK | `docs/whatsapp-connection-troubleshooting.md` |

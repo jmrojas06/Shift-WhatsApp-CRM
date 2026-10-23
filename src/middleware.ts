@@ -74,7 +74,7 @@ export async function middleware(request: NextRequest) {
   // middleware.test.ts reads that directory and fails on a missing one.
   // '/barberia' is only a fallback: next.config.ts redirects it to /agenda
   // before middleware runs.
-  const protectedPaths = ['/dashboard', '/inbox', '/contacts', '/pipelines', '/broadcasts', '/automations', '/flows', '/agents', '/notifications', '/settings', '/agenda', '/barberia']
+  const protectedPaths = ['/dashboard', '/inbox', '/contacts', '/pipelines', '/broadcasts', '/automations', '/flows', '/agents', '/notifications', '/settings', '/agenda', '/ventas', '/barberia']
   if (!user && protectedPaths.some(path => request.nextUrl.pathname.startsWith(path))) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'

@@ -11,7 +11,9 @@ import { renderToStaticMarkup } from 'react-dom/server'
 // debe mostrar el estado pausado, sin esperar el fetch de /api/ai/config.
 // ============================================================
 
-const authState: { account: { vertical_key: string | null } | null } = {
+const authState: {
+  account: { vertical_key?: string | null; modules?: string[] } | null
+} = {
   account: null,
 }
 
@@ -95,6 +97,20 @@ describe('<AiThreadBanner /> render', () => {
     expect(html).toContain('resumeBot')
     expect(html).toContain('<button')
     expect(html).toContain('El cliente pidió hablar con una persona.')
+  })
+
+  it('cuenta con la agenda en modules: muestra el bot en pausa', () => {
+    authState.account = { modules: ['agenda', 'ventas'], vertical_key: null }
+
+    const html = render({ disabled: true, assignedAgentId: 'user-agent' })
+
+    expect(html).toContain('botPausedTitle')
+  })
+
+  it('cuenta solo con ventas (sin bot) y sin IA: no renderiza nada', () => {
+    authState.account = { modules: ['ventas'], vertical_key: null }
+
+    expect(render({ disabled: true })).toBe('')
   })
 
   it('cuenta sin vertical y sin IA: no renderiza nada', () => {

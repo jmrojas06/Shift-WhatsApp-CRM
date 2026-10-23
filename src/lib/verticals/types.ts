@@ -2,13 +2,14 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { LucideIcon } from 'lucide-react'
 
 /**
- * Keys of the vertical modules shipped in `src/verticals/`.
+ * Claves de los módulos que una cuenta puede tener activos a la vez.
  *
- * A key is stored on `accounts.vertical_key` (migration 047) and is how
- * the account installs a vertical. This union grows one entry per
- * shipped vertical — the agenda (citas por WhatsApp) is the first.
+ * Viven en `accounts.modules text[]` (migración 053). La cuenta puede
+ * combinar varios (agenda + ventas…); `getAccountModules` en
+ * `registry.ts` es el único lugar que decide cuáles tiene una cuenta.
+ * Esta unión crece una entrada por módulo publicado.
  */
-export type VerticalKey = 'agenda'
+export type ModuleKey = 'agenda' | 'ventas'
 
 /**
  * Valores de `accounts.vertical_key` que cuentan como la agenda. 'barberia'
@@ -34,7 +35,7 @@ export interface VerticalNavItem {
  * see `dispatch.ts` — so this can be imported by client components.
  */
 export interface VerticalManifest {
-  key: VerticalKey
+  key: ModuleKey
   /** Display name. Spanish is the product language for SHIFT deployments. */
   name: string
   /** One-liner shown on setup / settings surfaces. */

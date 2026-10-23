@@ -25,6 +25,8 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { isUndefinedColumnError } from '@/lib/modules/undefined-column'
+import { hasModule, type AccountModulesSource } from '@/lib/verticals/registry'
 import { AGENDA_VERTICAL_KEYS } from '@/lib/verticals/types'
 
 import { DEFAULT_LABELS, readLabels, type AgendaLabels } from '../labels'
@@ -280,8 +282,11 @@ async function revertReminder(
 // Runner
 // ------------------------------------------------------------
 
-/** ¿El cliente escribió en las últimas 24 h? (ventana de WhatsApp) */
-async function hasRecentCustomerMessage(
+/**
+ * ¿El cliente escribió en las últimas 24 h? (ventana de WhatsApp). Exportada
+ * para los avisos de Ventas, que usan la misma regla de canal.
+ */
+export async function hasRecentCustomerMessage(
   db: SupabaseClient,
   conversationId: string,
   now: Date,
@@ -297,8 +302,39 @@ async function hasRecentCustomerMessage(
   return ((data ?? []) as unknown[]).length > 0
 }
 
+/**
+ * Cuentas con el módulo agenda. La base trae un superconjunto simple
+ * (`modules` contiene 'agenda', o `vertical_key` es 'agenda' / 'barberia')
+ * y la regla exacta la pone `hasModule` en código, la misma de
+ * `getAccountModules`: `modules` decide cuando trae algo y `vertical_key`
+ * solo cuenta con `modules` vacío. Así una cuenta 'barberia' con
+ * `modules = {ventas}` llega de la base pero se descarta aquí.
+ *
+ * Si la columna `modules` no existe todavía (migración 053 sin aplicar)
+ * repite con `vertical_key`, para que el cron siga recordando.
+ */
+async function readAgendaAccounts(db: SupabaseClient) {
+  const result = await db
+    .from('accounts')
+    .select('id, name, owner_user_id, modules, vertical_key')
+    .or(`modules.cs.{agenda},vertical_key.in.(${AGENDA_VERTICAL_KEYS.join(',')})`)
+  const fallback = isUndefinedColumnError(result.error)
+    ? await db
+        .from('accounts')
+        .select('id, name, owner_user_id, vertical_key')
+        .in('vertical_key', [...AGENDA_VERTICAL_KEYS])
+    : result
+  if (fallback.error) return { data: null, error: fallback.error }
+  const rows = (fallback.data ?? []) as (AccountRow &
+    AccountModulesSource)[]
+  return {
+    data: rows.filter((row) => hasModule(row, 'agenda')),
+    error: null,
+  }
+}
+
 export interface ReminderRunSummary {
-  /** Cuentas de la agenda (vertical_key 'agenda' o el alias 'barberia'). */
+  /** Cuentas de la agenda (módulo `agenda`, o `vertical_key` 'agenda' / alias 'barberia'). */
   accounts: number
   /** Citas activas con alguna señal pendiente (24 h o 2 h). */
   due: number
@@ -429,10 +465,9 @@ export async function runAgendaReminders(
 
   // Un fallo de lectura LANZA: devolver "0 citas" hacía que el runner
   // dejara de recordar sin que la ruta alertara (responde 500 + alerta).
-  const { data: accountRows, error: accountsError } = await args.db
-    .from('accounts')
-    .select('id, name, owner_user_id')
-    .in('vertical_key', [...AGENDA_VERTICAL_KEYS])
+  const { data: accountRows, error: accountsError } = await readAgendaAccounts(
+    args.db,
+  )
   if (accountsError) {
     throw new Error(`no se pudieron leer las cuentas: ${accountsError.message}`)
   }

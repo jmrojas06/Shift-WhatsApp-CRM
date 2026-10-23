@@ -27,7 +27,7 @@ import {
   Zap,
 } from "lucide-react";
 import type { AccountRole } from "@/lib/auth/roles";
-import { getVerticalNav } from "@/lib/verticals/registry";
+import { getModulesNav } from "@/lib/verticals/registry";
 
 // Per-role chip metadata used in the sidebar's account strip + the
 // Members tab roster. Keeping this near both consumers in a single
@@ -133,13 +133,13 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
     !!account?.name &&
     account.name !== profile?.full_name;
 
-  // Modules installed for this account's vertical (e.g. the barbería
-  // agenda) render inline with the primary nav. Empty for classic
-  // accounts — nav entries appear only once `vertical_key` is set on
-  // the account (migration 047).
+  // Modules active for this account (agenda, ventas…) render inline
+  // with the primary nav, one entry each. Empty for classic accounts —
+  // `getModulesNav` reads `modules` (migration 053) and falls back to
+  // `vertical_key` (047) while `modules` is empty.
   const navItemsWithVerticals: NavItem[] = [
     ...navItems,
-    ...getVerticalNav(account?.vertical_key ?? null),
+    ...getModulesNav(account),
   ];
 
   // Close the drawer when route changes — users opened it to navigate,

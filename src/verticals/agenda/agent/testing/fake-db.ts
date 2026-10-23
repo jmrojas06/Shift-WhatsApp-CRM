@@ -18,8 +18,20 @@ export type Row = Record<string, unknown>
 
 export type WriteOp = 'insert' | 'update' | 'delete' | 'upsert'
 
-/** Operaciones que `_failNext` puede hacer fallar: las escrituras y la lectura (`select`). */
-export type FailableOp = WriteOp | 'select'
+/**
+ * Operaciones que `_failNext` puede hacer fallar: las escrituras, la
+ * lectura (`select`) y la llamada a una función (`rpc`, donde "table" es
+ * el nombre de la función).
+ */
+export type FailableOp = WriteOp | 'select' | 'rpc'
+
+/** Resultado de una función RPC simulada (como PostgREST). */
+export interface RpcResult {
+  data: unknown
+  error: { message: string; code?: string } | null
+}
+
+export type RpcHandler = (args: Record<string, unknown>) => RpcResult | Promise<RpcResult>
 
 export interface FakeDb {
   _tables: Record<string, Row[]>
@@ -31,8 +43,22 @@ export interface FakeDb {
    * (`from().select()` sin escribir): el `.select()` encadenado a un
    * insert/upsert cuenta como esa escritura. Si el fallo no se consume,
    * esa operación no ocurrió.
+   *
+   * `op = 'rpc'` hace fallar la próxima llamada a la función `table`
+   * (su nombre), sin ejecutar el manejador.
    */
   _failNext(op: FailableOp, table: string, error: { message: string; code?: string }): void
+  /**
+   * Registra cómo responde `db.rpc(name, args)`. El fake no ejecuta SQL:
+   * cada test que llama una función (p. ej. `create_order`) escribe aquí
+   * el comportamiento mínimo que necesita (insertar en `_tables`,
+   * devolver una fila o un error con código de Postgres). Sin manejador,
+   * la llamada responde PGRST202 ("función no encontrada").
+   */
+  _onRpc(name: string, handler: RpcHandler): void
+  /** Cada llamada a `rpc`, en orden (nombre y argumentos tal cual). */
+  _rpcCalls: { name: string; args: Record<string, unknown> }[]
+  rpc(name: string, args?: Record<string, unknown>): Promise<RpcResult>
   from(table: string): unknown
 }
 
@@ -71,6 +97,12 @@ const TABLE_DEFAULTS: Record<string, Row> = {
     is_active: true,
     position: 0,
   },
+  // Migración 054: los avisos nacen prendidos.
+  sales_settings: {
+    notify_paid: true,
+    notify_shipped: true,
+    notify_delivered: true,
+  },
 }
 
 export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
@@ -87,7 +119,7 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
 
   function from(table: string) {
     const filters: { col: string; kind: FilterKind; value: unknown }[] = []
-    const orders: { col: string; ascending: boolean }[] = []
+    const orders: { col: string; ascending: boolean; nullsFirst?: boolean }[] = []
     type Op = 'select' | 'insert' | 'update' | 'delete' | 'upsert'
     let op: Op = 'select'
     let payload: Row | Row[] | null = null
@@ -121,10 +153,16 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
       if (orders.length) {
         // Como PostgREST: el primer `.order()` manda y los siguientes desempatan.
         out.sort((a, b) => {
-          for (const { col, ascending } of orders) {
+          for (const { col, ascending, nullsFirst } of orders) {
             const av = a[col] as never
             const bv = b[col] as never
             if (av === bv) continue
+            // Nulos como Postgres: al final si es ascendente y al principio si
+            // es descendente, salvo que `nullsFirst` diga otra cosa.
+            if (av == null || bv == null) {
+              if (av == null && bv == null) continue
+              return (av == null) === (nullsFirst ?? !ascending) ? -1 : 1
+            }
             return (av < bv ? -1 : 1) * (ascending ? 1 : -1)
           }
           return 0
@@ -240,8 +278,8 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
         filters.push({ col, kind: 'is', value })
         return api
       },
-      order: (col: string, o?: { ascending?: boolean }) => {
-        orders.push({ col, ascending: o?.ascending ?? true })
+      order: (col: string, o?: { ascending?: boolean; nullsFirst?: boolean }) => {
+        orders.push({ col, ascending: o?.ascending ?? true, nullsFirst: o?.nullsFirst })
         return api
       },
       limit: (n: number) => {
@@ -266,10 +304,32 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
     return api
   }
 
+  const rpcHandlers = new Map<string, RpcHandler>()
+  const rpcCalls: { name: string; args: Record<string, unknown> }[] = []
+
   return {
     _tables: tables,
     _failNext(op, table, error) {
       failures.push({ op, table, error })
+    },
+    _onRpc(name, handler) {
+      rpcHandlers.set(name, handler)
+    },
+    _rpcCalls: rpcCalls,
+    async rpc(name, args = {}) {
+      rpcCalls.push({ name, args })
+      const failIdx = failures.findIndex((f) => f.op === 'rpc' && f.table === name)
+      if (failIdx >= 0) {
+        return { data: null, error: failures.splice(failIdx, 1)[0].error }
+      }
+      const handler = rpcHandlers.get(name)
+      if (!handler) {
+        return {
+          data: null,
+          error: { code: 'PGRST202', message: `function ${name} not found` },
+        }
+      }
+      return handler(args)
     },
     from,
   }

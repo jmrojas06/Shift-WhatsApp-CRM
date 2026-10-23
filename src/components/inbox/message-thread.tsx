@@ -51,6 +51,7 @@ import {
 import { deleteAccountMedia } from "@/lib/storage/upload-media";
 import { TemplatePicker } from "./template-picker";
 import { AiThreadBanner } from "./ai-thread-banner";
+import { MobileOrdersButton } from "./mobile-orders-button";
 import { buildReplyPreview } from "./reply-quote";
 import { renderTemplateBody } from "@/lib/whatsapp/template-body";
 import { contactHandle } from "@/lib/whatsapp/wa-identity";
@@ -942,6 +943,15 @@ export function MessageThread({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Ventas on mobile: the contact panel doesn't exist below lg,
+              so orders are created from here (renders nothing without
+              the module or for viewers). */}
+          <MobileOrdersButton
+            contactId={contact.id}
+            contactName={displayName}
+            conversationId={conversation.id}
+          />
+
           {/* Contact-panel toggle — desktop only. The contact sidebar
               eats a chunk of horizontal width that crowds the thread on
               smaller laptops; this lets agents reclaim it when they just

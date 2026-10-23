@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useTranslations } from "next-intl";
 import { useAuth } from "@/hooks/use-auth";
-import { getVerticalManifest } from "@/lib/verticals/registry";
+import { hasModule } from "@/lib/verticals/registry";
 
 export type AiBannerMode = "hidden" | "paused" | "active";
 
@@ -107,7 +107,9 @@ export function AiThreadBanner({
 }: AiThreadBannerProps) {
   const t = useTranslations("Inbox.aiBanner");
   const { accountId, account } = useAuth();
-  const hasVertical = getVerticalManifest(account?.vertical_key) !== null;
+  // "Tiene bot de módulo": hoy solo la agenda atiende por WhatsApp
+  // (Ventas es solo panel), así que ese es el módulo que cuenta.
+  const hasVertical = hasModule(account, "agenda");
   const [autoReplyOn, setAutoReplyOn] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   // Optimistic local mirror of the pause flag so the banner flips
