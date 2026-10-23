@@ -213,7 +213,7 @@ export const VENTAS_TEXTS = {
   },
   filtersLabel: 'Filtrar pedidos',
   searchLabel: 'Buscar pedidos',
-  searchPlaceholder: 'Buscar por número, nombre o teléfono',
+  searchPlaceholder: 'Número, nombre o teléfono',
   resultsCount: (count: number | string) =>
     Number(count) === 1 ? '1 pedido' : `${count} pedidos`,
 
