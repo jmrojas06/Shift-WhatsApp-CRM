@@ -74,23 +74,13 @@ const templateParam = (value: string | null | undefined, fallback: string): stri
 const FALLBACK_BUSINESS = 'tu tienda'
 const FALLBACK_PARAM = '-'
 
-/** Mensaje libre (ventana de 24 h abierta). */
+/**
+ * Mensaje libre (ventana de 24 h abierta). Una sola redacción por aviso:
+ * es exactamente el cuerpo de la plantilla de Meta con sus variables, así
+ * el cliente recibe lo mismo por los dos canales.
+ */
 export function buildNoticeText(kind: NoticeKind, ctx: NoticeContext): string {
-  const n = ctx.number
-  switch (kind) {
-    case 'paid':
-      return `¡Recibimos tu pago! Tu pedido #${n} está confirmado. Te avisamos cuando salga. 🙌`
-    case 'shipped': {
-      const carrier = plain(ctx.carrier)
-      const tracking = plain(ctx.trackingNumber)
-      const parts = [`Tu pedido #${n} salió 📦.`]
-      if (carrier) parts.push(`Transportadora: ${carrier}.`)
-      if (tracking) parts.push(`Guía: ${tracking}.`)
-      return parts.join(' ')
-    }
-    case 'delivered':
-      return `Tu pedido #${n} fue entregado. ¡Gracias por comprarnos! 🙌`
-  }
+  return renderNoticeTemplateBody(kind, buildNoticeTemplateParams(kind, ctx))
 }
 
 /**
@@ -125,12 +115,19 @@ export function buildNoticeTemplate(
 /**
  * Cuerpo de cada plantilla tal como se crea en WhatsApp Manager
  * (categoría utilidad, idioma `es`, sin encabezado, pie ni botones).
- * Es la fuente única del texto: docs/ventas.md y la bandeja lo usan.
+ * Es la fuente única del texto de los avisos: el texto libre
+ * (`buildNoticeText`), docs/ventas.md y la bandeja salen de aquí.
+ *
+ *   - Pagado no promete "te avisamos cuando salga": con contraentrega el
+ *     pago llega después del envío.
+ *   - Enviado lleva texto fijo de sobra entre las variables: Meta rechaza
+ *     plantillas con demasiadas variables para su largo.
  */
 export const NOTICE_TEMPLATE_BODIES: Readonly<Record<NoticeKind, string>> = Object.freeze({
-  paid: '¡Hola! {{1}} recibió tu pago. Tu pedido #{{2}} está confirmado y te avisamos cuando salga. 🙌',
-  shipped: 'Tu pedido #{{1}} salió 📦. Transportadora: {{2}}. Guía: {{3}}.',
-  delivered: 'Tu pedido #{{1}} fue entregado. ¡Gracias por comprarnos! 🙌',
+  paid: '¡Hola! {{1}} recibió tu pago. Tu pedido #{{2}} está confirmado. ¡Gracias por tu compra! 🙌',
+  shipped:
+    '¡Hola! Tu pedido #{{1}} ya va en camino 📦. Lo lleva {{2}} con el número de guía {{3}}. Puedes rastrearlo en la página de la transportadora.',
+  delivered: '¡Hola! Tu pedido #{{1}} fue entregado. ¡Gracias por comprarnos! 🙌',
 })
 
 /**

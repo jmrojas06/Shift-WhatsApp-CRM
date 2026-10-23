@@ -60,6 +60,9 @@ export async function fetchSummaryRows(
     .or(
       `paid_at.gte."${since}",created_at.gte."${since}",and(payment_status.eq.pending,status.neq.cancelled)`,
     )
+    // Orden fijo: si se llega al tope, se quedan por fuera las filas más viejas.
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
     .limit(SUMMARY_LIMIT)
   if (error) return { rows: null, truncated: false, error }
   const rows = (data ?? []) as unknown as SummaryRow[]

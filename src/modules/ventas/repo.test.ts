@@ -92,7 +92,7 @@ function pipelineSeed(): Record<string, Row[]> {
 const stageId = (name: string) => `stage-${SALES_STAGES.indexOf(name as never)}`
 
 describe('ensureSalesPipeline', () => {
-  it('crea el pipeline Ventas con las seis etapas en orden', async () => {
+  it('crea el pipeline Ventas con las cinco etapas en orden (sin "Nuevo")', async () => {
     const db = makeFakeDb({})
     const result = await ensureSalesPipeline(asClient(db), ACCOUNT, USER)
 
@@ -105,7 +105,8 @@ describe('ensureSalesPipeline', () => {
     })
     const stages = db._tables.pipeline_stages
     expect(stages.map((s) => s.name)).toEqual([...SALES_STAGES])
-    expect(stages.map((s) => s.position)).toEqual([0, 1, 2, 3, 4, 5])
+    expect(stages.map((s) => s.position)).toEqual([0, 1, 2, 3, 4])
+    expect(stages.map((s) => s.name)).not.toContain('Nuevo')
     expect(stages.every((s) => s.pipeline_id === result.pipelineId)).toBe(true)
     expect(stages.every((s) => typeof s.color === 'string')).toBe(true)
     for (const name of SALES_STAGES) {
@@ -120,7 +121,7 @@ describe('ensureSalesPipeline', () => {
 
     expect(second).toEqual(first)
     expect(db._tables.pipelines).toHaveLength(1)
-    expect(db._tables.pipeline_stages).toHaveLength(6)
+    expect(db._tables.pipeline_stages).toHaveLength(5)
   })
 
   it('reconoce el nombre sin importar mayúsculas ni espacios', async () => {
@@ -132,7 +133,7 @@ describe('ensureSalesPipeline', () => {
 
     expect(result.pipelineId).toBe('pipe-1')
     expect(db._tables.pipelines).toHaveLength(1)
-    expect(db._tables.pipeline_stages).toHaveLength(6)
+    expect(db._tables.pipeline_stages).toHaveLength(5)
   })
 
   it('con dos pipelines "Ventas" elige siempre el más antiguo (created_at, id)', async () => {
@@ -193,19 +194,31 @@ describe('ensureSalesPipeline', () => {
     // "pagado" cuenta como "Pagado": no se duplica.
     expect(stages.filter((s) => String(s.name).toLowerCase() === 'pagado')).toHaveLength(1)
     expect(result.stageIdByName.Pagado).toBe('s-a')
-    // Faltaban 5: se agregan al final, con posiciones nuevas.
-    expect(stages).toHaveLength(7)
+    // Faltaban 4: se agregan al final, con posiciones nuevas.
+    expect(stages).toHaveLength(6)
     const added = stages.filter((s) => !['s-a', 's-b'].includes(String(s.id)))
-    expect(added.map((s) => s.name)).toEqual([
-      'Nuevo',
-      'Pago pendiente',
-      'Enviado',
-      'Entregado',
-      'Cancelado',
-    ])
+    expect(added.map((s) => s.name)).toEqual(['Pago pendiente', 'Enviado', 'Entregado', 'Cancelado'])
     const positions = stages.map((s) => s.position as number)
     expect(new Set(positions).size).toBe(positions.length)
     expect(Math.min(...added.map((s) => s.position as number))).toBeGreaterThan(1)
+  })
+
+  it('un pipeline que ya tiene "Nuevo" (versión anterior) lo conserva sin usarlo', async () => {
+    const db = makeFakeDb({
+      pipelines: [{ id: 'pipe-1', account_id: ACCOUNT, user_id: USER, name: 'Ventas' }],
+      pipeline_stages: ['Nuevo', ...SALES_STAGES].map((name, position) => ({
+        id: `old-${position}`,
+        pipeline_id: 'pipe-1',
+        name,
+        position,
+      })),
+    })
+    const result = await ensureSalesPipeline(asClient(db), ACCOUNT, USER)
+
+    expect(db._tables.pipeline_stages).toHaveLength(6)
+    expect(db._tables.pipeline_stages.find((s) => s.name === 'Nuevo')?.id).toBe('old-0')
+    expect(Object.keys(result.stageIdByName)).not.toContain('Nuevo')
+    expect(result.stageIdByName['Pago pendiente']).toBe('old-1')
   })
 
   it('no mira pipelines de otra cuenta', async () => {

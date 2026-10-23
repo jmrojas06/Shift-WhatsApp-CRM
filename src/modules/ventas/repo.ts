@@ -162,7 +162,6 @@ function unwrap<T>(result: { data: T; error: unknown }): T {
 const PIPELINE_NAME = 'Ventas'
 
 const STAGE_COLORS: Record<SalesStage, string> = {
-  Nuevo: '#3b82f6',
   'Pago pendiente': '#f59e0b',
   Pagado: '#10b981',
   Enviado: '#8b5cf6',
@@ -177,11 +176,11 @@ export interface SalesPipeline {
 
 /**
  * Deja listo el pipeline "Ventas" de la cuenta (nombre sin importar
- * mayúsculas ni espacios) con sus seis etapas. Idempotente y respetuoso:
+ * mayúsculas ni espacios) con sus cinco etapas. Idempotente y respetuoso:
  * crea lo que falta, nunca renombra, mueve ni borra lo que el dueño ya
- * tiene (las etapas propias se quedan; las que faltan se agregan al
- * final; "Nuevo" queda disponible para uso manual aunque ningún pedido
- * la use).
+ * tiene (las etapas propias se quedan, incluida una "Nuevo" de una
+ * versión anterior, que ya no se crea ni se usa; las que faltan se
+ * agregan al final).
  *
  * Determinista: con varios pipelines "Ventas" gana el más antiguo
  * (created_at, id) y con etapas repetidas la de menor posición

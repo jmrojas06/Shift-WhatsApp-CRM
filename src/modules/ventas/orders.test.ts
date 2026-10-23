@@ -886,9 +886,15 @@ describe('pipelineStageFor', () => {
     expect(pipelineStageFor(order)).toBe(stage)
   })
 
-  it('las etapas del pipeline están en el orden del diseño y cubren todo lo que devuelve el mapeo', () => {
-    expect(SALES_STAGES).toEqual(['Nuevo', 'Pago pendiente', 'Pagado', 'Enviado', 'Entregado', 'Cancelado'])
+  it('las etapas del pipeline están en orden y cubren todo lo que devuelve el mapeo', () => {
+    expect(SALES_STAGES).toEqual(['Pago pendiente', 'Pagado', 'Enviado', 'Entregado', 'Cancelado'])
     for (const [order] of cases) expect(SALES_STAGES).toContain(pipelineStageFor(order))
+  })
+
+  it('no hay etapas muertas: cada etapa es el destino de algún estado (sin "Nuevo")', () => {
+    const reached = new Set(cases.map(([order]) => pipelineStageFor(order)))
+    expect([...SALES_STAGES].every((stage) => reached.has(stage))).toBe(true)
+    expect(reached.has('Nuevo' as never)).toBe(false)
   })
 })
 

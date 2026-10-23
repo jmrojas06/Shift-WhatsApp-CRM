@@ -123,7 +123,7 @@ describe('sendOrderNotice — ventana de 24 h abierta (texto libre)', () => {
       userId: OWNER,
       conversationId: CONVERSATION,
       contactId: CONTACT,
-      text: '¡Recibimos tu pago! Tu pedido #1001 está confirmado. Te avisamos cuando salga. 🙌',
+      text: '¡Hola! Águila Dorada recibió tu pago. Tu pedido #1001 está confirmado. ¡Gracias por tu compra! 🙌',
     })
     expect(storedOrder(db)).toMatchObject({ last_notice: 'paid', last_notice_error: null })
   })
@@ -141,7 +141,7 @@ describe('sendOrderNotice — ventana de 24 h abierta (texto libre)', () => {
 
     expect(f.sendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 'Tu pedido #1001 salió 📦. Transportadora: Servientrega. Guía: GU123.',
+        text: '¡Hola! Tu pedido #1001 ya va en camino 📦. Lo lleva Servientrega con el número de guía GU123. Puedes rastrearlo en la página de la transportadora.',
       }),
     )
     expect(storedOrder(db).last_notice).toBe('shipped')
@@ -300,13 +300,13 @@ describe('sendOrderNotice — ventana cerrada (plantilla de Meta)', () => {
 
   it('el texto guardado de cada plantilla es el cuerpo documentado con sus variables', async () => {
     const cases: [Parameters<typeof sendOrderNotice>[2], Partial<OrderRow>, string][] = [
-      ['paid', {}, '¡Hola! Águila Dorada recibió tu pago. Tu pedido #1001 está confirmado y te avisamos cuando salga. 🙌'],
+      ['paid', {}, '¡Hola! Águila Dorada recibió tu pago. Tu pedido #1001 está confirmado. ¡Gracias por tu compra! 🙌'],
       [
         'shipped',
         { carrier: 'Coordinadora', tracking_number: 'ABC-99' },
-        'Tu pedido #1001 salió 📦. Transportadora: Coordinadora. Guía: ABC-99.',
+        '¡Hola! Tu pedido #1001 ya va en camino 📦. Lo lleva Coordinadora con el número de guía ABC-99. Puedes rastrearlo en la página de la transportadora.',
       ],
-      ['delivered', {}, 'Tu pedido #1001 fue entregado. ¡Gracias por comprarnos! 🙌'],
+      ['delivered', {}, '¡Hola! Tu pedido #1001 fue entregado. ¡Gracias por comprarnos! 🙌'],
     ]
     for (const [kind, over, body] of cases) {
       const db = closed()
@@ -351,13 +351,13 @@ describe('sendOrderNotice — ventana cerrada (plantilla de Meta)', () => {
       sender_type: 'bot',
       content_type: 'template',
       // Lo que el cliente recibió: el cuerpo de la plantilla con sus variables.
-      content_text: '¡Hola! Águila Dorada recibió tu pago. Tu pedido #1001 está confirmado y te avisamos cuando salga. 🙌',
+      content_text: '¡Hola! Águila Dorada recibió tu pago. Tu pedido #1001 está confirmado. ¡Gracias por tu compra! 🙌',
       template_name: 'pedido_pagado',
       message_id: 'wamid-tpl',
       status: 'sent',
     })
     expect(db._tables.conversations[0]).toMatchObject({
-      last_message_text: '¡Hola! Águila Dorada recibió tu pago. Tu pedido #1001 está confirmado y te avisamos cuando salga. 🙌',
+      last_message_text: '¡Hola! Águila Dorada recibió tu pago. Tu pedido #1001 está confirmado. ¡Gracias por tu compra! 🙌',
       last_message_at: NOW.toISOString(),
     })
   })

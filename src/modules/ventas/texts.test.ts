@@ -18,19 +18,25 @@ import {
 describe('buildNoticeText — avisos al cliente (diseño §3.5)', () => {
   it('pagado', () => {
     expect(buildNoticeText('paid', { number: 1001, businessName: 'Águila Dorada' })).toBe(
-      '¡Recibimos tu pago! Tu pedido #1001 está confirmado. Te avisamos cuando salga. 🙌',
+      '¡Hola! Águila Dorada recibió tu pago. Tu pedido #1001 está confirmado. ¡Gracias por tu compra! 🙌',
     )
+  })
+
+  it('pagado no promete avisar el envío (el pago puede llegar después: contraentrega)', () => {
+    expect(NOTICE_TEMPLATE_BODIES.paid).not.toMatch(/avisamos|salga/i)
   })
 
   it('enviado, con transportadora y guía', () => {
     expect(
       buildNoticeText('shipped', { number: 1002, carrier: 'Servientrega', trackingNumber: 'GU123' }),
-    ).toBe('Tu pedido #1002 salió 📦. Transportadora: Servientrega. Guía: GU123.')
+    ).toBe(
+      '¡Hola! Tu pedido #1002 ya va en camino 📦. Lo lleva Servientrega con el número de guía GU123. Puedes rastrearlo en la página de la transportadora.',
+    )
   })
 
   it('entregado', () => {
     expect(buildNoticeText('delivered', { number: 1003 })).toBe(
-      'Tu pedido #1003 fue entregado. ¡Gracias por comprarnos! 🙌',
+      '¡Hola! Tu pedido #1003 fue entregado. ¡Gracias por comprarnos! 🙌',
     )
   })
 
@@ -38,20 +44,32 @@ describe('buildNoticeText — avisos al cliente (diseño §3.5)', () => {
     expect(buildNoticeText('delivered', { number: 12345 })).toContain('#12345')
   })
 
-  it('enviado sin datos de guía no inventa nada', () => {
-    expect(buildNoticeText('shipped', { number: 1002 })).toBe('Tu pedido #1002 salió 📦.')
-    expect(buildNoticeText('shipped', { number: 1002, carrier: 'Envía' })).toBe(
-      'Tu pedido #1002 salió 📦. Transportadora: Envía.',
-    )
-    expect(buildNoticeText('shipped', { number: 1002, trackingNumber: '77' })).toBe(
-      'Tu pedido #1002 salió 📦. Guía: 77.',
-    )
+  it('una sola redacción: el texto libre es exactamente el cuerpo de la plantilla con sus variables', () => {
+    const contexts = [
+      { number: 1001, businessName: 'Águila Dorada', carrier: 'Servientrega', trackingNumber: 'GU123' },
+      { number: 7, businessName: null, carrier: '  Inter   Rapidísimo ', trackingNumber: '7 7' },
+      { number: 8, businessName: 'N'.repeat(75), carrier: null, trackingNumber: '' },
+    ]
+    for (const kind of ['paid', 'shipped', 'delivered'] as const) {
+      for (const ctx of contexts) {
+        expect(buildNoticeText(kind, ctx)).toBe(
+          renderNoticeTemplateBody(kind, buildNoticeTemplateParams(kind, ctx)),
+        )
+      }
+    }
   })
 
-  it('en el texto libre colapsa espacios y saltos de línea de los datos del negocio', () => {
+  it('colapsa espacios y saltos de línea de los datos del negocio', () => {
     expect(
       buildNoticeText('shipped', { number: 1, carrier: '  Inter   Rapidísimo ', trackingNumber: '7 7' }),
-    ).toBe('Tu pedido #1 salió 📦. Transportadora: Inter Rapidísimo. Guía: 7 7.')
+    ).toBe('¡Hola! Tu pedido #1 ya va en camino 📦. Lo lleva Inter Rapidísimo con el número de guía 7 7. Puedes rastrearlo en la página de la transportadora.')
+  })
+
+  it('el envío tiene texto fijo entre variables (Meta rechaza plantillas casi solo de variables)', () => {
+    const body = NOTICE_TEMPLATE_BODIES.shipped
+    const fixed = body.replace(/\{\{\d+\}\}/g, '').trim()
+    expect(fixed.length).toBeGreaterThan(60)
+    expect(body).toContain('Puedes rastrearlo en la página de la transportadora.')
   })
 })
 
@@ -115,8 +133,10 @@ describe('plantillas de Meta (ventana de 24 h cerrada)', () => {
     expect(buildNoticeTemplateParams('paid', { number: 1, businessName: name })[0]).toBe('a'.repeat(59))
   })
 
-  it('el texto libre no recorta el nombre (el negocio no aparece ahí)', () => {
-    expect(buildNoticeText('paid', { number: 1, businessName: 'N'.repeat(75) })).not.toContain('NNN')
+  it('el texto libre usa el mismo nombre recortado a 60 que la plantilla', () => {
+    const text = buildNoticeText('paid', { number: 1, businessName: 'N'.repeat(75) })
+    expect(text).toContain('N'.repeat(60))
+    expect(text).not.toContain('N'.repeat(61))
   })
 
   it('buildNoticeTemplate junta nombre y variables', () => {
@@ -227,7 +247,9 @@ describe('copy del panel', () => {
     expect(VENTAS_TEXTS.status.shipped).toBe('Enviado')
     expect(VENTAS_TEXTS.payment.pending).toBe('Pago pendiente')
     expect(VENTAS_TEXTS.payment.paid).toBe('Pagado')
-    expect(SALES_STAGES).toContain(VENTAS_TEXTS.status.new)
+    // "Nuevo" es el estado del pedido, no una etapa: el pipeline arranca en "Pago pendiente".
+    expect(VENTAS_TEXTS.status.new).toBe('Nuevo')
+    expect(SALES_STAGES).not.toContain(VENTAS_TEXTS.status.new)
   })
 
   it('la cédula se presenta como opcional y de uso restringido', () => {
@@ -251,15 +273,15 @@ describe('renderNoticeTemplateBody — lo que el cliente recibe con la plantilla
   it('rellena el cuerpo documentado de cada plantilla', () => {
     const paid = buildNoticeTemplate('paid', { number: 1001, businessName: 'Águila Dorada' })
     expect(renderNoticeTemplateBody('paid', paid.params)).toBe(
-      '¡Hola! Águila Dorada recibió tu pago. Tu pedido #1001 está confirmado y te avisamos cuando salga. 🙌',
+      '¡Hola! Águila Dorada recibió tu pago. Tu pedido #1001 está confirmado. ¡Gracias por tu compra! 🙌',
     )
     const shipped = buildNoticeTemplate('shipped', { number: 1002, carrier: 'Servientrega', trackingNumber: 'GU123' })
     expect(renderNoticeTemplateBody('shipped', shipped.params)).toBe(
-      'Tu pedido #1002 salió 📦. Transportadora: Servientrega. Guía: GU123.',
+      '¡Hola! Tu pedido #1002 ya va en camino 📦. Lo lleva Servientrega con el número de guía GU123. Puedes rastrearlo en la página de la transportadora.',
     )
     const delivered = buildNoticeTemplate('delivered', { number: 1003 })
     expect(renderNoticeTemplateBody('delivered', delivered.params)).toBe(
-      'Tu pedido #1003 fue entregado. ¡Gracias por comprarnos! 🙌',
+      '¡Hola! Tu pedido #1003 fue entregado. ¡Gracias por comprarnos! 🙌',
     )
   })
 
@@ -272,12 +294,25 @@ describe('renderNoticeTemplateBody — lo que el cliente recibe con la plantilla
   })
 
   it('una variable que falta no deja {{n}} a la vista', () => {
-    expect(renderNoticeTemplateBody('shipped', ['7'])).toBe('Tu pedido #7 salió 📦. Transportadora: -. Guía: -.')
+    expect(renderNoticeTemplateBody('shipped', ['7'])).toBe(
+      '¡Hola! Tu pedido #7 ya va en camino 📦. Lo lleva - con el número de guía -. Puedes rastrearlo en la página de la transportadora.',
+    )
   })
 
   it('un valor con "$&" o llaves se pone tal cual', () => {
     expect(renderNoticeTemplateBody('shipped', ['7', '$& {{1}}', 'G'])).toBe(
-      'Tu pedido #7 salió 📦. Transportadora: $& {{1}}. Guía: G.',
+      '¡Hola! Tu pedido #7 ya va en camino 📦. Lo lleva $& {{1}} con el número de guía G. Puedes rastrearlo en la página de la transportadora.',
     )
+  })
+})
+
+describe('cuerpos de las plantillas (lo que se crea en WhatsApp Manager)', () => {
+  it('son exactamente estos', () => {
+    expect(NOTICE_TEMPLATE_BODIES).toEqual({
+      paid: '¡Hola! {{1}} recibió tu pago. Tu pedido #{{2}} está confirmado. ¡Gracias por tu compra! 🙌',
+      shipped:
+        '¡Hola! Tu pedido #{{1}} ya va en camino 📦. Lo lleva {{2}} con el número de guía {{3}}. Puedes rastrearlo en la página de la transportadora.',
+      delivered: '¡Hola! Tu pedido #{{1}} fue entregado. ¡Gracias por comprarnos! 🙌',
+    })
   })
 })

@@ -17,7 +17,7 @@
 -- Orden de despliegue: el código nuevo tolera que la columna no exista
 -- todavía (cae a `vertical_key`), así que esta migración puede ir antes
 -- o después del despliegue. Es ADITIVA y NO destructiva: agrega una
--- función, una columna y una restricción, y rellena `modules`. No borra
+-- funciones, una columna, una restricción y un trigger, y rellena `modules`. No borra
 -- ni reescribe columnas existentes. Idempotente: se puede correr de nuevo.
 -- ============================================================
 
@@ -71,6 +71,46 @@ END;
 $$;
 
 ALTER FUNCTION public.enforce_account_protected_columns() OWNER TO postgres;
+
+-- ------------------------------------------------------------
+-- Sincronía vertical_key → modules
+-- ------------------------------------------------------------
+-- Una cuenta dada de alta a la manera vieja (solo `vertical_key`) recibe
+-- también `modules`, así que agregarle 'ventas' después
+-- (array_append) nunca le quita la agenda. Solo actúa si `modules` está
+-- vacío: una lista ya escrita por el operador no se toca. 'barberia' es
+-- la clave vieja de la agenda. Una clave con forma inválida no se copia
+-- (el INSERT no falla por esto).
+--
+-- Orden: los triggers BEFORE corren en orden alfabético de nombre.
+-- `accounts_sync_modules` va ANTES de `enforce_account_protected_columns`
+-- (050), así el guardia ve el `modules` ya llenado: si un cliente
+-- (authenticated/anon) manda `vertical_key` aunque sea sin cambiarlo, el
+-- cambio de `modules` lo bloquea el guardia. Para el operador (postgres /
+-- service_role) no cambia nada.
+CREATE OR REPLACE FUNCTION public.sync_account_modules_from_vertical()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+  key text;
+BEGIN
+  IF coalesce(cardinality(NEW.modules), 0) = 0 AND NEW.vertical_key IS NOT NULL THEN
+    key := CASE WHEN NEW.vertical_key = 'barberia' THEN 'agenda' ELSE NEW.vertical_key END;
+    IF public.valid_module_keys(ARRAY[key]) THEN
+      NEW.modules := ARRAY[key];
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS accounts_sync_modules ON public.accounts;
+CREATE TRIGGER accounts_sync_modules
+  BEFORE INSERT OR UPDATE OF vertical_key, modules ON public.accounts
+  FOR EACH ROW EXECUTE FUNCTION public.sync_account_modules_from_vertical();
 
 -- ============================================================
 -- Validación manual (además de supabase/ci/verify-schema.sql):

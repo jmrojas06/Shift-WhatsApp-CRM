@@ -77,6 +77,9 @@ function orderRow(overrides: Row = {}): Row {
   }
 }
 
+/** Id de la etapa en el seed, por nombre (no por posición). */
+const stageOf = (name: (typeof SALES_STAGES)[number]) => `stage-${SALES_STAGES.indexOf(name)}`
+
 function boot(
   options: { modules?: string[]; order?: Row; settings?: Row[] } = {},
 ): FakeDb {
@@ -90,7 +93,7 @@ function boot(
       position,
     })),
     deals: [
-      { id: 'deal-1', account_id: TEST_ACCOUNT, pipeline_id: 'pipe-1', stage_id: 'stage-1' },
+      { id: 'deal-1', account_id: TEST_ACCOUNT, pipeline_id: 'pipe-1', stage_id: stageOf('Pago pendiente') },
     ],
     orders: [
       options.order ?? orderRow(),
@@ -130,7 +133,7 @@ describe('PATCH /api/modules/ventas/orders/[id]', () => {
     expect(res.body.notice).toBe('sent')
     expect(res.body.order).toMatchObject({ payment_status: 'paid', items: [{ name: 'A' }] })
     expect(order(db).payment_status).toBe('paid')
-    expect(db._tables.deals[0].stage_id).toBe('stage-2') // Pagado
+    expect(db._tables.deals[0].stage_id).toBe(stageOf('Pagado'))
     expect(h.sendOrderNotice).toHaveBeenCalledTimes(1)
     expect(h.sendOrderNotice.mock.calls[0][1]).toMatchObject({ number: 1001, payment_status: 'paid' })
     expect(h.sendOrderNotice.mock.calls[0][2]).toBe('paid')
@@ -230,7 +233,7 @@ describe('PATCH /api/modules/ventas/orders/[id]', () => {
       tracking_number: 'ABC123',
     })
     expect(h.sendOrderNotice.mock.calls[0][2]).toBe('shipped')
-    expect(db._tables.deals[0].stage_id).toBe('stage-3') // Enviado
+    expect(db._tables.deals[0].stage_id).toBe(stageOf('Enviado'))
   })
 
   it('marcar enviado sin ciudad ni dirección en el pedido las toma del cuerpo', async () => {

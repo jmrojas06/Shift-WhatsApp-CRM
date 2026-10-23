@@ -69,8 +69,44 @@ describe('053_account_modules.sql', () => {
     )
   })
 
-  it('no recrea el trigger: el de 050 ya apunta a la función', () => {
-    expect(code).not.toMatch(/CREATE TRIGGER/i)
+  it('no recrea el trigger de 050: ya apunta a la función', () => {
+    expect(code).not.toMatch(/CREATE TRIGGER enforce_account_protected_columns/i)
+    expect(code.match(/CREATE TRIGGER/gi)).toHaveLength(1)
+  })
+
+  describe('sincronía vertical_key → modules', () => {
+    const fn = code.match(
+      /CREATE OR REPLACE FUNCTION public\.sync_account_modules_from_vertical\(\)[\s\S]*?\$\$;/,
+    )?.[0]
+
+    it('la función existe, es SECURITY INVOKER y fija su search_path', () => {
+      expect(fn).toBeDefined()
+      expect(fn).toMatch(/RETURNS TRIGGER/)
+      expect(fn).toMatch(/SECURITY INVOKER/)
+      expect(fn).not.toMatch(/SECURITY DEFINER/)
+      expect(fn).toMatch(/SET search_path = pg_catalog, public/)
+    })
+
+    it('solo llena modules si está vacío y hay vertical_key (barberia → agenda)', () => {
+      expect(fn).toMatch(/cardinality\(NEW\.modules\), 0\) = 0/)
+      expect(fn).toMatch(/NEW\.vertical_key IS NOT NULL/)
+      expect(fn).toMatch(/WHEN NEW\.vertical_key = 'barberia' THEN 'agenda'/)
+      expect(fn).toMatch(/NEW\.modules := ARRAY\[/)
+      // Una clave con forma inválida no rompe el INSERT: simplemente no se copia.
+      expect(fn).toMatch(/public\.valid_module_keys\(ARRAY\[/)
+    })
+
+    it('se dispara BEFORE INSERT OR UPDATE OF vertical_key, modules, por fila', () => {
+      expect(code).toMatch(
+        /DROP TRIGGER IF EXISTS accounts_sync_modules ON public\.accounts;\s*CREATE TRIGGER accounts_sync_modules\s+BEFORE INSERT OR UPDATE OF vertical_key, modules ON public\.accounts\s+FOR EACH ROW EXECUTE FUNCTION public\.sync_account_modules_from_vertical\(\);/,
+      )
+    })
+
+    it('corre ANTES del guardia de columnas protegidas (orden alfabético de triggers)', () => {
+      // Si corriera después, un cliente que mande vertical_key sin cambiarlo
+      // podría llenar modules sin que el guardia lo vea.
+      expect('accounts_sync_modules' < 'enforce_account_protected_columns').toBe(true)
+    })
   })
 
   it('es aditiva: ni DROP TABLE/COLUMN ni DELETE/TRUNCATE, un solo UPDATE', () => {
@@ -78,7 +114,8 @@ describe('053_account_modules.sql', () => {
     expect(code).not.toMatch(/DROP\s+COLUMN/i)
     expect(code).not.toMatch(/\bDELETE\s+FROM\b/i)
     expect(code).not.toMatch(/\bTRUNCATE\b/i)
-    expect(code.match(/\bUPDATE\b/gi)).toHaveLength(1)
+    // Un solo UPDATE de datos (el backfill); el `UPDATE OF` del trigger no cuenta.
+    expect(code.match(/^\s*UPDATE\s+accounts\b/gim)).toHaveLength(1)
   })
 
   it('no toca vertical_key (sigue vigente para el respaldo del código)', () => {
@@ -96,6 +133,13 @@ describe('verify-schema.sql (053)', () => {
     expect(sql).toContain("to_regprocedure('public.valid_module_keys(text[])')")
     expect(sql).toContain("pg_get_functiondef('public.enforce_account_protected_columns()'::regprocedure)")
     expect(sql).toContain("NOT LIKE '%NEW.modules IS DISTINCT FROM OLD.modules%'")
+  })
+
+  it('comprueba el trigger de sincronía vertical_key → modules y que corre antes del guardia', () => {
+    expect(sql).toContain("to_regprocedure('public.sync_account_modules_from_vertical()')")
+    expect(sql).toContain("tgname = 'accounts_sync_modules'")
+    expect(sql).toContain("'accounts_sync_modules' >= 'enforce_account_protected_columns'")
+    expect(sql).toContain('sync_account_modules_from_vertical is SECURITY DEFINER')
   })
 
   it('comprueba que valid_module_keys rechaza un elemento NULL', () => {

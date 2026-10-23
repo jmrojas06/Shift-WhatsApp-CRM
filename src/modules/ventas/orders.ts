@@ -627,9 +627,12 @@ export function applyOrderAction(
 // Pipeline "Ventas"
 // ------------------------------------------------------------
 
-/** Etapas del pipeline Ventas, en el orden en que se crean. */
+/**
+ * Etapas del pipeline Ventas, en el orden en que se crean. Solo las que
+ * `pipelineStageFor` usa: un pedido nuevo nace en "Pago pendiente" o
+ * "Pagado", así que no hay etapa "Nuevo".
+ */
 export const SALES_STAGES = [
-  'Nuevo',
   'Pago pendiente',
   'Pagado',
   'Enviado',

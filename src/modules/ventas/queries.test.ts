@@ -62,7 +62,7 @@ describe('fetchPanelOrders', () => {
 })
 
 describe('fetchSummaryRows', () => {
-  it('columnas mínimas, desde el inicio del mes en Colombia, con tope explícito', async () => {
+  it('columnas mínimas, desde el inicio del mes en Colombia, orden fijo (lo más nuevo primero) y tope explícito', async () => {
     const { client, calls } = fakeClient({ orders: { data: [], error: null } })
     const res = await fetchSummaryRows(client, 'acc-1', new Date('2026-10-22T12:00:00Z'))
     expect(res).toEqual({ rows: [], truncated: false, error: null })
@@ -73,6 +73,9 @@ describe('fetchSummaryRows', () => {
         'or',
         'paid_at.gte."2026-10-01T05:00:00.000Z",created_at.gte."2026-10-01T05:00:00.000Z",and(payment_status.eq.pending,status.neq.cancelled)',
       ],
+      // Si se llega al tope, lo que queda fuera son las filas más viejas.
+      ['order', 'created_at', { ascending: false }],
+      ['order', 'id', { ascending: false }],
       ['limit', SUMMARY_LIMIT],
     ])
   })

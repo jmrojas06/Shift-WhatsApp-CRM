@@ -542,6 +542,36 @@ BEGIN
       'enforce_account_protected_columns does not protect accounts.modules — migration 053 did not apply';
   END IF;
 
+  -- 053: vertical_key → modules sync. The trigger must exist, run as the
+  -- invoker, and sort BEFORE the 050 protected-columns guard (BEFORE
+  -- triggers fire in name order) so the guard sees the filled modules.
+  IF to_regprocedure('public.sync_account_modules_from_vertical()') IS NULL THEN
+    RAISE EXCEPTION
+      'public.sync_account_modules_from_vertical() is missing — migration 053 did not apply';
+  END IF;
+
+  IF (SELECT prosecdef FROM pg_proc
+      WHERE oid = to_regprocedure('public.sync_account_modules_from_vertical()'))
+  THEN
+    RAISE EXCEPTION
+      'sync_account_modules_from_vertical is SECURITY DEFINER — it must run as the invoker';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid = 'public.accounts'::regclass
+      AND tgname = 'accounts_sync_modules'
+      AND NOT tgisinternal
+  ) THEN
+    RAISE EXCEPTION
+      'trigger accounts_sync_modules is missing on accounts — migration 053 did not apply';
+  END IF;
+
+  IF 'accounts_sync_modules' >= 'enforce_account_protected_columns' COLLATE "C" THEN
+    RAISE EXCEPTION
+      'accounts_sync_modules must sort before enforce_account_protected_columns';
+  END IF;
+
   -- 053: the backfill — an agenda account must list the agenda in
   -- modules. Like the 052 check, only meaningful against PRODUCTION
   -- after 053 ran (the CI database has no accounts).
