@@ -5,6 +5,7 @@ import {
   availableOrderActions,
   filterOrders,
   formatAmounts,
+  formatOrderDate,
   matchesOrderFilter,
   matchesOrderSearch,
   missingShippingPlace,
@@ -345,6 +346,24 @@ describe('noticeResult: lo que se le dice a la persona tras guardar', () => {
     expect(noticeResult('skipped', order({}))).toBeNull()
     expect(noticeResult(null, order({}))).toBeNull()
     expect(noticeResult(undefined, order({}))).toBeNull()
+  })
+})
+
+describe('formatOrderDate: fechas en hora de Colombia', () => {
+  it('corta para la lista', () => {
+    // 2026-10-21 01:30 UTC = martes 20 de octubre, 8:30 p. m. en Bogotá.
+    expect(formatOrderDate('2026-10-21T01:30:00Z')).toBe('mar 20 oct, 8:30 p. m.')
+  })
+
+  it('larga para el detalle', () => {
+    expect(formatOrderDate('2026-10-21T01:30:00Z', 'long')).toBe(
+      'martes 20 de octubre de 2026, 8:30 p. m.',
+    )
+  })
+
+  it('vacía o inválida: null', () => {
+    expect(formatOrderDate(null)).toBeNull()
+    expect(formatOrderDate('no-es-fecha')).toBeNull()
   })
 })
 

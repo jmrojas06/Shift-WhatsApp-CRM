@@ -207,6 +207,7 @@ export function CreateOrderForm({
                   </Label>
                   <Input
                     id={fieldId('name', line.key)}
+                    name={`items.${index}.name`}
                     value={line.name}
                     maxLength={ORDER_LIMITS.nameMax}
                     placeholder={first ? T.productPlaceholder : undefined}
@@ -225,6 +226,7 @@ export function CreateOrderForm({
                   </Label>
                   <Input
                     id={fieldId('quantity', line.key)}
+                    name={`items.${index}.quantity`}
                     value={line.quantity}
                     inputMode="numeric"
                     pattern="[0-9]*"
@@ -244,6 +246,7 @@ export function CreateOrderForm({
                   </Label>
                   <Input
                     id={fieldId('unitPrice', line.key)}
+                    name={`items.${index}.unitPrice`}
                     value={line.unitPrice}
                     inputMode="decimal"
                     autoComplete="off"
@@ -300,6 +303,7 @@ export function CreateOrderForm({
           <Label htmlFor={fieldId('shipping')}>{T.shippingLabel}</Label>
           <Input
             id={fieldId('shipping')}
+            name="shipping"
             value={draft.shipping}
             inputMode="decimal"
             autoComplete="off"
@@ -340,6 +344,7 @@ export function CreateOrderForm({
             <Label htmlFor={fieldId('city')}>{T.cityLabel}</Label>
             <Input
               id={fieldId('city')}
+              name="city"
               value={draft.city}
               maxLength={ORDER_LIMITS.cityMax}
               autoComplete="address-level2"
@@ -353,6 +358,7 @@ export function CreateOrderForm({
             <Label htmlFor={fieldId('address')}>{T.addressLabel}</Label>
             <Input
               id={fieldId('address')}
+              name="address"
               value={draft.address}
               maxLength={ORDER_LIMITS.addressMax}
               autoComplete="street-address"
@@ -367,6 +373,8 @@ export function CreateOrderForm({
           <Label htmlFor={fieldId('idNumber')}>{T.idNumberLabel}</Label>
           <Input
             id={fieldId('idNumber')}
+            name="idNumber"
+            spellCheck={false}
             value={draft.idNumber}
             maxLength={ORDER_LIMITS.idNumberMax}
             autoComplete="off"
@@ -384,6 +392,7 @@ export function CreateOrderForm({
           <Label htmlFor={fieldId('notes')}>{T.notesLabel}</Label>
           <Textarea
             id={fieldId('notes')}
+            name="notes"
             value={draft.notes}
             maxLength={ORDER_LIMITS.notesMax}
             rows={2}
@@ -517,7 +526,7 @@ export function CreateOrderDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain sm:max-w-2xl">
         {result ? (
           <CreateOrderSuccess
             result={result}

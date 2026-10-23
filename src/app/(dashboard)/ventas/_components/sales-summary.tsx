@@ -1,0 +1,88 @@
+// ============================================================
+// Resumen del mes (diseño §3.4): vendido este mes, pedidos del mes y
+// pendiente por cobrar. "Vendido" va resaltado: es la cifra que el
+// negocio mira primero.
+// ============================================================
+
+import { Banknote, ReceiptText, Wallet } from 'lucide-react'
+
+import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card'
+import { cn } from '@/lib/utils'
+import { formatAmounts, type SalesSummary } from '@/modules/ventas/panel'
+import { VENTAS_TEXTS as T } from '@/modules/ventas/texts'
+
+interface SalesSummaryProps {
+  summary: SalesSummary | null
+  currency: string
+  loading: boolean
+}
+
+export function SalesSummaryTiles({ summary, currency, loading }: SalesSummaryProps) {
+  const value = (text: string) => (loading || !summary ? '…' : text)
+
+  const tiles = [
+    {
+      key: 'sold',
+      icon: Banknote,
+      label: T.summary.soldThisMonth,
+      hint: T.summary.soldHint,
+      value: value(formatAmounts(summary?.soldThisMonth ?? [], currency)),
+      highlight: true,
+    },
+    {
+      key: 'orders',
+      icon: ReceiptText,
+      label: T.summary.orders,
+      hint: T.summary.ordersHint,
+      value: value(String(summary?.ordersThisMonth ?? 0)),
+      highlight: false,
+    },
+    {
+      key: 'pending',
+      icon: Wallet,
+      label: T.summary.pending,
+      hint: T.summary.pendingHint,
+      value: value(formatAmounts(summary?.pendingToCollect ?? [], currency)),
+      highlight: false,
+    },
+  ]
+
+  return (
+    <section aria-label={T.summary.label} aria-busy={loading}>
+      <ul className="grid gap-3 sm:grid-cols-3">
+        {tiles.map((tile) => {
+          const Icon = tile.icon
+          return (
+            <li key={tile.key}>
+              <Card
+                size="sm"
+                className={cn('h-full', tile.highlight && 'bg-primary/5 ring-primary/25')}
+              >
+                <CardHeader>
+                  <CardDescription className="flex items-center gap-2">
+                    <Icon
+                      className={cn('h-4 w-4', tile.highlight ? 'text-primary' : 'text-muted-foreground')}
+                      aria-hidden="true"
+                    />
+                    {tile.label}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-1">
+                  <p
+                    className={cn(
+                      'text-2xl font-semibold tracking-tight tabular-nums break-words',
+                      tile.highlight ? 'text-primary' : 'text-foreground',
+                    )}
+                  >
+                    {tile.value}
+                  </p>
+                  <p className="text-xs text-muted-foreground">{tile.hint}</p>
+                </CardContent>
+              </Card>
+            </li>
+          )
+        })}
+      </ul>
+    </section>
+  )
+}

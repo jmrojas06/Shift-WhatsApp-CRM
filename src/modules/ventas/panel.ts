@@ -8,6 +8,7 @@
 // preguntan a `applyOrderAction` y "vendido" a `isCountedSale`.
 // ============================================================
 
+import { formatDayLabel, formatLongDate, formatTimeLabel } from '@/verticals/agenda/agent/format'
 import { zonedParts, zonedTimeToUtc } from '@/verticals/agenda/agent/time'
 
 import {
@@ -59,6 +60,24 @@ function monthKey(instant: Date, tz: string): string {
 /** Primer instante (00:00 del día 1) del mes de `now` en la zona de ventas. */
 export function salesMonthStart(now: Date, tz: string = SALES_TIME_ZONE): Date {
   return zonedTimeToUtc(`${monthKey(now, tz)}-01`, '00:00', tz)
+}
+
+/**
+ * Fecha y hora de un pedido en la zona de ventas: 'mar 20 oct, 8:30 p. m.'
+ * (lista) o 'martes 20 de octubre de 2026, 8:30 p. m.' (detalle). null si
+ * no hay fecha o no se puede leer.
+ */
+export function formatOrderDate(
+  iso: string | null | undefined,
+  style: 'short' | 'long' = 'short',
+  tz: string = SALES_TIME_ZONE,
+): string | null {
+  if (!iso) return null
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return null
+  const parts = zonedParts(date, tz)
+  const day = style === 'long' ? formatLongDate(parts.dateKey) : formatDayLabel(parts.dateKey)
+  return `${day}, ${formatTimeLabel(parts)}`
 }
 
 const inMonth = (iso: string | null | undefined, key: string, tz: string): boolean => {

@@ -284,7 +284,13 @@ export const VENTAS_TEXTS = {
     done: 'Listo.',
     groupLabel: (number: number | string) => `Acciones del pedido #${number}`,
     readOnlyReason: 'cambiar pedidos',
+    updated: (number: number | string) => `Pedido #${number} actualizado.`,
+    retry: 'Reintentar',
   },
+
+  listLimited: (count: number | string) =>
+    `Se muestran los ${count} pedidos más recientes.`,
+  ordersTitle: 'Pedidos',
 
   shipDialog: {
     title: 'Datos del envío',
