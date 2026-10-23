@@ -61,6 +61,7 @@ import {
 import { NodeConfigForm } from './forms/node-config-form';
 import { NodeKeySelect } from './forms/fields';
 import { IssueLine } from './validation-panel';
+import { ConfirmRemoveNode } from './confirm-remove-node';
 import { useFlowEditor, type BuilderState } from './flow-editor-state';
 
 // ============================================================
@@ -155,7 +156,7 @@ export function FlowBuilder() {
   }, [flashKey]);
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-7">
+    <div className="mx-auto flex max-w-3xl flex-col gap-6 px-3 py-4 sm:px-6 sm:py-7">
       <TriggerPanel
         state={state}
         setState={setState}
@@ -363,7 +364,7 @@ function EntryPicker({
   const entryId = useId();
   if (state.nodes.length === 0) return null;
   return (
-    <section className="border-border bg-card flex items-center gap-3 rounded-lg border p-3">
+    <section className="border-border bg-card flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border p-3">
       <CornerDownRight className="text-primary h-4 w-4 shrink-0" aria-hidden />
       <label htmlFor={entryId} className="text-muted-foreground text-xs">{t('entryNodeTitle')}</label>
       <NodeKeySelect
@@ -372,7 +373,7 @@ function EntryPicker({
         nodes={state.nodes}
         onChange={(key) => setState((s) => ({ ...s, entry_node_id: key }))}
         placeholder={t('entryNodePlaceholder')}
-        className="max-w-xs flex-1"
+        className="min-w-0 max-w-xs flex-1 basis-48"
       />
     </section>
   );
@@ -418,6 +419,7 @@ function NodeCard({
   const preview = summarizeNode(node, tSummary);
   const uid = useId();
   const panelId = `${uid}-panel`;
+  const [confirmRemove, setConfirmRemove] = useState(false);
   return (
     <div
       ref={cardRef}
@@ -445,20 +447,20 @@ function NodeCard({
       >
         <NodeIconChip type={node.node_type} size={32} iconSize={16} />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span
               className="truncate text-[11px] font-semibold tracking-wider uppercase"
               style={{ color: c.text }}
             >
               {t(`nodes.${node.node_type}.label`)}
             </span>
-            <code className="bg-muted text-muted-foreground rounded px-1.5 py-0.5 text-[10px]">
+            <code className="bg-muted text-muted-foreground max-w-full truncate rounded px-1.5 py-0.5 text-[11px]">
               {node.node_key}
             </code>
             {isEntry && (
               <Badge
                 variant="outline"
-                className="border-primary/40 bg-primary/10 text-primary text-[10px]"
+                className="border-primary/40 bg-primary/10 text-primary text-[11px]"
               >
                 {t('badgeEntry')}
               </Badge>
@@ -499,10 +501,10 @@ function NodeCard({
             <Button
               variant="ghost"
               size="sm"
-              onClick={onRemove}
+              onClick={() => setConfirmRemove(true)}
               className="text-destructive hover:bg-destructive/10 hover:text-destructive"
             >
-              <Trash2 className="h-3.5 w-3.5" />
+              <Trash2 className="h-3.5 w-3.5" aria-hidden />
               {t('removeNode')}
             </Button>
           </div>
@@ -515,6 +517,12 @@ function NodeCard({
           )}
         </div>
       )}
+      <ConfirmRemoveNode
+        nodeKey={node.node_key}
+        open={confirmRemove}
+        onOpenChange={setConfirmRemove}
+        onConfirm={onRemove}
+      />
     </div>
   );
 }
@@ -583,7 +591,7 @@ function NodeConfigWithAdvanced({
               />
             </div>
             {hasReplyIds && (
-              <p className="text-muted-foreground text-[10px]">
+              <p className="text-muted-foreground text-[11px]">
                 {t('replyIdsHint')}
               </p>
             )}
@@ -614,10 +622,9 @@ function AddNodeButton({ onAdd, t }: { onAdd: (type: NodeType) => void; t: Retur
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        className="border-border bg-card text-foreground hover:bg-muted inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors"
-        aria-label={t('addNode')}
+        className="border-border bg-card text-foreground hover:bg-muted focus-visible:ring-ring/50 inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium outline-none transition-colors focus-visible:ring-3 pointer-coarse:min-h-11"
       >
-        <Plus className="h-3.5 w-3.5" />
+        <Plus className="h-3.5 w-3.5" aria-hidden />
         {t('addNode')}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="border-border bg-popover">

@@ -7,6 +7,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { AiPlayground } from '@/components/agents/ai-playground';
 import { AiUsageCard } from '@/components/agents/ai-usage';
 import { AiConfig } from '@/components/settings/ai-config';
+import { Skeleton } from '@/components/dashboard/skeleton';
 import { useAuth } from '@/hooks/use-auth';
 import { canEditSettings } from '@/lib/auth/roles';
 
@@ -50,6 +51,16 @@ export default function AgentsPage() {
         {t('description')}
       </p>
 
+      {!decided && (
+        // Placeholder shaped like the tabs + panel, so the page doesn't
+        // pop in under the title once the AI config check resolves.
+        <div className="mt-6 space-y-4" role="status" aria-busy="true">
+          <span className="sr-only">{t('loading')}</span>
+          <Skeleton className="h-9 w-72 max-w-full" />
+          <Skeleton className="h-[420px] w-full rounded-xl" />
+        </div>
+      )}
+
       {decided && (
         <Tabs
           value={tab}
@@ -58,14 +69,14 @@ export default function AgentsPage() {
         >
           <TabsList className="max-w-full overflow-x-auto">
             <TabsTrigger value="playground">
-              <Sparkles className="mr-1.5 h-4 w-4" /> {t('tabPlayground')}
+              <Sparkles className="mr-1.5 h-4 w-4" aria-hidden /> {t('tabPlayground')}
             </TabsTrigger>
             <TabsTrigger value="setup">
-              <Settings2 className="mr-1.5 h-4 w-4" /> {t('tabSetup')}
+              <Settings2 className="mr-1.5 h-4 w-4" aria-hidden /> {t('tabSetup')}
             </TabsTrigger>
             {canViewUsage && (
               <TabsTrigger value="usage">
-                <BarChart3 className="mr-1.5 h-4 w-4" /> {t('tabUsage')}
+                <BarChart3 className="mr-1.5 h-4 w-4" aria-hidden /> {t('tabUsage')}
               </TabsTrigger>
             )}
           </TabsList>

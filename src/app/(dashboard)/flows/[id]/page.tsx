@@ -4,10 +4,10 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
-import { toast } from "sonner";
 
 import { useTranslations } from "next-intl";
 
+import { Button } from "@/components/ui/button";
 import { FlowEditorShell } from "@/components/flows/flow-editor-shell";
 import type { FlowRow, FlowNodeRow } from "@/lib/flows/types";
 
@@ -31,11 +31,16 @@ export default function FlowEditorPage() {
   const [nodes, setNodes] = useState<FlowNodeRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  // A real load failure (network/500) is not "flow not found": say what
+  // happened and let the person try again.
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (!params.id) return;
     let cancelled = false;
     (async () => {
+      setLoadFailed(false);
       try {
         const res = await fetch(`/api/flows/${params.id}`);
         if (res.status === 404) {
@@ -54,7 +59,7 @@ export default function FlowEditorPage() {
       } catch (err) {
         if (!cancelled) {
           console.error(err);
-          toast.error(t("loadError"));
+          setLoadFailed(true);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -63,18 +68,43 @@ export default function FlowEditorPage() {
     return () => {
       cancelled = true;
     };
-  }, [params.id]);
+  }, [params.id, reloadKey]);
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      <div className="flex h-64 items-center justify-center" role="status">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden />
+        <span className="sr-only">{t("loading")}</span>
+      </div>
+    );
+  }
+  if (loadFailed) {
+    return (
+      <div className="flex h-64 flex-col items-center justify-center gap-3 text-center">
+        <p role="alert" className="max-w-sm text-sm text-destructive">
+          {t("loadError")}
+        </p>
+        <Button
+          variant="outline"
+          onClick={() => {
+            setLoading(true);
+            setReloadKey((k) => k + 1);
+          }}
+        >
+          {t("retry")}
+        </Button>
+        <Link
+          href="/flows"
+          className="inline-flex min-h-11 items-center rounded-lg px-3 text-sm text-primary outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          {t("backToFlows")}
+        </Link>
       </div>
     );
   }
   if (notFound || !flow) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3">
+      <div className="flex h-64 flex-col items-center justify-center gap-3">
         <p className="text-sm text-muted-foreground">{t("notFound")}</p>
         <Link
           href="/flows"

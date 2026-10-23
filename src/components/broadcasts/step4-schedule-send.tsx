@@ -47,6 +47,7 @@ export function Step4ScheduleSend({
   const [estimatedReach, setEstimatedReach] = useState<number>(0);
   const [loadingReach, setLoadingReach] = useState(true);
   const nameId = useId();
+  const nameHintId = useId();
   const clampedProgress = Math.min(100, Math.max(0, Math.round(progress)));
 
   useEffect(() => {
@@ -90,8 +91,15 @@ export function Step4ScheduleSend({
           value={name}
           onChange={(e) => onNameChange(e.target.value)}
           placeholder={t('scheduleSend.broadcastNamePlaceholder')}
+          aria-describedby={name.trim() ? undefined : nameHintId}
           className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
         />
+        {/* Say why Guardar / Enviar are disabled instead of leaving them grey. */}
+        {!name.trim() && (
+          <p id={nameHintId} className="mt-1.5 text-xs text-muted-foreground">
+            {t('scheduleSend.nameRequiredHint')}
+          </p>
+        )}
       </div>
 
       {/* Summary Card */}
@@ -108,9 +116,9 @@ export function Step4ScheduleSend({
           </div>
           <div>
             <p className="text-xs text-muted-foreground">{t('scheduleSend.estimatedReach')}</p>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5" aria-live="polite">
               {loadingReach ? (
-                <Loader2 className="h-3 w-3 animate-spin text-primary" />
+                <Loader2 className="h-3 w-3 animate-spin text-primary" aria-hidden />
               ) : (
                 <>
                   <Users className="h-3.5 w-3.5 text-primary" />
@@ -128,7 +136,7 @@ export function Step4ScheduleSend({
 
       {/* Processing overlay */}
       {isProcessing && (
-        <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+        <div role="status" className="rounded-xl border border-primary/20 bg-primary/5 p-4">
           <div className="mb-2 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
@@ -181,7 +189,7 @@ export function Step4ScheduleSend({
           <DialogTrigger
             render={
               <Button
-                disabled={!name.trim() || isProcessing}
+                disabled={!name.trim() || isProcessing || loadingReach}
                 className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               />
             }
