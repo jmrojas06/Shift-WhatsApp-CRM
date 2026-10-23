@@ -71,22 +71,39 @@ describe('054_ventas.sql — estructura', () => {
     expect(code).toContain('CHECK (total = subtotal + shipping)')
   })
 
-  it('orders: estados y moneda con CHECK; el contacto no se borra con pedidos', () => {
+  it('orders: estados y moneda con CHECK', () => {
     expect(code).toContain("CHECK (payment_status IN ('pending','paid'))")
     expect(code).toContain("CHECK (status IN ('new','shipped','delivered','cancelled'))")
     expect(code).toContain("CHECK (currency ~ '^[A-Z]{3}$')")
-    expect(code).toContain('contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE RESTRICT')
   })
 
-  it('order_items: nombre 1–120, cantidad 1–9999, precio >= 0', () => {
-    expect(code).toContain('CHECK (char_length(name) BETWEEN 1 AND 120)')
+  it('orders: el contacto se puede borrar (SET NULL) y el pedido guarda nombre y teléfono', () => {
+    expect(code).toContain('contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL')
+    expect(code).not.toContain('contact_id uuid NOT NULL')
+    expect(code).not.toContain('ON DELETE RESTRICT')
+    expect(code).toMatch(/customer_name text NOT NULL CHECK \(char_length\(customer_name\) BETWEEN 1 AND 120\)/)
+    expect(code).toMatch(/customer_phone text NOT NULL CHECK \(char_length\(customer_phone\) BETWEEN 1 AND 30\)/)
+  })
+
+  it("importes y precios rechazan NaN (NaN >= 0 es verdadero en Postgres)", () => {
+    for (const col of ['subtotal', 'shipping', 'total', 'unit_price']) {
+      expect(code).toMatch(new RegExp(`${col} <> 'NaN'`))
+    }
+  })
+
+  it('order_items: nombre 1–120 y no vacío, cantidad 1–9999, precio >= 0', () => {
+    expect(code).toContain("CHECK (char_length(name) BETWEEN 1 AND 120 AND btrim(name) <> '')")
     expect(code).toContain('CHECK (quantity BETWEEN 1 AND 9999)')
-    expect(code).toContain('unit_price numeric(12,2) NOT NULL CHECK (unit_price >= 0)')
+    expect(code).toMatch(/unit_price numeric\(12,2\) NOT NULL CHECK \(unit_price >= 0 AND unit_price <> 'NaN'\)/)
   })
 
   it('crea los índices previstos', () => {
     expect(code).toContain('idx_orders_account_created ON orders (account_id, created_at DESC)')
-    expect(code).toContain('idx_orders_account_contact ON orders (account_id, contact_id)')
+    expect(code).toContain('idx_orders_contact_created ON orders (contact_id, created_at DESC)')
+    expect(code).not.toContain('idx_orders_account_contact')
+    expect(code).toMatch(/idx_orders_conversation ON orders \(conversation_id\)\s+WHERE conversation_id IS NOT NULL/)
+    expect(code).toMatch(/idx_orders_deal ON orders \(deal_id\)\s+WHERE deal_id IS NOT NULL/)
+    expect(code).toMatch(/idx_orders_account_paid_at ON orders \(account_id, paid_at\)\s+WHERE payment_status = 'paid'/)
     expect(code).toContain('idx_order_items_order ON order_items (order_id, position)')
   })
 
@@ -123,18 +140,9 @@ describe('054_ventas.sql — RLS', () => {
   }
 
   for (const table of ['orders', 'order_items']) {
-    for (const cmd of ['INSERT', 'UPDATE']) {
-      it(`${table} ${cmd}: agent o más`, () => {
-        const found = policiesFor(table, cmd)
-        expect(found).toHaveLength(1)
-        expect(found[0].body).toMatch(/is_account_member\(account_id,\s*'agent'\)/)
-        expect(found[0].body).not.toContain("'admin'")
-      })
-    }
-
-    it(`${table} UPDATE: WITH CHECK agent (no se mueve la fila a otra cuenta)`, () => {
-      const [update] = policiesFor(table, 'UPDATE')
-      expect(update.body).toMatch(/WITH CHECK\s*\(\s*is_account_member\(account_id,\s*'agent'\)\s*\)/)
+    it(`${table}: sin política INSERT (los pedidos nuevos solo nacen en create_order)`, () => {
+      expect(policiesFor(table, 'INSERT')).toHaveLength(0)
+      expect(code).not.toMatch(new RegExp(`ON ${table}\\s+FOR INSERT`, 'i'))
     })
 
     it(`${table}: sin política DELETE (se cancela, no se borra)`, () => {
@@ -144,10 +152,33 @@ describe('054_ventas.sql — RLS', () => {
     })
   }
 
-  it('orders INSERT: contacto y conversación deben ser de la misma cuenta', () => {
-    const [insert] = policiesFor('orders', 'INSERT')
-    expect(insert.body).toMatch(/FROM contacts c\s+WHERE c\.id = orders\.contact_id AND c\.account_id = orders\.account_id/)
-    expect(insert.body).toMatch(/FROM conversations v\s+WHERE v\.id = orders\.conversation_id/)
+  it('order_items: sin política UPDATE (las líneas son el comprobante)', () => {
+    expect(policiesFor('order_items', 'UPDATE')).toHaveLength(0)
+  })
+
+  it('orders UPDATE: agent o más, con WITH CHECK agent', () => {
+    const found = policiesFor('orders', 'UPDATE')
+    expect(found).toHaveLength(1)
+    expect(found[0].body).toMatch(/USING\s*\(\s*is_account_member\(account_id,\s*'agent'\)\s*\)/)
+    expect(found[0].body).toMatch(/WITH CHECK\s*\(\s*is_account_member\(account_id,\s*'agent'\)/)
+    expect(found[0].body).not.toContain("'admin'")
+  })
+
+  it('orders UPDATE: el negocio enlazado debe ser de la misma cuenta', () => {
+    const [update] = policiesFor('orders', 'UPDATE')
+    expect(update.body).toMatch(
+      /deal_id IS NULL\s+OR EXISTS \(\s*SELECT 1 FROM deals d\s+WHERE d\.id = orders\.deal_id AND d\.account_id = orders\.account_id/,
+    )
+  })
+
+  it('las políticas retiradas se borran por si una versión anterior ya se aplicó', () => {
+    for (const [name, table] of [
+      ['orders_insert', 'orders'],
+      ['order_items_insert', 'order_items'],
+      ['order_items_update', 'order_items'],
+    ]) {
+      expect(code).toContain(`DROP POLICY IF EXISTS ${name} ON ${table};`)
+    }
   })
 
   for (const cmd of ['INSERT', 'UPDATE', 'DELETE']) {
@@ -166,7 +197,7 @@ describe('054_ventas.sql — RLS', () => {
 
   it('las políticas se crean con DROP IF EXISTS antes (idempotente)', () => {
     const creates = code.match(/CREATE POLICY\s+(\w+)\s+ON\s+(\w+)/g) ?? []
-    expect(creates.length).toBeGreaterThanOrEqual(10)
+    expect(creates.length).toBeGreaterThanOrEqual(7)
     for (const c of creates) {
       const [, name, table] = c.match(/CREATE POLICY\s+(\w+)\s+ON\s+(\w+)/)!
       expect(code).toContain(`DROP POLICY IF EXISTS ${name} ON ${table};`)
@@ -178,7 +209,10 @@ describe('054_ventas.sql — columnas congeladas para el navegador', () => {
   it('orders: el cliente solo cambia estado, no importes ni dueño', () => {
     expect(code).toContain('CREATE OR REPLACE FUNCTION public.orders_freeze_columns()')
     const fn = code.match(/FUNCTION public\.orders_freeze_columns\(\)[\s\S]*?\$\$;/)?.[0] ?? ''
-    for (const col of ['account_id', 'number', 'contact_id', 'conversation_id', 'subtotal', 'shipping', 'total', 'currency', 'created_by']) {
+    for (const col of [
+      'account_id', 'number', 'contact_id', 'conversation_id', 'customer_name', 'customer_phone',
+      'subtotal', 'shipping', 'total', 'currency', 'created_by',
+    ]) {
       expect(fn).toContain(`NEW.${col} IS DISTINCT FROM OLD.${col}`)
     }
     expect(fn).toContain("current_user IN ('authenticated', 'anon')")
@@ -194,23 +228,91 @@ describe('054_ventas.sql — columnas congeladas para el navegador', () => {
   })
 })
 
+describe('054_ventas.sql — libro de pedidos (orders_ledger_guard)', () => {
+  const fn = code.match(/FUNCTION public\.orders_ledger_guard\(\)[\s\S]*?\$\$;/)?.[0] ?? ''
+
+  it('es un trigger BEFORE UPDATE solo para el navegador', () => {
+    expect(fn).not.toBe('')
+    expect(fn).toContain("current_user IN ('authenticated', 'anon')")
+    expect(fn).toContain("ERRCODE = 'insufficient_privilege'")
+    expect(code).toMatch(/CREATE TRIGGER orders_ledger_guard\s+BEFORE UPDATE ON orders/)
+    expect(code).toContain('ALTER FUNCTION public.orders_ledger_guard() OWNER TO postgres')
+  })
+
+  it('el estado solo avanza: new→shipped→delivered y new|shipped→cancelled', () => {
+    expect(fn).toContain("OLD.status = 'new' AND NEW.status IN ('shipped', 'cancelled')")
+    expect(fn).toContain("OLD.status = 'shipped' AND NEW.status IN ('delivered', 'cancelled')")
+    expect(fn).toMatch(/NEW\.status IS DISTINCT FROM OLD\.status/)
+  })
+
+  it('el pago nunca vuelve de paid a pending, y paid exige paid_at', () => {
+    expect(fn).toContain("OLD.payment_status = 'paid' AND NEW.payment_status <> 'paid'")
+    expect(fn).toContain("NEW.payment_status = 'paid' AND NEW.paid_at IS NULL")
+  })
+
+  it('las marcas de tiempo se fijan una sola vez', () => {
+    for (const col of ['paid_at', 'shipped_at', 'delivered_at', 'cancelled_at']) {
+      expect(fn).toContain(`OLD.${col} IS NOT NULL AND NEW.${col} IS DISTINCT FROM OLD.${col}`)
+    }
+  })
+
+  it('deja editables los datos operativos (avisos, negocio, envío)', () => {
+    for (const col of ['last_notice', 'last_notice_error', 'deal_id', 'carrier', 'tracking_number', 'city', 'address']) {
+      expect(fn).not.toContain(`NEW.${col}`)
+    }
+  })
+})
+
 describe('054_ventas.sql — create_order()', () => {
   const fn =
     code.match(/CREATE OR REPLACE FUNCTION public\.create_order\([\s\S]*?\n\$\$;/)?.[0] ?? ''
-  const signature = 'public.create_order(uuid,uuid,uuid,jsonb,numeric,text,boolean,jsonb)'
+  const signature = 'public.create_order(uuid,uuid,uuid,jsonb,numeric,boolean,jsonb)'
 
-  it('existe, es SECURITY INVOKER y fija el search_path', () => {
+  it('existe, es SECURITY DEFINER de postgres y fija el search_path', () => {
     expect(fn).not.toBe('')
-    expect(fn).toMatch(/SECURITY INVOKER/)
-    expect(fn).not.toMatch(/SECURITY DEFINER/)
+    expect(fn).toMatch(/SECURITY DEFINER/)
+    expect(fn).not.toMatch(/SECURITY INVOKER/)
     expect(fn).toMatch(/SET search_path = public/)
     expect(fn).toMatch(/RETURNS orders/)
+    expect(code).toContain(`ALTER FUNCTION ${signature} OWNER TO postgres;`)
+  })
+
+  it('no recibe la moneda: la lee de la cuenta', () => {
+    expect(fn).not.toContain('p_currency')
+    expect(fn).toMatch(/SELECT default_currency, modules\s+INTO v_currency, v_modules\s+FROM accounts WHERE id = p_account_id/)
+  })
+
+  it('guarda de acceso: service_role o agente de la cuenta (42501), antes de tocar datos', () => {
+    expect(fn).toMatch(/auth\.role\(\) IS DISTINCT FROM 'service_role'\s+AND NOT is_account_member\(p_account_id, 'agent'\)/)
+    expect(fn).toContain("ERRCODE = 'insufficient_privilege'")
+    const guard = fn.indexOf("is_account_member(p_account_id, 'agent')")
+    const firstRead = fn.indexOf('FROM accounts')
+    expect(guard).toBeGreaterThan(-1)
+    expect(guard).toBeLessThan(firstRead)
+  })
+
+  it('exige que el módulo Ventas esté activo en la cuenta', () => {
+    expect(fn).toMatch(/NOT \('ventas' = ANY\(v_modules\)\)/)
+    expect(fn).toContain('El módulo Ventas no está activo')
+    expect(fn).toContain("ERRCODE = 'P0001'")
   })
 
   it('no confía en el llamador: contacto y conversación deben ser de la cuenta', () => {
     expect(fn).toMatch(/FROM contacts\s+WHERE id = p_contact_id AND account_id = p_account_id/)
     expect(fn).toMatch(/FROM conversations\s+WHERE id = p_conversation_id AND account_id = p_account_id AND contact_id = p_contact_id/)
     expect(fn).toContain("ERRCODE = '23503'")
+  })
+
+  it('guarda nombre y teléfono del contacto en el pedido', () => {
+    expect(fn).toMatch(/SELECT name, phone\s+INTO v_contact_name, v_contact_phone\s+FROM contacts/)
+    expect(fn).toContain("nullif(btrim(v_contact_name), '')")
+    expect(fn).toMatch(/customer_name, customer_phone/)
+  })
+
+  it('rechaza NaN en el envío y en los precios, y nombres que son solo espacios', () => {
+    expect(fn).toContain("v_shipping = 'NaN'::numeric")
+    expect(fn).toMatch(/\(v_item->>'unit_price'\)::numeric = 'NaN'::numeric/)
+    expect(fn).toMatch(/btrim\(v_item->>'name'\) = ''/)
   })
 
   it('valida las líneas: arreglo de 1 a 50 con name/quantity/unit_price', () => {
@@ -258,11 +360,34 @@ describe('verify-schema.sql (054)', () => {
     expect(sql).toContain("to_regclass('public.sales_settings')")
     expect(sql).toContain("pg_get_constraintdef(oid) = 'UNIQUE (account_id, number)'")
     expect(sql).toContain('subtotal + shipping')
-    expect(sql).toContain("to_regprocedure('public.create_order(uuid,uuid,uuid,jsonb,numeric,text,boolean,jsonb)')")
+    expect(sql).toContain("to_regprocedure('public.create_order(uuid,uuid,uuid,jsonb,numeric,boolean,jsonb)')")
     expect(sql).toContain("has_function_privilege('anon'")
     expect(sql).toContain("has_function_privilege('authenticated'")
     expect(sql).toContain("has_function_privilege('service_role'")
     expect(sql).toContain("cmd IN ('DELETE', 'ALL')")
+  })
+
+  it('comprueba que create_order es DEFINER de postgres con su guarda', () => {
+    expect(sql).toMatch(/NOT prosecdef/)
+    expect(sql).toContain("pg_get_userbyid(proowner) <> 'postgres'")
+    expect(sql).toContain("NOT LIKE '%is_account_member%'")
+    expect(sql).toContain("NOT LIKE '%service_role%'")
+    expect(sql).toContain("NOT LIKE '%''ventas''%'")
+  })
+
+  it('comprueba que no hay política INSERT en orders ni order_items', () => {
+    expect(sql).toMatch(/tablename IN \('orders', 'order_items'\)\s+AND cmd = 'INSERT'/)
+  })
+
+  it('comprueba la FK de contacto (SET NULL), las columnas de cliente y los triggers', () => {
+    expect(sql).toContain("confdeltype = 'n'")
+    expect(sql).toContain("column_name IN ('customer_name', 'customer_phone')")
+    expect(sql).toContain("'orders_ledger_guard'")
+    expect(sql).toContain("tgname = 'order_items_freeze'")
+  })
+
+  it('ya no recorre políticas INSERT/UPDATE de order_items', () => {
+    expect(sql).not.toMatch(/ARRAY\['orders', 'order_items'\] LOOP\s+FOR v_cmd IN SELECT unnest\(ARRAY\['INSERT', 'UPDATE'\]\)/)
   })
 
   it('sigue siendo UN solo statement (un único bloque DO)', () => {
