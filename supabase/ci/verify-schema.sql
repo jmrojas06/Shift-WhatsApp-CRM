@@ -554,6 +554,183 @@ BEGIN
       'an agenda account has no agenda in modules — migration 053 did not apply';
   END IF;
 
+  -- 054: Ventas A. Same failure mode as every migration here: a typo'd
+  -- object name under IF NOT EXISTS is a green no-op. Orders are the
+  -- sales ledger, so the "nobody deletes" and "totals add up" rules are
+  -- asserted explicitly.
+  IF to_regclass('public.orders') IS NULL THEN
+    RAISE EXCEPTION 'public.orders is missing — migration 054 did not apply';
+  END IF;
+  IF to_regclass('public.order_items') IS NULL THEN
+    RAISE EXCEPTION 'public.order_items is missing — migration 054 did not apply';
+  END IF;
+  IF to_regclass('public.sales_settings') IS NULL THEN
+    RAISE EXCEPTION 'public.sales_settings is missing — migration 054 did not apply';
+  END IF;
+
+  FOREACH v_table IN ARRAY ARRAY['orders', 'order_items', 'sales_settings'] LOOP
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_class
+      WHERE oid = to_regclass('public.' || v_table)
+        AND relrowsecurity
+    ) THEN
+      RAISE EXCEPTION '% RLS is not enabled — migration 054 did not apply', v_table;
+    END IF;
+
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_policies
+      WHERE schemaname = 'public'
+        AND tablename = v_table
+        AND cmd = 'SELECT'
+        AND coalesce(qual, '') NOT LIKE '%''admin''%'
+        AND coalesce(qual, '') NOT LIKE '%''agent''%'
+    ) THEN
+      RAISE EXCEPTION
+        '% SELECT policy is missing or no longer open to every member — migration 054 did not apply',
+        v_table;
+    END IF;
+  END LOOP;
+
+  -- Nobody deletes an order or its lines through the API: they are
+  -- cancelled. Neither a DELETE policy nor a catch-all (ALL) may exist.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename IN ('orders', 'order_items')
+      AND cmd IN ('DELETE', 'ALL')
+  ) THEN
+    RAISE EXCEPTION
+      'orders/order_items have a DELETE or ALL policy — migration 054 did not apply';
+  END IF;
+
+  -- Agents (and up) create and change orders and lines, with WITH CHECK
+  -- on UPDATE so a row cannot be moved to another account.
+  FOREACH v_table IN ARRAY ARRAY['orders', 'order_items'] LOOP
+    FOR v_cmd IN SELECT unnest(ARRAY['INSERT', 'UPDATE']) LOOP
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = v_table
+          AND cmd = v_cmd
+          AND coalesce(qual, '') || coalesce(with_check, '') LIKE '%''agent''%'
+          AND coalesce(qual, '') || coalesce(with_check, '') NOT LIKE '%''admin''%'
+      ) THEN
+        RAISE EXCEPTION
+          '% % policy is missing or not agent-level — migration 054 did not apply',
+          v_table, v_cmd;
+      END IF;
+    END LOOP;
+
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_policies
+      WHERE schemaname = 'public'
+        AND tablename = v_table
+        AND cmd = 'UPDATE'
+        AND coalesce(with_check, '') LIKE '%''agent''%'
+    ) THEN
+      RAISE EXCEPTION
+        '% UPDATE policy has no WITH CHECK — migration 054 did not apply', v_table;
+    END IF;
+  END LOOP;
+
+  -- The sales settings (notice switches) are owner/admin only.
+  FOR v_cmd IN SELECT unnest(ARRAY['INSERT', 'UPDATE', 'DELETE']) LOOP
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_policies
+      WHERE schemaname = 'public'
+        AND tablename = 'sales_settings'
+        AND cmd = v_cmd
+        AND coalesce(qual, '') || coalesce(with_check, '') LIKE '%''admin''%'
+        AND coalesce(qual, '') || coalesce(with_check, '') NOT LIKE '%''agent''%'
+    ) THEN
+      RAISE EXCEPTION
+        'sales_settings % policy is missing or not admin-only — migration 054 did not apply',
+        v_cmd;
+    END IF;
+  END LOOP;
+
+  -- Per-account consecutive numbers: the UNIQUE is the last net under
+  -- the advisory lock in create_order.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.orders'::regclass
+      AND contype = 'u'
+      AND pg_get_constraintdef(oid) = 'UNIQUE (account_id, number)'
+  ) THEN
+    RAISE EXCEPTION
+      'orders UNIQUE (account_id, number) is missing — migration 054 did not apply';
+  END IF;
+
+  -- total = subtotal + shipping is enforced by the database, not trusted
+  -- from the client.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.orders'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) LIKE '%subtotal + shipping%'
+  ) THEN
+    RAISE EXCEPTION
+      'orders total CHECK (total = subtotal + shipping) is missing — migration 054 did not apply';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid = 'public.orders'::regclass
+      AND tgname IN ('set_updated_at', 'orders_freeze_columns')
+      AND NOT tgisinternal
+    GROUP BY tgrelid
+    HAVING count(*) = 2
+  ) THEN
+    RAISE EXCEPTION
+      'orders set_updated_at / orders_freeze_columns triggers are missing — migration 054 did not apply';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid = 'public.sales_settings'::regclass
+      AND tgname = 'set_updated_at'
+      AND NOT tgisinternal
+  ) THEN
+    RAISE EXCEPTION
+      'sales_settings set_updated_at trigger is missing — migration 054 did not apply';
+  END IF;
+
+  -- create_order: SECURITY INVOKER (RLS applies), search_path pinned,
+  -- callable by the signed-in user and the service role but NEVER by
+  -- anon (Supabase grants anon EXECUTE by default; 054 revokes it), and
+  -- it must check the contact/conversation against the account itself.
+  IF to_regprocedure('public.create_order(uuid,uuid,uuid,jsonb,numeric,text,boolean,jsonb)') IS NULL THEN
+    RAISE EXCEPTION 'public.create_order(...) is missing — migration 054 did not apply';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_proc
+    WHERE oid = to_regprocedure('public.create_order(uuid,uuid,uuid,jsonb,numeric,text,boolean,jsonb)')
+      AND (prosecdef OR proconfig IS NULL OR NOT ('search_path=public' = ANY(proconfig)))
+  ) THEN
+    RAISE EXCEPTION
+      'create_order must be SECURITY INVOKER with search_path=public — migration 054 did not apply';
+  END IF;
+
+  IF has_function_privilege('anon', 'public.create_order(uuid,uuid,uuid,jsonb,numeric,text,boolean,jsonb)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'anon can execute create_order — migration 054 did not apply';
+  END IF;
+  IF NOT has_function_privilege('authenticated', 'public.create_order(uuid,uuid,uuid,jsonb,numeric,text,boolean,jsonb)', 'EXECUTE')
+     OR NOT has_function_privilege('service_role', 'public.create_order(uuid,uuid,uuid,jsonb,numeric,text,boolean,jsonb)', 'EXECUTE')
+  THEN
+    RAISE EXCEPTION
+      'authenticated / service_role cannot execute create_order — migration 054 did not apply';
+  END IF;
+
+  IF pg_get_functiondef('public.create_order(uuid,uuid,uuid,jsonb,numeric,text,boolean,jsonb)'::regprocedure)
+       NOT LIKE '%account_id = p_account_id%'
+     OR pg_get_functiondef('public.create_order(uuid,uuid,uuid,jsonb,numeric,text,boolean,jsonb)'::regprocedure)
+       NOT LIKE '%pg_advisory_xact_lock%'
+  THEN
+    RAISE EXCEPTION
+      'create_order does not check account ownership / take the numbering lock — migration 054 did not apply';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
