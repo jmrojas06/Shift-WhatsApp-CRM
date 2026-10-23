@@ -15,14 +15,20 @@
 //   - readJsonBody: cuerpo JSON o null (llamadas rotas).
 //   - salesErrorResponse: SalesError, módulo apagado y errores de
 //     sesión/rol → su respuesta con `code`. Null si no es ninguno.
-//   - deliverNotice: aviso al cliente según los ajustes; nunca lanza.
+//   - deliverNotice: aviso al cliente según los ajustes; devuelve el
+//     resultado y el pedido con el aviso ya reflejado; nunca lanza.
 // ============================================================
 
 import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { ModuleNotActiveError } from '@/lib/modules/errors'
-import { sendOrderNotice, type NoticeOutcome } from '@/modules/ventas/notify'
+import {
+  NOTICE_ERRORS,
+  recordNotice,
+  sendOrderNotice,
+  type NoticeOutcome,
+} from '@/modules/ventas/notify'
 import type { NoticeKind } from '@/modules/ventas/orders'
 import { SalesError, getSalesSettings, type OrderRow } from '@/modules/ventas/repo'
 
@@ -70,24 +76,56 @@ const SETTING_FOR_NOTICE = {
   delivered: 'notify_delivered',
 } as const satisfies Record<NoticeKind, string>
 
+/** Pedido con el resultado del aviso ya reflejado (ver `deliverNotice`). */
+export interface DeliveredNotice<T extends OrderRow> {
+  notice: NoticeOutcome
+  order: T
+}
+
+/** Relee `last_notice` / `last_notice_error` y los mezcla en el pedido a devolver. */
+async function withStoredNotice<T extends OrderRow>(db: SupabaseClient, order: T): Promise<T> {
+  try {
+    const { data } = await db
+      .from('orders')
+      .select('last_notice, last_notice_error')
+      .eq('id', order.id)
+      .eq('account_id', order.account_id)
+      .maybeSingle()
+    const stored = data as Pick<OrderRow, 'last_notice' | 'last_notice_error'> | null
+    if (!stored) return order
+    return { ...order, last_notice: stored.last_notice, last_notice_error: stored.last_notice_error }
+  } catch {
+    return order
+  }
+}
+
 /**
- * Manda el aviso de `kind` si el interruptor de la cuenta está prendido.
+ * Manda el aviso de `kind` si el interruptor de la cuenta está prendido y
+ * devuelve el resultado junto con el pedido actualizado (con el
+ * `last_notice` / `last_notice_error` que quedaron guardados, para que la
+ * pantalla no muestre el estado viejo del aviso).
  * Resultado (ver notify.ts): 'sent' = salió; 'skipped' = el interruptor
- * de ese aviso está apagado; 'failed' = no salió (falló el envío o no se
- * pudieron leer los ajustes; el motivo queda en `last_notice_error`).
+ * de ese aviso está apagado (el pedido no cambia); 'failed' = no salió
+ * (falló el envío o no se pudieron leer los ajustes). En todo 'failed' el
+ * motivo queda en el pedido: sendOrderNotice lo guarda, y si ni siquiera
+ * se llegó a intentar (ajustes ilegibles, error inesperado) se guarda aquí
+ * con el motivo genérico.
  * Jamás lanza: el cambio de estado ya se guardó y no se deshace.
  */
-export async function deliverNotice(
+export async function deliverNotice<T extends OrderRow>(
   db: SupabaseClient,
-  order: OrderRow,
+  order: T,
   kind: NoticeKind,
-): Promise<NoticeOutcome> {
+): Promise<DeliveredNotice<T>> {
+  let notice: NoticeOutcome
   try {
     const settings = await getSalesSettings(db, order.account_id)
-    if (!settings[SETTING_FOR_NOTICE[kind]]) return 'skipped'
-    return await sendOrderNotice(db, order, kind)
+    if (!settings[SETTING_FOR_NOTICE[kind]]) return { notice: 'skipped', order }
+    notice = await sendOrderNotice(db, order, kind)
   } catch (err) {
-    console.error(`[ventas] pedido ${order.number}: falló el aviso "${kind}"`, err)
-    return 'failed'
+    console.error(`[ventas notice] pedido ${order.number}: falló el aviso "${kind}"`, err)
+    await recordNotice(db, order, kind, NOTICE_ERRORS.generic)
+    notice = 'failed'
   }
+  return { notice, order: await withStoredNotice(db, order) }
 }

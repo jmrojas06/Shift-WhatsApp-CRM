@@ -193,6 +193,48 @@ describe('sendOrderNotice — ventana de 24 h abierta (texto libre)', () => {
     })
   })
 
+  it('Meta responde 131047 al texto: el mismo aviso sale por plantilla y se registra ese resultado', async () => {
+    const db = seed(
+      { messages: [customerMessage(23 * HOURS)] },
+      order({ last_notice: 'paid', last_notice_error: 'viejo' }),
+    )
+    const f = fakes()
+    f.sendText.mockRejectedValueOnce(metaError(131047))
+
+    const outcome = await sendOrderNotice(asClient(db), order(), 'paid', f.deps)
+
+    expect(outcome).toBe('sent')
+    expect(f.sendText).toHaveBeenCalledTimes(1)
+    expect(f.sendTemplate).toHaveBeenCalledTimes(1)
+    expect(f.sendTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({ templateName: 'pedido_pagado', params: ['Águila Dorada', '1001'] }),
+    )
+    expect(db._tables.messages.at(-1)).toMatchObject({ content_type: 'template', template_name: 'pedido_pagado' })
+    expect(storedOrder(db)).toMatchObject({ last_notice: 'paid', last_notice_error: null })
+  })
+
+  it('131047 en el texto y la plantilla también falla: failed con el motivo de la plantilla', async () => {
+    const db = seed({ messages: [customerMessage(23 * HOURS)] })
+    const f = fakes()
+    f.sendText.mockRejectedValueOnce(metaError(131047))
+    f.sendTemplate.mockRejectedValue(metaError(132001))
+
+    const outcome = await sendOrderNotice(asClient(db), order(), 'paid', f.deps)
+
+    expect(outcome).toBe('failed')
+    expect(storedOrder(db).last_notice_error).toBe('Plantilla no aprobada en Meta')
+  })
+
+  it('otro error del texto NO cae a la plantilla', async () => {
+    const db = seed({ messages: [customerMessage(HOURS)] })
+    const f = fakes()
+    f.sendText.mockRejectedValueOnce(metaError(131026))
+
+    expect(await sendOrderNotice(asClient(db), order(), 'paid', f.deps)).toBe('failed')
+    expect(f.sendTemplate).not.toHaveBeenCalled()
+    expect(storedOrder(db).last_notice_error).toBe(NOTICE_ERRORS.undeliverable)
+  })
+
   it('el mensaje de OTRA conversación no abre la ventana', async () => {
     const db = seed({ messages: [customerMessage(HOURS, 'cv-otra')] })
     const f = fakes()
@@ -256,6 +298,25 @@ describe('sendOrderNotice — ventana cerrada (plantilla de Meta)', () => {
     )
   })
 
+  it('el texto guardado de cada plantilla es el cuerpo documentado con sus variables', async () => {
+    const cases: [Parameters<typeof sendOrderNotice>[2], Partial<OrderRow>, string][] = [
+      ['paid', {}, '¡Hola! Águila Dorada recibió tu pago. Tu pedido #1001 está confirmado y te avisamos cuando salga. 🙌'],
+      [
+        'shipped',
+        { carrier: 'Coordinadora', tracking_number: 'ABC-99' },
+        'Tu pedido #1001 salió 📦. Transportadora: Coordinadora. Guía: ABC-99.',
+      ],
+      ['delivered', {}, 'Tu pedido #1001 fue entregado. ¡Gracias por comprarnos! 🙌'],
+    ]
+    for (const [kind, over, body] of cases) {
+      const db = closed()
+      const f = fakes()
+      await sendOrderNotice(asClient(db), order(over), kind, f.deps)
+      expect(db._tables.messages.at(-1)).toMatchObject({ content_type: 'template', content_text: body })
+      expect(String(db._tables.messages.at(-1)?.content_text)).not.toContain('{{')
+    }
+  })
+
   it('enviado sin guía: manda "-" (Meta rechaza variables vacías)', async () => {
     const db = closed()
     const f = fakes()
@@ -289,13 +350,14 @@ describe('sendOrderNotice — ventana cerrada (plantilla de Meta)', () => {
       conversation_id: CONVERSATION,
       sender_type: 'bot',
       content_type: 'template',
-      content_text: '¡Recibimos tu pago! Tu pedido #1001 está confirmado. Te avisamos cuando salga. 🙌',
+      // Lo que el cliente recibió: el cuerpo de la plantilla con sus variables.
+      content_text: '¡Hola! Águila Dorada recibió tu pago. Tu pedido #1001 está confirmado y te avisamos cuando salga. 🙌',
       template_name: 'pedido_pagado',
       message_id: 'wamid-tpl',
       status: 'sent',
     })
     expect(db._tables.conversations[0]).toMatchObject({
-      last_message_text: '¡Recibimos tu pago! Tu pedido #1001 está confirmado. Te avisamos cuando salga. 🙌',
+      last_message_text: '¡Hola! Águila Dorada recibió tu pago. Tu pedido #1001 está confirmado y te avisamos cuando salga. 🙌',
       last_message_at: NOW.toISOString(),
     })
   })
@@ -352,6 +414,10 @@ describe('sendOrderNotice — errores de Meta', () => {
     ['132015 (plantilla pausada)', metaError(132015), 'Plantilla no aprobada en Meta'],
     ['132016 (plantilla deshabilitada)', metaError(132016), 'Plantilla no aprobada en Meta'],
     ['132000 (variables distintas)', metaError(132000), NOTICE_ERRORS.templateParams],
+    ['132005 (texto demasiado largo)', metaError(132005), NOTICE_ERRORS.templateParams],
+    ['132007 (contenido contra la política)', metaError(132007), NOTICE_ERRORS.templateParams],
+    ['132012 (formato de variable)', metaError(132012), NOTICE_ERRORS.templateParams],
+    ['131047 (fuera de las 24 h) en la plantilla', metaError(131047), NOTICE_ERRORS.windowClosed],
     ['131026 (no entregable)', metaError(131026), NOTICE_ERRORS.undeliverable],
     ['131030 en todas las variantes', metaError(131030, '(#131030) not in allowed list'), NOTICE_ERRORS.notAllowed],
     ['otro código de Meta', metaError(100), 'Error de WhatsApp: 100'],
@@ -427,6 +493,29 @@ describe('sendOrderNotice — sin a quién avisar', () => {
     expect(f.sendText).toHaveBeenCalledWith(expect.objectContaining({ conversationId: 'cv-nueva' }))
   })
 
+  it('una conversación sin mensajes (last_message_at nulo) no le gana a la que sí tiene', async () => {
+    const db = seed({
+      conversations: [
+        { id: 'cv-vacia', account_id: ACCOUNT, contact_id: CONTACT, last_message_at: null },
+        { id: 'cv-con-mensajes', account_id: ACCOUNT, contact_id: CONTACT, last_message_at: ago(48 * HOURS) },
+      ],
+    })
+    const f = fakes()
+
+    await sendOrderNotice(asClient(db), order({ conversation_id: null }), 'paid', f.deps)
+
+    expect(db._tables.messages.at(-1)).toMatchObject({ conversation_id: 'cv-con-mensajes' })
+  })
+
+  it('si todas las conversaciones están vacías igual elige una', async () => {
+    const db = seed({
+      conversations: [{ id: 'cv-vacia', account_id: ACCOUNT, contact_id: CONTACT, last_message_at: null }],
+    })
+    const f = fakes()
+    expect(await sendOrderNotice(asClient(db), order({ conversation_id: null }), 'paid', f.deps)).toBe('sent')
+    expect(db._tables.messages.at(-1)).toMatchObject({ conversation_id: 'cv-vacia' })
+  })
+
   it('una conversation_id de OTRA cuenta no se usa: cae a la del contacto', async () => {
     const db = seed({
       conversations: [
@@ -453,23 +542,27 @@ describe('sendOrderNotice — sin a quién avisar', () => {
     expect(storedOrder(db).last_notice_error).toBe('El cliente no tiene WhatsApp vinculado')
   })
 
-  it('cuenta sin WhatsApp conectado → failed', async () => {
-    const db = seed({ whatsapp_config: [] })
-    const f = fakes()
-    const outcome = await sendOrderNotice(asClient(db), order(), 'paid', f.deps)
-    expect(outcome).toBe('failed')
-    expect(storedOrder(db).last_notice_error).toBe(NOTICE_ERRORS.notConfigured)
-    expect(f.sendTemplate).not.toHaveBeenCalled()
-  })
+  const noCredentialsCases: [string, Row[]][] = [
+    ['ventana cerrada (plantilla)', []],
+    ['ventana abierta (texto)', [customerMessage(HOURS)]],
+  ]
+  for (const [label, messages] of noCredentialsCases) {
+    it(`sin credenciales (no conectado o token ilegible), ${label}: mismo motivo y sin enviar`, async () => {
+      const db = seed({ messages })
+      const f = fakes()
+      f.loadCredentials.mockRejectedValue(new Error('bad decrypt'))
 
-  it('credenciales ilegibles (no se pueden descifrar) → failed sin lanzar', async () => {
-    const db = seed()
-    const f = fakes()
-    f.loadCredentials.mockRejectedValue(new Error('bad decrypt'))
-    const outcome = await sendOrderNotice(asClient(db), order(), 'paid', f.deps)
-    expect(outcome).toBe('failed')
-    expect(storedOrder(db).last_notice_error).toBe(NOTICE_ERRORS.notConfigured)
-  })
+      const outcome = await sendOrderNotice(asClient(db), order(), 'paid', f.deps)
+
+      expect(outcome).toBe('failed')
+      expect(f.sendText).not.toHaveBeenCalled()
+      expect(f.sendTemplate).not.toHaveBeenCalled()
+      expect(storedOrder(db)).toMatchObject({
+        last_notice: 'paid',
+        last_notice_error: NOTICE_ERRORS.notConfigured,
+      })
+    })
+  }
 })
 
 describe('sendOrderNotice — registro en el pedido', () => {

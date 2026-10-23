@@ -41,7 +41,9 @@ vi.mock('@/lib/verticals/admin-client', () => ({
   supabaseAdmin: () => h.state.db,
 }))
 
-vi.mock('@/modules/ventas/notify', () => ({
+// Solo se falsea el envío; el registro del resultado (recordNotice) es el real.
+vi.mock('@/modules/ventas/notify', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/modules/ventas/notify')>()),
   sendOrderNotice: h.sendOrderNotice,
 }))
 
@@ -132,6 +134,85 @@ describe('PATCH /api/modules/ventas/orders/[id]', () => {
     expect(h.sendOrderNotice).toHaveBeenCalledTimes(1)
     expect(h.sendOrderNotice.mock.calls[0][1]).toMatchObject({ number: 1001, payment_status: 'paid' })
     expect(h.sendOrderNotice.mock.calls[0][2]).toBe('paid')
+  })
+
+  describe('el pedido devuelto refleja el aviso', () => {
+    it('envío fallido: trae last_notice y el motivo, y queda guardado', async () => {
+      const db = boot()
+      h.sendOrderNotice.mockImplementation(async (client, row, kind) => {
+        await client
+          .from('orders')
+          .update({ last_notice: kind, last_notice_error: 'El cliente no tiene WhatsApp vinculado' })
+          .eq('id', row.id)
+          .eq('account_id', row.account_id)
+        return 'failed'
+      })
+
+      const res = await patch(ORDER_ID, { action: 'mark_paid' })
+
+      expect(res.body.notice).toBe('failed')
+      expect(res.body.order).toMatchObject({
+        last_notice: 'paid',
+        last_notice_error: 'El cliente no tiene WhatsApp vinculado',
+        items: [{ name: 'A' }],
+      })
+      expect(order(db).last_notice_error).toBe('El cliente no tiene WhatsApp vinculado')
+    })
+
+    it('envío bueno tras uno fallido: el error viejo ya no aparece', async () => {
+      boot({ order: orderRow({ last_notice: 'paid', last_notice_error: 'viejo' }) })
+      h.sendOrderNotice.mockImplementation(async (client, row, kind) => {
+        await client.from('orders').update({ last_notice: kind, last_notice_error: null }).eq('id', row.id)
+        return 'sent'
+      })
+      const res = await patch(ORDER_ID, { action: 'mark_paid' })
+      expect(res.body.order).toMatchObject({ last_notice: 'paid', last_notice_error: null })
+    })
+
+    it('si no se pueden leer los ajustes, el motivo genérico queda en el pedido y en la respuesta', async () => {
+      const db = boot()
+      db._failNext('select', 'sales_settings', { message: 'lectura rota' })
+
+      const res = await patch(ORDER_ID, { action: 'mark_paid' })
+
+      expect(res.body.notice).toBe('failed')
+      expect(h.sendOrderNotice).not.toHaveBeenCalled()
+      expect(order(db)).toMatchObject({
+        last_notice: 'paid',
+        last_notice_error: 'No se pudo mandar el mensaje por WhatsApp',
+      })
+      expect(res.body.order).toMatchObject({
+        last_notice: 'paid',
+        last_notice_error: 'No se pudo mandar el mensaje por WhatsApp',
+      })
+    })
+
+    it('si el envío lanza, también queda el motivo genérico', async () => {
+      const db = boot()
+      h.sendOrderNotice.mockRejectedValue(new Error('Meta caída'))
+      const res = await patch(ORDER_ID, { action: 'mark_paid' })
+      expect(res.body.order).toMatchObject({ last_notice: 'paid', last_notice_error: 'No se pudo mandar el mensaje por WhatsApp' })
+      expect(order(db).last_notice).toBe('paid')
+    })
+
+    it('"skipped" deja el pedido como estaba', async () => {
+      boot({
+        order: orderRow({ last_notice: 'paid', last_notice_error: 'previo' }),
+        settings: [
+          { account_id: TEST_ACCOUNT, notify_paid: false, notify_shipped: true, notify_delivered: true },
+        ],
+      })
+      const res = await patch(ORDER_ID, { action: 'mark_paid' })
+      expect(res.body.notice).toBe('skipped')
+      expect(res.body.order).toMatchObject({ last_notice: 'paid', last_notice_error: 'previo' })
+    })
+
+    it('una acción sin aviso (cancelar) no toca last_notice', async () => {
+      const db = boot()
+      const res = await patch(ORDER_ID, { action: 'cancel' })
+      expect(res.body.notice).toBeNull()
+      expect(order(db).last_notice).toBeUndefined()
+    })
   })
 
   it('marcar enviado pasa transportadora y guía y avisa "shipped"', async () => {

@@ -34,10 +34,15 @@ export async function POST(request: Request) {
     if (!parsed.ok) return badRequest(parsed.message)
 
     const db = supabaseAdmin()
-    const order = await createOrder(db, ctx, parsed.value)
-    const notice = order.payment_status === 'paid' ? await deliverNotice(db, order, 'paid') : null
+    const created = await createOrder(db, ctx, parsed.value)
+    // El pedido que se devuelve ya trae el resultado del aviso (last_notice*).
+    const delivered =
+      created.payment_status === 'paid' ? await deliverNotice(db, created, 'paid') : null
 
-    return NextResponse.json({ order, notice }, { status: 201 })
+    return NextResponse.json(
+      { order: delivered?.order ?? created, notice: delivered?.notice ?? null },
+      { status: 201 },
+    )
   } catch (err) {
     return salesErrorResponse(err) ?? toModuleErrorResponse(err)
   }

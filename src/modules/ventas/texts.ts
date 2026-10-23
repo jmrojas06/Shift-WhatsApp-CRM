@@ -122,6 +122,30 @@ export function buildNoticeTemplate(
   return { name: NOTICE_TEMPLATES[kind], params: buildNoticeTemplateParams(kind, ctx) }
 }
 
+/**
+ * Cuerpo de cada plantilla tal como se crea en WhatsApp Manager
+ * (categoría utilidad, idioma `es`, sin encabezado, pie ni botones).
+ * Es la fuente única del texto: docs/ventas.md y la bandeja lo usan.
+ */
+export const NOTICE_TEMPLATE_BODIES: Readonly<Record<NoticeKind, string>> = Object.freeze({
+  paid: '¡Hola! {{1}} recibió tu pago. Tu pedido #{{2}} está confirmado y te avisamos cuando salga. 🙌',
+  shipped: 'Tu pedido #{{1}} salió 📦. Transportadora: {{2}}. Guía: {{3}}.',
+  delivered: 'Tu pedido #{{1}} fue entregado. ¡Gracias por comprarnos! 🙌',
+})
+
+/**
+ * Lo que el cliente recibe de verdad con la plantilla: el cuerpo
+ * documentado con las variables ya puestas. Es lo que se guarda como
+ * texto del mensaje saliente para que la bandeja muestre lo enviado.
+ * Una variable que falte queda como '-' (nunca queda un {{n}} a la vista).
+ */
+export function renderNoticeTemplateBody(kind: NoticeKind, params: readonly string[]): string {
+  return NOTICE_TEMPLATE_BODIES[kind].replace(/\{\{(\d+)\}\}/g, (_match, n: string) => {
+    const value = params[Number(n) - 1]
+    return value && value.length > 0 ? value : FALLBACK_PARAM
+  })
+}
+
 const NOTICE_KIND_LABEL: Record<NoticeKind, string> = {
   paid: 'pago',
   shipped: 'envío',

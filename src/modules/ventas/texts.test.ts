@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { SALES_STAGES } from './orders'
 import {
   NOTICE_TEMPLATES,
+  NOTICE_TEMPLATE_BODIES,
   VENTAS_TEXTS,
   buildNoticeTemplate,
   buildNoticeTemplateParams,
@@ -11,6 +12,7 @@ import {
   formatMoney,
   noticeStatusText,
   orderLabel,
+  renderNoticeTemplateBody,
 } from './texts'
 
 describe('buildNoticeText — avisos al cliente (diseño §3.5)', () => {
@@ -242,5 +244,40 @@ describe('copy del panel', () => {
     expect(VENTAS_TEXTS.createOrder.created(1001)).toBe('Pedido #1001 creado.')
     expect(VENTAS_TEXTS.createOrder.removeLine(2)).toBe('Quitar producto 2')
     expect(VENTAS_TEXTS.readOnly('crear pedidos')).toBe('Solo lectura: tu rol no puede crear pedidos.')
+  })
+})
+
+describe('renderNoticeTemplateBody — lo que el cliente recibe con la plantilla', () => {
+  it('rellena el cuerpo documentado de cada plantilla', () => {
+    const paid = buildNoticeTemplate('paid', { number: 1001, businessName: 'Águila Dorada' })
+    expect(renderNoticeTemplateBody('paid', paid.params)).toBe(
+      '¡Hola! Águila Dorada recibió tu pago. Tu pedido #1001 está confirmado y te avisamos cuando salga. 🙌',
+    )
+    const shipped = buildNoticeTemplate('shipped', { number: 1002, carrier: 'Servientrega', trackingNumber: 'GU123' })
+    expect(renderNoticeTemplateBody('shipped', shipped.params)).toBe(
+      'Tu pedido #1002 salió 📦. Transportadora: Servientrega. Guía: GU123.',
+    )
+    const delivered = buildNoticeTemplate('delivered', { number: 1003 })
+    expect(renderNoticeTemplateBody('delivered', delivered.params)).toBe(
+      'Tu pedido #1003 fue entregado. ¡Gracias por comprarnos! 🙌',
+    )
+  })
+
+  it('cada cuerpo usa exactamente las variables que manda buildNoticeTemplateParams', () => {
+    for (const kind of ['paid', 'shipped', 'delivered'] as const) {
+      const params = buildNoticeTemplateParams(kind, { number: 1, businessName: 'X', carrier: 'Y', trackingNumber: 'Z' })
+      const used = [...NOTICE_TEMPLATE_BODIES[kind].matchAll(/\{\{(\d+)\}\}/g)].map((m) => Number(m[1]))
+      expect(used.sort()).toEqual(params.map((_, i) => i + 1))
+    }
+  })
+
+  it('una variable que falta no deja {{n}} a la vista', () => {
+    expect(renderNoticeTemplateBody('shipped', ['7'])).toBe('Tu pedido #7 salió 📦. Transportadora: -. Guía: -.')
+  })
+
+  it('un valor con "$&" o llaves se pone tal cual', () => {
+    expect(renderNoticeTemplateBody('shipped', ['7', '$& {{1}}', 'G'])).toBe(
+      'Tu pedido #7 salió 📦. Transportadora: $& {{1}}. Guía: G.',
+    )
   })
 })

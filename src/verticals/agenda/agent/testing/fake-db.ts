@@ -119,7 +119,7 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
 
   function from(table: string) {
     const filters: { col: string; kind: FilterKind; value: unknown }[] = []
-    const orders: { col: string; ascending: boolean }[] = []
+    const orders: { col: string; ascending: boolean; nullsFirst?: boolean }[] = []
     type Op = 'select' | 'insert' | 'update' | 'delete' | 'upsert'
     let op: Op = 'select'
     let payload: Row | Row[] | null = null
@@ -153,10 +153,16 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
       if (orders.length) {
         // Como PostgREST: el primer `.order()` manda y los siguientes desempatan.
         out.sort((a, b) => {
-          for (const { col, ascending } of orders) {
+          for (const { col, ascending, nullsFirst } of orders) {
             const av = a[col] as never
             const bv = b[col] as never
             if (av === bv) continue
+            // Nulos como Postgres: al final si es ascendente y al principio si
+            // es descendente, salvo que `nullsFirst` diga otra cosa.
+            if (av == null || bv == null) {
+              if (av == null && bv == null) continue
+              return (av == null) === (nullsFirst ?? !ascending) ? -1 : 1
+            }
             return (av < bv ? -1 : 1) * (ascending ? 1 : -1)
           }
           return 0
@@ -272,8 +278,8 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
         filters.push({ col, kind: 'is', value })
         return api
       },
-      order: (col: string, o?: { ascending?: boolean }) => {
-        orders.push({ col, ascending: o?.ascending ?? true })
+      order: (col: string, o?: { ascending?: boolean; nullsFirst?: boolean }) => {
+        orders.push({ col, ascending: o?.ascending ?? true, nullsFirst: o?.nullsFirst })
         return api
       },
       limit: (n: number) => {

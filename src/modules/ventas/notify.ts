@@ -48,12 +48,17 @@ import {
 } from '@/lib/flows/meta-send'
 import { sendTemplateMessage } from '@/lib/whatsapp/meta-api'
 import { isRecipientNotAllowedError, phoneVariants } from '@/lib/whatsapp/phone-utils'
-import { resolveContactSendTarget } from '@/lib/whatsapp/wa-identity'
+import { resolveContactSendTarget, type WaSendTarget } from '@/lib/whatsapp/wa-identity'
 import { hasRecentCustomerMessage } from '@/verticals/agenda/agent/reminders'
 
 import type { NoticeKind } from './orders'
 import type { OrderRow } from './repo'
-import { buildNoticeTemplate, buildNoticeText, type NoticeContext } from './texts'
+import {
+  buildNoticeTemplate,
+  buildNoticeText,
+  renderNoticeTemplateBody,
+  type NoticeContext,
+} from './texts'
 
 export type NoticeOutcome = 'sent' | 'skipped' | 'failed'
 
@@ -89,6 +94,9 @@ type Attempt = { ok: true } | { ok: false; reason: string }
 
 const FAIL = (reason: string): Attempt => ({ ok: false, reason })
 
+/** Error de Meta: se intentó un mensaje libre fuera de la ventana de 24 h. */
+const META_OUTSIDE_WINDOW = 131047
+
 /** Códigos de error de WhatsApp Cloud API → motivo legible. */
 function reasonFromError(err: unknown): string {
   const code = (err as { code?: unknown } | null)?.code
@@ -107,7 +115,7 @@ function reasonFromError(err: unknown): string {
         return NOTICE_ERRORS.templateParams
       case 131026: // no entregable (no usa WhatsApp / no aceptó términos)
         return NOTICE_ERRORS.undeliverable
-      case 131047: // fuera de las 24 h
+      case META_OUTSIDE_WINDOW:
         return NOTICE_ERRORS.windowClosed
       default:
         return NOTICE_ERRORS.whatsapp(code)
@@ -141,7 +149,8 @@ async function resolveTarget(db: SupabaseClient, order: OrderRow): Promise<Notic
     .select('id')
     .eq('account_id', order.account_id)
     .eq('contact_id', order.contact_id)
-    .order('last_message_at', { ascending: false })
+    // Las conversaciones sin mensajes (last_message_at nulo) van al final.
+    .order('last_message_at', { ascending: false, nullsFirst: false })
     .limit(1)
   const latest = ((data ?? []) as { id: string }[])[0]
   return latest ? { conversationId: latest.id, contactId: order.contact_id } : null
@@ -174,12 +183,15 @@ async function attemptNotice(
   const sendTarget = resolveContactSendTarget(contact)
   if (!sendTarget) return FAIL(NOTICE_ERRORS.noWhatsApp)
 
-  const { data: configData } = await db
-    .from('whatsapp_config')
-    .select('phone_number_id')
-    .eq('account_id', order.account_id)
-    .maybeSingle()
-  if (!configData) return FAIL(NOTICE_ERRORS.notConfigured)
+  // Credenciales una sola vez para los dos canales: si no se pueden leer
+  // (cuenta sin WhatsApp conectado o token ilegible) el motivo es el mismo.
+  let credentials: { phoneNumberId: string; accessToken: string }
+  try {
+    credentials = await deps.loadCredentials(db, order.account_id)
+  } catch (err) {
+    console.error(`[ventas notice] pedido ${order.number}: no se pudieron leer las credenciales`, err)
+    return FAIL(NOTICE_ERRORS.notConfigured)
+  }
 
   const { data: accountData } = await db
     .from('accounts')
@@ -198,6 +210,7 @@ async function attemptNotice(
   const windowOpen = await hasRecentCustomerMessage(db, target.conversationId, deps.now())
 
   if (windowOpen) {
+    let fallThrough = false
     try {
       await deps.sendText({
         accountId: order.account_id,
@@ -209,16 +222,24 @@ async function attemptNotice(
     } catch (err) {
       // Meta ya lo aceptó y lo que falló fue guardarlo en `messages`:
       // el cliente lo recibió, así que cuenta como enviado.
-      if (!(err instanceof MessagePersistAfterSendError)) return FAIL(reasonFromError(err))
-      console.error(
-        `[ventas notice] pedido ${order.number}: aviso enviado (${err.whatsappMessageId}) pero no se pudo registrar en messages:`,
-        err.message,
-      )
+      if (err instanceof MessagePersistAfterSendError) {
+        console.error(
+          `[ventas notice] pedido ${order.number}: aviso enviado (${err.whatsappMessageId}) pero no se pudo registrar en messages:`,
+          err.message,
+        )
+      } else if ((err as { code?: unknown } | null)?.code === META_OUTSIDE_WINDOW) {
+        // Mi reloj decía "ventana abierta" pero Meta ya la cerró: el mismo
+        // aviso sale por plantilla, que sí vale fuera de las 24 h.
+        console.warn(`[ventas notice] pedido ${order.number}: Meta cerró la ventana, se manda la plantilla`)
+        fallThrough = true
+      } else {
+        return FAIL(reasonFromError(err))
+      }
     }
-    return { ok: true }
+    if (!fallThrough) return { ok: true }
   }
 
-  return sendTemplateNotice(db, order, kind, ctx, target, contact, deps)
+  return sendTemplateNotice(db, order, kind, ctx, target, contact, sendTarget, credentials, deps)
 }
 
 /**
@@ -234,20 +255,11 @@ async function sendTemplateNotice(
   ctx: NoticeContext,
   target: NoticeTarget,
   contact: ContactRow,
+  sendTarget: WaSendTarget,
+  credentials: { phoneNumberId: string; accessToken: string },
   deps: Required<NoticeDeps>,
 ): Promise<Attempt> {
-  const sendTarget = resolveContactSendTarget(contact)
-  if (!sendTarget) return FAIL(NOTICE_ERRORS.noWhatsApp)
   const sanitized = sendTarget.target
-
-  let credentials: { phoneNumberId: string; accessToken: string }
-  try {
-    credentials = await deps.loadCredentials(db, order.account_id)
-  } catch (err) {
-    console.error(`[ventas notice] pedido ${order.number}: no se pudieron leer las credenciales`, err)
-    return FAIL(NOTICE_ERRORS.notConfigured)
-  }
-
   const template = buildNoticeTemplate(kind, ctx)
   const variants = sendTarget.isPhone ? phoneVariants(sanitized) : [sanitized]
   let workingPhone = sanitized
@@ -285,7 +297,8 @@ async function sendTemplateNotice(
         .eq('account_id', order.account_id)
     }
 
-    const contentText = buildNoticeText(kind, ctx)
+    // Lo que el cliente recibió: el cuerpo de la plantilla con sus variables.
+    const contentText = renderNoticeTemplateBody(kind, template.params)
     const { error: msgErr } = await db.from('messages').insert({
       conversation_id: target.conversationId,
       sender_type: 'bot',
@@ -315,8 +328,12 @@ async function sendTemplateNotice(
   return { ok: true }
 }
 
-/** Guarda el resultado en el pedido. Nunca lanza: solo registra el fallo. */
-async function recordNotice(
+/**
+ * Guarda el resultado en el pedido (`error` null = salió bien). Nunca
+ * lanza: solo registra el fallo. También la usa deliverNotice cuando ni
+ * siquiera se llegó a intentar el envío.
+ */
+export async function recordNotice(
   db: SupabaseClient,
   order: OrderRow,
   kind: NoticeKind,

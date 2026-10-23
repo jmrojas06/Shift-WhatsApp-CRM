@@ -55,10 +55,16 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       address: body.address,
     })
 
-    const notice =
-      result.changed && result.notice ? await deliverNotice(db, result.order, result.notice) : null
+    // El pedido que se devuelve ya trae el resultado del aviso (last_notice*).
+    const delivered =
+      result.changed && result.notice
+        ? await deliverNotice(db, result.order, result.notice)
+        : null
 
-    return NextResponse.json({ order: result.order, notice })
+    return NextResponse.json({
+      order: delivered?.order ?? result.order,
+      notice: delivered?.notice ?? null,
+    })
   } catch (err) {
     return salesErrorResponse(err) ?? toModuleErrorResponse(err)
   }

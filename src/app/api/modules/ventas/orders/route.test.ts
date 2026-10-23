@@ -45,7 +45,9 @@ vi.mock('@/lib/verticals/admin-client', () => ({
   supabaseAdmin: () => h.state.db,
 }))
 
-vi.mock('@/modules/ventas/notify', () => ({
+// Solo se falsea el envío; el registro del resultado (recordNotice) es el real.
+vi.mock('@/modules/ventas/notify', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/modules/ventas/notify')>()),
   sendOrderNotice: h.sendOrderNotice,
 }))
 
@@ -262,6 +264,82 @@ describe('POST /api/modules/ventas/orders', () => {
       h.sendOrderNotice.mockResolvedValue('failed')
       const res = await post(validBody({ paid: true }))
       expect(res.body.notice).toBe('failed')
+    })
+
+    it('el pedido devuelto trae el aviso registrado (last_notice y su error)', async () => {
+      const db = boot()
+      // El envío real guarda su resultado en el pedido; el mock lo imita.
+      h.sendOrderNotice.mockImplementation(async (client, order, kind) => {
+        await client
+          .from('orders')
+          .update({ last_notice: kind, last_notice_error: 'Plantilla no aprobada en Meta' })
+          .eq('id', order.id)
+          .eq('account_id', order.account_id)
+        return 'failed'
+      })
+
+      const res = await post(validBody({ paid: true }))
+
+      expect(res.body.notice).toBe('failed')
+      expect(res.body.order).toMatchObject({
+        last_notice: 'paid',
+        last_notice_error: 'Plantilla no aprobada en Meta',
+        items: [{ name: 'Anillo' }, { name: 'Cadena' }],
+      })
+      expect(db._tables.orders[0]).toMatchObject({ last_notice_error: 'Plantilla no aprobada en Meta' })
+    })
+
+    it('si el aviso salió bien, el pedido devuelto lo dice sin error', async () => {
+      boot()
+      h.sendOrderNotice.mockImplementation(async (client, order, kind) => {
+        await client.from('orders').update({ last_notice: kind, last_notice_error: null }).eq('id', order.id)
+        return 'sent'
+      })
+      const res = await post(validBody({ paid: true }))
+      expect(res.body.order).toMatchObject({ last_notice: 'paid', last_notice_error: null })
+    })
+
+    it('"skipped" no toca el pedido: last_notice sigue nulo', async () => {
+      boot({
+        extra: {
+          sales_settings: [
+            { account_id: TEST_ACCOUNT, notify_paid: false, notify_shipped: true, notify_delivered: true },
+          ],
+        },
+      })
+      const res = await post(validBody({ paid: true }))
+      expect(res.body.order).toMatchObject({ last_notice: null, last_notice_error: null })
+    })
+
+    it('si el envío lanza, queda el motivo genérico en el pedido y en la respuesta', async () => {
+      const db = boot()
+      h.sendOrderNotice.mockRejectedValue(new Error('Meta caída'))
+
+      const res = await post(validBody({ paid: true }))
+
+      expect(res.body.notice).toBe('failed')
+      expect(res.body.order).toMatchObject({
+        last_notice: 'paid',
+        last_notice_error: 'No se pudo mandar el mensaje por WhatsApp',
+      })
+      expect(db._tables.orders[0]).toMatchObject({ last_notice: 'paid' })
+    })
+
+    it('si no se pueden leer los ajustes, deja el motivo en el pedido y responde "failed"', async () => {
+      const db = boot()
+      db._failNext('select', 'sales_settings', { message: 'lectura rota' })
+
+      const res = await post(validBody({ paid: true }))
+
+      expect(res.body.notice).toBe('failed')
+      expect(db._tables.orders[0]).toMatchObject({
+        last_notice: 'paid',
+        last_notice_error: 'No se pudo mandar el mensaje por WhatsApp',
+      })
+      expect(res.body.order).toMatchObject({
+        last_notice: 'paid',
+        last_notice_error: 'No se pudo mandar el mensaje por WhatsApp',
+      })
     })
 
     it('si no se pueden leer los ajustes, responde "failed" sin tumbar el pedido', async () => {
