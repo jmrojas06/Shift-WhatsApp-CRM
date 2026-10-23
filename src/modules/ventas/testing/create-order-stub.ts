@@ -5,17 +5,18 @@
 // reproduce lo esencial de la función de la migración 054: el
 // consecutivo desde 1001 por cuenta, el total calculado a partir de
 // las líneas y el envío, la moneda fija (COP), el estado inicial según
-// `p_paid` y las líneas en `order_items`. Si las tablas `contacts` /
-// `conversations` existen en el fake, comprueba que pertenezcan a la
-// cuenta y responde 23503 como Postgres.
+// `p_paid`, un id nuevo por llamada y las líneas en `order_items`. Si
+// las tablas `contacts` / `conversations` existen en el fake,
+// comprueba que el contacto sea de la cuenta y que la conversación sea
+// de la cuenta Y de ese contacto, y responde 23503 como Postgres.
 //
-// NO valida rangos ni permisos: eso lo cubren las migraciones; los
-// tests de error usan `_failNext('rpc', 'create_order', …)`.
+// NO emula el rol del usuario (42501), el módulo activo (P0001) ni los
+// rangos de los CHECK: eso lo cubren las migraciones y verify-schema.
+// Los tests de esos errores usan `_failNext('rpc', 'create_order', …)`.
 // ============================================================
 
 import type { FakeDb, Row } from '@/verticals/agenda/agent/testing/fake-db'
 
-export const STUB_ORDER_ID = '33333333-3333-4333-8333-333333333333'
 export const STUB_NOW = '2026-10-23T15:00:00.000Z'
 
 export function stubCreateOrder(
@@ -34,9 +35,17 @@ export function stubCreateOrder(
     if (
       args.p_conversation_id &&
       conversations &&
-      !conversations.some((c) => c.id === args.p_conversation_id && c.account_id === accountId)
+      !conversations.some(
+        (c) =>
+          c.id === args.p_conversation_id &&
+          c.account_id === accountId &&
+          c.contact_id === args.p_contact_id,
+      )
     ) {
-      return { data: null, error: { code: '23503', message: 'conversation does not belong' } }
+      return {
+        data: null,
+        error: { code: '23503', message: 'conversation does not belong to account and contact' },
+      }
     }
 
     const items = args.p_items as { name: string; quantity: number; unit_price: number }[]
@@ -48,7 +57,7 @@ export function stubCreateOrder(
     const contact = contacts?.find((c) => c.id === args.p_contact_id)
 
     const order: Row = {
-      id: STUB_ORDER_ID,
+      id: crypto.randomUUID(),
       account_id: accountId,
       number: 1001 + taken,
       contact_id: args.p_contact_id,
@@ -81,7 +90,7 @@ export function stubCreateOrder(
     ;(target._tables.orders ??= []).push(order)
     items.forEach((item, position) => {
       ;(target._tables.order_items ??= []).push({
-        id: `item-${position}`,
+        id: crypto.randomUUID(),
         order_id: order.id,
         account_id: accountId,
         name: item.name,

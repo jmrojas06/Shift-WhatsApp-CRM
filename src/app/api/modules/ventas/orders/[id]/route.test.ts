@@ -242,6 +242,7 @@ describe('PATCH /api/modules/ventas/orders/[id]', () => {
       const res = await patch(ORDER_ID, { action: 'mark_paid' })
 
       expect(res.status).toBe(403)
+      expect(res.body.code).toBe('forbidden')
       expect(order(db).payment_status).toBe('pending')
     })
 
@@ -251,6 +252,7 @@ describe('PATCH /api/modules/ventas/orders/[id]', () => {
 
       expect(res.status).toBe(409)
       expect(res.body.error).toBe('El módulo Ventas no está activo para esta cuenta.')
+      expect(res.body.code).toBe('module_inactive')
       expect(order(db).payment_status).toBe('pending')
     })
 
@@ -259,6 +261,7 @@ describe('PATCH /api/modules/ventas/orders/[id]', () => {
       const res = await patch(FOREIGN_ORDER_ID, { action: 'mark_paid' })
 
       expect(res.status).toBe(404)
+      expect(res.body.code).toBe('not_found')
       expect(order(db, FOREIGN_ORDER_ID).payment_status).toBe('pending')
       expect(h.sendOrderNotice).not.toHaveBeenCalled()
     })
@@ -275,6 +278,7 @@ describe('PATCH /api/modules/ventas/orders/[id]', () => {
       const res = await patch(ORDER_ID, { action: 'borrar' })
       expect(res.status).toBe(400)
       expect(res.body.error).toBe('La acción no es válida.')
+      expect(res.body.code).toBe('invalid')
     })
 
     it('sin acción', async () => {
@@ -301,16 +305,20 @@ describe('PATCH /api/modules/ventas/orders/[id]', () => {
 
       expect(res.status).toBe(400)
       expect(res.body.error).toBe('Escribe el número de guía.')
+      expect(res.body.code).toBe('invalid')
       expect(order(db).status).toBe('new')
       expect(h.sendOrderNotice).not.toHaveBeenCalled()
     })
 
-    it('una transición inválida: 400', async () => {
+    it('una transición que el estado no permite: 409 invalid_transition', async () => {
       const db = boot({ order: orderRow({ status: 'delivered' }) })
       const res = await patch(ORDER_ID, { action: 'cancel' })
 
-      expect(res.status).toBe(400)
+      expect(res.status).toBe(409)
+      expect(res.body.code).toBe('invalid_transition')
+      expect(res.body.error).toBe('Un pedido entregado no se puede cancelar.')
       expect(order(db).status).toBe('delivered')
+      expect(h.sendOrderNotice).not.toHaveBeenCalled()
     })
 
     it('campos que no son del contrato (status, total) se ignoran', async () => {
@@ -320,6 +328,17 @@ describe('PATCH /api/modules/ventas/orders/[id]', () => {
       expect(res.status).toBe(200)
       expect(order(db)).toMatchObject({ status: 'new', total: 100000, payment_status: 'paid' })
     })
+  })
+
+  it('si la base rechaza el cambio por estado viejo (42501): 409 stale y sin aviso', async () => {
+    const db = boot()
+    db._failNext('update', 'orders', { code: '42501', message: 'order status cannot move' })
+    const res = await patch(ORDER_ID, { action: 'mark_paid' })
+
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe('stale')
+    expect(order(db).payment_status).toBe('pending')
+    expect(h.sendOrderNotice).not.toHaveBeenCalled()
   })
 
   it('un error inesperado de la base responde 500 genérico', async () => {

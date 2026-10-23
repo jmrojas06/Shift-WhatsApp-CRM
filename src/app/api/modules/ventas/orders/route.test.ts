@@ -20,6 +20,7 @@ import {
 const CONTACT = '11111111-1111-4111-8111-111111111111'
 const FOREIGN_CONTACT = '99999999-9999-4999-8999-999999999999'
 const CONVERSATION = '22222222-2222-4222-8222-222222222222'
+const OTHER_CONTACT_CONVERSATION = '66666666-6666-4666-8666-666666666666'
 
 const h = vi.hoisted(() => ({
   state: {
@@ -59,7 +60,10 @@ function boot(overrides: { modules?: string[]; extra?: Record<string, Row[]> } =
       { id: CONTACT, account_id: TEST_ACCOUNT, name: 'Ana', phone: '573001112233' },
       { id: FOREIGN_CONTACT, account_id: 'acc-2', name: 'Ajena', phone: '573009998877' },
     ],
-    conversations: [{ id: CONVERSATION, account_id: TEST_ACCOUNT, contact_id: CONTACT }],
+    conversations: [
+      { id: CONVERSATION, account_id: TEST_ACCOUNT, contact_id: CONTACT },
+      { id: OTHER_CONTACT_CONVERSATION, account_id: TEST_ACCOUNT, contact_id: 'otro-contacto' },
+    ],
     ...overrides.extra,
   })
   stubCreateOrder(db)
@@ -121,6 +125,7 @@ describe('POST /api/modules/ventas/orders', () => {
     const res = await post(validBody())
 
     expect(res.status).toBe(403)
+    expect(res.body.code).toBe('forbidden')
     expect(db._rpcCalls).toHaveLength(0)
   })
 
@@ -130,6 +135,7 @@ describe('POST /api/modules/ventas/orders', () => {
 
     expect(res.status).toBe(409)
     expect(res.body.error).toBe('El módulo Ventas no está activo para esta cuenta.')
+    expect(res.body.code).toBe('module_inactive')
     expect(db._rpcCalls).toHaveLength(0)
   })
 
@@ -149,6 +155,7 @@ describe('POST /api/modules/ventas/orders', () => {
 
     expect(res.status).toBe(404)
     expect(res.body.error).toBe('El contacto o la conversación no existe en tu cuenta.')
+    expect(res.body.code).toBe('not_found')
     expect(db._tables.orders ?? []).toHaveLength(0)
     expect(db._tables.deals ?? []).toHaveLength(0)
   })
@@ -157,6 +164,15 @@ describe('POST /api/modules/ventas/orders', () => {
     boot()
     const res = await post(validBody({ conversationId: '77777777-7777-4777-8777-777777777777' }))
     expect(res.status).toBe(404)
+  })
+
+  it('una conversación de otro contacto de la misma cuenta responde 404', async () => {
+    const db = boot()
+    const res = await post(validBody({ conversationId: OTHER_CONTACT_CONVERSATION }))
+
+    expect(res.status).toBe(404)
+    expect(res.body.code).toBe('not_found')
+    expect(db._tables.orders ?? []).toHaveLength(0)
   })
 
   describe('validación (400)', () => {
@@ -173,6 +189,7 @@ describe('POST /api/modules/ventas/orders', () => {
         const db = boot()
         const res = await post(body)
         expect(res.status).toBe(400)
+        expect(res.body.code).toBe('invalid')
         expect(typeof res.body.error).toBe('string')
         expect(db._rpcCalls).toHaveLength(0)
       })

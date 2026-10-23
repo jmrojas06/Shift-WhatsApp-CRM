@@ -482,9 +482,23 @@ export type OrderActionResult =
       /** Aviso a mandar al cliente; null si no hay o si no cambió nada. */
       notice: NoticeKind | null
     }
-  | { ok: false; message: string }
+  | {
+      ok: false
+      message: string
+      /**
+       * 'transition' = el estado actual del pedido no admite la acción
+       * (ya enviado, entregado, cancelado…): es un conflicto (409).
+       * 'invalid' = faltan datos o están mal, o la acción no existe (400).
+       */
+      reason: 'invalid' | 'transition'
+    }
 
-const refuse = (message: string): OrderActionResult => ({ ok: false, message })
+const refuse = (message: string, reason: 'invalid' | 'transition' = 'invalid'): OrderActionResult => ({
+  ok: false,
+  message,
+  reason,
+})
+const blocked = (message: string): OrderActionResult => refuse(message, 'transition')
 
 /**
  * Aplica una acción a un pedido. Pura: no muta el pedido ni toca la
@@ -513,7 +527,7 @@ export function applyOrderAction(
   switch (action) {
     case 'mark_paid': {
       if (order.status === 'cancelled') {
-        return refuse('Un pedido cancelado no se puede marcar como pagado.')
+        return blocked('Un pedido cancelado no se puede marcar como pagado.')
       }
       if (order.payment_status === 'paid') {
         return { ok: true, changed: false, patch: {}, notice: null }
@@ -527,9 +541,9 @@ export function applyOrderAction(
     }
 
     case 'mark_shipped': {
-      if (order.status === 'shipped') return refuse('El pedido ya fue marcado como enviado.')
-      if (order.status === 'delivered') return refuse('El pedido ya fue entregado.')
-      if (order.status === 'cancelled') return refuse('El pedido está cancelado.')
+      if (order.status === 'shipped') return blocked('El pedido ya fue marcado como enviado.')
+      if (order.status === 'delivered') return blocked('El pedido ya fue entregado.')
+      if (order.status === 'cancelled') return blocked('El pedido está cancelado.')
 
       const carrier = requiredText(extra.carrier, {
         missing: 'Escribe la transportadora.',
@@ -575,8 +589,8 @@ export function applyOrderAction(
     }
 
     case 'mark_delivered': {
-      if (order.status === 'delivered') return refuse('El pedido ya fue entregado.')
-      if (order.status === 'cancelled') return refuse('El pedido está cancelado.')
+      if (order.status === 'delivered') return blocked('El pedido ya fue entregado.')
+      if (order.status === 'cancelled') return blocked('El pedido está cancelado.')
       return {
         ok: true,
         changed: true,
@@ -586,8 +600,8 @@ export function applyOrderAction(
     }
 
     case 'cancel': {
-      if (order.status === 'delivered') return refuse('Un pedido entregado no se puede cancelar.')
-      if (order.status === 'cancelled') return refuse('El pedido ya está cancelado.')
+      if (order.status === 'delivered') return blocked('Un pedido entregado no se puede cancelar.')
+      if (order.status === 'cancelled') return blocked('El pedido ya está cancelado.')
       return {
         ok: true,
         changed: true,
@@ -615,6 +629,18 @@ export const SALES_STAGES = [
   'Cancelado',
 ] as const
 export type SalesStage = (typeof SALES_STAGES)[number]
+
+/**
+ * Estado del negocio (`deals.status`) que corresponde al pedido: un
+ * pedido entregado es un negocio ganado, uno cancelado es perdido y el
+ * resto sigue abierto. Así el tablero y sus totales no cuentan como
+ * abiertos negocios que ya terminaron.
+ */
+export function dealStatusFor(order: Pick<OrderState, 'status'>): 'open' | 'won' | 'lost' {
+  if (order.status === 'delivered') return 'won'
+  if (order.status === 'cancelled') return 'lost'
+  return 'open'
+}
 
 /** Etapa del negocio que corresponde al pedido (diseño §3.2). */
 export function pipelineStageFor(order: OrderState): SalesStage {

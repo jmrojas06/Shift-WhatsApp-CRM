@@ -117,7 +117,9 @@ describe('PATCH /api/modules/ventas/settings', () => {
   it('un agente recibe 403', async () => {
     h.state.role = 'agent'
     const db = boot()
-    expect((await patch({ notify_paid: false })).status).toBe(403)
+    const res = await patch({ notify_paid: false })
+    expect(res.status).toBe(403)
+    expect(res.body.code).toBe('forbidden')
     expect(db._tables.sales_settings).toHaveLength(0)
   })
 
@@ -132,6 +134,7 @@ describe('PATCH /api/modules/ventas/settings', () => {
     const res = await patch({ notify_paid: false })
 
     expect(res.status).toBe(409)
+    expect(res.body.code).toBe('module_inactive')
     expect(db._tables.sales_settings).toHaveLength(0)
   })
 
@@ -150,6 +153,7 @@ describe('PATCH /api/modules/ventas/settings', () => {
         const db = boot()
         const res = await patch(body)
         expect(res.status).toBe(400)
+        expect(res.body.code).toBe('invalid')
         expect(typeof res.body.error).toBe('string')
         expect(db._tables.sales_settings).toHaveLength(0)
       })

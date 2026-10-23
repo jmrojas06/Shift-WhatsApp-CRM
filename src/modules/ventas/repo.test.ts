@@ -23,6 +23,11 @@ import { stubCreateOrder } from './testing/create-order-stub'
 // es una función SQL: el fake no la ejecuta, así que cada test
 // registra con `_onRpc` el comportamiento mínimo (insertar el pedido
 // y sus líneas, o responder con un error de Postgres).
+//
+// El repositorio usa dos clientes: el del usuario (`ctx.supabase`:
+// RPC y lectura/escritura de `orders`, con RLS y el guarda de 054) y
+// el service-role (`db`: pipeline, negocio y líneas). Los tests de
+// estado los separan en dos fakes para comprobar quién hace qué.
 // ============================================================
 
 const ACCOUNT = 'acc-1'
@@ -115,6 +120,47 @@ describe('ensureSalesPipeline', () => {
     expect(db._tables.pipeline_stages).toHaveLength(6)
   })
 
+  it('con dos pipelines "Ventas" elige siempre el más antiguo (created_at, id)', async () => {
+    const db = makeFakeDb({
+      pipelines: [
+        { id: 'p-b', account_id: ACCOUNT, user_id: USER, name: 'Ventas', created_at: '2026-02-01T00:00:00Z' },
+        { id: 'p-a', account_id: ACCOUNT, user_id: USER, name: 'ventas', created_at: '2026-01-01T00:00:00Z' },
+      ],
+      pipeline_stages: SALES_STAGES.map((name, position) => ({
+        id: `a-${position}`,
+        pipeline_id: 'p-a',
+        name,
+        position,
+      })),
+    })
+    const result = await ensureSalesPipeline(asClient(db), ACCOUNT, USER)
+
+    expect(result.pipelineId).toBe('p-a')
+    expect(db._tables.pipelines).toHaveLength(2)
+  })
+
+  it('con empate en created_at desempata por id', async () => {
+    const db = makeFakeDb({
+      pipelines: [
+        { id: 'p-2', account_id: ACCOUNT, user_id: USER, name: 'Ventas', created_at: '2026-01-01T00:00:00Z' },
+        { id: 'p-1', account_id: ACCOUNT, user_id: USER, name: 'Ventas', created_at: '2026-01-01T00:00:00Z' },
+      ],
+    })
+    expect((await ensureSalesPipeline(asClient(db), ACCOUNT, USER)).pipelineId).toBe('p-1')
+  })
+
+  it('con etapas repetidas elige la de menor posición (luego created_at, id)', async () => {
+    const db = makeFakeDb({
+      pipelines: [{ id: 'pipe-1', account_id: ACCOUNT, user_id: USER, name: 'Ventas' }],
+      pipeline_stages: [
+        { id: 'late', pipeline_id: 'pipe-1', name: 'Pagado', position: 5 },
+        { id: 'early', pipeline_id: 'pipe-1', name: 'pagado', position: 2 },
+      ],
+    })
+    const result = await ensureSalesPipeline(asClient(db), ACCOUNT, USER)
+    expect(result.stageIdByName.Pagado).toBe('early')
+  })
+
   it('rellena solo las etapas que faltan y conserva las del dueño', async () => {
     const db = makeFakeDb({
       pipelines: [{ id: 'pipe-1', account_id: ACCOUNT, user_id: USER, name: 'Ventas' }],
@@ -202,11 +248,21 @@ describe('createOrder', () => {
   it('devuelve el pedido con sus líneas ordenadas', async () => {
     const order = await createOrder(asClient(db), ctxFor(db), input())
 
-    expect(order).toMatchObject({ id: ORDER_ID, number: 1001, total: 140000.5, currency: 'COP' })
+    expect(order).toMatchObject({ number: 1001, total: 140000.5, currency: 'COP' })
+    expect(order.id).toBe(db._tables.orders[0].id)
     expect(order.items.map((i) => [i.name, i.quantity, i.unit_price, i.position])).toEqual([
       ['Anillo', 2, 50000, 0],
       ['Cadena', 1, 30000.5, 1],
     ])
+  })
+
+  it('cada pedido recibe un id distinto', async () => {
+    const a = await createOrder(asClient(db), ctxFor(db), input())
+    const b = await createOrder(asClient(db), ctxFor(db), input())
+    expect(a.id).not.toBe(b.id)
+    expect(b.number).toBe(1002)
+    expect(b.items.every((i) => i.order_id === b.id)).toBe(true)
+    expect(b.items).toHaveLength(2)
   })
 
   it('el pedido sale de un body con un total mentiroso: el total lo pone la función', async () => {
@@ -223,7 +279,7 @@ describe('createOrder', () => {
     expect(db._tables.orders[0].total).toBe(100)
   })
 
-  it('crea el pipeline y el negocio en la etapa "Pago pendiente" y guarda deal_id', async () => {
+  it('crea el pipeline y el negocio abierto en la etapa "Pago pendiente" y guarda deal_id', async () => {
     const order = await createOrder(asClient(db), ctxFor(db), input())
 
     const [deal] = db._tables.deals
@@ -244,11 +300,11 @@ describe('createOrder', () => {
     expect(db._tables.orders[0].deal_id).toBe(deal.id)
   })
 
-  it('un pedido ya pagado entra en la etapa "Pagado"', async () => {
+  it('un pedido ya pagado entra en la etapa "Pagado" (el negocio sigue abierto)', async () => {
     await createOrder(asClient(db), ctxFor(db), input({ paid: true }))
 
     const pagado = db._tables.pipeline_stages.find((s) => s.name === 'Pagado')
-    expect(db._tables.deals[0].stage_id).toBe(pagado?.id)
+    expect(db._tables.deals[0]).toMatchObject({ stage_id: pagado?.id, status: 'open' })
   })
 
   it('reutiliza el pipeline Ventas que ya existe', async () => {
@@ -289,14 +345,39 @@ describe('createOrder', () => {
     expect(db._tables.orders).toHaveLength(1)
   })
 
-  it('si no se puede enlazar deal_id, el pedido igual se devuelve', async () => {
+  it('si no se puede enlazar deal_id, borra el negocio recién creado y el pedido se devuelve', async () => {
     db._failNext('update', 'orders', { message: 'update roto' })
 
     const order = await createOrder(asClient(db), ctxFor(db), input())
 
     expect(order.number).toBe(1001)
     expect(order.deal_id).toBeNull()
+    // Sin negocio huérfano en el tablero.
+    expect(db._tables.deals).toHaveLength(0)
+    expect(db._tables.orders).toHaveLength(1)
     expect(console.error).toHaveBeenCalled()
+  })
+
+  it('el borrado del negocio huérfano solo toca la cuenta del pedido', async () => {
+    db = makeFakeDb({
+      deals: [{ id: 'otro', account_id: OTHER_ACCOUNT, title: 'Ajeno' }],
+    })
+    stubCreateOrder(db)
+    db._failNext('update', 'orders', { message: 'update roto' })
+
+    await createOrder(asClient(db), ctxFor(db), input())
+
+    expect(db._tables.deals.map((d) => d.id)).toEqual(['otro'])
+  })
+
+  it('si tampoco se puede borrar el huérfano, el pedido igual se devuelve', async () => {
+    db._failNext('update', 'orders', { message: 'update roto' })
+    db._failNext('delete', 'deals', { message: 'delete roto' })
+
+    const order = await createOrder(asClient(db), ctxFor(db), input())
+
+    expect(order.number).toBe(1001)
+    expect(order.deal_id).toBeNull()
   })
 
   it('si no se pueden leer las líneas, devuelve las que se enviaron', async () => {
@@ -312,25 +393,36 @@ describe('createOrder', () => {
 
   describe('errores de la función', () => {
     const invalid = 'Los datos del pedido no son válidos. Revisa los productos, precios y el envío.'
-    const cases: [string, number, string][] = [
-      ['42501', 403, 'No tienes permiso para crear pedidos en esta cuenta.'],
-      ['P0001', 409, 'El módulo Ventas no está activo para esta cuenta.'],
-      ['23503', 404, 'El contacto o la conversación no existe en tu cuenta.'],
-      ['23514', 400, invalid],
-      ['22023', 400, invalid],
+    const moduleMessage = 'El módulo Ventas no está activo para esta cuenta.'
+    const cases: [string, string, number, string, string][] = [
+      // code de Postgres, mensaje crudo, status, code de dominio, mensaje en español
+      ['42501', 'raw postgres text', 403, 'forbidden', 'No tienes permiso para crear pedidos en esta cuenta.'],
+      ['P0001', moduleMessage, 409, 'module_inactive', moduleMessage],
+      ['23503', 'raw postgres text', 404, 'not_found', 'El contacto o la conversación no existe en tu cuenta.'],
+      ['23514', 'raw postgres text', 400, 'invalid', invalid],
+      ['22023', 'raw postgres text', 400, 'invalid', invalid],
     ]
-    for (const [code, status, message] of cases) {
-      it(`${code} → ${status} con mensaje en español (nunca el crudo de Postgres)`, async () => {
-        db._failNext('rpc', 'create_order', { code, message: 'raw postgres text' })
+    for (const [pg, raw, status, code, message] of cases) {
+      it(`${pg} → ${status} (${code}) con mensaje en español`, async () => {
+        db._failNext('rpc', 'create_order', { code: pg, message: raw })
 
         const error = await createOrder(asClient(db), ctxFor(db), input()).catch((e) => e)
 
         expect(error).toBeInstanceOf(SalesError)
         expect(error.status).toBe(status)
+        expect(error.code).toBe(code)
         expect(error.message).toBe(message)
         expect(db._tables.deals ?? []).toHaveLength(0)
       })
     }
+
+    it('P0001 con otro mensaje (un RAISE genérico) no se hace pasar por módulo apagado', async () => {
+      db._failNext('rpc', 'create_order', { code: 'P0001', message: 'algo distinto' })
+      const error = await createOrder(asClient(db), ctxFor(db), input()).catch((e) => e)
+
+      expect(error).not.toBeInstanceOf(SalesError)
+      expect(error.message).toBe('algo distinto')
+    })
 
     it('cualquier otro error se lanza tal cual (500 en la ruta)', async () => {
       db._failNext('rpc', 'create_order', { code: 'XX000', message: 'se cayó' })
@@ -378,13 +470,16 @@ describe('updateOrderStatus', () => {
     }
   }
 
-  function seedDb(order: Row = orderRow()): FakeDb {
-    return makeFakeDb({
+  /**
+   * Dos fakes, como en producción: el del usuario ve `orders` (RLS) y el
+   * service-role ve el pipeline, los negocios y las líneas.
+   */
+  function seed(order: Row = orderRow()): { user: FakeDb; admin: FakeDb } {
+    const user = makeFakeDb({
+      orders: [order, orderRow({ id: OTHER_ORDER_ID, account_id: OTHER_ACCOUNT, deal_id: 'deal-x' })],
+    })
+    const admin = makeFakeDb({
       ...pipelineSeed(),
-      orders: [
-        order,
-        orderRow({ id: OTHER_ORDER_ID, account_id: OTHER_ACCOUNT, deal_id: 'deal-x' }),
-      ],
       order_items: [
         { id: 'i2', order_id: ORDER_ID, account_id: ACCOUNT, name: 'B', quantity: 1, unit_price: 5, position: 1 },
         { id: 'i1', order_id: ORDER_ID, account_id: ACCOUNT, name: 'A', quantity: 2, unit_price: 10, position: 0 },
@@ -395,6 +490,7 @@ describe('updateOrderStatus', () => {
           account_id: ACCOUNT,
           pipeline_id: 'pipe-1',
           stage_id: stageId('Pago pendiente'),
+          status: 'open',
           title: 'Pedido #1001',
         },
         {
@@ -402,189 +498,318 @@ describe('updateOrderStatus', () => {
           account_id: OTHER_ACCOUNT,
           pipeline_id: 'pipe-x',
           stage_id: 'stage-x',
+          status: 'open',
           title: 'Pedido #1001',
         },
       ],
     })
+    return { user, admin }
   }
+
+  const run = (
+    fakes: { user: FakeDb; admin: FakeDb },
+    action: string,
+    extra: Record<string, unknown> = {},
+    id = ORDER_ID,
+  ) => updateOrderStatus(asClient(fakes.admin), ctxFor(fakes.user), id, action, extra, NOW)
 
   beforeEach(() => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.spyOn(console, 'warn').mockImplementation(() => {})
   })
 
-  it('marca pagado: guarda el cambio, mueve el negocio y devuelve el aviso', async () => {
-    const db = seedDb()
-    const result = await updateOrderStatus(asClient(db), ctxFor(db), ORDER_ID, 'mark_paid', {}, NOW)
+  it('marca pagado con el cliente del usuario, mueve el negocio y devuelve el aviso', async () => {
+    const fakes = seed()
+    const result = await run(fakes, 'mark_paid')
 
     expect(result.changed).toBe(true)
     expect(result.notice).toBe('paid')
     expect(result.order).toMatchObject({ payment_status: 'paid', paid_at: NOW.toISOString() })
     expect(result.order.items.map((i) => i.name)).toEqual(['A', 'B'])
-    expect(db._tables.orders[0]).toMatchObject({ payment_status: 'paid', paid_at: NOW.toISOString() })
-    expect(db._tables.deals[0].stage_id).toBe(stageId('Pagado'))
+    // El UPDATE del pedido ocurrió en el fake del usuario (RLS + guarda de 054)…
+    expect(fakes.user._tables.orders[0]).toMatchObject({ payment_status: 'paid', paid_at: NOW.toISOString() })
+    // …y el service-role ni siquiera tiene la tabla de pedidos.
+    expect(fakes.admin._tables.orders).toBeUndefined()
+    expect(fakes.admin._tables.deals[0]).toMatchObject({ stage_id: stageId('Pagado'), status: 'open' })
+  })
+
+  it('el UPDATE lleva los filtros de cuenta y de estado leído', async () => {
+    const fakes = seed()
+    // Otra cuenta con el mismo id de pedido: no debe tocarse jamás.
+    fakes.user._tables.orders.push(orderRow({ account_id: OTHER_ACCOUNT, deal_id: null }))
+
+    await run(fakes, 'mark_paid')
+
+    expect(fakes.user._tables.orders[0].payment_status).toBe('paid')
+    expect(fakes.user._tables.orders[2].payment_status).toBe('pending')
   })
 
   it('marcar pagado un pedido ya pagado no escribe nada ni avisa', async () => {
-    const db = seedDb(orderRow({ payment_status: 'paid', paid_at: '2026-10-01T00:00:00.000Z' }))
-    const updateSpy = vi.spyOn(db as unknown as { from: (t: string) => unknown }, 'from')
+    const fakes = seed(orderRow({ payment_status: 'paid', paid_at: '2026-10-01T00:00:00.000Z' }))
+    const adminFrom = vi.spyOn(fakes.admin as unknown as { from: (t: string) => unknown }, 'from')
 
-    const result = await updateOrderStatus(asClient(db), ctxFor(db), ORDER_ID, 'mark_paid', {}, NOW)
+    const result = await run(fakes, 'mark_paid')
 
     expect(result).toMatchObject({ changed: false, notice: null })
     expect(result.order.paid_at).toBe('2026-10-01T00:00:00.000Z')
-    expect(db._tables.orders[0].paid_at).toBe('2026-10-01T00:00:00.000Z')
-    // Solo lecturas: ni update de orders ni de deals.
-    const writes = updateSpy.mock.calls.filter(([t]) => t === 'deals')
-    expect(writes).toHaveLength(0)
-    expect(db._tables.deals[0].stage_id).toBe(stageId('Pago pendiente'))
+    expect(result.order.items).toHaveLength(2)
+    expect(fakes.user._tables.orders[0].paid_at).toBe('2026-10-01T00:00:00.000Z')
+    expect(adminFrom.mock.calls.filter(([t]) => t === 'deals')).toHaveLength(0)
+    expect(fakes.admin._tables.deals[0].stage_id).toBe(stageId('Pago pendiente'))
   })
 
   it('marca enviado con transportadora y guía y mueve el negocio a "Enviado"', async () => {
-    const db = seedDb()
-    const result = await updateOrderStatus(
-      asClient(db),
-      ctxFor(db),
-      ORDER_ID,
-      'mark_shipped',
-      { carrier: 'Servientrega', tracking_number: 'ABC123' },
-      NOW,
-    )
+    const fakes = seed()
+    const result = await run(fakes, 'mark_shipped', {
+      carrier: 'Servientrega',
+      tracking_number: 'ABC123',
+    })
 
     expect(result.notice).toBe('shipped')
-    expect(db._tables.orders[0]).toMatchObject({
+    expect(fakes.user._tables.orders[0]).toMatchObject({
       status: 'shipped',
       shipped_at: NOW.toISOString(),
       carrier: 'Servientrega',
       tracking_number: 'ABC123',
     })
-    expect(db._tables.deals[0].stage_id).toBe(stageId('Enviado'))
+    expect(fakes.admin._tables.deals[0]).toMatchObject({ stage_id: stageId('Enviado'), status: 'open' })
   })
 
-  it('cancelar mueve el negocio a "Cancelado" y no avisa', async () => {
-    const db = seedDb()
-    const result = await updateOrderStatus(asClient(db), ctxFor(db), ORDER_ID, 'cancel', {}, NOW)
+  it('entregado: el negocio pasa a "Entregado" y a ganado (won)', async () => {
+    const fakes = seed(orderRow({ status: 'shipped' }))
+    await run(fakes, 'mark_delivered')
+
+    expect(fakes.admin._tables.deals[0]).toMatchObject({
+      stage_id: stageId('Entregado'),
+      status: 'won',
+      updated_at: NOW.toISOString(),
+    })
+  })
+
+  it('cancelado: el negocio pasa a "Cancelado" y a perdido (lost), sin aviso', async () => {
+    const fakes = seed()
+    const result = await run(fakes, 'cancel')
 
     expect(result).toMatchObject({ changed: true, notice: null })
-    expect(db._tables.deals[0].stage_id).toBe(stageId('Cancelado'))
+    expect(fakes.admin._tables.deals[0]).toMatchObject({ stage_id: stageId('Cancelado'), status: 'lost' })
   })
 
-  it('una acción inválida para el estado es un 400 con el mensaje del dominio', async () => {
-    const db = seedDb(orderRow({ status: 'delivered' }))
-    await expect(
-      updateOrderStatus(asClient(db), ctxFor(db), ORDER_ID, 'cancel', {}, NOW),
-    ).rejects.toMatchObject({ status: 400, message: 'Un pedido entregado no se puede cancelar.' })
-    expect(db._tables.orders[0].status).toBe('delivered')
-  })
+  it('si el dueño borró la etapa, el estado del negocio se actualiza igual y se avisa en el log', async () => {
+    const fakes = seed(orderRow({ status: 'shipped' }))
+    fakes.admin._tables.pipeline_stages = fakes.admin._tables.pipeline_stages.filter(
+      (s) => s.name !== 'Entregado',
+    )
 
-  it('marcar enviado sin guía es un 400', async () => {
-    const db = seedDb()
-    await expect(
-      updateOrderStatus(asClient(db), ctxFor(db), ORDER_ID, 'mark_shipped', { carrier: 'X' }, NOW),
-    ).rejects.toMatchObject({ status: 400, message: 'Escribe el número de guía.' })
-  })
-
-  it('un pedido de otra cuenta es un 404 y no se toca', async () => {
-    const db = seedDb()
-    await expect(
-      updateOrderStatus(asClient(db), ctxFor(db), OTHER_ORDER_ID, 'mark_paid', {}, NOW),
-    ).rejects.toMatchObject({ status: 404 })
-    expect(db._tables.orders[1].payment_status).toBe('pending')
-    expect(db._tables.deals[1].stage_id).toBe('stage-x')
-  })
-
-  it('un id que no es uuid es un 404 sin consultar la base', async () => {
-    const db = seedDb()
-    const spy = vi.spyOn(db as unknown as { from: (t: string) => unknown }, 'from')
-    await expect(
-      updateOrderStatus(asClient(db), ctxFor(db), 'no-es-uuid', 'mark_paid', {}, NOW),
-    ).rejects.toMatchObject({ status: 404 })
-    expect(spy).not.toHaveBeenCalled()
-  })
-
-  it('un pedido inexistente es un 404', async () => {
-    const db = seedDb()
-    await expect(
-      updateOrderStatus(
-        asClient(db),
-        ctxFor(db),
-        '55555555-5555-4555-8555-555555555555',
-        'mark_paid',
-        {},
-        NOW,
-      ),
-    ).rejects.toMatchObject({ status: 404 })
-  })
-
-  it('el cambio se guarda aunque el negocio falle', async () => {
-    const db = seedDb()
-    db._failNext('update', 'deals', { message: 'deals roto' })
-
-    const result = await updateOrderStatus(asClient(db), ctxFor(db), ORDER_ID, 'mark_paid', {}, NOW)
+    const result = await run(fakes, 'mark_delivered')
 
     expect(result.changed).toBe(true)
-    expect(db._tables.orders[0].payment_status).toBe('paid')
-    expect(console.error).toHaveBeenCalled()
-  })
-
-  it('el pedido sin negocio (deal_id nulo) se actualiza igual', async () => {
-    const db = seedDb(orderRow({ deal_id: null }))
-    const result = await updateOrderStatus(asClient(db), ctxFor(db), ORDER_ID, 'mark_paid', {}, NOW)
-
-    expect(result.changed).toBe(true)
-    expect(db._tables.deals[0].stage_id).toBe(stageId('Pago pendiente'))
-  })
-
-  it('si el dueño borró la etapa, el pedido igual se actualiza y el negocio no se mueve', async () => {
-    const db = seedDb()
-    db._tables.pipeline_stages = db._tables.pipeline_stages.filter((s) => s.name !== 'Pagado')
-
-    const result = await updateOrderStatus(asClient(db), ctxFor(db), ORDER_ID, 'mark_paid', {}, NOW)
-
-    expect(result.changed).toBe(true)
-    expect(db._tables.deals[0].stage_id).toBe(stageId('Pago pendiente'))
+    expect(fakes.admin._tables.deals[0]).toMatchObject({
+      stage_id: stageId('Pago pendiente'), // no se movió
+      status: 'won',
+    })
     expect(console.warn).toHaveBeenCalled()
   })
 
-  it('un error al leer el pedido se lanza (500)', async () => {
-    const db = seedDb()
-    db._failNext('select', 'orders', { message: 'lectura rota' })
-    const error = await updateOrderStatus(asClient(db), ctxFor(db), ORDER_ID, 'mark_paid', {}, NOW).catch((e) => e)
-    expect(error).not.toBeInstanceOf(SalesError)
-    expect(error.message).toBe('lectura rota')
+  it('si la etapa ya era la correcta pero el estado cambió, solo cambia el estado', async () => {
+    const fakes = seed(orderRow({ status: 'shipped' }))
+    // El negocio ya está en "Entregado" (movido a mano) pero sigue abierto.
+    fakes.admin._tables.deals[0].stage_id = stageId('Entregado')
+
+    await run(fakes, 'mark_delivered')
+
+    expect(fakes.admin._tables.deals[0]).toMatchObject({ stage_id: stageId('Entregado'), status: 'won' })
   })
 
-  it('un error al guardar el pedido se lanza y no mueve el negocio', async () => {
-    const db = seedDb()
-    db._failNext('update', 'orders', { message: 'escritura rota' })
-    const error = await updateOrderStatus(asClient(db), ctxFor(db), ORDER_ID, 'mark_paid', {}, NOW).catch((e) => e)
-    expect(error.message).toBe('escritura rota')
-    expect(db._tables.deals[0].stage_id).toBe(stageId('Pago pendiente'))
+  it('si el negocio ya está en la etapa y el estado correctos no lo escribe', async () => {
+    const fakes = seed()
+    fakes.admin._tables.deals[0].stage_id = stageId('Pagado')
+    const before = JSON.stringify(fakes.admin._tables.deals[0])
+
+    await run(fakes, 'mark_paid')
+
+    expect(JSON.stringify(fakes.admin._tables.deals[0])).toBe(before)
   })
 
-  it('si el pedido cambió entre la lectura y la escritura, responde 409 y no duplica el aviso', async () => {
-    const db = seedDb()
-    // Otra pestaña ya lo marcó pagado entre la lectura y la escritura.
-    const realFrom = db.from.bind(db)
-    let flipped = false
-    db.from = (table: string) => {
+  it('mueve el negocio según el pedido releído, no según el parche (evita movimientos fuera de orden)', async () => {
+    const fakes = seed()
+    // Entre nuestro UPDATE y el movimiento del negocio, otra petición ya lo entregó.
+    const realFrom = fakes.user.from.bind(fakes.user)
+    fakes.user.from = (table: string) => {
       const api = realFrom(table) as { update?: (p: Row) => unknown }
       if (table === 'orders' && api.update) {
         const update = api.update.bind(api)
         api.update = (p: Row) => {
-          if (!flipped) {
-            flipped = true
-            db._tables.orders[0].payment_status = 'paid'
-          }
-          return update(p)
+          const out = update(p)
+          // Se aplica nuestro parche y, a continuación, la otra petición gana.
+          queueMicrotask(() => {
+            Object.assign(fakes.user._tables.orders[0], {
+              status: 'delivered',
+              payment_status: 'paid',
+            })
+          })
+          return out
         }
       }
       return api
     }
 
-    await expect(
-      updateOrderStatus(asClient(db), ctxFor(db), ORDER_ID, 'mark_paid', {}, NOW),
-    ).rejects.toMatchObject({ status: 409 })
+    await run(fakes, 'mark_paid')
+
+    expect(fakes.admin._tables.deals[0]).toMatchObject({
+      stage_id: stageId('Entregado'),
+      status: 'won',
+    })
+  })
+
+  describe('errores de dominio', () => {
+    it('una transición que el estado no permite es 409 invalid_transition', async () => {
+      const fakes = seed(orderRow({ status: 'delivered' }))
+      await expect(run(fakes, 'cancel')).rejects.toMatchObject({
+        status: 409,
+        code: 'invalid_transition',
+        message: 'Un pedido entregado no se puede cancelar.',
+      })
+      expect(fakes.user._tables.orders[0].status).toBe('delivered')
+    })
+
+    it('un pedido cancelado no se marca como pagado: 409 invalid_transition', async () => {
+      const fakes = seed(orderRow({ status: 'cancelled' }))
+      await expect(run(fakes, 'mark_paid')).rejects.toMatchObject({
+        status: 409,
+        code: 'invalid_transition',
+      })
+    })
+
+    it('marcar enviado sin guía es 400 invalid', async () => {
+      const fakes = seed()
+      await expect(run(fakes, 'mark_shipped', { carrier: 'X' })).rejects.toMatchObject({
+        status: 400,
+        code: 'invalid',
+        message: 'Escribe el número de guía.',
+      })
+    })
+
+    it('una acción desconocida es 400 invalid', async () => {
+      const fakes = seed()
+      await expect(run(fakes, 'volar')).rejects.toMatchObject({ status: 400, code: 'invalid' })
+    })
+
+    it('si la acción se rechaza no se leen las líneas', async () => {
+      for (const [order, action, extra] of [
+        [orderRow({ status: 'delivered' }), 'cancel', {}],
+        [orderRow(), 'mark_shipped', {}],
+      ] as const) {
+        const fakes = seed(order)
+        const adminFrom = vi.spyOn(fakes.admin as unknown as { from: (t: string) => unknown }, 'from')
+        await run(fakes, action, extra).catch(() => {})
+        expect(adminFrom.mock.calls.filter(([t]) => t === 'order_items')).toHaveLength(0)
+      }
+    })
+
+    it('un pedido de otra cuenta es 404 not_found y no se toca', async () => {
+      const fakes = seed()
+      await expect(run(fakes, 'mark_paid', {}, OTHER_ORDER_ID)).rejects.toMatchObject({
+        status: 404,
+        code: 'not_found',
+      })
+      expect(fakes.user._tables.orders[1].payment_status).toBe('pending')
+      expect(fakes.admin._tables.deals[1].stage_id).toBe('stage-x')
+    })
+
+    it('un id que no es uuid es 404 sin consultar ninguna base', async () => {
+      const fakes = seed()
+      const userFrom = vi.spyOn(fakes.user as unknown as { from: (t: string) => unknown }, 'from')
+      const adminFrom = vi.spyOn(fakes.admin as unknown as { from: (t: string) => unknown }, 'from')
+      await expect(run(fakes, 'mark_paid', {}, 'no-es-uuid')).rejects.toMatchObject({
+        status: 404,
+        code: 'not_found',
+      })
+      expect(userFrom).not.toHaveBeenCalled()
+      expect(adminFrom).not.toHaveBeenCalled()
+    })
+
+    it('un pedido inexistente es 404', async () => {
+      const fakes = seed()
+      await expect(
+        run(fakes, 'mark_paid', {}, '55555555-5555-4555-8555-555555555555'),
+      ).rejects.toMatchObject({ status: 404 })
+    })
+  })
+
+  describe('errores de la base', () => {
+    it('el cambio se guarda aunque el negocio falle', async () => {
+      const fakes = seed()
+      fakes.admin._failNext('update', 'deals', { message: 'deals roto' })
+
+      const result = await run(fakes, 'mark_paid')
+
+      expect(result.changed).toBe(true)
+      expect(fakes.user._tables.orders[0].payment_status).toBe('paid')
+      expect(console.error).toHaveBeenCalled()
+    })
+
+    it('el pedido sin negocio (deal_id nulo) se actualiza igual', async () => {
+      const fakes = seed(orderRow({ deal_id: null }))
+      const result = await run(fakes, 'mark_paid')
+
+      expect(result.changed).toBe(true)
+      expect(fakes.admin._tables.deals[0].stage_id).toBe(stageId('Pago pendiente'))
+    })
+
+    it('un error al leer el pedido se lanza (500)', async () => {
+      const fakes = seed()
+      fakes.user._failNext('select', 'orders', { message: 'lectura rota' })
+      const error = await run(fakes, 'mark_paid').catch((e) => e)
+      expect(error).not.toBeInstanceOf(SalesError)
+      expect(error.message).toBe('lectura rota')
+    })
+
+    it('un error genérico al guardar se lanza y no mueve el negocio', async () => {
+      const fakes = seed()
+      fakes.user._failNext('update', 'orders', { message: 'escritura rota' })
+      const error = await run(fakes, 'mark_paid').catch((e) => e)
+      expect(error).not.toBeInstanceOf(SalesError)
+      expect(error.message).toBe('escritura rota')
+      expect(fakes.admin._tables.deals[0].stage_id).toBe(stageId('Pago pendiente'))
+    })
+
+    it('42501 (guarda de 054 o RLS) es 409 stale y se registra', async () => {
+      const fakes = seed()
+      fakes.user._failNext('update', 'orders', {
+        code: '42501',
+        message: 'order status cannot move from shipped to new',
+      })
+
+      const error = await run(fakes, 'mark_paid').catch((e) => e)
+
+      expect(error).toBeInstanceOf(SalesError)
+      expect(error).toMatchObject({ status: 409, code: 'stale' })
+      expect(console.error).toHaveBeenCalled()
+      expect(fakes.admin._tables.deals[0].stage_id).toBe(stageId('Pago pendiente'))
+    })
+
+    it('si el pedido cambió entre la lectura y la escritura (0 filas) es 409 stale', async () => {
+      const fakes = seed()
+      const realFrom = fakes.user.from.bind(fakes.user)
+      let flipped = false
+      fakes.user.from = (table: string) => {
+        const api = realFrom(table) as { update?: (p: Row) => unknown }
+        if (table === 'orders' && api.update) {
+          const update = api.update.bind(api)
+          api.update = (p: Row) => {
+            if (!flipped) {
+              flipped = true
+              fakes.user._tables.orders[0].payment_status = 'paid'
+            }
+            return update(p)
+          }
+        }
+        return api
+      }
+
+      await expect(run(fakes, 'mark_paid')).rejects.toMatchObject({ status: 409, code: 'stale' })
+      expect(fakes.admin._tables.deals[0].stage_id).toBe(stageId('Pago pendiente'))
+    })
   })
 })
 

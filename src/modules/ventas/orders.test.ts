@@ -5,6 +5,7 @@ import {
   ORDER_LIMITS,
   SALES_STAGES,
   applyOrderAction,
+  dealStatusFor,
   fromCents,
   SALES_TIME_ZONE,
   isCountedSale,
@@ -822,6 +823,51 @@ describe('applyOrderAction', () => {
     expect(order).toMatchObject({ status: 'delivered', payment_status: 'paid' })
     // y desde ahí nada más es posible
     expect(applyOrderAction(order, 'cancel', {}, NOW).ok).toBe(false)
+  })
+})
+
+describe('applyOrderAction — razón del rechazo', () => {
+  const NOW = new Date('2026-10-23T15:30:00.000Z')
+  const place = { city: 'Bogotá', address: 'Calle 1' }
+  const reasonOf = (
+    order: Pick<OrderState, 'status' | 'payment_status'>,
+    action: string,
+    extra = {},
+  ) => {
+    const r = applyOrderAction({ ...order, ...place }, action, extra, NOW)
+    if (r.ok) throw new Error('esperaba rechazo')
+    return r.reason
+  }
+
+  it('un pedido en estado final o ya movido es "transition" (el estado no lo permite)', () => {
+    expect(reasonOf({ status: 'cancelled', payment_status: 'pending' }, 'mark_paid')).toBe('transition')
+    expect(reasonOf({ status: 'shipped', payment_status: 'paid' }, 'mark_shipped')).toBe('transition')
+    expect(reasonOf({ status: 'delivered', payment_status: 'paid' }, 'mark_shipped')).toBe('transition')
+    expect(reasonOf({ status: 'cancelled', payment_status: 'paid' }, 'mark_shipped')).toBe('transition')
+    expect(reasonOf({ status: 'delivered', payment_status: 'paid' }, 'mark_delivered')).toBe('transition')
+    expect(reasonOf({ status: 'cancelled', payment_status: 'paid' }, 'mark_delivered')).toBe('transition')
+    expect(reasonOf({ status: 'delivered', payment_status: 'paid' }, 'cancel')).toBe('transition')
+    expect(reasonOf({ status: 'cancelled', payment_status: 'paid' }, 'cancel')).toBe('transition')
+  })
+
+  it('datos que faltan o están mal, o una acción desconocida, son "invalid"', () => {
+    const open = { status: 'new', payment_status: 'pending' } as const
+    expect(reasonOf(open, 'mark_shipped', {})).toBe('invalid')
+    expect(reasonOf(open, 'mark_shipped', { carrier: 'X' })).toBe('invalid')
+    expect(reasonOf(open, 'mark_shipped', { carrier: 5, tracking_number: 'x' })).toBe('invalid')
+    expect(reasonOf(open, 'volar')).toBe('invalid')
+  })
+})
+
+describe('dealStatusFor', () => {
+  const cases: [OrderState['status'], 'open' | 'won' | 'lost'][] = [
+    ['new', 'open'],
+    ['shipped', 'open'],
+    ['delivered', 'won'],
+    ['cancelled', 'lost'],
+  ]
+  it.each(cases)('%s → %s (sin importar el pago)', (status, expected) => {
+    expect(dealStatusFor({ status })).toBe(expected)
   })
 })
 
