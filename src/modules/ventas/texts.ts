@@ -338,7 +338,9 @@ export const VENTAS_TEXTS = {
     saving: 'Guardando…',
     cancel: 'Cancelar',
     created: (number: number | string) => `Pedido #${number} creado.`,
-    description: (name: string) => `Para ${name}. El nombre y el teléfono salen del contacto.`,
+    // Un nombre como "Laura M." ya trae su punto: no se duplica.
+    description: (name: string) =>
+      `Para ${name}${/[.!?]$/.test(name) ? '' : '.'} El nombre y el teléfono salen del contacto.`,
     lineLabel: (n: number | string) => `Producto ${n}`,
     quantityPlaceholder: '1',
     pricePlaceholder: '0',
