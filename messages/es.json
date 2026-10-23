@@ -65,7 +65,8 @@
     "menuSignOut": "Cerrar sesión"
   },
   "ModeToggle": {
-    "switchMode": "Cambiar al modo {mode}"
+    "toLight": "Cambiar a modo claro",
+    "toDark": "Cambiar a modo oscuro"
   },
   "AccountAccess": {
     "unlinkedTitle": "Este usuario no está vinculado a una cuenta",
@@ -1441,7 +1442,7 @@
       "tagsAndFields": "Etiquetas y campos personalizados",
       "tagsCount": "{count} {count, plural, =1 {etiqueta} other {etiquetas}}",
       "fieldsCount": "{count} {count, plural, =1 {campo personalizado} other {campos personalizados}}",
-      "appearance": "modo {mode} · acento {theme}",
+      "appearance": "Modo: {mode} · Acento: {theme}",
       "yourAccount": "Tu cuenta",
       "loading": "Cargando…"
     },
@@ -1852,14 +1853,50 @@
     },
     "appearance": {
       "title": "Apariencia",
-      "description": "Define el modo y el color de acento que se usan en toda la app. Se guarda en este dispositivo; pruébalo, cambia al instante.",
+      "description": "Elige el modo y el color de acento de la app. Se guarda en este dispositivo y cambia al instante.",
       "mode": "Modo",
       "colorMode": "Modo de color",
-      "useMode": "Usar el modo {mode}",
+      "useMode": "Usar modo {mode}",
       "active": "Activo",
       "accentColor": "Color de acento",
       "useTheme": "Usar el tema {name}",
-      "themeId": "ID del tema: {id}"
+      "themeId": "ID del tema: {id}",
+      "modes": {
+        "system": "Sistema",
+        "light": "Claro",
+        "dark": "Oscuro"
+      },
+      "modeHints": {
+        "system": "Sigue el modo de tu celular o computador",
+        "light": "Fondo claro todo el tiempo",
+        "dark": "Fondo oscuro todo el tiempo"
+      },
+      "themes": {
+        "shift": {
+          "name": "Shift",
+          "tagline": "El de siempre: verde menta, suave para los ojos."
+        },
+        "violet": {
+          "name": "Violeta",
+          "tagline": "Seguro y un poco juguetón."
+        },
+        "emerald": {
+          "name": "Esmeralda",
+          "tagline": "Fresco y de crecimiento."
+        },
+        "cobalt": {
+          "name": "Cobalto",
+          "tagline": "Azul tranquilo y profesional."
+        },
+        "amber": {
+          "name": "Ámbar",
+          "tagline": "Cálido y cercano."
+        },
+        "rose": {
+          "name": "Rosa",
+          "tagline": "Moderno y con carácter."
+        }
+      }
     },
     "security": {
       "title": "Acceso y seguridad",

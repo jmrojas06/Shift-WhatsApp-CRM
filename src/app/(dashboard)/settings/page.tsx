@@ -43,7 +43,7 @@ function SettingsPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { defaultCurrency } = useAuth();
-  const { mode } = useTheme();
+  const { modePreference } = useTheme();
   const t = useTranslations('Settings');
 
   // The URL (`?tab=`) is the single source of truth for the active
@@ -63,10 +63,10 @@ function SettingsPageInner() {
   // already in context.
   const hints: Partial<Record<SettingsSection, ReactNode>> = useMemo(
     () => ({
-      appearance: mode.charAt(0).toUpperCase() + mode.slice(1),
+      appearance: t(`appearance.modes.${modePreference}`),
       deals: defaultCurrency,
     }),
-    [mode, defaultCurrency],
+    [t, modePreference, defaultCurrency],
   );
 
   const panel: Record<SettingsSection, ReactNode> = {

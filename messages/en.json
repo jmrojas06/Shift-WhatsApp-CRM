@@ -65,7 +65,8 @@
     "menuSignOut": "Sign out"
   },
   "ModeToggle": {
-    "switchMode": "Switch to {mode} mode"
+    "toLight": "Switch to light mode",
+    "toDark": "Switch to dark mode"
   },
   "AccountAccess": {
     "unlinkedTitle": "This user is not linked to an account",
@@ -1441,7 +1442,7 @@
       "tagsAndFields": "Tags and custom fields",
       "tagsCount": "{count} {count, plural, =1 {tag} other {tags}}",
       "fieldsCount": "{count} custom {count, plural, =1 {field} other {fields}}",
-      "appearance": "{mode} mode · {theme} accent",
+      "appearance": "Mode: {mode} · Accent: {theme}",
       "yourAccount": "Your account",
       "loading": "Loading…"
     },
@@ -1859,7 +1860,43 @@
       "active": "Active",
       "accentColor": "Accent color",
       "useTheme": "Use {name} theme",
-      "themeId": "Theme id: {id}"
+      "themeId": "Theme id: {id}",
+      "modes": {
+        "system": "System",
+        "light": "Light",
+        "dark": "Dark"
+      },
+      "modeHints": {
+        "system": "Follows your phone or computer",
+        "light": "Always light",
+        "dark": "Always dark"
+      },
+      "themes": {
+        "shift": {
+          "name": "Shift",
+          "tagline": "The default: soft mint, easy on the eyes."
+        },
+        "violet": {
+          "name": "Violet",
+          "tagline": "Confident, slightly playful."
+        },
+        "emerald": {
+          "name": "Emerald",
+          "tagline": "Fresh and growth-coded."
+        },
+        "cobalt": {
+          "name": "Cobalt",
+          "tagline": "Calm, professional blue."
+        },
+        "amber": {
+          "name": "Amber",
+          "tagline": "Warm and friendly."
+        },
+        "rose": {
+          "name": "Rose",
+          "tagline": "Bold and modern."
+        }
+      }
     },
     "security": {
       "title": "Login & security",

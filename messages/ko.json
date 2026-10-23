@@ -65,7 +65,8 @@
     "menuSignOut": "로그아웃"
   },
   "ModeToggle": {
-    "switchMode": "{mode} 모드로 전환"
+    "toLight": "라이트 모드로 전환",
+    "toDark": "다크 모드로 전환"
   },
   "AccountAccess": {
     "unlinkedTitle": "이 사용자가 계정에 연결되어 있지 않음",
@@ -1859,7 +1860,43 @@
       "active": "사용 중",
       "accentColor": "강조 색상",
       "useTheme": "{name} 테마 사용",
-      "themeId": "테마 ID: {id}"
+      "themeId": "테마 ID: {id}",
+      "modes": {
+        "system": "시스템",
+        "light": "라이트",
+        "dark": "다크"
+      },
+      "modeHints": {
+        "system": "휴대폰이나 컴퓨터 설정을 따릅니다",
+        "light": "항상 밝게",
+        "dark": "항상 어둡게"
+      },
+      "themes": {
+        "shift": {
+          "name": "Shift",
+          "tagline": "기본값: 눈이 편안한 민트색."
+        },
+        "violet": {
+          "name": "바이올렛",
+          "tagline": "자신감 있고 약간 경쾌한 느낌."
+        },
+        "emerald": {
+          "name": "에메랄드",
+          "tagline": "산뜻하고 성장하는 느낌."
+        },
+        "cobalt": {
+          "name": "코발트",
+          "tagline": "차분하고 전문적인 파란색."
+        },
+        "amber": {
+          "name": "앰버",
+          "tagline": "따뜻하고 친근한 느낌."
+        },
+        "rose": {
+          "name": "로즈",
+          "tagline": "대담하고 현대적인 느낌."
+        }
+      }
     },
     "security": {
       "title": "로그인 & 보안",

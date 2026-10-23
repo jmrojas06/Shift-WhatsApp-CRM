@@ -65,7 +65,8 @@
     "menuSignOut": "Sair"
   },
   "ModeToggle": {
-    "switchMode": "Mudar para o modo {mode}"
+    "toLight": "Mudar para o modo claro",
+    "toDark": "Mudar para o modo escuro"
   },
   "AccountAccess": {
     "unlinkedTitle": "Este usuário não está vinculado a uma conta",
@@ -1441,7 +1442,7 @@
       "tagsAndFields": "Tags e campos personalizados",
       "tagsCount": "{count} {count, plural, =1 {tag} other {tags}}",
       "fieldsCount": "{count} {count, plural, =1 {campo personalizado} other {campos personalizados}}",
-      "appearance": "modo {mode} · destaque {theme}",
+      "appearance": "Modo: {mode} · Destaque: {theme}",
       "yourAccount": "Sua conta",
       "loading": "Carregando…"
     },
@@ -1855,11 +1856,47 @@
       "description": "Defina o modo e a cor de destaque usados no app. Salvo neste dispositivo — experimente, a mudança é imediata.",
       "mode": "Modo",
       "colorMode": "Modo de cor",
-      "useMode": "Usar o modo {mode}",
+      "useMode": "Usar modo {mode}",
       "active": "Ativo",
       "accentColor": "Cor de destaque",
       "useTheme": "Usar o tema {name}",
-      "themeId": "ID do tema: {id}"
+      "themeId": "ID do tema: {id}",
+      "modes": {
+        "system": "Sistema",
+        "light": "Claro",
+        "dark": "Escuro"
+      },
+      "modeHints": {
+        "system": "Segue o modo do seu celular ou computador",
+        "light": "Sempre claro",
+        "dark": "Sempre escuro"
+      },
+      "themes": {
+        "shift": {
+          "name": "Shift",
+          "tagline": "O padrão: verde-menta, suave para os olhos."
+        },
+        "violet": {
+          "name": "Violeta",
+          "tagline": "Confiante e um pouco divertido."
+        },
+        "emerald": {
+          "name": "Esmeralda",
+          "tagline": "Fresco e de crescimento."
+        },
+        "cobalt": {
+          "name": "Cobalto",
+          "tagline": "Azul calmo e profissional."
+        },
+        "amber": {
+          "name": "Âmbar",
+          "tagline": "Quente e acolhedor."
+        },
+        "rose": {
+          "name": "Rosa",
+          "tagline": "Moderno e marcante."
+        }
+      }
     },
     "security": {
       "title": "Login e segurança",

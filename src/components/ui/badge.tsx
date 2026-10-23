@@ -18,6 +18,11 @@ const badgeVariants = cva(
           "border-border text-foreground [a]:hover:bg-muted [a]:hover:text-muted-foreground",
         ghost:
           "hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50",
+        // Soft status tints — text uses the token itself, which is AA in
+        // both modes; the background is the same hue at low alpha.
+        success: "bg-success/12 text-success",
+        warning: "bg-warning/12 text-warning",
+        info: "bg-info/12 text-info",
         link: "text-primary underline-offset-4 hover:underline",
       },
     },

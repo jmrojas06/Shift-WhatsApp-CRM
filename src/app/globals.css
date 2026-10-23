@@ -9,7 +9,10 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
+  --font-heading: var(--font-heading-face), var(--font-sans);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -51,8 +54,8 @@
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-xl: calc(var(--radius) * 1.5);
+  --radius-2xl: calc(var(--radius) * 2);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
 }
@@ -61,8 +64,9 @@
  * THEMING — two orthogonal dimensions
  *
  *   1. MODE   (light / dark)  → neutral surfaces. Selected with
- *      `document.documentElement.dataset.mode`. Defaults to dark.
- *   2. ACCENT (violet / …)    → the primary color only. Selected
+ *      `document.documentElement.dataset.mode`. Follows the OS
+ *      unless the user pinned one (see lib/themes).
+ *   2. ACCENT (shift / …)     → the primary color only. Selected
  *      with `document.documentElement.dataset.theme`.
  *
  * The two compose: any accent works in either mode. Neutral
@@ -72,7 +76,7 @@
  * --sidebar-ring) live in the ACCENT blocks. They set disjoint
  * variables, so cascade order between them doesn't matter.
  *
- * `:root` carries the dark-mode + violet defaults so a visitor
+ * `:root` carries the dark-mode + shift defaults so a visitor
  * renders correctly before JS runs; the boot script in
  * layout.tsx replays the saved mode + accent before first paint.
  *
@@ -80,74 +84,115 @@
  * hovered primary buttons and tinted-primary surfaces (sidebar
  * active pill, validation badges).
  *
- * Token shapes come straight from the design handoff at
- * project/Color Themes.html — change one, change the other.
+ * The neutral palette is the soft one approved in
+ * docs/superpowers/specs/2026-10-22-ui-polish-design.md: graphite
+ * instead of black, bone text instead of pure white, and every text
+ * pair at WCAG AA or better.
  * ============================================================ */
 
 /* ---- MODE: neutral surfaces ---- */
 
 :root,
 html[data-mode="dark"] {
-  --background: oklch(0.13 0.01 260);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.18 0.01 260);
-  --card-2: oklch(0.205 0.01 260);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.18 0.01 260);
-  --popover-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.22 0.01 260);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.22 0.01 260);
-  --muted-foreground: oklch(0.65 0.01 260);
-  --accent: oklch(0.22 0.01 260);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.28 0.01 260);
-  --input: oklch(0.28 0.01 260);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.16 0.01 260);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.22 0.01 260);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(0.28 0.01 260);
+  --background: #131316;
+  --foreground: #e6e6ea;
+  --card: #1a1a1e;
+  --card-2: #212126;
+  --card-foreground: #e6e6ea;
+  --popover: #1f1f24;
+  --popover-foreground: #e6e6ea;
+  --secondary: #212126;
+  --secondary-foreground: #e6e6ea;
+  --muted: #212126;
+  --muted-foreground: #a8a8b2;
+  --accent: #2a2a30;
+  --accent-foreground: #e6e6ea;
+  --destructive: #f07a7a;
+  --success: #5edba7;
+  --warning: #e8b45a;
+  --info: #7fb0f5;
+  --border: #2b2b31;
+  --input: #3a3a42;
+  --chart-2: #5f5f6a;
+  --chart-3: #7a7a85;
+  --chart-4: #4a4a53;
+  --chart-5: #3a3a42;
+  --radius: 0.5rem;
+  --sidebar: #131316;
+  --sidebar-foreground: #e6e6ea;
+  --sidebar-accent: #212126;
+  --sidebar-accent-foreground: #e6e6ea;
+  --sidebar-border: #2b2b31;
+  --shadow-card: none;
+  color-scheme: dark;
 }
 
 html[data-mode="light"] {
-  --background: oklch(0.99 0.002 260);
-  --foreground: oklch(0.21 0.01 260);
-  --card: oklch(1 0 0);
-  --card-2: oklch(0.985 0.002 260);
-  --card-foreground: oklch(0.21 0.01 260);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.21 0.01 260);
-  --secondary: oklch(0.967 0.003 260);
-  --secondary-foreground: oklch(0.25 0.01 260);
-  --muted: oklch(0.967 0.003 260);
-  --muted-foreground: oklch(0.52 0.015 260);
-  --accent: oklch(0.96 0.004 260);
-  --accent-foreground: oklch(0.25 0.01 260);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0.004 260);
-  --input: oklch(0.922 0.004 260);
-  --chart-2: oklch(0.6 0.1 260);
-  --chart-3: oklch(0.7 0.06 260);
-  --chart-4: oklch(0.8 0.04 260);
-  --chart-5: oklch(0.87 0.03 260);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0.002 260);
-  --sidebar-foreground: oklch(0.21 0.01 260);
-  --sidebar-accent: oklch(0.96 0.004 260);
-  --sidebar-accent-foreground: oklch(0.25 0.01 260);
-  --sidebar-border: oklch(0.922 0.004 260);
+  --background: #f3f4f6;
+  --foreground: #1d1d21;
+  --card: #ffffff;
+  --card-2: #f5f6f8;
+  --card-foreground: #1d1d21;
+  --popover: #ffffff;
+  --popover-foreground: #1d1d21;
+  --secondary: #ebecef;
+  --secondary-foreground: #1d1d21;
+  --muted: #f5f6f8;
+  --muted-foreground: #50505a;
+  --accent: #ebecef;
+  --accent-foreground: #1d1d21;
+  --destructive: #b42318;
+  --success: #0b7a4b;
+  --warning: #8a5a00;
+  --info: #1d5fd1;
+  --border: #e3e4e8;
+  --input: #d2d4da;
+  --chart-2: #b8bac2;
+  --chart-3: #9a9ca6;
+  --chart-4: #d2d4da;
+  --chart-5: #e3e4e8;
+  --radius: 0.5rem;
+  --sidebar: #f3f4f6;
+  --sidebar-foreground: #1d1d21;
+  --sidebar-accent: #ffffff;
+  --sidebar-accent-foreground: #1d1d21;
+  --sidebar-border: #e3e4e8;
+  --shadow-card: 0 1px 2px rgb(29 29 33 / 4%);
+  color-scheme: light;
 }
 
 /* ---- ACCENT: primary color ---- */
 
+/* Shift mint. Dark mode uses the soft mint with near-black text; light
+ * mode drops to a deeper green so `text-primary` links and the white
+ * button label both stay at AA (5.4:1) on white. */
 :root,
+html[data-theme="shift"] {
+  --primary: #45d49a;
+  --primary-foreground: #06180f;
+  --primary-hover: #5edba7;
+  --primary-soft: rgb(69 212 154 / 12%);
+  --primary-soft-2: rgb(69 212 154 / 20%);
+  --ring: #45d49a;
+  --chart-1: #45d49a;
+  --sidebar-primary: #45d49a;
+  --sidebar-primary-foreground: #06180f;
+  --sidebar-ring: #45d49a;
+}
+
+html[data-mode="light"][data-theme="shift"] {
+  --primary: #0b7a4b;
+  --primary-foreground: #ffffff;
+  --primary-hover: #0e8a55;
+  --primary-soft: rgb(11 122 75 / 10%);
+  --primary-soft-2: rgb(11 122 75 / 16%);
+  --ring: #0b7a4b;
+  --chart-1: #1fa96d;
+  --sidebar-primary: #0b7a4b;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-ring: #0b7a4b;
+}
+
 html[data-theme="violet"] {
   --primary: oklch(0.526 0.247 293);
   --primary-foreground: oklch(0.985 0 0);
@@ -223,8 +268,28 @@ html[data-theme="rose"] {
   }
   body {
     @apply bg-background text-foreground;
+    line-height: 1.55;
   }
   html {
     @apply font-sans;
+  }
+  /* Page titles use Shift's display face; section headings stay in
+   * Inter so dense screens don't turn into a wall of display type. */
+  h1 {
+    font-family: var(--font-heading);
+    letter-spacing: -0.02em;
+  }
+}
+
+/* Respect the OS "reduce motion" setting everywhere, including the
+ * tw-animate-css enter/exit animations on dialogs, sheets and menus. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

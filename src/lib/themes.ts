@@ -8,12 +8,13 @@
  *
  * Adding a new theme is a two-step change:
  *   1. Append the new `html[data-theme="<id>"]` block in globals.css
- *      with every token from an existing theme (use violet as the
+ *      with every token from an existing theme (use shift as the
  *      shape reference).
  *   2. Add an entry below. The order here drives the picker grid.
  */
 
 export const THEME_IDS = [
+  "shift",
   "violet",
   "emerald",
   "cobalt",
@@ -23,7 +24,7 @@ export const THEME_IDS = [
 
 export type ThemeId = (typeof THEME_IDS)[number];
 
-export const DEFAULT_THEME: ThemeId = "violet";
+export const DEFAULT_THEME: ThemeId = "shift";
 
 export const STORAGE_KEY = "wacrm.theme";
 
@@ -32,18 +33,27 @@ export const STORAGE_KEY = "wacrm.theme";
  *
  * The CSS variables live in `src/app/globals.css` under
  * `html[data-mode="..."]` blocks (neutral surfaces only). Applied
- * at runtime via `document.documentElement.dataset.mode`. Dark is
- * the historical default and stays the app's identity; light is the
- * opt-in eye-strain-friendly alternative.
+ * at runtime via `document.documentElement.dataset.mode`.
+ *
+ * What the user picks is a *preference* (`system`, `light`, `dark`);
+ * `data-mode` always holds the resolved `light` / `dark`. With no
+ * saved preference the app follows the OS (`prefers-color-scheme`).
  *
  * Persisted under its own localStorage key so it composes freely
- * with the accent choice (you can run Violet-light or Violet-dark).
+ * with the accent choice (you can run Shift-light or Shift-dark).
  */
 export const MODES = ["light", "dark"] as const;
 
 export type Mode = (typeof MODES)[number];
 
+/** Server-side render value only, until the boot script resolves the real mode. */
 export const DEFAULT_MODE: Mode = "dark";
+
+export const MODE_PREFERENCES = ["system", "light", "dark"] as const;
+
+export type ModePreference = (typeof MODE_PREFERENCES)[number];
+
+export const DEFAULT_MODE_PREFERENCE: ModePreference = "system";
 
 export const MODE_STORAGE_KEY = "wacrm.mode";
 
@@ -51,6 +61,18 @@ export function isMode(value: unknown): value is Mode {
   return (
     typeof value === "string" && (MODES as ReadonlyArray<string>).includes(value)
   );
+}
+
+export function isModePreference(value: unknown): value is ModePreference {
+  return (
+    typeof value === "string" &&
+    (MODE_PREFERENCES as ReadonlyArray<string>).includes(value)
+  );
+}
+
+export function resolveMode(preference: ModePreference, prefersDark: boolean): Mode {
+  if (preference === "system") return prefersDark ? "dark" : "light";
+  return preference;
 }
 
 export interface ThemeMeta {
@@ -68,9 +90,15 @@ export interface ThemeMeta {
 
 export const THEMES: ReadonlyArray<ThemeMeta> = [
   {
+    id: "shift",
+    name: "Shift",
+    tagline: "The default — soft mint, easy on the eyes.",
+    swatch: "#45D49A",
+  },
+  {
     id: "violet",
     name: "Violet",
-    tagline: "The default — confident, slightly playful.",
+    tagline: "Confident, slightly playful.",
     swatch: "oklch(0.526 0.247 293)",
   },
   {
