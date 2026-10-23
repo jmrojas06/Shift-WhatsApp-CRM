@@ -99,6 +99,24 @@ describe('plantillas de Meta (ventana de 24 h cerrada)', () => {
     expect(buildNoticeTemplateParams('paid', { number: 1, businessName: null })[0]).toBe('tu tienda')
   })
 
+  it('el nombre del negocio se recorta a 60 caracteres (puntos de código) para la variable {{1}}', () => {
+    const long = 'N'.repeat(75)
+    expect(buildNoticeTemplateParams('paid', { number: 1, businessName: long })[0]).toBe('N'.repeat(60))
+    expect(buildNoticeTemplateParams('paid', { number: 1, businessName: 'N'.repeat(60) })[0]).toBe('N'.repeat(60))
+    const emojis = buildNoticeTemplateParams('paid', { number: 1, businessName: '💍'.repeat(70) })[0]
+    expect(Array.from(emojis)).toHaveLength(60)
+    expect(emojis).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/) // sin medio emoji
+  })
+
+  it('el recorte no deja un espacio al final de la variable', () => {
+    const name = `${'a'.repeat(59)} ${'b'.repeat(10)}`
+    expect(buildNoticeTemplateParams('paid', { number: 1, businessName: name })[0]).toBe('a'.repeat(59))
+  })
+
+  it('el texto libre no recorta el nombre (el negocio no aparece ahí)', () => {
+    expect(buildNoticeText('paid', { number: 1, businessName: 'N'.repeat(75) })).not.toContain('NNN')
+  })
+
   it('buildNoticeTemplate junta nombre y variables', () => {
     expect(buildNoticeTemplate('delivered', { number: 1003 })).toEqual({
       name: 'pedido_entregado',
@@ -117,12 +135,12 @@ describe('estado del aviso en el pedido', () => {
   })
 
   it('enviado / no enviado, por tipo', () => {
-    expect(noticeStatusText('paid', false)).toBe('Aviso de pago enviado')
-    expect(noticeStatusText('shipped', false)).toBe('Aviso de envío enviado')
-    expect(noticeStatusText('delivered', false)).toBe('Aviso de entrega enviado')
-    expect(noticeStatusText('paid', true)).toBe('Aviso de pago no enviado')
-    expect(noticeStatusText('shipped', true)).toBe('Aviso de envío no enviado')
-    expect(noticeStatusText('delivered', true)).toBe('Aviso de entrega no enviado')
+    expect(noticeStatusText('paid', false)).toBe('Aviso de pago mandado')
+    expect(noticeStatusText('shipped', false)).toBe('Aviso de envío mandado')
+    expect(noticeStatusText('delivered', false)).toBe('Aviso de entrega mandado')
+    expect(noticeStatusText('paid', true)).toBe('Aviso de pago: no se pudo mandar')
+    expect(noticeStatusText('shipped', true)).toBe('Aviso de envío: no se pudo mandar')
+    expect(noticeStatusText('delivered', true)).toBe('Aviso de entrega: no se pudo mandar')
   })
 })
 

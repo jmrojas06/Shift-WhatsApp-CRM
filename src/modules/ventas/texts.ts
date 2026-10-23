@@ -58,12 +58,18 @@ export interface NoticeContext {
 const plain = (value: string | null | undefined): string =>
   (value ?? '').replace(/\s+/g, ' ').trim()
 
+/** Tope de una variable de plantilla (el nombre del negocio es el único sin tope propio). */
+const TEMPLATE_PARAM_MAX = 60
+
 /**
  * Variable de plantilla: Meta rechaza vacías, con saltos de línea,
- * tabulaciones o 4+ espacios seguidos.
+ * tabulaciones o 4+ espacios seguidos. Se recorta a 60 puntos de código
+ * (sin partir un emoji) y sin espacio al final.
  */
-const templateParam = (value: string | null | undefined, fallback: string): string =>
-  plain(value) || fallback
+const templateParam = (value: string | null | undefined, fallback: string): string => {
+  const text = Array.from(plain(value)).slice(0, TEMPLATE_PARAM_MAX).join('').trimEnd()
+  return text || fallback
+}
 
 const FALLBACK_BUSINESS = 'tu tienda'
 const FALLBACK_PARAM = '-'
@@ -122,10 +128,15 @@ const NOTICE_KIND_LABEL: Record<NoticeKind, string> = {
   delivered: 'entrega',
 }
 
-/** Línea del pedido: 'Aviso de pago enviado' / '… no enviado'. null si no hubo aviso. */
+/**
+ * Línea del pedido: 'Aviso de pago mandado' / 'Aviso de pago: no se pudo
+ * mandar'. null si no hubo aviso. ("Mandado" y no "enviado": en Ventas
+ * "enviado" es el estado del paquete.)
+ */
 export function noticeStatusText(kind: NoticeKind | null, failed: boolean): string | null {
   if (!kind) return null
-  return `Aviso de ${NOTICE_KIND_LABEL[kind]} ${failed ? 'no enviado' : 'enviado'}`
+  const label = NOTICE_KIND_LABEL[kind]
+  return failed ? `Aviso de ${label}: no se pudo mandar` : `Aviso de ${label} mandado`
 }
 
 // ------------------------------------------------------------
@@ -219,6 +230,9 @@ export const VENTAS_TEXTS = {
     carrierLabel: 'Transportadora',
     carrierPlaceholder: 'Servientrega, Coordinadora, Envía…',
     trackingLabel: 'Número de guía',
+    cityLabel: 'Ciudad de envío',
+    addressLabel: 'Dirección de envío',
+    placeHint: 'Si el pedido no tenía ciudad o dirección, complétalas para poder enviarlo.',
     submit: 'Marcar enviado',
     cancel: 'Volver',
   },

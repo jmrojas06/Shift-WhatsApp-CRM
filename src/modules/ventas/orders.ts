@@ -47,12 +47,15 @@ export const ORDER_LIMITS = {
 // ------------------------------------------------------------
 
 /**
- * Tolerancia, en centavos, para aceptar el ruido de coma flotante de
- * valores como 0.1 + 0.2 (= 0.30000000000000004). Un importe con un
- * tercer decimal real (1.005, 10.001) se aleja del centavo por 0.1 o
- * más, así que no se confunde con ruido.
+ * Tolerancia RELATIVA para aceptar el ruido de coma flotante de valores
+ * como 0.1 + 0.2 (= 0.30000000000000004). El error de punto flotante crece
+ * con el tamaño del número (unos pocos ulp, ~1e-15 relativo); una
+ * tolerancia absoluta aceptaría fracciones de centavo diminutas como
+ * 1e-7 en importes pequeños. Aquí: |x·100 − centavos| ≤ |x·100| · 1e-13.
+ * Un tercer decimal real (1.005, 10.001, 99999999.9901) se aleja del
+ * centavo por mucho más que eso, y 0 solo admite 0 exacto.
  */
-const CENT_NOISE = 1e-4
+const CENT_NOISE_RELATIVE = 1e-13
 
 /** Importe → centavos enteros (redondea; normaliza -0). */
 export function toCents(amount: number): number {
@@ -198,7 +201,8 @@ function validateAmount(raw: unknown, subject: string): Valid<number> {
       message: `${subject} no puede pasar de ${plainAmount(ORDER_LIMITS.amountMaxCents)}.`,
     }
   }
-  if (Math.abs(raw * 100 - cents) > CENT_NOISE) {
+  const scaled = raw * 100
+  if (Math.abs(scaled - cents) > Math.abs(scaled) * CENT_NOISE_RELATIVE) {
     return { ok: false, message: `${subject} admite máximo 2 decimales.` }
   }
   return { ok: true, value: fromCents(cents) }
@@ -278,6 +282,7 @@ export function validateOrderCreate(input: unknown): Valid<ValidOrderCreate> {
   if (
     conversationId !== undefined &&
     conversationId !== null &&
+    conversationId !== '' &&
     (typeof conversationId !== 'string' || !UUID_RE.test(conversationId))
   ) {
     return { ok: false, message: 'La conversación del pedido no es válida.' }
@@ -346,7 +351,7 @@ export function validateOrderCreate(input: unknown): Valid<ValidOrderCreate> {
     ok: true,
     value: {
       contactId,
-      conversationId: typeof conversationId === 'string' ? conversationId : null,
+      conversationId: typeof conversationId === 'string' && conversationId !== '' ? conversationId : null,
       items,
       shipping,
       paid,
@@ -365,10 +370,38 @@ export function validateOrderCreate(input: unknown): Valid<ValidOrderCreate> {
 export type OrderStatus = 'new' | 'shipped' | 'delivered' | 'cancelled'
 export type PaymentStatus = 'pending' | 'paid'
 
-/** Lo mínimo del pedido que las reglas necesitan (nombres de columna). */
+/**
+ * Lo mínimo del pedido que las reglas necesitan (nombres de columna).
+ * `city` y `address` los exige `mark_shipped`: si faltan en el pedido
+ * deben llegar por `extra`.
+ */
 export interface OrderState {
   status: OrderStatus
   payment_status: PaymentStatus
+  city?: string | null
+  address?: string | null
+}
+
+/** Zona horaria con la que se mide el mes de "vendido este mes". */
+export const SALES_TIME_ZONE = 'America/Bogota'
+
+/**
+ * ¿El pedido cuenta como venta? Definición única de "vendido este mes"
+ * (pestaña /ventas): la SUMA de `total` de los pedidos con
+ * `payment_status = 'paid'` Y `status <> 'cancelled'`, agrupados por el
+ * mes de `paid_at` en la zona America/Bogota (`SALES_TIME_ZONE`).
+ *
+ *   - Se cuenta cuando se COBRA, no cuando se crea ni cuando se entrega.
+ *   - Un pedido cancelado deja de contar aunque se hubiera cobrado
+ *     (el reembolso lo maneja el negocio; en el CRM la venta se cae).
+ *   - "Por cobrar" es lo contrario: `payment_status = 'pending'` y no
+ *     cancelado.
+ *
+ * El filtro por mes es de fechas (SQL/repo); esta función es la parte de
+ * estado, para que ninguna pantalla invente su propia regla.
+ */
+export function isCountedSale(order: Pick<OrderState, 'status' | 'payment_status'>): boolean {
+  return order.payment_status === 'paid' && order.status !== 'cancelled'
 }
 
 export const ORDER_ACTIONS = ['mark_paid', 'mark_shipped', 'mark_delivered', 'cancel'] as const
@@ -403,12 +436,41 @@ export interface OrderPatch {
   cancelled_at?: string
   carrier?: string
   tracking_number?: string
+  /** Solo si llegaron por `extra` al marcar enviado. */
+  city?: string
+  address?: string
 }
 
 /** Datos extra de una acción (hoy: solo "enviado"). */
 export interface OrderActionExtra {
   carrier?: unknown
   tracking_number?: unknown
+  city?: unknown
+  address?: unknown
+}
+
+/**
+ * Ciudad o dirección de envío. Si llega por `extra` (no vacía) se valida
+ * y se devuelve para el parche; si no, el pedido ya debe tenerla.
+ * `undefined` en el valor = no tocar lo que ya tiene el pedido.
+ */
+function shippingPlace(
+  provided: unknown,
+  current: string | null | undefined,
+  rules: { subject: string; missing: string; max: number },
+): Valid<string | undefined> {
+  const isProvided =
+    provided !== undefined &&
+    provided !== null &&
+    !(typeof provided === 'string' && !provided.trim())
+  if (isProvided) {
+    if (typeof provided !== 'string') {
+      return { ok: false, message: `${rules.subject} debe ser texto.` }
+    }
+    return requiredText(provided, rules)
+  }
+  if (typeof current === 'string' && current.trim()) return { ok: true, value: undefined }
+  return { ok: false, message: rules.missing }
 }
 
 export type OrderActionResult =
@@ -430,7 +492,8 @@ const refuse = (message: string): OrderActionResult => ({ ok: false, message })
  *
  *   mark_paid       pending → paid, en cualquier estado no cancelado.
  *                   Ya pagado: no-op (`changed: false`, sin aviso).
- *   mark_shipped    new → shipped. Exige transportadora y guía.
+ *   mark_shipped    new → shipped. Exige transportadora, guía, ciudad
+ *                   y dirección (las dos últimas, del pedido o de `extra`).
  *   mark_delivered  shipped → delivered.
  *   cancel          new | shipped → cancelled.
  *
@@ -478,6 +541,21 @@ export function applyOrderAction(
       })
       if (!tracking.ok) return refuse(tracking.message)
 
+      // Un envío sin ciudad y dirección no sale: se toman del pedido o,
+      // si faltan, de `extra` (y entonces quedan guardadas en el pedido).
+      const city = shippingPlace(extra.city, order.city, {
+        subject: 'La ciudad',
+        missing: 'Escribe la ciudad de envío.',
+        max: ORDER_LIMITS.cityMax,
+      })
+      if (!city.ok) return refuse(city.message)
+      const address = shippingPlace(extra.address, order.address, {
+        subject: 'La dirección',
+        missing: 'Escribe la dirección de envío.',
+        max: ORDER_LIMITS.addressMax,
+      })
+      if (!address.ok) return refuse(address.message)
+
       return {
         ok: true,
         changed: true,
@@ -486,6 +564,8 @@ export function applyOrderAction(
           shipped_at: at,
           carrier: carrier.value,
           tracking_number: tracking.value,
+          ...(city.value !== undefined ? { city: city.value } : {}),
+          ...(address.value !== undefined ? { address: address.value } : {}),
         },
         notice: 'shipped',
       }

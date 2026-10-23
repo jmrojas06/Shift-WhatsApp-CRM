@@ -6,6 +6,8 @@ import {
   SALES_STAGES,
   applyOrderAction,
   fromCents,
+  SALES_TIME_ZONE,
+  isCountedSale,
   isOrderAction,
   noticeFor,
   orderTotals,
@@ -109,6 +111,7 @@ describe('validateOrderCreate — ids', () => {
   it('la conversación es opcional pero, si viene, debe ser uuid', () => {
     expect(ok({ ...base(), conversationId: null }).conversationId).toBeNull()
     expect(ok({ ...base(), conversationId: undefined }).conversationId).toBeNull()
+    expect(ok({ ...base(), conversationId: '' }).conversationId).toBeNull()
     expect(fail({ ...base(), conversationId: 'nope' })).toBe('La conversación del pedido no es válida.')
     expect(fail({ ...base(), conversationId: 7 })).toBe('La conversación del pedido no es válida.')
   })
@@ -238,6 +241,38 @@ describe('validateOrderCreate — líneas', () => {
     it('tolera el ruido en importes grandes (99999999.99 calculado)', () => {
       const v = ok(withLines(line({ unitPrice: 99999999 + 0.99, quantity: 1 })))
       expect(v.items[0].unitPrice).toBe(99999999.99)
+    })
+
+    it('rechaza fracciones de centavo diminutas (la tolerancia es relativa, no absoluta)', () => {
+      for (const unitPrice of [1e-7, 0.000001, 0.0000001, 1e-9, 0.00001, 1e-15]) {
+        expect(fail(withLines(line({ unitPrice })))).toBe('Producto 1: el precio admite máximo 2 decimales.')
+      }
+      expect(fail({ ...base(), shipping: 1e-7 })).toBe('El envío admite máximo 2 decimales.')
+      expect(fail({ ...base(), shipping: 0.000001 })).toBe('El envío admite máximo 2 decimales.')
+    })
+
+    it('rechaza una fracción de centavo también en importes grandes', () => {
+      expect(fail(withLines(line({ unitPrice: 99999999.9901 })))).toBe(
+        'Producto 1: el precio admite máximo 2 decimales.',
+      )
+      expect(fail(withLines(line({ unitPrice: 12345678.001 })))).toContain('2 decimales')
+    })
+
+    it('acepta el ruido típico de sumas y productos de coma flotante', () => {
+      const noisy: [number, number][] = [
+        [0.1 + 0.2, 0.3],
+        [0.1 * 3, 0.3],
+        [1.1 * 3, 3.3],
+        [4.35 * 100 / 100, 4.35],
+        [0.07, 0.07],
+        [0.1 + 0.7, 0.8],
+        [33333333.33 * 3, 99999999.99],
+        [19.99 * 3, 59.97],
+        [1234567.89 + 0.01, 1234567.9],
+      ]
+      for (const [input, expected] of noisy) {
+        expect(ok(withLines(line({ unitPrice: input, quantity: 1 }))).items[0].unitPrice).toBe(expected)
+      }
     })
   })
 
@@ -433,9 +468,14 @@ describe('toCents / fromCents / orderTotals', () => {
 
 describe('applyOrderAction', () => {
   const NOW = new Date('2026-10-23T15:30:00.000Z')
-  const state = (status: OrderState['status'], payment_status: OrderState['payment_status'] = 'pending'): OrderState => ({
+  const state = (
+    status: OrderState['status'],
+    payment_status: OrderState['payment_status'] = 'pending',
+    place: { city?: string | null; address?: string | null } = { city: 'Bogotá', address: 'Calle 1 # 2-3' },
+  ): OrderState => ({
     status,
     payment_status,
+    ...place,
   })
   const ship = { carrier: 'Servientrega', tracking_number: 'GU123456' }
 
@@ -521,6 +561,107 @@ describe('applyOrderAction', () => {
       expect(refused(state('new'), 'mark_shipped', { carrier: 5, tracking_number: 'x' })).toBe(
         'Escribe la transportadora.',
       )
+    })
+
+    describe('ciudad y dirección de envío', () => {
+      const noPlace = { city: null, address: null }
+
+      it('exige ciudad y dirección en el pedido', () => {
+        expect(refused(state('new', 'paid', noPlace), 'mark_shipped', ship)).toBe('Escribe la ciudad de envío.')
+        expect(refused(state('new', 'paid', { city: 'Bogotá', address: null }), 'mark_shipped', ship)).toBe(
+          'Escribe la dirección de envío.',
+        )
+        expect(refused(state('new', 'paid', { city: null, address: 'Calle 1' }), 'mark_shipped', ship)).toBe(
+          'Escribe la ciudad de envío.',
+        )
+      })
+
+      it('un pedido sin esos campos en el objeto (undefined) también los pide', () => {
+        expect(refused(state('new', 'paid', {}), 'mark_shipped', ship)).toBe('Escribe la ciudad de envío.')
+      })
+
+      it('solo espacios cuenta como vacío', () => {
+        expect(refused(state('new', 'paid', { city: '   ', address: 'x' }), 'mark_shipped', ship)).toBe(
+          'Escribe la ciudad de envío.',
+        )
+        expect(
+          refused(state('new', 'paid', noPlace), 'mark_shipped', { ...ship, city: '  ', address: '  ' }),
+        ).toBe('Escribe la ciudad de envío.')
+      })
+
+      it('los acepta por extra cuando faltan y los incluye en el parche', () => {
+        const r = applied(state('new', 'paid', noPlace), 'mark_shipped', {
+          ...ship,
+          city: ' Medellín ',
+          address: ' Carrera 7 # 8-9 ',
+        })
+        expect(r.patch).toEqual({
+          status: 'shipped',
+          shipped_at: '2026-10-23T15:30:00.000Z',
+          carrier: 'Servientrega',
+          tracking_number: 'GU123456',
+          city: 'Medellín',
+          address: 'Carrera 7 # 8-9',
+        })
+      })
+
+      it('completa solo lo que falta: ciudad en el pedido, dirección por extra', () => {
+        const r = applied(state('new', 'paid', { city: 'Bogotá', address: null }), 'mark_shipped', {
+          ...ship,
+          address: 'Calle 9',
+        })
+        expect(r.patch).toMatchObject({ address: 'Calle 9' })
+        expect(r.patch).not.toHaveProperty('city')
+      })
+
+      it('si el pedido ya los tiene y no llegan por extra, el parche no los toca', () => {
+        const r = applied(state('new'), 'mark_shipped', ship)
+        expect(r.patch).not.toHaveProperty('city')
+        expect(r.patch).not.toHaveProperty('address')
+      })
+
+      it('lo que llega por extra corrige al pedido (queda en el parche)', () => {
+        const r = applied(state('new'), 'mark_shipped', { ...ship, city: 'Cartagena' })
+        expect(r.patch).toMatchObject({ city: 'Cartagena' })
+      })
+
+      it('respeta los topes: ciudad 80, dirección 200', () => {
+        const r = applied(state('new', 'paid', noPlace), 'mark_shipped', {
+          ...ship,
+          city: 'c'.repeat(80),
+          address: 'a'.repeat(200),
+        })
+        expect(r.patch.city).toHaveLength(80)
+        expect(r.patch.address).toHaveLength(200)
+        expect(refused(state('new'), 'mark_shipped', { ...ship, city: 'c'.repeat(81) })).toBe(
+          'La ciudad no puede pasar de 80 caracteres.',
+        )
+        expect(refused(state('new'), 'mark_shipped', { ...ship, address: 'a'.repeat(201) })).toBe(
+          'La dirección no puede pasar de 200 caracteres.',
+        )
+      })
+
+      it('rechaza lo que no es texto y los caracteres de control', () => {
+        expect(refused(state('new'), 'mark_shipped', { ...ship, city: 5 })).toBe('La ciudad debe ser texto.')
+        expect(refused(state('new'), 'mark_shipped', { ...ship, address: {} })).toBe('La dirección debe ser texto.')
+        expect(refused(state('new'), 'mark_shipped', { ...ship, city: 'Bo\ngotá' })).toBe(
+          'La ciudad tiene caracteres no permitidos.',
+        )
+        expect(refused(state('new'), 'mark_shipped', { ...ship, address: 'Calle​1' })).toBe(
+          'La dirección tiene caracteres no permitidos.',
+        )
+      })
+
+      it('transportadora y guía se piden antes que la ciudad', () => {
+        expect(refused(state('new', 'paid', noPlace), 'mark_shipped', {})).toBe('Escribe la transportadora.')
+        expect(refused(state('new', 'paid', noPlace), 'mark_shipped', { carrier: 'Envía' })).toBe(
+          'Escribe el número de guía.',
+        )
+      })
+
+      it('el estado del pedido gana sobre los datos faltantes', () => {
+        expect(refused(state('delivered', 'paid', noPlace), 'mark_shipped', {})).toBe('El pedido ya fue entregado.')
+      })
     })
 
     it('ambos hasta 60 caracteres', () => {
@@ -662,6 +803,29 @@ describe('pipelineStageFor', () => {
   it('las etapas del pipeline están en el orden del diseño y cubren todo lo que devuelve el mapeo', () => {
     expect(SALES_STAGES).toEqual(['Nuevo', 'Pago pendiente', 'Pagado', 'Enviado', 'Entregado', 'Cancelado'])
     for (const [order] of cases) expect(SALES_STAGES).toContain(pipelineStageFor(order))
+  })
+})
+
+describe('isCountedSale — "vendido este mes"', () => {
+  it('cuenta lo cobrado y no cancelado', () => {
+    expect(isCountedSale({ status: 'new', payment_status: 'paid' })).toBe(true)
+    expect(isCountedSale({ status: 'shipped', payment_status: 'paid' })).toBe(true)
+    expect(isCountedSale({ status: 'delivered', payment_status: 'paid' })).toBe(true)
+  })
+
+  it('no cuenta lo pendiente de pago', () => {
+    for (const status of ['new', 'shipped', 'delivered'] as const) {
+      expect(isCountedSale({ status, payment_status: 'pending' })).toBe(false)
+    }
+  })
+
+  it('no cuenta lo cancelado, aunque se hubiera cobrado', () => {
+    expect(isCountedSale({ status: 'cancelled', payment_status: 'paid' })).toBe(false)
+    expect(isCountedSale({ status: 'cancelled', payment_status: 'pending' })).toBe(false)
+  })
+
+  it('el mes se mide por paid_at en la zona horaria de Bogotá', () => {
+    expect(SALES_TIME_ZONE).toBe('America/Bogota')
   })
 })
 
