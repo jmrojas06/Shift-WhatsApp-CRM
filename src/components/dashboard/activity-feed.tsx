@@ -9,6 +9,7 @@ import {
   Megaphone,
   Zap,
   Inbox,
+  TriangleAlert,
 } from 'lucide-react'
 import type { ComponentType } from 'react'
 import type { ActivityItem, ActivityKind } from '@/lib/dashboard/types'
@@ -41,6 +42,7 @@ import { useLocale, useTranslations } from 'next-intl'
 
 export function ActivityFeed({ items, loading }: ActivityFeedProps) {
   const t = useTranslations('Dashboard.activityFeed')
+  const tEmpty = useTranslations('Dashboard.emptyState')
   const locale = useLocale()
   // Start at 5 — a quick scan of the most recent events without
   // dominating vertical real estate. User expands explicitly via the
@@ -64,17 +66,27 @@ export function ActivityFeed({ items, loading }: ActivityFeedProps) {
         <h2 className="text-sm font-semibold text-foreground">{t('title')}</h2>
         <Link
           href="/inbox"
-          className="text-xs font-medium text-primary hover:text-primary/80"
+          // Negative margin + padding grows the tap target (≥44px on touch)
+          // without making the header taller.
+          className="-my-2 -mr-2 inline-flex min-h-9 items-center rounded-md px-2 text-xs font-medium text-primary hover:text-primary/80 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none pointer-coarse:min-h-11"
         >
           {t('viewAll')}
         </Link>
       </header>
 
-      {loading || !items ? (
+      {loading ? (
         <div className="space-y-2 p-5">
           {Array.from({ length: 5 }).map((_, i) => (
             <Skeleton key={i} className="h-10 w-full" />
           ))}
+        </div>
+      ) : !items ? (
+        <div className="p-5">
+          <EmptyState
+            icon={TriangleAlert}
+            title={tEmpty('loadError')}
+            hint={tEmpty('loadErrorHint')}
+          />
         </div>
       ) : items.length === 0 ? (
         <div className="p-5">
@@ -94,7 +106,7 @@ export function ActivityFeed({ items, loading }: ActivityFeedProps) {
                   <span className="flex size-8 flex-shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
                     <Icon className="size-4" />
                   </span>
-                  <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                  <span className="min-w-0 flex-1 truncate text-sm text-foreground" title={it.text}>
                     {it.text}
                     {count > 1 && (
                       <span className="ml-2 text-xs text-muted-foreground">

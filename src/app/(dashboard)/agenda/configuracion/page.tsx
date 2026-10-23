@@ -18,11 +18,11 @@
 // ============================================================
 
 import { useCallback, useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { ArrowLeft, Loader2 } from 'lucide-react'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import {
   Tabs,
   TabsContent,
@@ -61,7 +61,6 @@ import {
 
 export default function AgendaConfiguracionPage() {
   const { account, accountId, canEditSettings } = useAuth()
-  const router = useRouter()
   const isAgenda = hasModule(account, 'agenda')
 
   const [loading, setLoading] = useState(true)
@@ -250,15 +249,15 @@ export default function AgendaConfiguracionPage() {
             {T.config.subtitle}
           </p>
         </div>
-        <Button variant="outline" onClick={() => router.push('/agenda')}>
+        <Link href="/agenda" className={buttonVariants({ variant: 'outline' })}>
           <ArrowLeft className="h-4 w-4" />
           {T.config.backToAgenda}
-        </Button>
+        </Link>
       </div>
 
       {loading ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
+        <div role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
           {T.config.loading}
         </div>
       ) : failed ? (

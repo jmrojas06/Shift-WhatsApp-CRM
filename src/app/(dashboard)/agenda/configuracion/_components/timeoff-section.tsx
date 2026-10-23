@@ -157,7 +157,7 @@ export function TimeOffSection({
         key={row.id}
         className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
       >
-        <div className={muted ? 'min-w-0 text-muted-foreground' : 'min-w-0'}>
+        <div className={muted ? 'min-w-0 break-words text-muted-foreground' : 'min-w-0 break-words'}>
           <p className="text-sm font-medium">{staffName(row.staff_id)}</p>
           <p className="text-xs text-muted-foreground">{rangeLabel(row)}</p>
           {row.reason && (
@@ -166,7 +166,8 @@ export function TimeOffSection({
         </div>
         <Button
           variant="ghost"
-          size="sm"
+          size="icon-sm"
+          className="pointer-coarse:size-11"
           onClick={() => setDeleting(row)}
           disabled={!canEdit || deleteBusy}
           aria-label={T.config.timeOff.delete}

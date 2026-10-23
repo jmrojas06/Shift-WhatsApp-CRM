@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { MessageSquare } from 'lucide-react'
+import { MessageSquare, TriangleAlert } from 'lucide-react'
 import type { ConversationsSeriesPoint } from '@/lib/dashboard/types'
 import { EmptyState } from './empty-state'
 import { Skeleton } from './skeleton'
@@ -32,6 +32,7 @@ import { useLocale, useTranslations } from 'next-intl'
 
 export function ConversationsChart({ series, loading, range, onRangeChange }: ConversationsChartProps) {
   const t = useTranslations('Dashboard.conversationsChart')
+  const tEmpty = useTranslations('Dashboard.emptyState')
   const locale = useLocale()
   const data = series[range]
 
@@ -51,13 +52,17 @@ export function ConversationsChart({ series, loading, range, onRangeChange }: Co
   }, [data])
 
   return (
-    <section className="flex h-full flex-col rounded-xl border border-border bg-card">
+    <section className="flex h-full flex-col rounded-xl border border-border bg-card shadow-(--shadow-card)">
       <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-border px-5 py-4">
         <div>
           <h2 className="text-sm font-semibold text-foreground">{t('title')}</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">{t('description')}</p>
         </div>
-        <div className="flex items-center gap-1 rounded-lg bg-muted/60 p-1">
+        <div
+          role="group"
+          aria-label={t('title')}
+          className="flex items-center gap-1 rounded-lg bg-muted/60 p-1"
+        >
           {[7, 30, 90].map((r) => (
             <button
               key={r}
@@ -65,7 +70,7 @@ export function ConversationsChart({ series, loading, range, onRangeChange }: Co
               onClick={() => onRangeChange(r as RangeDays)}
               aria-pressed={range === r}
               className={cn(
-                'min-h-8 rounded-md px-2.5 py-1 text-xs font-medium whitespace-nowrap transition-colors pointer-coarse:min-h-10',
+                'min-h-8 rounded-md px-2.5 py-1 text-xs font-medium whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none pointer-coarse:min-h-11 pointer-coarse:px-3',
                 range === r
                   ? 'bg-secondary text-secondary-foreground'
                   : 'text-muted-foreground hover:text-foreground',
@@ -78,8 +83,14 @@ export function ConversationsChart({ series, loading, range, onRangeChange }: Co
       </header>
 
       <div className="p-5">
-        {loading || !data ? (
+        {loading ? (
           <Skeleton className="h-[240px] w-full" />
+        ) : !data ? (
+          <EmptyState
+            icon={TriangleAlert}
+            title={tEmpty('loadError')}
+            hint={tEmpty('loadErrorHint')}
+          />
         ) : data.every((p) => p.incoming === 0 && p.outgoing === 0) ? (
           <EmptyState
             icon={MessageSquare}
@@ -238,7 +249,7 @@ function LineSvg({
                 y={y}
                 textAnchor="end"
                 dominantBaseline="middle"
-                className="fill-muted-foreground text-[10px]"
+                className="fill-muted-foreground text-[11px]"
               >
                 {t}
               </text>
@@ -254,14 +265,14 @@ function LineSvg({
               x={xFor(i)}
               y={VB_H - 8}
               textAnchor="middle"
-              className="fill-muted-foreground text-[10px]"
+              className="fill-muted-foreground text-[11px]"
             >
               {shortDayLabel(p.day, locale)}
             </text>
           ) : null,
         )}
 
-        {/* Outgoing polyline (violet) */}
+        {/* Outgoing polyline (series 2, blue) */}
         <path
           d={outgoingPath}
           fill="none"
@@ -270,7 +281,7 @@ function LineSvg({
           strokeLinecap="round"
           strokeLinejoin="round"
         />
-        {/* Incoming polyline (blue) */}
+        {/* Incoming polyline (series 1, aqua) */}
         <path
           d={incomingPath}
           fill="none"
@@ -304,7 +315,9 @@ function LineSvg({
       {hovered && hover !== null && (
         <div
           className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 rounded-md border border-border bg-popover px-2.5 py-1.5 text-[11px] shadow-lg"
-          style={{ left: `${hover.tooltipLeftPx}px` }}
+          // Clamped so the first/last points never push the tooltip past the
+          // card (which would add a horizontal scrollbar to the page on phones).
+          style={{ left: `clamp(72px, ${hover.tooltipLeftPx}px, calc(100% - 72px))` }}
         >
           <div className="font-medium text-popover-foreground">{longDayLabel(hovered.day, locale)}</div>
           <div className="mt-1 flex flex-col gap-0.5">

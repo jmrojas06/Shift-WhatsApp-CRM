@@ -31,7 +31,11 @@ export function formatMinutes(mins: number, locale: string): string {
  */
 export function TodaySummary({ metrics, metricsLoading, responseTime, targetMinutes }: TodaySummaryProps) {
   const t = useTranslations('Dashboard.summary')
+  const tEmpty = useTranslations('Dashboard.emptyState')
   const locale = useLocale()
+  // The query finished but returned nothing (it failed): say so instead of
+  // leaving the skeleton on screen forever.
+  const failed = !metricsLoading && !metrics
 
   const delta = (current: number, previous: number) => {
     const diff = current - previous
@@ -73,6 +77,19 @@ export function TodaySummary({ metrics, metricsLoading, responseTime, targetMinu
           },
         ]
       : null
+
+  if (failed) {
+    return (
+      <section aria-labelledby="summary-title" className="space-y-3">
+        <h2 id="summary-title" className="text-[15px] font-semibold text-foreground">
+          {t('title')}
+        </h2>
+        <p className="rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground shadow-(--shadow-card) sm:px-5">
+          {tEmpty('loadError')} {tEmpty('loadErrorHint')}
+        </p>
+      </section>
+    )
+  }
 
   return (
     <section aria-labelledby="summary-title" className="space-y-3">
