@@ -92,7 +92,7 @@ export function NoticeSettings({
                     {item.hint}
                   </p>
                 </div>
-                <div className="flex min-h-11 shrink-0 items-center gap-2 sm:min-h-0">
+                <div className="flex shrink-0 items-center gap-2 max-sm:min-h-11 pointer-coarse:min-h-11">
                   {saving === key && (
                     <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden="true" />
                   )}

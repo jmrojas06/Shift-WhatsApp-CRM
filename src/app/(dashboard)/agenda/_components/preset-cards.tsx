@@ -47,9 +47,9 @@ export function PresetCards({
             aria-current={active ? 'true' : undefined}
             onClick={() => onSelect(key)}
             className={cn(
-              'rounded-lg border p-4 text-left transition-colors',
+              'rounded-xl border bg-card p-4 text-left transition-colors',
               'hover:border-primary disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+              'focus-visible:border-ring focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50',
               active ? 'border-primary bg-primary/5' : 'border-border',
             )}
           >

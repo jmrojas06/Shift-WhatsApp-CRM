@@ -11,16 +11,17 @@ import type { OrderStatus, PaymentStatus } from '@/modules/ventas/orders'
 import type { PanelOrder } from '@/modules/ventas/panel'
 import { VENTAS_TEXTS as T } from '@/modules/ventas/texts'
 
-type Variant = 'default' | 'secondary' | 'outline' | 'destructive'
+type Variant = 'success' | 'warning' | 'info' | 'secondary' | 'outline' | 'destructive'
 
+// Tintes de estado suaves (tokens): por cobrar = aviso, pagado = éxito.
 const PAYMENT_VARIANT: Record<PaymentStatus, Variant> = {
-  pending: 'outline',
-  paid: 'default',
+  pending: 'warning',
+  paid: 'success',
 }
 
 const STATUS_VARIANT: Record<OrderStatus, Variant> = {
   new: 'outline',
-  shipped: 'secondary',
+  shipped: 'info',
   delivered: 'secondary',
   cancelled: 'destructive',
 }
@@ -54,7 +55,7 @@ export function OrderStatusBadges({
       {order.last_notice_error && (
         <Badge
           variant="outline"
-          className="border-amber-500/50 text-amber-700 dark:text-amber-400"
+          className="border-warning/40 text-warning"
           title={order.last_notice_error}
         >
           <BellOff aria-hidden="true" />

@@ -24,12 +24,6 @@ import { ArrowLeft, Loader2 } from 'lucide-react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
-  Card,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import {
   Tabs,
   TabsContent,
   TabsList,
@@ -44,6 +38,7 @@ import { readQuestion } from '@/verticals/agenda/questions'
 import { AGENDA_TEXTS as T } from '@/verticals/agenda/texts'
 import { togglesFromRow } from '@/verticals/agenda/toggles'
 
+import { ModuleNotEnabled } from '../_components/module-not-enabled'
 import { BotSection } from './_components/bot-section'
 import { BusinessSection } from './_components/business-section'
 import { BusinessTypeSection } from './_components/business-type-section'
@@ -232,19 +227,14 @@ export default function AgendaConfiguracionPage() {
     return (
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">
+          <h1 className="text-2xl font-semibold text-foreground">
             {T.config.title}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {T.config.subtitle}
           </p>
         </div>
-        <Card>
-          <CardHeader>
-            <CardTitle>{T.notEnabledTitle}</CardTitle>
-            <CardDescription>{T.notEnabledBody}</CardDescription>
-          </CardHeader>
-        </Card>
+        <ModuleNotEnabled />
       </div>
     )
   }
@@ -252,8 +242,8 @@ export default function AgendaConfiguracionPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold text-foreground">
             {T.config.title}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -290,9 +280,10 @@ export default function AgendaConfiguracionPage() {
         </div>
       ) : (
         <Tabs defaultValue="business" className="space-y-4">
-          {/* Con nueve pestañas la barra se desplaza en pantallas angostas. */}
-          <div className="max-w-full overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            <TabsList>
+          {/* Con nueve pestañas la barra se desplaza en pantallas angostas;
+              el borde derecho se desvanece como indicio de que hay más. */}
+          <div className="max-w-full min-w-0 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden max-sm:mask-r-from-85% max-sm:pr-8">
+            <TabsList className="pointer-coarse:h-11 [&>[data-slot=tabs-trigger]]:px-2.5">
               <TabsTrigger value="business">
                 {T.config.tabs.business}
               </TabsTrigger>

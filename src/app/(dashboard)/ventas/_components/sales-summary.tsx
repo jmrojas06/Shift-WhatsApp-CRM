@@ -43,7 +43,7 @@ export function SalesSummaryTiles({
                 type="button"
                 size="sm"
                 variant="outline"
-                className="h-11 sm:h-8"
+                className="max-sm:h-11 pointer-coarse:h-11"
                 onClick={onRetry}
               >
                 {T.actions.retry}

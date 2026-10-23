@@ -29,7 +29,7 @@ import {
   PanelRightClose,
 } from "lucide-react";
 import { format, isToday, isYesterday, differenceInHours } from "date-fns";
-import { useTranslations } from "next-intl";
+import { useFormatter, useTranslations } from "next-intl";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -38,7 +38,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageBubble } from "./message-bubble";
 import { MessageActions } from "./message-actions";
 import { MediaLightbox } from "./media-lightbox";
@@ -109,11 +108,16 @@ interface MessageThreadProps {
   onToggleContactPanel?: () => void;
 }
 
-function formatDateSeparator(dateStr: string, t: ReturnType<typeof useTranslations>): string {
+function formatDateSeparator(
+  dateStr: string,
+  t: ReturnType<typeof useTranslations>,
+  formatter: ReturnType<typeof useFormatter>,
+): string {
   const date = new Date(dateStr);
   if (isToday(date)) return t("today");
   if (isYesterday(date)) return t("yesterday");
-  return format(date, "MMMM d, yyyy");
+  // App locale ("12 de octubre de 2026", "October 12, 2026", …).
+  return formatter.dateTime(date, { day: "numeric", month: "long", year: "numeric" });
 }
 
 function groupMessagesByDate(messages: Message[]) {
@@ -133,23 +137,48 @@ function groupMessagesByDate(messages: Message[]) {
   return groups;
 }
 
-const STATUS_OPTIONS: { label: string; value: ConversationStatus; color: string }[] = [
-  { label: "Open", value: "open", color: "text-primary" },
-  { label: "Pending", value: "pending", color: "text-amber-400" },
-  { label: "Closed", value: "closed", color: "text-muted-foreground" },
+/**
+ * Conversation status options. `chip` styles the header trigger with the
+ * semantic status tokens; `dot` is the matching colour for menu items.
+ */
+const STATUS_OPTIONS: {
+  label: string;
+  value: ConversationStatus;
+  chip: string;
+  dot: string;
+}[] = [
+  {
+    label: "Open",
+    value: "open",
+    chip: "border-success/30 bg-success/10 text-success",
+    dot: "bg-success",
+  },
+  {
+    label: "Pending",
+    value: "pending",
+    chip: "border-warning/30 bg-warning/10 text-warning",
+    dot: "bg-warning",
+  },
+  {
+    label: "Closed",
+    value: "closed",
+    chip: "border-border bg-muted text-muted-foreground",
+    dot: "bg-muted-foreground/50",
+  },
 ];
 
 /**
- * WhatsApp-style doodle background applied to the chat area (both the
- * active thread and the empty state). The SVG tile lives at
- * `/public/inbox-doodle.svg`; the slate-950 colour sits underneath so
- * the doodles read as a subtle pattern rather than a stark grid.
- *
- * Defined once at module scope so the two render paths can't drift —
- * if we ever switch the asset, both spots update together.
+ * WhatsApp-style doodle behind the open chat, kept very faint: the tile
+ * (`/public/inbox-doodle.svg`) is painted on a pseudo-element at reduced
+ * opacity, under the content (`-z-10` inside an `isolate` root) so the
+ * header and composer surfaces cover it. The empty state has no pattern.
  */
 const DOODLE_BG_CLASSES =
-  "bg-background bg-[url('/inbox-doodle.svg')] bg-repeat";
+  "relative isolate bg-background before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:bg-[url('/inbox-doodle.svg')] before:bg-repeat before:opacity-40";
+
+/** Header icon buttons: 36px on desktop, 44px on touch, visible focus. */
+const HEADER_ICON_BUTTON =
+  "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-60 pointer-coarse:h-11 pointer-coarse:w-11";
 
 export function MessageThread({
   conversation,
@@ -169,6 +198,7 @@ export function MessageThread({
   const t = useTranslations("Inbox.messageThread");
   const tTimer = useTranslations("Inbox.sessionTimer");
   const tQuote = useTranslations("Inbox.replyQuote");
+  const formatter = useFormatter();
 
   const { user } = useAuth();
   const { getPresence, getRow, now } = usePresence();
@@ -775,7 +805,7 @@ export function MessageThread({
         preview: buildReplyPreview(msg, tQuote),
       });
     },
-    [authorLabelFor],
+    [authorLabelFor, tQuote],
   );
 
   // Single reaction-set primitive. emoji === "" removes; otherwise adds/swaps.
@@ -863,19 +893,18 @@ export function MessageThread({
     [conversation, onAssignChange, t],
   );
 
-  // Empty state — same WhatsApp-style doodle background as the active
-  // thread below, so swapping between empty/selected doesn't change the
-  // pattern under the user's eye.
+  // Empty state — calm on purpose: plain background, one short message.
+  // (Only visible on lg+; on mobile the list takes the whole screen.)
   if (!conversation || !contact) {
     return (
-      <div className={cn("flex flex-1 flex-col items-center justify-center", DOODLE_BG_CLASSES)}>
-        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
-          <MessageSquare className="h-8 w-8 text-muted-foreground" />
+      <div className="flex flex-1 flex-col items-center justify-center bg-background px-6 text-center">
+        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-muted">
+          <MessageSquare aria-hidden="true" className="h-6 w-6 text-muted-foreground" />
         </div>
-        <h3 className="mt-4 text-sm font-medium text-muted-foreground">
+        <h2 className="mt-4 text-[15px] font-semibold text-foreground">
           {t("selectConversation")}
-        </h3>
-        <p className="mt-1 text-xs text-muted-foreground">
+        </h2>
+        <p className="mt-1 max-w-xs text-sm text-muted-foreground">
           {t("selectConversationHint")}
         </p>
       </div>
@@ -905,21 +934,25 @@ export function MessageThread({
     <div className={cn("flex min-w-0 flex-1 flex-col", DOODLE_BG_CLASSES)}>
       {/* Header — solid card surface sits on top of the doodle so the
           name/avatar/dropdowns stay legible. */}
-      <div className="flex items-center justify-between gap-2 border-b border-border bg-card px-3 py-3 sm:px-4">
-        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-          {/* Back-to-list button — mobile only. Hidden on lg+ where the
-              conversation list is always visible next to the thread. */}
+      <div className="flex min-w-0 items-center justify-between gap-2 border-b border-border bg-card px-2 py-2 sm:px-4">
+        <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+          {/* Back-to-list button — mobile only (44px on touch). Hidden on
+              lg+ where the conversation list is always visible. */}
           {onBack && (
             <button
               type="button"
               onClick={onBack}
               aria-label={t("backToConversations")}
-              className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
+              className={cn(HEADER_ICON_BUTTON, "lg:hidden")}
             >
-              <ArrowLeft className="h-5 w-5" />
+              <ArrowLeft aria-hidden="true" className="h-5 w-5" />
             </button>
           )}
-          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground">
+          {/* Avatar — hidden on phones so the name keeps its room. */}
+          <div
+            aria-hidden="true"
+            className="hidden h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground sm:flex"
+          >
             {displayName.charAt(0).toUpperCase()}
           </div>
           <div className="min-w-0">
@@ -931,18 +964,15 @@ export function MessageThread({
           {/* Session timer badge — hidden on the narrowest phones so
               the name + back arrow keep their room. */}
           <Badge
-            variant="outline"
-            className={cn(
-              "ml-1 hidden gap-1 border-border text-[10px] sm:inline-flex sm:ml-2",
-              sessionInfo.expired ? "text-red-400" : "text-primary"
-            )}
+            variant={sessionInfo.expired ? "destructive" : "success"}
+            className="ml-1 hidden shrink-0 gap-1 text-[11px] sm:ml-2 sm:inline-flex"
           >
-            <Clock className="h-3 w-3" />
+            <Clock aria-hidden="true" className="h-3 w-3" />
             {sessionInfo.remaining}
           </Badge>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1 sm:gap-2">
           {/* Ventas on mobile: the contact panel doesn't exist below lg,
               so orders are created from here (renders nothing without
               the module or for viewers). */}
@@ -967,14 +997,15 @@ export function MessageThread({
               title={contactPanelOpen ? t("hideContact") : t("showContact")}
               aria-pressed={contactPanelOpen}
               className={cn(
-                "hidden h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground lg:inline-flex",
-                contactPanelOpen ? "text-primary" : "text-muted-foreground",
+                HEADER_ICON_BUTTON,
+                "hidden lg:inline-flex",
+                contactPanelOpen && "text-primary hover:text-primary",
               )}
             >
               {contactPanelOpen ? (
-                <PanelRightClose className="h-4 w-4" />
+                <PanelRightClose aria-hidden="true" className="h-4 w-4" />
               ) : (
-                <PanelRightOpen className="h-4 w-4" />
+                <PanelRightOpen aria-hidden="true" className="h-4 w-4" />
               )}
             </button>
           )}
@@ -991,36 +1022,59 @@ export function MessageThread({
               disabled={isRefreshing}
               aria-label={t("refreshConversation")}
               title={t("refresh")}
-              className={cn(
-                "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-60",
-              )}
+              className={HEADER_ICON_BUTTON}
             >
               <RefreshCw
-                className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")}
+                aria-hidden="true"
+                className={cn("h-4 w-4", isRefreshing && "animate-spin")}
               />
             </button>
           )}
 
-          {/* Status dropdown */}
+          {/* Status dropdown — semantic chip. On phones only the coloured
+              dot shows (the name stays in the accessible label). */}
           <DropdownMenu>
-            <DropdownMenuTrigger className={cn(
-                  "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
-                  currentStatus?.color ?? "text-muted-foreground"
-                )}>
+            <DropdownMenuTrigger
+              aria-label={t("changeStatus", {
+                status: currentStatus
+                  ? t(`status${currentStatus.label}`)
+                  : t("status"),
+              })}
+              className={cn(
+                "inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-full border px-2.5 text-xs font-medium outline-none transition-colors hover:opacity-90 focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:h-11 pointer-coarse:min-w-11",
+                currentStatus?.chip ?? "border-border text-muted-foreground",
+              )}
+            >
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "h-2 w-2 rounded-full",
+                  currentStatus?.dot ?? "bg-muted-foreground/50",
+                )}
+              />
+              <span className="hidden sm:inline">
                 {currentStatus ? t(`status${currentStatus.label}`) : t("status")}
-                <ChevronDown className="h-3 w-3" />
+              </span>
+              <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="end"
-              className="border-border bg-popover"
+              className="w-44 border-border bg-popover"
             >
               {STATUS_OPTIONS.map((opt) => (
                 <DropdownMenuItem
                   key={opt.value}
                   onClick={() => handleStatusChange(opt.value)}
-                  className={cn("text-sm", opt.color)}
+                  className="text-sm pointer-coarse:min-h-11"
                 >
-                  {t(`status${opt.label}`)}
+                  <span
+                    aria-hidden="true"
+                    className={cn("h-2 w-2 rounded-full", opt.dot)}
+                  />
+                  <span className="flex-1">{t(`status${opt.label}`)}</span>
+                  {opt.value === conversation.status && (
+                    <Check aria-hidden="true" className="h-3.5 w-3.5 text-primary" />
+                  )}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
@@ -1029,18 +1083,19 @@ export function MessageThread({
           {/* Assign dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger
+              aria-label={assignLabel}
               className={cn(
-                "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
+                "inline-flex h-9 shrink-0 items-center justify-center gap-1 rounded-lg px-2 text-xs outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:h-11 pointer-coarse:min-w-11",
                 assignedAgentId ? "text-primary" : "text-muted-foreground"
               )}
             >
-              <UserPlus className="h-3 w-3" />
-              <span className="hidden sm:inline">{assignLabel}</span>
-              <ChevronDown className="h-3 w-3" />
+              <UserPlus aria-hidden="true" className="h-4 w-4" />
+              <span className="hidden max-w-32 truncate sm:inline">{assignLabel}</span>
+              <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="end"
-              className="border-border bg-popover"
+              className="w-56 border-border bg-popover"
             >
               {profiles.length === 0 ? (
                 <DropdownMenuItem disabled className="text-sm text-muted-foreground">
@@ -1055,7 +1110,7 @@ export function MessageThread({
                       key={p.id}
                       onClick={() => handleAssignChange(p.user_id)}
                       className={cn(
-                        "text-sm",
+                        "text-sm pointer-coarse:min-h-11",
                         isSelected ? "text-primary" : "text-popover-foreground"
                       )}
                     >
@@ -1082,7 +1137,7 @@ export function MessageThread({
                   <DropdownMenuSeparator className="bg-border" />
                   <DropdownMenuItem
                     onClick={() => handleAssignChange(null)}
-                    className="text-sm text-muted-foreground"
+                    className="text-sm text-muted-foreground pointer-coarse:min-h-11"
                   >
                     {t("unassign")}
                   </DropdownMenuItem>
@@ -1094,15 +1149,16 @@ export function MessageThread({
       </div>
 
       {/* Messages Area */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-4">
         {loading ? (
-          <div className="flex items-center justify-center py-12">
+          <div className="flex items-center justify-center py-12" role="status">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            <span className="sr-only">{t("loadingMessages")}</span>
           </div>
         ) : messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12">
-            <p className="text-sm text-muted-foreground">{t("noMessagesYet")}</p>
-            <p className="text-xs text-muted-foreground">
+          <div className="flex flex-col items-center justify-center gap-1 py-12 text-center">
+            <p className="text-sm font-medium text-foreground">{t("noMessagesYet")}</p>
+            <p className="text-[13px] text-muted-foreground">
               {t("sendTemplateHint")}
             </p>
           </div>
@@ -1112,8 +1168,8 @@ export function MessageThread({
               <div key={group.date}>
                 {/* Date separator */}
                 <div className="mb-4 flex items-center justify-center">
-                  <span className="rounded-full bg-muted px-3 py-1 text-[10px] font-medium text-muted-foreground">
-                    {formatDateSeparator(group.date, t)}
+                  <span className="rounded-full border border-border bg-card px-3 py-1 text-[11px] font-medium text-muted-foreground">
+                    {formatDateSeparator(group.date, t, formatter)}
                   </span>
                 </div>
                 {/* Messages */}

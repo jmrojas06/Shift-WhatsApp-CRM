@@ -5,8 +5,8 @@ import type { PresenceStatus } from "@/lib/presence";
 // (emerald / amber / muted), mirroring the role-chip palette already
 // used across settings, so they're intentionally not tokenized.
 export const PRESENCE_DOT_CLASS: Record<PresenceStatus, string> = {
-  online: "bg-emerald-500",
-  away: "bg-amber-500",
+  online: "bg-success",
+  away: "bg-warning",
   offline: "bg-muted-foreground/50",
 };
 

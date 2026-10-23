@@ -280,7 +280,7 @@ export function Step3Personalize({
               />
             )}
           {headerMediaError && (
-            <p className="mt-1.5 text-xs text-amber-300">
+            <p className="mt-1.5 text-xs text-warning">
               {headerMediaError === 'missing'
                 ? t('personalize.mediaUrlRequired')
                 : t('personalize.mediaUrlInvalid')}
@@ -416,9 +416,9 @@ export function Step3Personalize({
             <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
           )}
         </div>
-        <div className="rounded-lg bg-[#0e1a12] p-3">
-          <div className="ml-auto max-w-[85%] rounded-lg bg-primary/30 px-3 py-2 shadow-sm">
-            <p className="whitespace-pre-wrap text-sm text-primary">
+        <div className="rounded-lg bg-muted p-3">
+          <div className="ml-auto max-w-[85%] rounded-lg bg-primary/15 px-3 py-2 shadow-sm">
+            <p className="text-sm break-words whitespace-pre-wrap text-foreground">
               {previewText}
             </p>
           </div>
@@ -426,7 +426,7 @@ export function Step3Personalize({
       </div>
 
       {unmappedKeys.length > 0 && (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+        <div className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
           {t.rich('personalize.unmappedWarning', {
             keys: unmappedKeys.join(', '),
             mono: (chunks) => <span className="font-mono font-semibold">{chunks}</span>,

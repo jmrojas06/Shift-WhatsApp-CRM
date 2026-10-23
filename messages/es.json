@@ -1,11 +1,11 @@
 {
   "LoginPage": {
     "titleAccept": "Inicia sesión para aceptar",
-    "titleWelcome": "Bienvenido de nuevo",
+    "titleWelcome": "Te damos la bienvenida",
     "descAccept": "Inicia sesión y te llevaremos a la invitación.",
     "descWelcome": "Inicia sesión en tu cuenta",
     "emailLabel": "Correo electrónico",
-    "emailPlaceholder": "you@example.com",
+    "emailPlaceholder": "nombre@correo.com",
     "passwordLabel": "Contraseña",
     "forgotPassword": "¿Olvidaste tu contraseña?",
     "passwordPlaceholder": "Ingresa tu contraseña",
@@ -191,11 +191,12 @@
   },
   "Inbox": {
     "page": {
-      "whatsappNotConnected": "WhatsApp® no está conectado. Ve a Configuración para conectar tu cuenta.",
-      "title": "Bandeja de entrada"
+      "whatsappNotConnected": "WhatsApp® no está conectado. Conéctalo para recibir y enviar mensajes.",
+      "title": "Bandeja de entrada",
+      "reconnect": "Reconectar"
     },
     "conversationList": {
-      "searchPlaceholder": "Buscar conversaciones...",
+      "searchPlaceholder": "Nombre, teléfono o mensaje",
       "filterAll": "Todas",
       "filterUnread": "Sin leer",
       "filterOpen": "Abiertas",
@@ -207,7 +208,13 @@
       "clearAll": "Limpiar todo",
       "noConversations": "No se encontraron conversaciones",
       "noMessagesYet": "Aún no hay mensajes",
-      "unknown": "Desconocido"
+      "unknown": "Desconocido",
+      "searchLabel": "Buscar conversaciones",
+      "filtersLabel": "Filtrar conversaciones",
+      "removeFilter": "Quitar el filtro {name}",
+      "emptyInbox": "Aún no tienes conversaciones. Aparecerán aquí cuando un cliente te escriba por WhatsApp.",
+      "showAll": "Ver todas",
+      "unreadMessages": "{count, plural, =1 {1 mensaje sin leer} other {# mensajes sin leer}}"
     },
     "messageThread": {
       "backToConversations": "Volver a las conversaciones",
@@ -241,7 +248,9 @@
       "assignmentUpdateFailed": "Error al actualizar la asignación",
       "networkError": "error de red",
       "documentFallback": "Documento",
-      "you": "Tú"
+      "you": "Tú",
+      "changeStatus": "Estado: {status}. Cambiar estado",
+      "loadingMessages": "Cargando mensajes"
     },
     "sessionTimer": {
       "expired": "Expirada",
@@ -292,7 +301,10 @@
         "document": "documento",
         "audio": "audio"
       },
-      "uploadFailed": "Falló la carga."
+      "uploadFailed": "Falló la carga.",
+      "composerMenu": "Adjuntar, plantillas y respuestas rápidas",
+      "replyWith": "Responder con",
+      "messageLabel": "Mensaje"
     },
     "bubble": {
       "photo": "Foto",
@@ -373,7 +385,10 @@
       "deals": "Oportunidades",
       "noTags": "Sin etiquetas",
       "noDeals": "Sin oportunidades",
-      "addNotePlaceholder": "Agregar una nota..."
+      "addNotePlaceholder": "Agregar una nota...",
+      "newNoteLabel": "Nueva nota",
+      "addNote": "Guardar nota",
+      "copyHandle": "Copiar {handle}"
     },
     "aiBanner": {
       "pausedTitle": "El asistente de IA está en pausa aquí",
@@ -392,7 +407,7 @@
   "Contacts": {
     "page": {
       "title": "Contactos",
-      "subtitle": "Administra tu lista de contactos. {count} contactos en total.",
+      "subtitle": "Administra tu lista de contactos. {count, plural, =1 {1 contacto en total.} other {# contactos en total.}}",
       "subtitleZero": "Administra tu lista de contactos.",
       "customFieldsBtn": "Campos personalizados",
       "selectAllOnPage": "Seleccionar todos los contactos de esta página",
@@ -402,7 +417,7 @@
       "filterByTags": "Filtrar por etiquetas",
       "clearAll": "Limpiar todo",
       "noTagsYet": "Aún no hay etiquetas.",
-      "selectedCount": "{count} seleccionados",
+      "selectedCount": "{count, plural, =1 {1 seleccionado} other {# seleccionados}}",
       "clearSelection": "Limpiar",
       "deleteSelected": "Eliminar seleccionados",
       "tableColumns": {
@@ -427,30 +442,38 @@
       "cancel": "Cancelar",
       "deleteBtn": "Eliminar",
       "deleteBulkTitle": "Eliminar contactos",
-      "deleteBulkDesc": "¿Seguro que quieres eliminar los {count} contactos seleccionados? Esta acción no se puede deshacer.",
-      "toastFailedLoad": "Error al cargar los contactos",
-      "toastFailedDelete": "Error al eliminar el contacto",
+      "deleteBulkDesc": "{count, plural, =1 {¿Seguro que quieres eliminar el contacto seleccionado? Esta acción no se puede deshacer.} other {¿Seguro que quieres eliminar los # contactos seleccionados? Esta acción no se puede deshacer.}}",
+      "toastFailedLoad": "No se pudieron cargar los contactos. Recarga la página.",
+      "toastFailedDelete": "No se pudo eliminar el contacto. Inténtalo de nuevo.",
       "toastDeleted": "Contacto eliminado",
-      "toastBulkFailedDelete": "Error al eliminar los contactos",
-      "toastBulkDeleted": "{count} contactos eliminados",
+      "toastBulkFailedDelete": "No se pudieron eliminar los contactos. Inténtalo de nuevo.",
+      "toastBulkDeleted": "{count, plural, =1 {1 contacto eliminado} other {# contactos eliminados}}",
       "filterByTag": "Filtrar por {name}",
       "removeTagFilter": "Quitar el filtro {name}",
-      "selectContact": "Seleccionar {name}"
+      "selectContact": "Seleccionar {name}",
+      "moreActions": "Más",
+      "readOnlyNote": "Tu rol es de solo lectura: puedes ver los contactos, pero no agregarlos ni importarlos. Pídele a un administrador que cambie tu rol si lo necesitas.",
+      "searchLabel": "Buscar contactos",
+      "rowActions": "Acciones para {name}",
+      "previousPage": "Página anterior",
+      "nextPage": "Página siguiente",
+      "deleteContactBtn": "Eliminar contacto",
+      "deleteBulkBtn": "{count, plural, =1 {Eliminar 1 contacto} other {Eliminar # contactos}}"
     },
     "form": {
       "addTitle": "Agregar contacto",
-      "addDesc": "Crea un nuevo contacto. El nombre es obligatorio.",
+      "addDesc": "Crea un contacto nuevo. Solo el teléfono es obligatorio.",
       "editTitle": "Editar contacto",
       "editDesc": "Actualiza los datos y las etiquetas del contacto.",
       "nameLabel": "Nombre",
-      "namePlaceholder": "María Pérez",
+      "namePlaceholder": "Nombre y apellido",
       "phoneLabel": "Número de teléfono",
-      "phonePlaceholder": "+1234567890",
-      "phoneHint": "Incluye el código de país, p. ej. +52 para México",
+      "phonePlaceholder": "+57 300 123 4567",
+      "phoneHint": "Incluye el código de país, por ejemplo +57 300 123 4567 para Colombia.",
       "emailLabel": "Correo electrónico",
-      "emailPlaceholder": "maria@example.com",
+      "emailPlaceholder": "nombre@correo.com",
       "companyLabel": "Empresa",
-      "companyPlaceholder": "Acme S.A.",
+      "companyPlaceholder": "Nombre de la empresa",
       "tagsLabel": "Etiquetas",
       "tagsPlaceholder": "Selecciona etiquetas...",
       "noTagsFound": "No se encontraron etiquetas.",
@@ -468,10 +491,12 @@
       "dupSimilar": "Ya existe un contacto con un número muy parecido.",
       "loadingTags": "Cargando etiquetas...",
       "noTagsAvailable": "No hay etiquetas disponibles. Crea etiquetas en Configuración.",
-      "phoneRequired": "El número de teléfono es obligatorio",
-      "phoneNeedsCountryCode": "Incluye el código de país — el número debe empezar con + (p. ej. +5215512345678)",
+      "phoneRequired": "Escribe el número de teléfono con el código de país, por ejemplo +57 300 123 4567.",
+      "phoneNeedsCountryCode": "Agrega el código de país al inicio, con +. Por ejemplo: +57 300 123 4567.",
       "notAuthenticated": "No autenticado",
-      "notLinkedToAccount": "Tu perfil no está vinculado a una cuenta."
+      "notLinkedToAccount": "Tu perfil no está vinculado a una cuenta.",
+      "requiredMark": "obligatorio",
+      "emailInvalid": "Revisa el correo: debe verse como nombre@correo.com. Si no lo tienes, déjalo vacío."
     },
     "detailView": {
       "tabs": {
@@ -523,7 +548,7 @@
       "saveChangesBtn": "Guardar cambios",
       "saveCustomFieldsBtn": "Guardar campos personalizados",
       "toastPhoneRequired": "El número de teléfono es obligatorio",
-      "toastPhoneNeedsCountryCode": "Incluye el código de país — el número debe empezar con + (p. ej. +5215512345678)",
+      "toastPhoneNeedsCountryCode": "Agrega el código de país al inicio, con +. Por ejemplo: +57 300 123 4567.",
       "toastUpdateFailed": "Error al actualizar el contacto",
       "toastUpdated": "Contacto actualizado",
       "toastNotAuthenticated": "No autenticado",
@@ -535,7 +560,9 @@
       "toastCustomFieldsFailed": "Error al guardar los campos personalizados",
       "toastTemplateSent": "Plantilla \"{name}\" enviada",
       "toastTemplateFailed": "Error al enviar la plantilla: {reason}",
-      "networkError": "error de red"
+      "networkError": "error de red",
+      "requiredMark": "obligatorio",
+      "deleteNoteAria": "Eliminar nota"
     },
     "importModal": {
       "title": "Importar contactos",
@@ -665,8 +692,8 @@
       "notes": "Notas",
       "notesPlaceholder": "Agregar notas...",
       "status": "Estado",
-      "markAsWon": "Marcar como ganado",
-      "markAsLost": "Marcar como perdido",
+      "markAsWon": "Marcar como ganada",
+      "markAsLost": "Marcar como perdida",
       "reopenDeal": "Reabrir oportunidad",
       "cancel": "Cancelar",
       "saving": "Guardando...",
@@ -684,11 +711,19 @@
       "toastUpdated": "Oportunidad actualizada",
       "toastCreated": "Oportunidad creada",
       "toastFailedStatus": "No se pudo actualizar el estado de la oportunidad. Inténtalo de nuevo.",
-      "toastMarkedWon": "Marcado como ganado",
-      "toastMarkedLost": "Marcado como perdido",
+      "toastMarkedWon": "Oportunidad marcada como ganada",
+      "toastMarkedLost": "Oportunidad marcada como perdida",
       "toastReopened": "Oportunidad reabierta",
       "toastFailedDelete": "No se pudo eliminar la oportunidad. Inténtalo de nuevo.",
-      "toastDeleted": "Oportunidad eliminada"
+      "toastDeleted": "Oportunidad eliminada",
+      "requiredMark": "obligatorio",
+      "titleRequired": "Escribe un título para la oportunidad.",
+      "contactRequired": "Elige el contacto de esta oportunidad. Puedes buscarlo por nombre o teléfono.",
+      "stageRequired": "Elige la etapa del embudo.",
+      "missingFields": "Para guardar, completa: {fields}.",
+      "searchContactLabel": "Buscar contacto",
+      "searchContactPlaceholder": "Buscar por nombre o teléfono",
+      "noContactMatches": "Ningún contacto coincide con la búsqueda"
     },
     "settings": {
       "managePipeline": "Administrar embudo",
@@ -713,7 +748,8 @@
       "toastFailedDeleteStage": "Error al eliminar la etapa",
       "toastFailedDeletePipeline": "No se pudo eliminar el embudo. Inténtalo de nuevo.",
       "toastDeleted": "Embudo eliminado",
-      "pickColor": "Elegir el color {color}"
+      "pickColor": "Elegir el color {color}",
+      "removeStage": "Eliminar la etapa {name}"
     },
     "analytics": {
       "totalDeals": "Oportunidades",
@@ -728,7 +764,11 @@
       "wonThisMonthTooltip": "Oportunidades marcadas como ganadas desde el primer día del mes actual.",
       "lostThisMonth": "Perdidas este mes",
       "lostThisMonthTooltip": "Oportunidades marcadas como perdidas desde el primer día del mes actual.",
-      "howCalculated": "Cómo se calcula {label}"
+      "howCalculated": "Cómo se calcula {label}",
+      "sectionLabel": "Métricas del embudo",
+      "summary": "{count, plural, =1 {1 oportunidad} other {# oportunidades}} · {value}",
+      "showMetrics": "Ver métricas",
+      "hideMetrics": "Ocultar métricas"
     }
   },
   "Broadcasts": {
@@ -737,7 +777,6 @@
       "subtitle": "Envía mensajes masivos a tus contactos usando plantillas aprobadas.",
       "newBroadcast": "Nueva difusión",
       "noBroadcastsYet": "Aún no hay difusiones",
-      "createFirst": "Crea tu primera difusión para llegar a tus contactos a gran escala.",
       "table": {
         "name": "Nombre",
         "template": "Plantilla",
@@ -749,7 +788,9 @@
       },
       "errorLoad": "Error al cargar las difusiones",
       "broadcastInProgress": "Difusión en curso",
-      "retry": "Reintentar"
+      "retry": "Reintentar",
+      "emptyBody": "Una difusión envía el mismo mensaje a muchos contactos a la vez, por ejemplo una promoción o un aviso.",
+      "emptyRequirement": "Para crearla necesitas una plantilla de mensaje aprobada por Meta. Puedes crearla en Configuración, en Plantillas."
     },
     "status": {
       "draft": "Borrador",
@@ -772,7 +813,7 @@
       "cancel": "Cancelar",
       "confirm": "Confirmar",
       "deleting": "Eliminando…",
-      "delete": "Eliminar",
+      "delete": "Eliminar difusión",
       "cannotDeleteSending": "No se puede eliminar mientras una difusión se está enviando",
       "deleteHover": "Eliminar esta difusión",
       "funnel": "Embudo",
@@ -811,7 +852,8 @@
       "toastResumeStartedCapped": "Enviando a {count} destinatarios en segundo plano. Otros {remaining} necesitarán otra ejecución.",
       "toastResumeFailed": "No se pudo reanudar: {error}",
       "unknownError": "Error desconocido",
-      "unknownContact": "Desconocido"
+      "unknownContact": "Desconocido",
+      "confirmDelete": "Sí, eliminar"
     },
     "new": {
       "title": "Nueva difusión",
@@ -965,16 +1007,15 @@
       "retry": "Reintentar",
       "templatesTitle": "Plantillas de inicio rápido",
       "emptyTitle": "Aún no hay automatizaciones",
-      "emptyDesc": "Elige una plantilla de arriba o crea una desde cero.",
-      "runs": "{count} ejecución",
-      "runsPlural": "{count} ejecuciones",
+      "emptyDesc": "Empieza con una de las plantillas de abajo o crea una desde cero.",
+      "runs": "{count, plural, =1 {# ejecución} other {# ejecuciones}}",
       "lastRun": "última {time}",
       "activate": "Activar",
       "deactivate": "Desactivar",
       "edit": "Editar",
       "duplicate": "Duplicar",
       "viewLogs": "Ver registros",
-      "delete": "Eliminar",
+      "delete": "Eliminar automatización",
       "cancel": "Cancelar",
       "deleteTitle": "Eliminar automatización",
       "deleteDesc": "Esto elimina permanentemente {name} y su historial de ejecuciones. No se puede deshacer.",
@@ -1487,8 +1528,8 @@
       "unnamed": "Sin nombre",
       "joined": "Se unió el {date}",
       "remove": "Quitar",
-      "removedToast": "{name} eliminado",
-      "updatedToast": "{name} actualizado a {role}",
+      "removedToast": "Quitaste a {name} del equipo",
+      "updatedToast": "Ahora {name} tiene el rol {role}",
       "pendingInvitations": "Invitaciones pendientes",
       "inviteHint": "Por seguridad, la URL de la invitación en texto plano solo se muestra una vez, al crearla. Para volver a compartirla, revoca la invitación abajo y crea una nueva.",
       "noPendingTitle": "No hay invitaciones pendientes.",
@@ -1500,18 +1541,25 @@
       "expired": "expirada",
       "revoke": "Revocar",
       "revokedToast": "Invitación revocada",
-      "loadFailed": "Error al cargar los miembros",
-      "loadInvitationsFailed": "Error al cargar las invitaciones",
-      "updateRoleFailed": "Error al actualizar el rol",
-      "removeFailed": "Error al quitar al miembro",
-      "revokeFailed": "Error al revocar la invitación",
-      "networkError": "No se pudo conectar con el servidor",
+      "loadFailed": "No se pudieron cargar los miembros. Recarga la página.",
+      "loadInvitationsFailed": "No se pudieron cargar las invitaciones. Recarga la página.",
+      "updateRoleFailed": "No se pudo cambiar el rol. Inténtalo de nuevo.",
+      "removeFailed": "No se pudo quitar a este miembro. Inténtalo de nuevo.",
+      "revokeFailed": "No se pudo revocar la invitación. Inténtalo de nuevo.",
+      "networkError": "No se pudo conectar con el servidor. Revisa tu conexión e inténtalo de nuevo.",
       "memberAlt": "Miembro",
       "removeDialogTitle": "Quitar miembro",
       "removeDialogDesc": "¿Quitar a <bold>{name}</bold> de la cuenta? Se cerrará su sesión en esta cuenta y recibirá una cuenta personal nueva en su próximo inicio de sesión. Su acceso no se elimina.",
       "cancel": "Cancelar",
       "removing": "Quitando...",
-      "removeBtn": "Quitar miembro"
+      "removeBtn": "Quitar miembro",
+      "loadingMembers": "Cargando miembros del equipo…",
+      "roleSelectLabel": "Rol de {name}",
+      "removeMemberLabel": "Quitar a {name} del equipo",
+      "revokeDialogTitle": "Revocar invitación",
+      "revokeDialogDesc": "El enlace de <bold>{label}</bold> dejará de funcionar. Si lo necesitas, crea una invitación nueva.",
+      "revokeBtn": "Revocar invitación",
+      "revoking": "Revocando…"
     },
     "invite": {
       "inviteCreated": "Invitación creada",
@@ -1577,7 +1625,10 @@
         "blue": "Azul",
         "violet": "Violeta",
         "pink": "Rosa"
-      }
+      },
+      "newTagLabel": "Nombre de la etiqueta nueva",
+      "colorGroupLabel": "Color de la etiqueta",
+      "loadingTags": "Cargando etiquetas…"
     },
     "templates": {
       "title": "Plantillas de mensaje",
@@ -1692,7 +1743,9 @@
         "Marketing": "Marketing",
         "Utility": "Utilidad",
         "Authentication": "Autenticación"
-      }
+      },
+      "loadingTemplates": "Cargando plantillas…",
+      "removeButtonLabel": "Quitar este botón"
     },
     "roles": {
       "admin": "Administrador",
@@ -1714,7 +1767,7 @@
       "notConnected": "No conectado",
       "connectedDesc": "Tu token de acceso se autentica con Meta. Revisa el estado de registro abajo para saber si los webhooks están realmente conectados.",
       "notConnectedDesc": "Configura abajo tus credenciales de la API de Meta para conectar tu cuenta de WhatsApp Business.",
-      "registered": "Registrado: Meta entregará los eventos a wacrm",
+      "registered": "Registrado: Meta entregará los eventos a Shift CRM",
       "notRegistered": "No registrado: Meta no entregará eventos",
       "verifyWithMeta": "Verificar con Meta",
       "subscribedSince": "Suscrito desde {date}. Haz clic en Verificar con Meta si los eventos dejan de llegar.",
@@ -1749,11 +1802,11 @@
       "mirrorInboundDesc": "Guarda una copia de cada foto, video, nota de voz y documento que envían los clientes. Usa tu almacenamiento de Supabase; los archivos de más de 16 MB se omiten.",
       "mirrorInboundOffWarning": "Los nuevos adjuntos dejarán de copiarse y quedarán inaccesibles unos 30 días después de su llegada.",
       "mirrorInboundSaveFailed": "No se pudo actualizar la configuración de adjuntos.",
-      "loadFailed": "Error al cargar la configuración de WhatsApp",
+      "loadFailed": "No se pudo cargar la configuración de WhatsApp. Recarga la página.",
       "phoneNumberIdRequired": "El Phone Number ID es obligatorio",
       "accessTokenRequired": "El token de acceso es obligatorio para la configuración inicial",
       "reenterAccessToken": "Vuelve a ingresar el token de acceso para guardar los cambios",
-      "saveFailed": "Error al guardar la configuración",
+      "saveFailed": "No se pudo guardar la configuración. Revisa los datos e inténtalo de nuevo.",
       "savedButRegistrationFailed": "Guardado, pero Meta no pudo registrar el número: {error}",
       "savedRegistrationSkipped": "Credenciales guardadas y verificadas. El registro de entrada se omitió (sin PIN); revisa el estado de registro abajo.",
       "liveWithName": "Activo: {name} ya puede recibir eventos.",
@@ -1766,7 +1819,7 @@
       "notFullyRegistered": "El número no está completamente registrado. Revisa abajo qué paso falló.",
       "verifyEndpointUnreachable": "No se pudo acceder al endpoint de verificación.",
       "resetConfirm": "Esto eliminará la configuración actual de WhatsApp para que puedas ingresarla de nuevo. ¿Continuar?",
-      "resetFailed": "Error al restablecer la configuración",
+      "resetFailed": "No se pudo restablecer la configuración. Inténtalo de nuevo.",
       "resetDone": "Configuración borrada. Ya puedes volver a ingresar tus credenciales.",
       "webhookCopied": "URL del webhook copiada al portapapeles",
       "phoneNumberIdPlaceholder": "p. ej. 100234567890123",
@@ -1807,7 +1860,16 @@
       "phoneNumberIdNotNumeric": "El Phone Number ID debe contener solo dígitos. Copia el id numérico desde Meta → WhatsApp → Configuración de la API, no el número de teléfono en sí.",
       "wabaIdNotNumeric": "El ID de la cuenta de WhatsApp Business debe contener solo dígitos. Cópialo desde Meta → WhatsApp → Configuración de la API.",
       "wabaSubscribed": "La cuenta de WhatsApp Business está suscrita a esta app: los webhooks entrantes pueden entregarse.",
-      "wabaNotSubscribed": "La cuenta de WhatsApp Business no está suscrita a esta app, así que Meta no entregará webhooks entrantes. Vuelve a ingresar el token de acceso y guarda de nuevo para suscribirla."
+      "wabaNotSubscribed": "La cuenta de WhatsApp Business no está suscrita a esta app, así que Meta no entregará webhooks entrantes. Vuelve a ingresar el token de acceso y guarda de nuevo para suscribirla.",
+      "loadingConfig": "Cargando la conexión con WhatsApp…",
+      "needsReconnectTitle": "Hay que reconectar WhatsApp",
+      "needsReconnectDesc": "Meta ya no acepta las credenciales guardadas, así que no llegan ni salen mensajes.",
+      "reconnect": "Reconectar",
+      "reconnectHint": "Pega un token de acceso nuevo de Meta y toca Guardar configuración.",
+      "reconnectAskAdmin": "Pide a una persona administradora de la cuenta que reconecte WhatsApp.",
+      "showToken": "Mostrar el token",
+      "hideToken": "Ocultar el token",
+      "copyWebhookUrl": "Copiar la URL del webhook"
     },
     "sections": {
       "overview": "Resumen",
@@ -1991,7 +2053,9 @@
       "newKeyTitle": "Nueva clave de API",
       "newKeyDesc": "Nómbrala según la integración que la usará y concede solo los alcances que necesite.",
       "done": "Listo",
-      "networkError": "No se pudo conectar con el servidor"
+      "networkError": "No se pudo conectar con el servidor",
+      "loadingKeys": "Cargando claves de API…",
+      "revokeConfirm": "¿Revocar la clave «{name}»? Las integraciones que la usan dejarán de funcionar y no se puede deshacer."
     },
     "deals": {
       "title": "Oportunidades y moneda",
@@ -2002,8 +2066,9 @@
       "adminOnlyHint": "Solo los administradores de la cuenta pueden cambiar la moneda predeterminada.",
       "save": "Guardar",
       "saving": "Guardando...",
-      "saveFailed": "Error al guardar la moneda predeterminada",
-      "saveSuccess": "Moneda predeterminada actualizada"
+      "saveFailed": "No se pudo guardar la moneda. Inténtalo de nuevo.",
+      "saveSuccess": "Listo. Las oportunidades nuevas usarán {currency}.",
+      "currencyHint": "Solo cambia las oportunidades nuevas y los totales. Las que ya existen conservan su moneda."
     },
     "aiConfig": {
       "title": "Configuración del agente",
@@ -2080,11 +2145,11 @@
     },
     "quickReplies": {
       "nameRequired": "Ponle un nombre a la respuesta rápida.",
-      "saveError": "No se pudo guardar la respuesta rápida.",
+      "saveError": "No se pudo guardar la respuesta rápida. Inténtalo de nuevo.",
       "updated": "Respuesta rápida actualizada.",
       "created": "Respuesta rápida creada.",
       "deleteConfirm": "¿Eliminar esta respuesta rápida?",
-      "deleteError": "No se pudo eliminar la respuesta rápida.",
+      "deleteError": "No se pudo eliminar la respuesta rápida. Inténtalo de nuevo.",
       "title": "Respuestas rápidas",
       "description": "Fragmentos reutilizables (texto simple o un mensaje interactivo guardado) que los agentes pueden insertar desde el editor de la bandeja de entrada.",
       "new": "Nueva respuesta rápida",
@@ -2096,23 +2161,28 @@
       "kindInteractive": "Interactiva",
       "textPlaceholder": "El texto del mensaje que se insertará",
       "cancel": "Cancelar",
-      "save": "Guardar"
+      "save": "Guardar",
+      "loading": "Cargando respuestas rápidas…",
+      "editLabel": "Editar «{name}»",
+      "deleteLabel": "Eliminar «{name}»",
+      "kindLabel": "Tipo de respuesta",
+      "messageLabel": "Mensaje"
     }
   },
   "SignupPage": {
-    "passwordsMismatch": "Las contraseñas no coinciden",
-    "passwordTooShort": "La contraseña debe tener al menos 6 caracteres",
+    "passwordsMismatch": "Las contraseñas no coinciden. Escríbelas de nuevo.",
+    "passwordTooShort": "La contraseña es muy corta. Usa al menos 6 caracteres.",
     "checkEmailTitle": "Revisa tu correo",
     "checkEmailDesc": "Enviamos un enlace de confirmación a <strong>{email}</strong>. Revisa tu bandeja de entrada y haz clic en el enlace para verificar tu cuenta.",
     "backToSignIn": "Volver a iniciar sesión",
     "titleJoin": "Crear cuenta y unirse",
     "title": "Crear cuenta",
     "descJoin": "Verifica tu correo y luego acepta la invitación para unirte a tu equipo.",
-    "desc": "Empieza a usar la Plantilla de CRM para WhatsApp",
+    "desc": "Empieza a usar Shift CRM",
     "fullNameLabel": "Nombre completo",
     "fullNamePlaceholder": "Juan Pérez",
     "emailLabel": "Correo electrónico",
-    "emailPlaceholder": "you@example.com",
+    "emailPlaceholder": "nombre@correo.com",
     "passwordLabel": "Contraseña",
     "passwordPlaceholder": "Al menos 6 caracteres",
     "confirmPasswordLabel": "Confirmar contraseña",
@@ -2129,7 +2199,7 @@
     "title": "Restablecer contraseña",
     "desc": "Ingresa tu correo y te enviaremos un enlace para restablecerla",
     "emailLabel": "Correo electrónico",
-    "emailPlaceholder": "you@example.com",
+    "emailPlaceholder": "nombre@correo.com",
     "sending": "Enviando...",
     "sendLink": "Enviar enlace de restablecimiento"
   },
@@ -2142,8 +2212,8 @@
     "confirmPasswordPlaceholder": "Repite la nueva contraseña",
     "submit": "Actualizar contraseña",
     "saving": "Actualizando...",
-    "passwordsMismatch": "Las contraseñas no coinciden",
-    "passwordTooShort": "La contraseña debe tener al menos 6 caracteres",
+    "passwordsMismatch": "Las contraseñas no coinciden. Escríbelas de nuevo.",
+    "passwordTooShort": "La contraseña es muy corta. Usa al menos 6 caracteres.",
     "checking": "Comprobando tu enlace...",
     "expiredTitle": "Este enlace ya no es válido",
     "expiredDesc": "Los enlaces para restablecer la contraseña funcionan una sola vez y expiran pronto. Pide uno nuevo y ábrelo en el mismo navegador desde el que lo solicitaste.",
@@ -2165,9 +2235,9 @@
       "serverErrorBody": "No pudimos verificar esta invitación en este momento. Intenta recargar la página en un momento."
     },
     "conflictDefault": "Ya perteneces a otra cuenta. Inicia sesión con un correo distinto para unirte a esta.",
-    "acceptFailed": "Error al aceptar la invitación",
-    "welcome": "Bienvenido al equipo",
-    "serverUnreachable": "No se pudo conectar con el servidor",
+    "acceptFailed": "No se pudo aceptar la invitación. Inténtalo de nuevo.",
+    "welcome": "Te damos la bienvenida al equipo",
+    "serverUnreachable": "No se pudo conectar con el servidor. Revisa tu conexión e inténtalo de nuevo.",
     "signOutFailed": "No se pudo cerrar sesión. Intenta recargar la página.",
     "verifying": "Verificando invitación…",
     "tryAgain": "Intentar de nuevo",
@@ -2788,5 +2858,18 @@
       "metaApiStatus": "Error de la API de Meta: {status}",
       "syncFailed": "Error al sincronizar las plantillas"
     }
+  },
+  "AuthErrors": {
+    "invalidCredentials": "El correo o la contraseña no son correctos. Revísalos e inténtalo de nuevo.",
+    "emailNotConfirmed": "Aún no has confirmado tu correo. Abre el enlace que te enviamos y vuelve a iniciar sesión.",
+    "userExists": "Ya existe una cuenta con ese correo. Inicia sesión o restablece tu contraseña.",
+    "weakPassword": "Esa contraseña es muy fácil de adivinar. Usa una más larga, con letras y números.",
+    "samePassword": "La nueva contraseña debe ser distinta de la anterior.",
+    "invalidEmail": "Ese correo no parece válido. Revísalo e inténtalo de nuevo.",
+    "rateLimited": "Hubo demasiados intentos seguidos. Espera unos minutos e inténtalo de nuevo.",
+    "signupDisabled": "El registro de cuentas nuevas está desactivado. Pide una invitación a quien administra la cuenta.",
+    "sessionExpired": "Tu sesión expiró. Pide un enlace nuevo o vuelve a iniciar sesión.",
+    "network": "No se pudo conectar. Revisa tu conexión a internet e inténtalo de nuevo.",
+    "generic": "Algo salió mal. Inténtalo de nuevo en un momento."
   }
 }

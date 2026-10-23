@@ -4,18 +4,21 @@ import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
+import { CheckCircle, Loader2, UsersRound } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { CardContent } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { MessageSquare, CheckCircle, UsersRound } from "lucide-react";
+  AuthAlert,
+  AuthCard,
+  AuthCardHeader,
+  AuthShell,
+  authLinkClass,
+} from "@/components/auth/auth-shell";
+import { authErrorKey } from "@/components/auth/auth-error";
 
 // `useSearchParams` opts the component out of static prerendering
 // unless wrapped in Suspense — same pattern as /login.
@@ -36,6 +39,7 @@ function SignupPageInner() {
   // redeem step instead of being dropped on /dashboard.
   const inviteToken = searchParams.get("invite");
   const t = useTranslations("SignupPage");
+  const tErrors = useTranslations("AuthErrors");
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -45,6 +49,10 @@ function SignupPageInner() {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const supabase = createClient();
+
+  const loginHref = inviteToken
+    ? `/login?invite=${encodeURIComponent(inviteToken)}`
+    : "/login";
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -89,7 +97,7 @@ function SignupPageInner() {
     });
 
     if (error) {
-      setError(error.message);
+      setError(tErrors(authErrorKey(error)));
       setLoading(false);
       return;
     }
@@ -100,155 +108,117 @@ function SignupPageInner() {
 
   if (success) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4">
-        <Card className="w-full max-w-md border-border bg-card">
-          <CardHeader className="items-center text-center">
-            <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-              <CheckCircle className="h-6 w-6 text-primary" />
-            </div>
-            <CardTitle className="text-xl text-foreground">
-              {t("checkEmailTitle")}
-            </CardTitle>
-            <CardDescription className="text-muted-foreground">
-              {t.rich("checkEmailDesc", {
-                email,
-                strong: (chunks) => (
-                  <span className="text-foreground">{chunks}</span>
-                ),
-              })}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
+      <AuthShell>
+        <AuthCard>
+          <AuthCardHeader
+            icon={CheckCircle}
+            tone="success"
+            title={t("checkEmailTitle")}
+            description={t.rich("checkEmailDesc", {
+              email,
+              strong: (chunks) => (
+                <span className="font-medium text-foreground">{chunks}</span>
+              ),
+            })}
+          />
+          <CardContent className="px-6">
             <Link
-              href={
-                inviteToken
-                  ? `/login?invite=${encodeURIComponent(inviteToken)}`
-                  : "/login"
-              }
+              href={loginHref}
+              className={cn(buttonVariants({ variant: "outline", size: "lg" }), "w-full")}
             >
-              <Button
-                variant="outline"
-                className="w-full border-border text-muted-foreground hover:bg-muted hover:text-foreground"
-              >
-                {t("backToSignIn")}
-              </Button>
+              {t("backToSignIn")}
             </Link>
           </CardContent>
-        </Card>
-      </div>
+        </AuthCard>
+      </AuthShell>
     );
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-md border-border bg-card">
-        <CardHeader className="items-center text-center">
-          <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-            {inviteToken ? (
-              <UsersRound className="h-6 w-6 text-primary" />
-            ) : (
-              <MessageSquare className="h-6 w-6 text-primary" />
-            )}
-          </div>
-          <CardTitle className="text-xl text-foreground">
-            {inviteToken ? t("titleJoin") : t("title")}
-          </CardTitle>
-          <CardDescription className="text-muted-foreground">
-            {inviteToken ? t("descJoin") : t("desc")}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+    <AuthShell>
+      <AuthCard>
+        <AuthCardHeader
+          icon={inviteToken ? UsersRound : undefined}
+          title={inviteToken ? t("titleJoin") : t("title")}
+          description={inviteToken ? t("descJoin") : t("desc")}
+        />
+        <CardContent className="px-6">
           <form onSubmit={handleSignup} className="flex flex-col gap-4">
-            {error && (
-              <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">
-                {error}
-              </div>
-            )}
+            {error && <AuthAlert>{error}</AuthAlert>}
 
             <div className="flex flex-col gap-2">
-              <Label htmlFor="fullName" className="text-muted-foreground">
-                {t("fullNameLabel")}
-              </Label>
+              <Label htmlFor="fullName">{t("fullNameLabel")}</Label>
               <Input
                 id="fullName"
                 type="text"
+                autoComplete="name"
                 placeholder={t("fullNamePlaceholder")}
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
               />
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label htmlFor="email" className="text-muted-foreground">
-                {t("emailLabel")}
-              </Label>
+              <Label htmlFor="email">{t("emailLabel")}</Label>
               <Input
                 id="email"
                 type="email"
+                autoComplete="email"
+                inputMode="email"
                 placeholder={t("emailPlaceholder")}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
               />
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label htmlFor="password" className="text-muted-foreground">
-                {t("passwordLabel")}
-              </Label>
+              <Label htmlFor="password">{t("passwordLabel")}</Label>
               <Input
                 id="password"
                 type="password"
+                autoComplete="new-password"
                 placeholder={t("passwordPlaceholder")}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
               />
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label htmlFor="confirmPassword" className="text-muted-foreground">
-                {t("confirmPasswordLabel")}
-              </Label>
+              <Label htmlFor="confirmPassword">{t("confirmPasswordLabel")}</Label>
               <Input
                 id="confirmPassword"
                 type="password"
+                autoComplete="new-password"
                 placeholder={t("confirmPasswordPlaceholder")}
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
               />
             </div>
 
-            <Button
-              type="submit"
-              disabled={loading}
-              className="mt-2 h-10 w-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-            >
-              {loading ? t("creating") : t("submit")}
+            <Button type="submit" size="lg" disabled={loading} className="mt-2 w-full">
+              {loading ? (
+                <>
+                  <Loader2 className="animate-spin" aria-hidden />
+                  {t("creating")}
+                </>
+              ) : (
+                t("submit")
+              )}
             </Button>
           </form>
 
           <p className="mt-6 text-center text-sm text-muted-foreground">
             {t("haveAccount")}{" "}
-            <Link
-              href={
-                inviteToken
-                  ? `/login?invite=${encodeURIComponent(inviteToken)}`
-                  : "/login"
-              }
-              className="text-primary hover:text-primary/80"
-            >
+            <Link href={loginHref} className={authLinkClass}>
               {t("signIn")}
             </Link>
           </p>
         </CardContent>
-      </Card>
-    </div>
+      </AuthCard>
+    </AuthShell>
   );
 }

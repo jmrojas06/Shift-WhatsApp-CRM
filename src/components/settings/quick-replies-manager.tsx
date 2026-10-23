@@ -7,6 +7,7 @@ import { useTranslations } from "next-intl";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
@@ -139,9 +140,23 @@ export function QuickRepliesManager() {
       />
 
       {loading ? (
-        <div className="flex justify-center py-10">
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-        </div>
+        // Skeleton rows shaped like the list (icon, name, preview line).
+        <ul role="status" className="flex flex-col gap-2">
+          <span className="sr-only">{t("loading")}</span>
+          {[0, 1, 2].map((i) => (
+            <li
+              key={i}
+              aria-hidden
+              className="flex items-start gap-3 rounded-lg border border-border bg-card p-3"
+            >
+              <span className="mt-0.5 size-4 shrink-0 animate-pulse rounded bg-muted" />
+              <span className="min-w-0 flex-1 space-y-2">
+                <span className="block h-3 w-32 animate-pulse rounded-full bg-muted" />
+                <span className="block h-3 w-56 max-w-full animate-pulse rounded-full bg-muted" />
+              </span>
+            </li>
+          ))}
+        </ul>
       ) : items.length === 0 ? (
         <p className="rounded-lg border border-dashed border-border py-10 text-center text-sm text-muted-foreground">
           {t("empty")}
@@ -167,16 +182,22 @@ export function QuickRepliesManager() {
                 </p>
               </div>
               <div className="flex shrink-0 gap-1">
-                <Button variant="ghost" size="icon-sm" onClick={() => openEdit(qr)}>
-                  <Pencil className="h-4 w-4" />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => openEdit(qr)}
+                  aria-label={t("editLabel", { name: qr.title })}
+                >
+                  <Pencil className="h-4 w-4" aria-hidden />
                 </Button>
                 <Button
                   variant="ghost"
-                  size="icon-sm"
+                  size="icon"
                   onClick={() => remove(qr.id)}
-                  className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
+                  aria-label={t("deleteLabel", { name: qr.title })}
+                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                 >
-                  <Trash2 className="h-4 w-4" />
+                  <Trash2 className="h-4 w-4" aria-hidden />
                 </Button>
               </div>
             </li>
@@ -192,15 +213,17 @@ export function QuickRepliesManager() {
           {draft && (
             <div className="max-h-[70vh] space-y-3 overflow-y-auto">
               <div>
-                <label className="mb-1 block text-xs text-muted-foreground">{t("nameLabel")}</label>
+                <Label htmlFor="qr-name" className="mb-2">
+                  {t("nameLabel")}
+                </Label>
                 <Input
+                  id="qr-name"
                   value={draft.title}
                   onChange={(e) => setDraft({ ...draft, title: e.target.value })}
                   placeholder={t("namePlaceholder")}
-                  className="bg-muted text-foreground"
                 />
               </div>
-              <div className="flex gap-2">
+              <div role="group" aria-label={t("kindLabel")} className="flex gap-2">
                 <KindTab
                   active={draft.kind === "text"}
                   label={t("kindText")}
@@ -213,12 +236,18 @@ export function QuickRepliesManager() {
                 />
               </div>
               {draft.kind === "text" ? (
-                <Textarea
-                  value={draft.content_text}
-                  onChange={(e) => setDraft({ ...draft, content_text: e.target.value })}
-                  placeholder={t("textPlaceholder")}
-                  className="min-h-28 bg-muted text-foreground"
-                />
+                <div>
+                  <Label htmlFor="qr-text" className="mb-2">
+                    {t("messageLabel")}
+                  </Label>
+                  <Textarea
+                    id="qr-text"
+                    value={draft.content_text}
+                    onChange={(e) => setDraft({ ...draft, content_text: e.target.value })}
+                    placeholder={t("textPlaceholder")}
+                    className="min-h-28"
+                  />
+                </div>
               ) : (
                 <InteractiveBuilder
                   value={draft.interactive_payload}
@@ -255,10 +284,12 @@ function KindTab({
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={active}
       className={
-        active
-          ? "flex-1 rounded-md border border-primary bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary"
-          : "flex-1 rounded-md border border-border bg-muted px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
+        "flex-1 rounded-lg border px-3 py-1.5 text-sm font-medium outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-11 " +
+        (active
+          ? "border-primary bg-primary-soft text-primary"
+          : "border-border bg-muted text-muted-foreground hover:text-foreground")
       }
     >
       {label}

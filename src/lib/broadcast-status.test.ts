@@ -26,13 +26,16 @@ describe("getBroadcastStatus", () => {
   });
 
   it("each variant has the dark-theme class triple", () => {
-    // Accept both fixed-shade Tailwind names (bg-red-500/10) and
-    // token-backed names without a shade number (bg-primary/10) since
-    // the brand-accent statuses now ride the active color theme.
-    for (const v of Object.values(broadcastStatusConfig)) {
-      expect(v.classes).toMatch(/bg-[a-z]+(-\d+)?\/10/);
-      expect(v.classes).toMatch(/text-[a-z]+(-\d+)?/);
-      expect(v.classes).toMatch(/border-[a-z]+(-\d+)?\/20/);
+    // Theme tokens only (bg-info/10, bg-muted, border-border…): no
+    // fixed Tailwind palette shades, so the tints follow light/dark.
+    for (const v of [
+      ...Object.values(broadcastStatusConfig),
+      ...Object.values(recipientStatusConfig),
+    ]) {
+      expect(v.classes).toMatch(/(^|\s)bg-[a-z-]+(\/\d+)?(\s|$)/);
+      expect(v.classes).toMatch(/(^|\s)text-[a-z-]+(\s|$)/);
+      expect(v.classes).toMatch(/(^|\s)border-[a-z-]+(\/\d+)?(\s|$)/);
+      expect(v.classes).not.toMatch(/-\d{2,3}(\/|\s|$)/);
     }
   });
 });

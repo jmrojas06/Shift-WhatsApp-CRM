@@ -148,7 +148,7 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
               {turn.role === 'assistant' && turn.handoff && (
                 <p
                   className={cn(
-                    'flex items-center gap-1 text-xs text-amber-500',
+                    'flex items-center gap-1 text-xs text-warning',
                     turn.content && 'mt-1.5 border-t border-border/50 pt-1.5',
                   )}
                 >

@@ -28,7 +28,8 @@ import { ORDER_LIMITS } from '@/modules/ventas/orders'
 import { missingShippingPlace, type PanelOrder } from '@/modules/ventas/panel'
 import { VENTAS_TEXTS as T } from '@/modules/ventas/texts'
 
-const TOUCH = 'h-11 sm:h-9'
+// 44 px en pantallas angostas y en cualquier pantalla táctil.
+const TOUCH = 'max-sm:h-11 pointer-coarse:h-11'
 
 /** Resultado de la acción: null = salió bien; texto = error para mostrar en el diálogo. */
 export type DialogSubmitResult = string | null

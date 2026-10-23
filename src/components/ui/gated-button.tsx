@@ -49,6 +49,7 @@ import type { ComponentProps, ReactNode } from "react";
 import { useTranslations } from "next-intl";
 
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 
 interface GatedButtonProps extends Omit<ComponentProps<typeof Button>, "title"> {
@@ -66,6 +67,33 @@ interface GatedButtonProps extends Omit<ComponentProps<typeof Button>, "title"> 
   children?: ReactNode;
 }
 
+/**
+ * What the button should look like:
+ *   - "ready"    → normal, clickable.
+ *   - "disabled" → the caller disabled it (busy, missing data…).
+ *   - "pending"  → the role is still loading (`useCan` returns false
+ *                  while `profileLoading`), so we don't know yet. It
+ *                  keeps its normal look, is marked `aria-busy` and
+ *                  ignores clicks, with no "read-only" tooltip. This
+ *                  avoids CTAs that look broken for 2-3 s on load.
+ *   - "blocked"  → the role really can't act: disabled + tooltip.
+ */
+export type GateState = "ready" | "disabled" | "pending" | "blocked";
+
+export function gateState({
+  canAct,
+  disabled,
+  profileLoading,
+}: {
+  canAct: boolean;
+  disabled?: boolean;
+  profileLoading: boolean;
+}): GateState {
+  if (disabled) return "disabled";
+  if (canAct) return "ready";
+  return profileLoading ? "pending" : "blocked";
+}
+
 export function GatedButton({
   canAct = true,
   gateReason,
@@ -73,13 +101,19 @@ export function GatedButton({
   disabled,
   className,
   children,
+  onClick,
   ...rest
 }: GatedButtonProps) {
   const t = useTranslations("GatedButton");
-  const effectivelyDisabled = disabled || !canAct;
-  const tooltip = !canAct && gateReason
+  const { profileLoading } = useAuth();
+  const state = gateState({ canAct, disabled, profileLoading });
+  const blocked = state === "blocked";
+  const pending = state === "pending";
+  const tooltip = blocked && gateReason
     ? t("readOnly", { action: gateReason })
-    : title;
+    : pending
+      ? undefined
+      : title;
 
   return (
     <span
@@ -88,12 +122,26 @@ export function GatedButton({
       // here (not on the button) is what makes the tooltip work
       // in Safari / older Firefox — those browsers don't fire
       // mouseover on disabled buttons.
-      className={cn("inline-flex", !canAct && "cursor-not-allowed")}
+      className={cn(
+        "inline-flex",
+        blocked && "cursor-not-allowed",
+        pending && "cursor-progress",
+      )}
       title={tooltip}
     >
       <Button
-        disabled={effectivelyDisabled}
-        className={className}
+        disabled={state === "disabled" || blocked}
+        aria-busy={pending || undefined}
+        aria-disabled={pending || undefined}
+        data-gate={pending ? "pending" : undefined}
+        className={cn(pending && "pointer-events-none", className)}
+        onClick={(event) => {
+          if (pending) {
+            event.preventDefault();
+            return;
+          }
+          onClick?.(event);
+        }}
         {...rest}
       >
         {children}

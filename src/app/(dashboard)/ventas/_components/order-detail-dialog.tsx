@@ -127,7 +127,7 @@ export function OrderDetailBody({ order }: { order: Detail }) {
             className={cn(
               'flex items-start gap-2 rounded-lg border px-3 py-2 text-sm',
               notice.failed
-                ? 'border-amber-500/50 text-amber-800 dark:text-amber-300'
+                ? 'border-warning/30 bg-warning/10 text-warning'
                 : 'border-border text-foreground',
             )}
           >
@@ -221,7 +221,7 @@ export function OrderDetailDialog({
             )}
             {current.kind === 'ready' && <OrderDetailBody order={current.order} />}
             <DialogFooter>
-              <Button type="button" variant="outline" className="h-11 sm:h-9" onClick={onClose}>
+              <Button type="button" variant="outline" className="max-sm:h-11" onClick={onClose}>
                 {T.close}
               </Button>
             </DialogFooter>

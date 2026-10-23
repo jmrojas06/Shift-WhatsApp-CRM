@@ -38,7 +38,9 @@ export function ReplyQuote({
           ? "rounded-md bg-muted/80"
           : onPrimary
             ? "mb-1.5 rounded-md bg-primary-foreground/15"
-            : "mb-1.5 rounded-md bg-background/20",
+            : // Neutral wash that reads on both bubble surfaces (card
+              // and the soft primary tint).
+              "mb-1.5 rounded-md bg-foreground/5",
       )}
     >
       <div className="min-w-0 flex-1 overflow-hidden">
@@ -66,9 +68,9 @@ export function ReplyQuote({
           type="button"
           onClick={onDismiss}
           aria-label={t("cancelReply")}
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:h-11 pointer-coarse:w-11"
         >
-          <X className="h-3.5 w-3.5" />
+          <X aria-hidden="true" className="h-3.5 w-3.5" />
         </button>
       )}
     </div>

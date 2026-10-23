@@ -307,14 +307,14 @@ export default function PipelinesPage() {
 
   if (loading) {
     return (
-      <div className="space-y-6">
+      <div className="min-w-0 space-y-6">
         <div className="flex items-center justify-between">
           <div className="h-8 w-48 animate-pulse rounded bg-muted" />
           <div className="h-9 w-28 animate-pulse rounded-lg bg-muted" />
         </div>
-        <div className="flex gap-3">
+        <div className="flex gap-3 overflow-hidden">
           {[1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="h-96 w-72 animate-pulse rounded-xl bg-muted/50" />
+            <div key={i} className="h-96 w-72 shrink-0 animate-pulse rounded-xl bg-muted/50" />
           ))}
         </div>
       </div>
@@ -322,20 +322,20 @@ export default function PipelinesPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 max-w-full items-center gap-3">
           {/* Pipeline selector dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger
-              className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground hover:bg-muted transition-colors data-[popup-open]:bg-muted"
+              className="inline-flex min-h-9 min-w-0 max-w-full items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 data-[popup-open]:bg-muted pointer-coarse:min-h-11"
             >
-              <GitBranch className="h-4 w-4 text-primary" />
-              <span className="font-semibold">
+              <GitBranch aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+              <span className="truncate font-semibold">
                 {selectedPipeline?.name ?? t("selectPipeline")}
               </span>
-              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              <ChevronDown aria-hidden className="size-4 shrink-0 text-muted-foreground" />
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="start"
@@ -374,15 +374,15 @@ export default function PipelinesPage() {
           </DropdownMenu>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <GatedButton
             variant="outline"
             canAct={canEditSettings}
             gateReason={tGate("reasons.createPipelines")}
             onClick={() => setNewPipelineOpen(true)}
-            className="border-border bg-card text-foreground hover:bg-muted"
+            className="border-border"
           >
-            <Plus className="mr-1 h-4 w-4" />
+            <Plus className="size-4" />
             {t("addPipeline")}
           </GatedButton>
           <GatedButton
@@ -390,9 +390,8 @@ export default function PipelinesPage() {
             gateReason={tGate("reasons.createDeals")}
             disabled={!selectedPipelineId || stages.length === 0}
             onClick={() => handleAddDeal()}
-            className="bg-primary text-primary-foreground hover:bg-primary/90"
           >
-            <Plus className="mr-1 h-4 w-4" />
+            <Plus className="size-4" />
             {t("addDeal")}
           </GatedButton>
         </div>
@@ -400,9 +399,9 @@ export default function PipelinesPage() {
 
       {/* Board */}
       {pipelines.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-20">
-          <GitBranch className="h-12 w-12 text-muted-foreground" />
-          <h3 className="mt-4 text-lg font-medium text-foreground">
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border px-4 py-20 text-center">
+          <GitBranch aria-hidden className="size-10 text-muted-foreground" />
+          <h3 className="mt-4 text-[15px] font-semibold text-foreground">
             {t("noPipelinesYet")}
           </h3>
           <p className="mt-2 text-sm text-muted-foreground">
@@ -412,9 +411,9 @@ export default function PipelinesPage() {
             canAct={canEditSettings}
             gateReason={tGate("reasons.createPipelines")}
             onClick={() => setNewPipelineOpen(true)}
-            className="mt-4 bg-primary text-primary-foreground hover:bg-primary/90"
+            className="mt-4"
           >
-            <Plus className="mr-1 h-4 w-4" />
+            <Plus className="size-4" />
             {t("createPipeline")}
           </GatedButton>
         </div>
@@ -438,8 +437,9 @@ export default function PipelinesPage() {
             <DialogTitle className="text-popover-foreground">{t("newPipeline")}</DialogTitle>
           </DialogHeader>
           <div className="py-2">
-            <Label className="text-muted-foreground">{t("pipelineName")}</Label>
+            <Label htmlFor="new-pipeline-name">{t("pipelineName")}</Label>
             <Input
+              id="new-pipeline-name"
               value={newPipelineName}
               onChange={(e) => setNewPipelineName(e.target.value)}
               placeholder={t("pipelineNamePlaceholder")}
@@ -456,14 +456,13 @@ export default function PipelinesPage() {
             <Button
               variant="outline"
               onClick={() => setNewPipelineOpen(false)}
-              className="border-border text-muted-foreground hover:bg-muted"
+              className="border-border"
             >
               {t("cancel")}
             </Button>
             <Button
               onClick={handleCreatePipeline}
               disabled={creating || !newPipelineName.trim()}
-              className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
               {creating ? t("creating") : t("createPipelineBtn")}
             </Button>

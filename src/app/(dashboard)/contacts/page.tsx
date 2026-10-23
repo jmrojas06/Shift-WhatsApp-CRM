@@ -56,8 +56,9 @@ import { ContactDetailView } from '@/components/contacts/contact-detail-view';
 import { ImportModal } from '@/components/contacts/import-modal';
 import { CustomFieldsManager } from '@/components/contacts/custom-fields-manager';
 import { useCan } from '@/hooks/use-can';
+import { useAuth } from '@/hooks/use-auth';
 import { GatedButton } from '@/components/ui/gated-button';
-import { useTranslations } from 'next-intl';
+import { useFormatter, useTranslations } from 'next-intl';
 
 const PAGE_SIZE = 25;
 
@@ -68,9 +69,14 @@ interface ContactWithTags extends Contact {
 export default function ContactsPage() {
   const t = useTranslations('Contacts.page');
   const tGate = useTranslations('GatedButton');
+  const format = useFormatter();
   const supabase = createClient();
   const canEdit = useCan('send-messages');
   const canEditSettings = useCan('edit-settings');
+  // `useCan` is false while the role loads; only explain the read-only
+  // state once we actually know the role.
+  const { profileLoading } = useAuth();
+  const showReadOnlyNote = !profileLoading && !canEdit;
 
   const [contacts, setContacts] = useState<ContactWithTags[]>([]);
   const [loading, setLoading] = useState(true);
@@ -345,21 +351,23 @@ export default function ContactsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">{t('title')}</h1>
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold text-foreground">{t('title')}</h1>
           <p className="text-sm text-muted-foreground mt-1">
             {totalCount > 0 ? t('subtitle', { count: totalCount }) : t('subtitleZero')}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+
+        {/* Desktop: every action in a row. */}
+        <div className="hidden sm:flex sm:flex-wrap sm:items-center sm:justify-end sm:gap-2">
           {canEditSettings && (
             <Button
               variant="outline"
               onClick={() => setCustomFieldsOpen(true)}
-              className="border-border text-muted-foreground hover:bg-muted"
+              className="border-border"
             >
               <SlidersHorizontal className="size-4" />
               {t('customFieldsBtn')}
@@ -370,7 +378,7 @@ export default function ContactsPage() {
             canAct={canEdit}
             gateReason={tGate('reasons.addOrImportContacts')}
             onClick={() => setImportOpen(true)}
-            className="border-border text-muted-foreground hover:bg-muted"
+            className="border-border"
           >
             <Upload className="size-4" />
             {t('importBtn')}
@@ -379,20 +387,71 @@ export default function ContactsPage() {
             canAct={canEdit}
             gateReason={tGate('reasons.addOrImportContacts')}
             onClick={openAddForm}
-            className="bg-primary hover:bg-primary/90 text-primary-foreground"
           >
             <Plus className="size-4" />
             {t('addContactBtn')}
           </GatedButton>
         </div>
+
+        {/* Mobile: one clear primary action + the rest under "Más". */}
+        <div className="flex items-center gap-2 sm:hidden">
+          {/* GatedButton wraps the button in an inline span; stretch it. */}
+          <div className="min-w-0 flex-1 [&>span]:w-full">
+            <GatedButton
+              canAct={canEdit}
+              gateReason={tGate('reasons.addOrImportContacts')}
+              onClick={openAddForm}
+              className="w-full"
+            >
+              <Plus className="size-4" />
+              {t('addContactBtn')}
+            </GatedButton>
+          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={<Button variant="outline" className="shrink-0 border-border" />}
+            >
+              <MoreHorizontal className="size-4" />
+              {t('moreActions')}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-52">
+              {canEditSettings && (
+                <DropdownMenuItem onClick={() => setCustomFieldsOpen(true)}>
+                  <SlidersHorizontal className="size-4" />
+                  {t('customFieldsBtn')}
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem
+                disabled={!canEdit}
+                onClick={() => setImportOpen(true)}
+              >
+                <Upload className="size-4" />
+                {t('importBtn')}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
+
+      {/* Why "Agregar" / "Importar" are disabled, visible on touch too
+          (the GatedButton tooltip only shows on hover). */}
+      {showReadOnlyNote && (
+        <p className="-mt-3 text-xs text-muted-foreground">
+          {t('readOnlyNote')}
+        </p>
+      )}
 
       {/* Search + tag filter */}
       <div className="space-y-2">
         <div className="flex flex-col sm:flex-row gap-2">
-          <div className="relative w-full max-w-sm">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+          <div className="relative w-full sm:max-w-sm">
+            <Search
+              aria-hidden
+              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground"
+            />
             <Input
+              type="search"
+              aria-label={t('searchLabel')}
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value);
@@ -410,7 +469,7 @@ export default function ContactsPage() {
               render={
                 <Button
                   variant="outline"
-                  className="border-border text-muted-foreground hover:bg-muted shrink-0"
+                  className="border-border shrink-0 self-start"
                 />
               }
             >
@@ -429,8 +488,9 @@ export default function ContactsPage() {
                 </span>
                 {selectedTagIds.length > 0 && (
                   <button
+                    type="button"
                     onClick={clearTagFilters}
-                    className="text-xs text-muted-foreground hover:text-foreground"
+                    className="rounded text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
                   >
                     {t('clearAll')}
                   </button>
@@ -445,7 +505,7 @@ export default function ContactsPage() {
                   {allTags.map((tag) => (
                     <label
                       key={tag.id}
-                      className="flex items-center gap-2.5 px-3 py-1.5 cursor-pointer hover:bg-muted/50"
+                      className="flex min-h-9 items-center gap-2.5 px-3 py-1.5 cursor-pointer hover:bg-muted/50 pointer-coarse:min-h-11"
                     >
                       <Checkbox
                         checked={selectedTagIds.includes(tag.id)}
@@ -476,26 +536,29 @@ export default function ContactsPage() {
               return (
                 <span
                   key={id}
-                  className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
-                  style={{
-                    backgroundColor: tag.color + '20',
-                    color: tag.color,
-                  }}
+                  className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border bg-muted py-0.5 pl-2.5 pr-1 text-xs font-medium text-foreground"
                 >
-                  {tag.name}
+                  <span
+                    aria-hidden
+                    className="size-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: tag.color }}
+                  />
+                  <span className="truncate">{tag.name}</span>
                   <button
+                    type="button"
                     onClick={() => toggleTagFilter(id)}
                     aria-label={t('removeTagFilter', { name: tag.name })}
-                    className="hover:opacity-70"
+                    className="inline-flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:size-8"
                   >
-                    <X className="size-3" />
+                    <X className="size-3.5" />
                   </button>
                 </span>
               );
             })}
             <button
+              type="button"
               onClick={clearTagFilters}
-              className="text-xs text-muted-foreground hover:text-foreground px-1"
+              className="rounded px-1 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-11"
             >
               {t('clearAll')}
             </button>
@@ -505,8 +568,8 @@ export default function ContactsPage() {
 
       {/* Bulk action bar */}
       {selected.size > 0 && (
-        <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-muted/40 px-4 py-2">
-          <p className="text-sm text-foreground">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-border bg-muted/40 px-4 py-2">
+          <p className="text-sm text-foreground" aria-live="polite">
             {t('selectedCount', { count: selected.size })}
           </p>
           <div className="flex items-center gap-2">
@@ -533,18 +596,25 @@ export default function ContactsPage() {
       )}
 
       {/* Table */}
-      <div className="rounded-lg border border-border overflow-hidden">
+      {/* The Table primitive scrolls horizontally inside its own box, so
+          a wide row never makes the page itself scroll sideways. */}
+      <div className="min-w-0 rounded-xl border border-border bg-card shadow-(--shadow-card) overflow-hidden">
         <Table>
           <TableHeader>
             <TableRow className="border-border hover:bg-transparent">
-              <TableHead className="w-10">
-                <Checkbox
-                  checked={allOnPageSelected}
-                  indeterminate={!allOnPageSelected && someOnPageSelected}
-                  onCheckedChange={toggleSelectAll}
-                  disabled={contacts.length === 0}
-                  aria-label={t('selectAllOnPage')}
-                />
+              {/* Selection column: a visible checkbox inside a label so the
+                  whole cell is the tap target. */}
+              <TableHead className="w-12 pl-3">
+                <label className="inline-flex size-8 cursor-pointer items-center justify-center pointer-coarse:size-11">
+                  <Checkbox
+                    checked={allOnPageSelected}
+                    indeterminate={!allOnPageSelected && someOnPageSelected}
+                    onCheckedChange={toggleSelectAll}
+                    disabled={contacts.length === 0}
+                    aria-label={t('selectAllOnPage')}
+                    className="size-[18px] border-muted-foreground/60"
+                  />
+                </label>
               </TableHead>
               <TableHead className="text-muted-foreground">{t('tableColumns.name')}</TableHead>
               <TableHead className="text-muted-foreground">{t('tableColumns.phone')}</TableHead>
@@ -582,7 +652,7 @@ export default function ContactsPage() {
                         variant="outline"
                         size="sm"
                         onClick={openAddForm}
-                        className="mt-2 border-border text-muted-foreground hover:bg-muted"
+                        className="mt-2 border-border"
                       >
                         <Plus className="size-3.5" />
                         {t('addFirstContact')}
@@ -598,15 +668,18 @@ export default function ContactsPage() {
                   className="border-border hover:bg-muted/50 cursor-pointer"
                   onClick={() => openDetail(contact.id)}
                 >
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <Checkbox
-                      checked={selected.has(contact.id)}
-                      onCheckedChange={() => toggleSelect(contact.id)}
-                      aria-label={t('selectContact', { name: contact.name || contact.phone })}
-                    />
+                  <TableCell className="pl-3" onClick={(e) => e.stopPropagation()}>
+                    <label className="inline-flex size-8 cursor-pointer items-center justify-center pointer-coarse:size-11">
+                      <Checkbox
+                        checked={selected.has(contact.id)}
+                        onCheckedChange={() => toggleSelect(contact.id)}
+                        aria-label={t('selectContact', { name: contact.name || contact.phone })}
+                        className="size-[18px] border-muted-foreground/60"
+                      />
+                    </label>
                   </TableCell>
-                  <TableCell className="text-foreground font-medium">
-                    {contact.name || <span className="text-muted-foreground italic">{t('unnamed')}</span>}
+                  <TableCell className="max-w-44 truncate text-foreground font-medium sm:max-w-none">
+                    {contact.name || <span className="text-muted-foreground">{t('unnamed')}</span>}
                   </TableCell>
                   <TableCell className="text-muted-foreground font-mono text-xs">
                     {contact.phone}
@@ -623,12 +696,13 @@ export default function ContactsPage() {
                         contact.tags.slice(0, 3).map((tag) => (
                           <span
                             key={tag.id}
-                            className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium"
-                            style={{
-                              backgroundColor: tag.color + '20',
-                              color: tag.color,
-                            }}
+                            className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted px-2 py-0.5 text-xs font-medium text-foreground"
                           >
+                            <span
+                              aria-hidden
+                              className="size-2 shrink-0 rounded-full"
+                              style={{ backgroundColor: tag.color }}
+                            />
                             {tag.name}
                           </span>
                         ))
@@ -636,16 +710,16 @@ export default function ContactsPage() {
                         <span className="text-muted-foreground text-xs">-</span>
                       )}
                       {contact.tags && contact.tags.length > 3 && (
-                        <span className="text-[10px] text-muted-foreground">
+                        <span className="self-center text-xs text-muted-foreground">
                           +{contact.tags.length - 3}
                         </span>
                       )}
                     </div>
                   </TableCell>
                   <TableCell className="text-muted-foreground text-xs hidden lg:table-cell">
-                    {new Date(contact.created_at).toLocaleDateString('en-US', {
-                      month: 'short',
+                    {format.dateTime(new Date(contact.created_at), {
                       day: 'numeric',
+                      month: 'short',
                       year: 'numeric',
                     })}
                   </TableCell>
@@ -656,6 +730,7 @@ export default function ContactsPage() {
                           <Button
                             variant="ghost"
                             size="icon-sm"
+                            aria-label={t('rowActions', { name: contact.name || contact.phone })}
                             className="text-muted-foreground hover:text-foreground"
                             onClick={(e) => e.stopPropagation()}
                           />
@@ -700,7 +775,7 @@ export default function ContactsPage() {
 
       {/* Pagination */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-muted-foreground">
             {t('showingPagination', {
               start: page * PAGE_SIZE + 1,
@@ -714,7 +789,8 @@ export default function ContactsPage() {
               size="icon-sm"
               disabled={!hasPrev}
               onClick={() => setPage((p) => p - 1)}
-              className="border-border text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30"
+              aria-label={t('previousPage')}
+              className="border-border"
             >
               <ChevronLeft className="size-4" />
             </Button>
@@ -726,7 +802,8 @@ export default function ContactsPage() {
               size="icon-sm"
               disabled={!hasNext}
               onClick={() => setPage((p) => p + 1)}
-              className="border-border text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30"
+              aria-label={t('nextPage')}
+              className="border-border"
             >
               <ChevronRight className="size-4" />
             </Button>
@@ -786,7 +863,7 @@ export default function ContactsPage() {
             <Button
               variant="outline"
               onClick={() => setDeleteConfirmOpen(false)}
-              className="border-border text-muted-foreground hover:bg-muted"
+              className="border-border"
             >
               {t('cancel')}
             </Button>
@@ -796,7 +873,7 @@ export default function ContactsPage() {
               disabled={deleting}
             >
               {deleting && <Loader2 className="size-4 animate-spin" />}
-              {t('deleteBtn')}
+              {t('deleteContactBtn')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -817,7 +894,7 @@ export default function ContactsPage() {
             <Button
               variant="outline"
               onClick={() => setBulkDeleteOpen(false)}
-              className="border-border text-muted-foreground hover:bg-muted"
+              className="border-border"
             >
               {t('cancel')}
             </Button>
@@ -827,7 +904,7 @@ export default function ContactsPage() {
               disabled={deleting}
             >
               {deleting && <Loader2 className="size-4 animate-spin" />}
-              {t('deleteBtn')}
+              {t('deleteBulkBtn', { count: selected.size })}
             </Button>
           </DialogFooter>
         </DialogContent>

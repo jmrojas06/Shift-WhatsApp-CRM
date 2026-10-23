@@ -18,7 +18,7 @@ import {
   ArrowLeft,
   X,
 } from 'lucide-react';
-import { useTranslations } from 'next-intl';
+import { useFormatter, useTranslations } from 'next-intl';
 
 type AudienceType = 'all' | 'tags' | 'custom_field' | 'csv';
 type CustomFieldOperator = 'is' | 'is_not' | 'contains';
@@ -51,6 +51,7 @@ export function Step2SelectAudience({
   onBack,
 }: Step2Props) {
   const t = useTranslations('Broadcasts.wizard');
+  const format = useFormatter();
 
   const OPERATOR_OPTIONS = useMemo<{ value: CustomFieldOperator; label: string }[]>(() => [
     { value: 'is', label: t('selectAudience.operatorIs') },
@@ -254,6 +255,8 @@ export function Step2SelectAudience({
           return (
             <button
               key={option.type}
+              type="button"
+              aria-pressed={isSelected}
               onClick={() =>
                 onUpdate({
                   ...audience,
@@ -269,10 +272,10 @@ export function Step2SelectAudience({
                     option.type === 'csv' ? audience.csvContacts : undefined,
                 })
               }
-              className={`flex items-start gap-3 rounded-xl border p-4 text-left transition-all ${
+              className={`flex min-w-0 items-start gap-3 rounded-xl border p-4 text-left transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50 ${
                 isSelected
                   ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
-                  : 'border-border bg-card/50 hover:border-border'
+                  : 'border-border bg-card hover:border-input hover:bg-muted/40'
               }`}
             >
               <div
@@ -311,8 +314,10 @@ export function Step2SelectAudience({
                 return (
                   <button
                     key={tag.id}
+                    type="button"
+                    aria-pressed={Boolean(isSelected)}
                     onClick={() => toggleTag(tag.id)}
-                    className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-all ${
+                    className={`inline-flex min-h-8 items-center rounded-full border px-3 py-1 text-xs font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-11 ${
                       isSelected
                         ? 'border-primary/30 bg-primary/10 text-primary'
                         : 'border-border bg-muted text-muted-foreground hover:border-border'
@@ -427,7 +432,7 @@ export function Step2SelectAudience({
       {/* Exclude list — applies regardless of audience type */}
       <div className="rounded-xl border border-border bg-card/50 p-4">
         <div className="mb-3 flex items-center gap-2">
-          <X className="h-4 w-4 text-red-400" />
+          <X className="h-4 w-4 text-destructive" aria-hidden="true" />
           <p className="text-sm font-medium text-foreground">
             {t('selectAudience.excludeTags')}
           </p>
@@ -441,10 +446,12 @@ export function Step2SelectAudience({
               return (
                 <button
                   key={tag.id}
+                  type="button"
+                  aria-pressed={Boolean(isExcluded)}
                   onClick={() => toggleExcludeTag(tag.id)}
-                  className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-all ${
+                  className={`inline-flex min-h-8 items-center rounded-full border px-3 py-1 text-xs font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-11 ${
                     isExcluded
-                      ? 'border-red-500/30 bg-red-500/10 text-red-300'
+                      ? 'border-destructive/30 bg-destructive/10 text-destructive'
                       : 'border-border bg-muted text-muted-foreground hover:border-border'
                   }`}
                 >
@@ -472,7 +479,7 @@ export function Step2SelectAudience({
           <div className="flex items-center gap-2">
             <Users className="h-4 w-4 text-primary" />
             <span className="text-sm text-foreground">
-              {estimatedCount.toLocaleString()}
+              {format.number(estimatedCount)}
             </span>
             <span className="text-xs text-muted-foreground">{t('selectAudience.estimatedRecipients')}</span>
           </div>

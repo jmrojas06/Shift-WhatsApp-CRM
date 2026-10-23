@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, type ReactNode } from 'react';
-import { ChevronRight, Loader2 } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 
 import { createClient } from '@/lib/supabase/client';
@@ -167,9 +167,9 @@ export function SettingsOverview({
           <StatusDot tone="ok" /> {t('connected')}
         </>
       ) : (
-        <>
-          <StatusDot tone="muted" /> {t('needsReconnecting')}
-        </>
+        <span className="inline-flex items-center gap-1.5 font-medium text-warning">
+          <StatusDot tone="warn" /> {t('needsReconnecting')}
+        </span>
       ),
     },
     {
@@ -199,7 +199,7 @@ export function SettingsOverview({
     {
       section: 'deals',
       loading: false,
-      subtitle: `${defaultCurrency} — ${currencyLabel}`,
+      subtitle: `${defaultCurrency} · ${currencyLabel}`,
     },
     {
       section: 'fields',
@@ -262,7 +262,7 @@ export function SettingsOverview({
               type="button"
               onClick={() => onSelect(section)}
               className={cn(
-                'group flex items-start gap-3.5 rounded-xl border border-border bg-card p-4 text-left transition-colors',
+                'group flex min-w-0 items-start gap-3.5 rounded-xl border border-border bg-card p-4 text-left shadow-(--shadow-card) transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50',
                 'hover:border-primary-soft-2 hover:bg-card-2',
               )}
             >
@@ -273,15 +273,21 @@ export function SettingsOverview({
                 <span className="block text-sm font-semibold text-foreground">
                   {tSections(section)}
                 </span>
-                <span className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-                  {loading ? (
-                    <>
-                      <Loader2 className="size-3 animate-spin" /> {t('loading')}
-                    </>
-                  ) : (
-                    subtitle
-                  )}
-                </span>
+                {loading ? (
+                  // Skeleton shaped like the one-line subtitle it stands
+                  // in for; the label is kept for screen readers.
+                  <span className="mt-1.5 flex h-4 items-center">
+                    <span
+                      aria-hidden
+                      className="block h-3 w-32 max-w-full animate-pulse rounded-full bg-muted"
+                    />
+                    <span className="sr-only">{t('loading')}</span>
+                  </span>
+                ) : (
+                  <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+                    {subtitle}
+                  </span>
+                )}
               </span>
               <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
             </button>

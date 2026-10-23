@@ -53,10 +53,11 @@ export default function EditAutomationPage({
   if (error) {
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-3">
-        <p className="text-sm text-red-400">{error}</p>
+        <p className="text-sm text-destructive">{error}</p>
         <button
+          type="button"
           onClick={() => router.push("/automations")}
-          className="text-sm text-primary hover:text-primary/80"
+          className="min-h-11 rounded-lg px-3 text-sm text-primary outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           {t("back")}
         </button>

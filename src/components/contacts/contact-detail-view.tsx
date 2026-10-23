@@ -40,7 +40,7 @@ import {
   DollarSign,
   LayoutTemplate,
 } from 'lucide-react';
-import { useTranslations } from 'next-intl';
+import { useFormatter, useTranslations } from 'next-intl';
 import { contactHandle } from '@/lib/whatsapp/wa-identity';
 import { parseInternationalPhone } from '@/lib/whatsapp/phone-utils';
 
@@ -58,6 +58,8 @@ export function ContactDetailView({
   onUpdated,
 }: ContactDetailViewProps) {
   const t = useTranslations('Contacts.detailView');
+  const tDealStatus = useTranslations('Pipelines.card');
+  const format = useFormatter();
   const supabase = createClient();
   const { accountId, defaultCurrency } = useAuth();
 
@@ -509,7 +511,8 @@ export function ContactDetailView({
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-muted-foreground text-xs">
-                      {t('phone')} <span className="text-red-400">*</span>
+                      {t('phone')}
+                      <span className="font-normal">({t('requiredMark')})</span>
                     </Label>
                     <Input
                       value={editPhone}
@@ -633,13 +636,14 @@ export function ContactDetailView({
                           </p>
                           <button
                             onClick={() => deleteNote(note.id)}
-                            className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-400 transition-all cursor-pointer shrink-0"
+                            aria-label={t('deleteNoteAria')}
+                            className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all cursor-pointer shrink-0"
                           >
                             <Trash2 className="size-3.5" />
                           </button>
                         </div>
                         <p className="text-xs text-muted-foreground mt-1.5">
-                          {new Date(note.created_at).toLocaleDateString('en-US', {
+                          {format.dateTime(new Date(note.created_at), {
                             month: 'short',
                             day: 'numeric',
                             year: 'numeric',
@@ -743,11 +747,15 @@ export function ContactDetailView({
                             <span
                               className={
                                 deal.status === 'won'
-                                  ? 'text-primary'
-                                  : 'text-red-400'
+                                  ? 'text-success'
+                                  : 'text-destructive'
                               }
                             >
-                              {deal.status}
+                              {deal.status === 'won'
+                                ? tDealStatus('won')
+                                : deal.status === 'lost'
+                                  ? tDealStatus('lost')
+                                  : deal.status}
                             </span>
                           )}
                         </div>

@@ -62,7 +62,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { useTranslations } from 'next-intl';
+import { useFormatter, useTranslations } from 'next-intl';
 import { RequireRole } from '@/components/auth/require-role';
 import { useAuth } from '@/hooks/use-auth';
 import { usePresence } from '@/hooks/use-presence';
@@ -102,13 +102,14 @@ const EDITABLE_ROLES: { value: AccountRole }[] = [
 
 // Per-role chip metadata (icon / label / colour) lives in the shared
 // ROLE_META module so this roster and the Overview identity chip can't
-// drift. The colour scale runs amber (owner — scarce, immutable) →
-// primary (admin) → muted (agent / viewer).
+// drift. The colour scale runs warning (owner — scarce, immutable) →
+// primary (admin) → muted (agent / viewer), all theme tokens.
 
-function fmtDate(iso: string): string {
-  // Match the rest of the dashboard's locale-light formatting.
-  const d = new Date(iso);
-  return d.toLocaleDateString(undefined, {
+type DateFormatter = ReturnType<typeof useFormatter>;
+
+function fmtDate(iso: string, format: DateFormatter): string {
+  // In the app's language (next-intl), not the browser's.
+  return format.dateTime(new Date(iso), {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
@@ -127,8 +128,13 @@ function fmtExpiresIn(iso: string, t: (key: string, values?: Record<string, stri
 export function MembersTab() {
   const t = useTranslations('Settings.members');
   const tRoles = useTranslations('Settings.roles');
+  const format = useFormatter();
   const { user, canManageMembers } = useAuth();
   const { getPresence, getRow, now } = usePresence();
+  // Revoking kills a link someone may be about to use, so it asks
+  // first (it used to fire on the first click).
+  const [revokingInvite, setRevokingInvite] = useState<Invitation | null>(null);
+  const [revokeBusy, setRevokeBusy] = useState(false);
 
   const [members, setMembers] = useState<Member[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
@@ -272,11 +278,35 @@ export function MembersTab() {
     }
   }
 
+  async function confirmRevoke() {
+    if (!revokingInvite) return;
+    setRevokeBusy(true);
+    await handleRevoke(revokingInvite);
+    setRevokeBusy(false);
+    setRevokingInvite(null);
+  }
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="size-6 animate-spin text-primary" />
-      </div>
+      <section className="space-y-6">
+        <SettingsPanelHead title={t('title')} description={t('description')} />
+        {/* Skeleton rows shaped like the roster (avatar, name, email, role). */}
+        <Card role="status">
+          <span className="sr-only">{t('loadingMembers')}</span>
+          <CardContent aria-hidden className="divide-y divide-border p-0">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="flex items-center gap-4 px-4 py-3">
+                <div className="size-9 shrink-0 animate-pulse rounded-full bg-muted" />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <div className="h-3 w-32 animate-pulse rounded-full bg-muted" />
+                  <div className="h-3 w-44 max-w-full animate-pulse rounded-full bg-muted" />
+                </div>
+                <div className="h-6 w-20 animate-pulse rounded-full bg-muted" />
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </section>
     );
   }
 
@@ -402,7 +432,7 @@ export function MembersTab() {
                   {/* Joined date stays desktop-only. The mobile row's
                       vertical density makes the joined date noise. */}
                   <div className="hidden sm:block text-right text-xs text-muted-foreground">
-                    {t('joined', { date: fmtDate(member.joined_at) })}
+                    {t('joined', { date: fmtDate(member.joined_at, format) })}
                   </div>
 
                   {/* Actions cluster. On mobile this is its own row
@@ -425,8 +455,11 @@ export function MembersTab() {
                         }
                       >
                         <SelectTrigger
-                          className="w-32 bg-muted border-border text-foreground"
+                          className="w-36"
                           disabled={isBusy}
+                          aria-label={t('roleSelectLabel', {
+                            name: member.full_name || t('unnamed'),
+                          })}
                         >
                           <SelectValue>{tRoles(member.role)}</SelectValue>
                         </SelectTrigger>
@@ -440,29 +473,28 @@ export function MembersTab() {
                       </Select>
                     ) : (
                       <span
-                        className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium ${roleMeta.className}`}
+                        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${roleMeta.className}`}
                       >
-                        <RoleIcon className="size-3.5" />
+                        <RoleIcon className="size-3.5" aria-hidden />
                         {tRoles(member.role)}
                       </span>
                     )}
 
                     {/* Remove. Admin+ only; never on the owner row;
-                        never on yourself. Pre-polish styling was
-                        neutral-default + red-on-hover — the
-                        destructive intent was invisible until the
-                        user moused over. Now red is the default
-                        state with a darker shade on hover so the
-                        affordance reads at-a-glance. */}
+                        never on yourself. Destructive tint by default
+                        so the intent reads at a glance; icon-only, so
+                        it carries a label naming who it removes. */}
                     {canManageMembers && !isOwnerRow && !isSelf && (
                       <Button
-                        variant="outline"
-                        size="sm"
+                        variant="destructive"
+                        size="icon"
                         onClick={() => setRemovingMember(member)}
                         disabled={isBusy}
-                        className="border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 hover:border-red-500/60 hover:text-red-200"
+                        aria-label={t('removeMemberLabel', {
+                          name: member.full_name || t('unnamed'),
+                        })}
                       >
-                        <Trash2 className="size-4" />
+                        <Trash2 className="size-4" aria-hidden />
                       </Button>
                     )}
                   </div>
@@ -521,33 +553,31 @@ export function MembersTab() {
                       className="flex items-center gap-4 px-4 py-3"
                     >
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-foreground">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="min-w-0 break-words text-sm font-medium text-foreground">
                             {inv.label || t('untitledInvite')}
                           </span>
                           <span
-                            className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium ${inviteRoleMeta.className}`}
+                            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${inviteRoleMeta.className}`}
                           >
-                            <InviteRoleIcon className="size-3" />
+                            <InviteRoleIcon className="size-3" aria-hidden />
                             {tRoles(inv.role)}
                           </span>
                         </div>
                         <p className="mt-0.5 text-xs text-muted-foreground">
-                          {t('created', { date: fmtDate(inv.created_at) })} · {fmtExpiresIn(inv.expires_at, t)}
+                          {t('created', { date: fmtDate(inv.created_at, format) })} · {fmtExpiresIn(inv.expires_at, t)}
                         </p>
                       </div>
 
-                      {/* Revoke: red default state, mirrors the
-                          members-tab Remove button. Pre-polish version
-                          read as a neutral secondary button until
-                          hover. */}
+                      {/* Revoke: destructive tint, mirrors the Remove
+                          button; asks for confirmation first. */}
                       <Button
-                        variant="outline"
+                        variant="destructive"
                         size="sm"
-                        onClick={() => handleRevoke(inv)}
-                        className="border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 hover:border-red-500/60 hover:text-red-200"
+                        onClick={() => setRevokingInvite(inv)}
+                        className="shrink-0"
                       >
-                        <MailX className="size-4" />
+                        <MailX className="size-4" aria-hidden />
                         {t('revoke')}
                       </Button>
                     </li>
@@ -575,7 +605,7 @@ export function MembersTab() {
         <DialogContent className="bg-popover border-border sm:max-w-sm">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-popover-foreground">
-              <AlertTriangle className="size-4 text-amber-400" />
+              <AlertTriangle className="size-4 text-destructive" aria-hidden />
               {t('removeDialogTitle')}
             </DialogTitle>
             <DialogDescription className="text-muted-foreground">
@@ -586,25 +616,62 @@ export function MembersTab() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="bg-popover border-border">
-            <Button
-              variant="outline"
-              onClick={() => setRemovingMember(null)}
-              className="border-border text-muted-foreground hover:bg-muted"
-            >
+            <Button variant="outline" onClick={() => setRemovingMember(null)}>
               {t('cancel')}
             </Button>
             <Button
+              variant="destructive"
               onClick={handleRemove}
               disabled={!!pendingMemberAction}
-              className="bg-red-600 hover:bg-red-700 text-white"
             >
               {pendingMemberAction ? (
                 <>
-                  <Loader2 className="size-4 animate-spin" />
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
                   {t('removing')}
                 </>
               ) : (
                 t('removeBtn')
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={revokingInvite !== null}
+        onOpenChange={(open) => {
+          if (!open && !revokeBusy) setRevokingInvite(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="size-4 text-destructive" aria-hidden />
+              {t('revokeDialogTitle')}
+            </DialogTitle>
+            <DialogDescription>
+              {t.rich('revokeDialogDesc', {
+                label: revokingInvite?.label || t('untitledInvite'),
+                bold: (chunks: React.ReactNode) => <strong>{chunks}</strong>,
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setRevokingInvite(null)}
+              disabled={revokeBusy}
+            >
+              {t('cancel')}
+            </Button>
+            <Button variant="destructive" onClick={confirmRevoke} disabled={revokeBusy}>
+              {revokeBusy ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
+                  {t('revoking')}
+                </>
+              ) : (
+                t('revokeBtn')
               )}
             </Button>
           </DialogFooter>

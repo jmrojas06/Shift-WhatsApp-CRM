@@ -3,21 +3,24 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
+import { ArrowLeft, CheckCircle, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { CardContent } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { MessageSquare, CheckCircle, ArrowLeft } from "lucide-react";
+  AuthAlert,
+  AuthCard,
+  AuthCardHeader,
+  AuthShell,
+} from "@/components/auth/auth-shell";
+import { authErrorKey } from "@/components/auth/auth-error";
 
 export default function ForgotPasswordPage() {
   const t = useTranslations("ForgotPasswordPage");
+  const tErrors = useTranslations("AuthErrors");
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -39,7 +42,7 @@ export default function ForgotPasswordPage() {
     });
 
     if (error) {
-      setError(error.message);
+      setError(tErrors(authErrorKey(error)));
       setLoading(false);
       return;
     }
@@ -50,92 +53,78 @@ export default function ForgotPasswordPage() {
 
   if (success) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4">
-        <Card className="w-full max-w-md border-border bg-card">
-          <CardHeader className="items-center text-center">
-            <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-              <CheckCircle className="h-6 w-6 text-primary" />
-            </div>
-            <CardTitle className="text-xl text-foreground">
-              {t("checkEmailTitle")}
-            </CardTitle>
-            <CardDescription className="text-muted-foreground">
-              {t.rich("checkEmailDesc", {
-                email,
-                strong: (chunks) => (
-                  <span className="text-foreground">{chunks}</span>
-                ),
-              })}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Link href="/login">
-              <Button
-                variant="outline"
-                className="w-full border-border text-muted-foreground hover:bg-muted hover:text-foreground"
-              >
-                {t("backToSignIn")}
-              </Button>
+      <AuthShell>
+        <AuthCard>
+          <AuthCardHeader
+            icon={CheckCircle}
+            tone="success"
+            title={t("checkEmailTitle")}
+            description={t.rich("checkEmailDesc", {
+              email,
+              strong: (chunks) => (
+                <span className="font-medium text-foreground">{chunks}</span>
+              ),
+            })}
+          />
+          <CardContent className="px-6">
+            <Link
+              href="/login"
+              className={cn(buttonVariants({ variant: "outline", size: "lg" }), "w-full")}
+            >
+              {t("backToSignIn")}
             </Link>
           </CardContent>
-        </Card>
-      </div>
+        </AuthCard>
+      </AuthShell>
     );
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-md border-border bg-card">
-        <CardHeader className="items-center text-center">
-          <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-            <MessageSquare className="h-6 w-6 text-primary" />
-          </div>
-          <CardTitle className="text-xl text-foreground">{t("title")}</CardTitle>
-          <CardDescription className="text-muted-foreground">
-            {t("desc")}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+    <AuthShell>
+      <AuthCard>
+        <AuthCardHeader title={t("title")} description={t("desc")} />
+        <CardContent className="px-6">
           <form onSubmit={handleReset} className="flex flex-col gap-4">
-            {error && (
-              <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">
-                {error}
-              </div>
-            )}
+            {error && <AuthAlert>{error}</AuthAlert>}
 
             <div className="flex flex-col gap-2">
-              <Label htmlFor="email" className="text-muted-foreground">
-                {t("emailLabel")}
-              </Label>
+              <Label htmlFor="email">{t("emailLabel")}</Label>
               <Input
                 id="email"
                 type="email"
+                autoComplete="email"
+                inputMode="email"
                 placeholder={t("emailPlaceholder")}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
               />
             </div>
 
-            <Button
-              type="submit"
-              disabled={loading}
-              className="mt-2 h-10 w-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-            >
-              {loading ? t("sending") : t("sendLink")}
+            <Button type="submit" size="lg" disabled={loading} className="mt-2 w-full">
+              {loading ? (
+                <>
+                  <Loader2 className="animate-spin" aria-hidden />
+                  {t("sending")}
+                </>
+              ) : (
+                t("sendLink")
+              )}
             </Button>
           </form>
 
           <Link
             href="/login"
-            className="mt-6 flex items-center justify-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+            className={cn(
+              buttonVariants({ variant: "ghost", size: "lg" }),
+              "mt-4 w-full text-muted-foreground",
+            )}
           >
-            <ArrowLeft className="h-4 w-4" />
+            <ArrowLeft aria-hidden />
             {t("backToSignIn")}
           </Link>
         </CardContent>
-      </Card>
-    </div>
+      </AuthCard>
+    </AuthShell>
   );
 }

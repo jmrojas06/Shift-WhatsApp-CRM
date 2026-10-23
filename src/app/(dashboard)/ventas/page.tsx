@@ -20,11 +20,11 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { X } from 'lucide-react'
+import { ShoppingBag, X } from 'lucide-react'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { NoticeResultAlert } from '@/components/ventas/notice-result'
 import { useAuth } from '@/hooks/use-auth'
 import { createClient } from '@/lib/supabase/client'
@@ -277,8 +277,8 @@ function VentasPageInner() {
   }
 
   const header = (
-    <div>
-      <h1 className="text-2xl font-bold text-foreground">{T.title}</h1>
+    <div className="min-w-0">
+      <h1 className="text-2xl font-semibold text-foreground">{T.title}</h1>
       <p className="mt-1 text-sm text-muted-foreground">{T.subtitle}</p>
     </div>
   )
@@ -287,12 +287,14 @@ function VentasPageInner() {
     return (
       <div className="space-y-6">
         {header}
-        <Card>
-          <CardHeader>
-            <CardTitle>{T.notEnabledTitle}</CardTitle>
-            <CardDescription>{T.notEnabledBody}</CardDescription>
-          </CardHeader>
-        </Card>
+        {/* Estado vacío tranquilo: alguien entró por URL directa sin el módulo. */}
+        <div className="flex flex-col items-center rounded-xl border border-dashed border-border bg-card px-6 py-12 text-center">
+          <span className="flex size-12 items-center justify-center rounded-full bg-muted">
+            <ShoppingBag className="size-6 text-muted-foreground" aria-hidden="true" />
+          </span>
+          <h2 className="mt-4 text-[15px] font-semibold text-foreground">{T.notEnabledTitle}</h2>
+          <p className="mt-1 max-w-sm text-sm text-muted-foreground">{T.notEnabledBody}</p>
+        </div>
       </div>
     )
   }
@@ -324,7 +326,7 @@ function VentasPageInner() {
       <Card>
         <CardHeader>
           <CardTitle>
-            <h2>{T.ordersTitle}</h2>
+            <h2 className="text-[15px] font-semibold">{T.ordersTitle}</h2>
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -338,7 +340,7 @@ function VentasPageInner() {
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="size-11 shrink-0 rounded-full sm:size-7"
+                  className="size-7 shrink-0 rounded-full max-sm:size-11 pointer-coarse:size-11"
                   aria-label={T.contactFilter.remove}
                   title={T.contactFilter.remove}
                   onClick={() => router.replace(ventasUrlWithout(searchParams, 'contacto'))}
@@ -388,7 +390,7 @@ function VentasPageInner() {
                   type="button"
                   size="sm"
                   variant="outline"
-                  className="h-11 sm:h-8"
+                  className="max-sm:h-11 pointer-coarse:h-11"
                   onClick={() => void loadOrders()}
                 >
                   {T.actions.retry}

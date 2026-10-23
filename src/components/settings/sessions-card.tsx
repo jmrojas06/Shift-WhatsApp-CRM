@@ -53,7 +53,7 @@ export function SessionsCard() {
     <>
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-foreground">
+          <CardTitle className="flex items-center gap-2 text-[15px] font-semibold text-foreground">
             <LogOut className="size-4 text-primary" />
             {t('sessionsTitle')}
           </CardTitle>

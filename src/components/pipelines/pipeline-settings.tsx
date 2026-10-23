@@ -208,10 +208,10 @@ export function PipelineSettings({
 
         {showDeleteConfirm ? (
           <div className="py-4">
-            <div className="flex items-center gap-3 rounded-lg border border-red-500/30 bg-red-500/10 p-4">
-              <AlertTriangle className="h-5 w-5 shrink-0 text-red-400" />
+            <div className="flex items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-4">
+              <AlertTriangle aria-hidden className="size-5 shrink-0 text-destructive" />
               <div>
-                <p className="text-sm font-medium text-red-400">
+                <p className="text-sm font-medium text-destructive">
                   {t("deletePipeline")}
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -228,9 +228,9 @@ export function PipelineSettings({
                 {t("cancel")}
               </Button>
               <Button
+                variant="destructive"
                 onClick={handleDeletePipeline}
                 disabled={deleting}
-                className="bg-red-600 text-white hover:bg-red-700"
               >
                 {deleting ? t("deleting") : t("deletePipelineBtn")}
               </Button>
@@ -337,8 +337,9 @@ export function PipelineSettings({
 
             <DialogFooter className="border-border bg-popover/50">
               <Button
+                variant="destructive"
                 onClick={() => setShowDeleteConfirm(true)}
-                className="mr-auto bg-red-600 text-white hover:bg-red-700"
+                className="mr-auto"
               >
                 {t("deletePipeline")}
               </Button>
@@ -414,7 +415,8 @@ function SortableStageRow({
         variant="ghost"
         size="icon-xs"
         onClick={onRemove}
-        className="text-muted-foreground hover:text-red-400"
+        aria-label={t("removeStage", { name: stage.name })}
+        className="text-muted-foreground hover:text-destructive"
       >
         <Trash2 className="h-3 w-3" />
       </Button>
@@ -456,6 +458,8 @@ function ColorSwatch({
                   onChange(c);
                   setOpen(false);
                 }}
+                aria-label={t("pickColor", { color: c })}
+                aria-pressed={c === value}
                 className="h-5 w-5 rounded-full border-2 transition-transform hover:scale-110"
                 style={{
                   backgroundColor: c,

@@ -263,10 +263,11 @@ export function TemplatePicker({
             </div>
             {slots && slots.headerVarCount > 0 && (
               <div className="space-y-1">
-                <Label className="text-xs text-popover-foreground">
+                <Label htmlFor="tpl-header-var" className="text-xs text-popover-foreground">
                   {t("headerVarLabel", { var: "{{1}}" })}
                 </Label>
                 <Input
+                  id="tpl-header-var"
                   value={headerText}
                   onChange={(e) => setHeaderText(e.target.value)}
                   placeholder={t("headerValuePlaceholder")}
@@ -276,8 +277,9 @@ export function TemplatePicker({
             )}
             {slots?.bodyVars.map((v, i) => (
               <div key={v} className="space-y-1">
-                <Label className="text-xs text-popover-foreground">{t("bodyVarLabel", { var: `{{${v}}}` })}</Label>
+                <Label htmlFor={`tpl-body-var-${v}`} className="text-xs text-popover-foreground">{t("bodyVarLabel", { var: `{{${v}}}` })}</Label>
                 <Input
+                  id={`tpl-body-var-${v}`}
                   value={params[i] ?? ""}
                   onChange={(e) => {
                     const next = [...params];
@@ -291,10 +293,11 @@ export function TemplatePicker({
             ))}
             {slots?.urlButtonSlots.map((slot) => (
               <div key={slot.index} className="space-y-1">
-                <Label className="text-xs text-popover-foreground">
+                <Label htmlFor={`tpl-url-var-${slot.index}`} className="text-xs text-popover-foreground">
                   {t("urlButtonVarLabel", { text: slot.text, var: "{{1}}" })}
                 </Label>
                 <Input
+                  id={`tpl-url-var-${slot.index}`}
                   value={buttonParams[slot.index] ?? ""}
                   onChange={(e) =>
                     setButtonParams((prev) => ({
