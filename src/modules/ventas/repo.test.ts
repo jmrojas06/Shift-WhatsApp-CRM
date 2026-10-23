@@ -16,6 +16,7 @@ import {
   saveSalesSettings,
   updateOrderStatus,
 } from './repo'
+import { stubCreateOrder } from './testing/create-order-stub'
 
 // ============================================================
 // Repositorio de Ventas contra el fake de PostgREST. `create_order`
@@ -54,65 +55,6 @@ function input(overrides: Partial<ValidOrderCreate> = {}): ValidOrderCreate {
     notes: null,
     ...overrides,
   }
-}
-
-/**
- * Simula `create_order`: guarda el pedido y sus líneas en las tablas de
- * `target` (la base que ve el servidor) con lo que calcularía la función.
- */
-function stubCreateOrder(rpcDb: FakeDb, target: FakeDb = rpcDb) {
-  rpcDb._onRpc('create_order', (args) => {
-    const items = args.p_items as { name: string; quantity: number; unit_price: number }[]
-    const subtotal = items.reduce((sum, i) => sum + i.quantity * i.unit_price, 0)
-    const shipping = (args.p_shipping as number) ?? 0
-    const paid = args.p_paid === true
-    const fields = (args.p_fields ?? {}) as Record<string, string | null>
-    const number = 1001 + (target._tables.orders ?? []).length
-    const order: Row = {
-      id: ORDER_ID,
-      account_id: args.p_account_id,
-      number,
-      contact_id: args.p_contact_id,
-      customer_name: 'Ana',
-      customer_phone: '573001112233',
-      conversation_id: args.p_conversation_id,
-      deal_id: null,
-      subtotal,
-      shipping,
-      total: subtotal + shipping,
-      currency: 'COP',
-      payment_status: paid ? 'paid' : 'pending',
-      status: 'new',
-      city: fields.city ?? null,
-      address: fields.address ?? null,
-      id_number: fields.id_number ?? null,
-      carrier: null,
-      tracking_number: null,
-      notes: fields.notes ?? null,
-      last_notice: null,
-      last_notice_error: null,
-      created_by: USER,
-      paid_at: paid ? NOW.toISOString() : null,
-      shipped_at: null,
-      delivered_at: null,
-      cancelled_at: null,
-      created_at: NOW.toISOString(),
-      updated_at: NOW.toISOString(),
-    }
-    ;(target._tables.orders ??= []).push(order)
-    items.forEach((item, position) => {
-      ;(target._tables.order_items ??= []).push({
-        id: `item-${position}`,
-        order_id: order.id,
-        account_id: args.p_account_id,
-        name: item.name,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-        position,
-      })
-    })
-    return { data: { ...order }, error: null }
-  })
 }
 
 function pipelineSeed(): Record<string, Row[]> {
