@@ -243,6 +243,10 @@ Commit: `feat(ventas): order domain rules`.
 - `ensureSalesPipeline(db, accountId)`: crea (si no existe por nombre "Ventas", sin importar
   mayúsculas) el pipeline con etapas Nuevo, Pago pendiente, Pagado, Enviado, Entregado, Cancelado;
   rellena etapas faltantes. Idempotente. Usa el mismo patrón que el instalador de la agenda.
+
+  > **Nota posterior (5364167):** la etapa «Nuevo» ya no se crea (ningún pedido la usaba). Etapas
+  > actuales: Pago pendiente, Pagado, Enviado, Entregado, Cancelado; un pipeline que ya tenga
+  > «Nuevo» la conserva sin usarla. El pipeline se crea con el primer pedido. Ver §8 del diseño.
 - `createOrder(db, ctx, input)`: llama RPC `create_order`; luego (best-effort, nunca deshace el
   pedido) crea el negocio en el pipeline Ventas (título `Pedido #N`, valor = total, moneda,
   contacto, conversación, etapa según `pipelineStageFor`) y guarda `deal_id`. Si falla el negocio,
@@ -284,6 +288,12 @@ Commit: `feat(ventas): orders API`.
 - Respeta `WHATSAPP_TEMPLATES_DRY_RUN` si el resto del código lo respeta.
 - Tests con senders falsos: ventana abierta → texto; cerrada → plantilla con variables correctas;
   error de Meta → `failed` y `last_notice_error`; ajuste apagado → `skipped`.
+
+> **Nota posterior (5364167):** el texto libre ya no tiene redacción propia: es el cuerpo de la
+> plantilla (`NOTICE_TEMPLATE_BODIES`) con sus variables puestas, así que dentro y fuera de la
+> ventana el cliente lee lo mismo. El aviso de pago ya no dice «te avisamos cuando salga»
+> (contraentrega) y `pedido_enviado` lleva más texto fijo. `WHATSAPP_TEMPLATES_DRY_RUN` no aplica a
+> los avisos (ningún envío de mensajes lo mira). Ver §8 del diseño y `docs/ventas.md`.
 
 Commit: `feat(ventas): order status notices`.
 

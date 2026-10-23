@@ -91,6 +91,9 @@ quienes venden); nadie borra (se cancela). `sales_settings`: solo owner/admin es
 Al activar el módulo, un instalador crea el pipeline **Ventas** con etapas:
 Nuevo → Pago pendiente → Pagado → Enviado → Entregado, más **Cancelado**.
 
+> Actualizado en la implementación (§8): el pipeline se crea con el primer pedido y sin la etapa
+> «Nuevo».
+
 | Pedido | Etapa del negocio |
 | --- | --- |
 | creado, `payment_status = pending` | Pago pendiente |
@@ -135,6 +138,10 @@ no se reabre (se crea otro).
 | Pagado | "¡Recibimos tu pago! Tu pedido #{n} está confirmado. Te avisamos cuando salga. 🙌" | `pedido_pagado` (1: negocio, 2: número) |
 | Enviado | "Tu pedido #{n} salió 📦. Transportadora: {carrier}. Guía: {guía}." | `pedido_enviado` (1: número, 2: transportadora, 3: guía) |
 | Entregado | "Tu pedido #{n} fue entregado. ¡Gracias por comprarnos! 🙌" | `pedido_entregado` (1: número) |
+
+> Actualizado en la implementación (§8): los textos de esta tabla son los del diseño original. El
+> texto libre y la plantilla ahora son iguales y salen de `NOTICE_TEMPLATE_BODIES`; las variables
+> siguen siendo las de la tabla.
 
 - Mismo mecanismo que los recordatorios de la Agenda: si el cliente escribió en las últimas 24 h
   se envía texto; si no, la plantilla. Las 3 plantillas las crea el usuario en WhatsApp Manager
@@ -193,27 +200,39 @@ de uso es `docs/ventas.md` y el despliegue `docs/ventas-despliegue.md`.
   También agrega al final las etapas que falten.
 - **Etapa «Nuevo» (§3.2):** ya no se crea. Ningún pedido la usaba (un pedido nace en «Pago
   pendiente» o «Pagado»). Etapas: Pago pendiente → Pagado → Enviado → Entregado, más Cancelado.
-  (Cambio en curso en el código al escribir esto.)
+  Un pipeline «Ventas» que ya tenga una etapa «Nuevo» la conserva, pero ningún pedido la usa.
 - **Plantilla no aprobada (§3.5):** fuera de la ventana de 24 h el aviso **se intenta igual** por
   plantilla; si Meta lo rechaza (por ejemplo, plantilla no aprobada), el pedido guarda el fallo con
   su motivo. Nunca se omite en silencio. Solo un interruptor apagado deja de intentar el aviso.
 - **Etiqueta de fallo (§3.5):** es **«Aviso sin mandar»** (no «aviso no enviado»: en Ventas
   «enviado» es el estado del paquete). Solo se guarda el **último** aviso intentado
   (`last_notice`, `last_notice_error`) y **no hay reintento automático**.
-- **Aviso de pago (§3.5):** ya no dice «te avisamos cuando salga», porque el pago puede llegar
-  después del envío (contraentrega: «Marcar pagado» vale en cualquier estado no cancelado). El texto
-  libre y la plantilla `pedido_pagado` comparten la misma redacción. El texto exacto de las tres
-  plantillas vive en `NOTICE_TEMPLATE_BODIES` (`src/modules/ventas/texts.ts`); la tabla de §3.5
-  queda solo como referencia de las variables.
-- **Plantilla `pedido_enviado` (§3.5):** lleva más texto fijo alrededor de sus 3 variables para
-  bajar el riesgo de que Meta la rechace por «demasiadas variables para la longitud».
+- **Una sola redacción por aviso (§3.5):** el mensaje libre dentro de la ventana es exactamente el
+  cuerpo de la plantilla con sus variables puestas (incluido el nombre del negocio en el aviso de
+  pago), así que el cliente lee lo mismo por los dos caminos. La fuente única es
+  `NOTICE_TEMPLATE_BODIES` (`src/modules/ventas/texts.ts`); los textos de la tabla de §3.5 quedan
+  como historia y solo valen sus variables. Cuerpos actuales:
+  - `pedido_pagado`: «¡Hola! {{1}} recibió tu pago. Tu pedido #{{2}} está confirmado. ¡Gracias por
+    tu compra! 🙌». Ya no dice «te avisamos cuando salga», porque el pago puede llegar después del
+    envío (contraentrega: «Marcar pagado» vale en cualquier estado no cancelado).
+  - `pedido_enviado`: «¡Hola! Tu pedido #{{1}} ya va en camino 📦. Lo lleva {{2}} con el número de
+    guía {{3}}. Puedes rastrearlo en la página de la transportadora.». Lleva más texto fijo
+    alrededor de sus 3 variables para bajar el riesgo de que Meta la rechace por «demasiadas
+    variables para la longitud».
+  - `pedido_entregado`: «¡Hola! Tu pedido #{{1}} fue entregado. ¡Gracias por comprarnos! 🙌».
 - **Retiro en tienda (§3.2):** además de `new → shipped → delivered`, se permite
   `new → delivered` (retiro en tienda o entrega local sin guía), con aviso de entrega.
 - **Activación (§2.1):** como el código lee `modules` antes que `vertical_key`, activar Ventas con
   un `array_append` a secas en una cuenta con `modules` vacío le quitaría la agenda. La activación
   usa una sentencia única que conserva la agenda (`docs/ventas.md` → «Activar») y el onboarding de
-  la agenda fija `vertical_key` y `modules` a la vez (`docs/onboarding-cliente.md`).
+  la agenda fija `vertical_key` y `modules` a la vez (`docs/onboarding-cliente.md`). Además, la 053
+  trae el trigger `accounts_sync_modules` (`sync_account_modules_from_vertical()`): al crear una
+  cuenta o escribir su `vertical_key` o `modules`, si `modules` queda vacío lo llena desde
+  `vertical_key` (`barberia` → `agenda`).
 - **Límites conocidos:** la transportadora y la guía **no se pueden corregir** desde la pantalla
   después de marcar enviado; la lista y la búsqueda de `/ventas` cubren solo los **500 pedidos más
   recientes** (uno más viejo se abre con `?pedido=<número>`), y el resumen lee como máximo 1.000
-  filas (avisa si se llega al tope).
+  filas, de la más reciente a la más vieja (si se llega al tope quedan por fuera las más viejas y
+  la pantalla lo avisa).
+- **Montos en el formulario:** con más de 2 decimales el campo se deja como se escribió (no se
+  redondea) y al guardar sale «… admite máximo 2 decimales.».

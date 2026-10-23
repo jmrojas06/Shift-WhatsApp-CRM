@@ -73,10 +73,13 @@ Supabase → **SQL Editor** de producción.
    `modules` trae algo, **manda `modules`**; solo si está vacío mira
    `vertical_key`. Una cuenta con agenda que tenga `vertical_key =
    'agenda'` (o `'barberia'`) pero `modules` vacío (`{}`) perdería la
-   Agenda (menú y bot) al quedar `modules = {ventas}`. Esto pasa, por
-   ejemplo, con una cuenta activada después de la 053 con el SQL de
-   una versión vieja de `docs/onboarding-cliente.md`, que solo fijaba
-   `vertical_key`.
+   Agenda (menú y bot) al quedar `modules = {ventas}`. La 053 cierra
+   casi todo ese hueco: rellena `modules` en las cuentas de agenda que
+   ya existían y trae el trigger `accounts_sync_modules`, que llena un
+   `modules` vacío a partir de `vertical_key` cada vez que se crea una
+   cuenta o se escribe su `vertical_key` o `modules` (ver
+   `docs/ventas-despliegue.md`, paso 2). Aun así, la sentencia del paso
+   3 no depende de eso.
 
 3. Activa Ventas con **una sola sentencia que conserva la agenda**:
 
@@ -117,6 +120,11 @@ crearse; y crea las **3 plantillas de Meta** en su WABA (sección 6).
 update accounts set modules = array_remove(modules, 'ventas')
 where id = '<uuid-de-la-cuenta>';
 ```
+
+Si `ventas` era el único módulo y la cuenta tiene `vertical_key`, el
+trigger `accounts_sync_modules` vuelve a llenar `modules` desde
+`vertical_key` (por ejemplo `{agenda}`): es lo mismo que el código
+leería de todas formas.
 
 Qué pasa al desactivar:
 
@@ -196,6 +204,12 @@ Regla: un solo separador seguido de exactamente 3 dígitos es de miles
 el último es el decimal. Lo que no se pueda leer se deja tal cual y al
 guardar sale el error en el campo.
 
+**Más de 2 decimales no se redondea.** Si escribes `0,125` o `1.500,999`,
+al salir del campo el valor **se queda tal como lo escribiste** (nunca se
+redondea a escondidas) y, al guardar, el formulario marca el campo con
+«el precio admite máximo 2 decimales.» (o «El envío admite máximo 2
+decimales.»).
+
 Al guardar aparece «Pedido #1001 creado.», el resultado del aviso (si
 hubo) y dos botones: **Crear otro pedido** y **Listo**.
 
@@ -222,9 +236,10 @@ mezclan pesos con dólares.
 
 **Límite de 1.000 filas.** Para el resumen se leen como máximo **1.000
 pedidos**: los pagados o creados desde el inicio del mes, más todos los
-pendientes de cobro. Si se llega al tope, la pantalla avisa «El resumen
-solo cuenta los primeros 1000 pedidos del mes: las cifras pueden estar
-incompletas.».
+pendientes de cobro, del más reciente al más viejo (por fecha de
+creación). Si se llega al tope, quedan por fuera los más viejos y la
+pantalla avisa «El resumen solo cuenta los primeros 1000 pedidos del mes:
+las cifras pueden estar incompletas.».
 
 ### Lista, filtros y búsqueda
 
@@ -336,17 +351,19 @@ aunque el asesor no pueda crear pipelines.
 - **Cuándo se crea el pipeline:** con el **primer pedido** de la cuenta
   (no al activar el módulo). Si ya existe uno llamado «Ventas» (sin
   importar mayúsculas ni espacios), se usa ese.
-- **Etapas:** Nuevo → Pago pendiente → Pagado → Enviado → Entregado, más
-  Cancelado. Si al pipeline le falta alguna, se agrega al final en el
-  siguiente pedido; las etapas propias del dueño se respetan. La etapa
-  «Nuevo» queda para uso manual: ningún pedido la usa.
+- **Etapas (cinco):** Pago pendiente → Pagado → Enviado → Entregado, más
+  Cancelado. Un pedido nace en «Pago pendiente» o en «Pagado», así que
+  no hay etapa de pedido nuevo. Si al pipeline le falta alguna, se
+  agrega al final en el siguiente pedido; las etapas propias del dueño se
+  respetan. Un pipeline «Ventas» que ya tenga una etapa «Nuevo» (de una
+  versión anterior) la conserva, pero ningún pedido la usa.
 
 Cómo se mueve el negocio:
 
 | Pedido | Etapa | Estado del negocio |
 | --- | --- | --- |
-| Sin pagar, estado Nuevo | Pago pendiente | Abierto |
-| Pagado, estado Nuevo | Pagado | Abierto |
+| Sin pagar, sin enviar (estado del pedido «Nuevo») | Pago pendiente | Abierto |
+| Pagado, sin enviar (estado del pedido «Nuevo») | Pagado | Abierto |
 | Enviado (pagado o no) | Enviado | Abierto |
 | Entregado | Entregado | **Ganado** |
 | Cancelado | Cancelado | **Perdido** |
@@ -390,15 +407,30 @@ WhatsApp solo deja mandar mensajes libres si el cliente escribió en las
 recordatorios de la agenda:
 
 - **El cliente escribió en las últimas 24 h** (hay un mensaje suyo en
-  esa conversación) → **mensaje libre**:
-  - Pago: «¡Recibimos tu pago! Tu pedido #1001 está confirmado. Te
-    avisamos cuando salga. 🙌»
-  - Envío: «Tu pedido #1001 salió 📦. Transportadora: Servientrega.
-    Guía: 700012345678.»
-  - Entrega: «Tu pedido #1001 fue entregado. ¡Gracias por comprarnos!
-    🙌»
+  esa conversación) → **mensaje libre**.
 - **Si no** → **plantilla aprobada por Meta** (`pedido_pagado`,
   `pedido_enviado` o `pedido_entregado`, idioma `es`).
+
+**El texto es el mismo por los dos caminos.** El mensaje libre es
+exactamente el cuerpo de la plantilla con sus variables puestas
+(incluido el nombre del negocio en el aviso de pago), así que el cliente
+lee lo mismo dentro o fuera de la ventana. Por ejemplo, para el pedido
+#1001 de «Tienda Ejemplo», enviado con Coordinadora y guía
+`700012345678`:
+
+- Pago: «¡Hola! Tienda Ejemplo recibió tu pago. Tu pedido #1001 está
+  confirmado. ¡Gracias por tu compra! 🙌»
+- Envío: «¡Hola! Tu pedido #1001 ya va en camino 📦. Lo lleva
+  Coordinadora con el número de guía 700012345678. Puedes rastrearlo en
+  la página de la transportadora.»
+- Entrega: «¡Hola! Tu pedido #1001 fue entregado. ¡Gracias por
+  comprarnos! 🙌»
+
+Si la cuenta no tiene nombre, el aviso de pago dice «tu tienda»; si
+falta la transportadora o la guía, va un `-`.
+
+Otros detalles del envío:
+
 - **Respaldo 131047:** si el sistema creía la ventana abierta pero Meta
   responde con el error **131047** («fuera de la ventana de 24 h»), el
   mismo aviso se reintenta enseguida **por plantilla**.
@@ -464,10 +496,11 @@ Las tres van con **categoría Utilidad (Utility)**, **idioma Español
 nombre, el idioma y el cuerpo deben coincidir **exactamente** con el
 código: `NOTICE_TEMPLATES` y `NOTICE_TEMPLATE_BODIES` en
 `src/modules/ventas/texts.ts`, y `NOTICE_TEMPLATE_LANGUAGE = 'es'` en
-`src/modules/ventas/notify.ts`. El sistema guarda en la conversación el
-cuerpo de `NOTICE_TEMPLATE_BODIES` con las variables puestas, así que si
-el texto de Meta es otro, la bandeja mostraría algo distinto de lo que
-recibió el cliente.
+`src/modules/ventas/notify.ts`. `NOTICE_TEMPLATE_BODIES` es la fuente
+única del texto: de ahí sale también el mensaje libre dentro de la
+ventana, y es lo que el sistema guarda en la conversación. Si el texto de
+Meta es otro, el cliente recibiría por plantilla algo distinto de lo que
+muestra la bandeja y de lo que recibe dentro de la ventana.
 
 **1) `pedido_pagado`**
 
@@ -480,8 +513,11 @@ recibió el cliente.
 Cuerpo (copiar tal cual):
 
 ```
-¡Hola! {{1}} recibió tu pago. Tu pedido #{{2}} está confirmado y te avisamos cuando salga. 🙌
+¡Hola! {{1}} recibió tu pago. Tu pedido #{{2}} está confirmado. ¡Gracias por tu compra! 🙌
 ```
+
+No promete «te avisamos cuando salga» a propósito: el pago puede llegar
+después del envío (contraentrega).
 
 | Variable | Contenido | Ejemplo para Meta |
 | --- | --- | --- |
@@ -499,13 +535,13 @@ Cuerpo (copiar tal cual):
 Cuerpo (copiar tal cual):
 
 ```
-Tu pedido #{{1}} salió 📦. Transportadora: {{2}}. Guía: {{3}}.
+¡Hola! Tu pedido #{{1}} ya va en camino 📦. Lo lleva {{2}} con el número de guía {{3}}. Puedes rastrearlo en la página de la transportadora.
 ```
 
 | Variable | Contenido | Ejemplo para Meta |
 | --- | --- | --- |
 | `{{1}}` | Número del pedido, sin `#` | `1001` |
-| `{{2}}` | Transportadora (hasta 60 caracteres; vacía → `-`) | `Servientrega` |
+| `{{2}}` | Transportadora (hasta 60 caracteres; vacía → `-`) | `Coordinadora` |
 | `{{3}}` | Número de guía (hasta 60 caracteres; vacío → `-`) | `700012345678` |
 
 **3) `pedido_entregado`**
@@ -519,7 +555,7 @@ Tu pedido #{{1}} salió 📦. Transportadora: {{2}}. Guía: {{3}}.
 Cuerpo (copiar tal cual):
 
 ```
-Tu pedido #{{1}} fue entregado. ¡Gracias por comprarnos! 🙌
+¡Hola! Tu pedido #{{1}} fue entregado. ¡Gracias por comprarnos! 🙌
 ```
 
 | Variable | Contenido | Ejemplo para Meta |
@@ -554,14 +590,14 @@ Tu pedido #{{1}} fue entregado. ¡Gracias por comprarnos! 🙌
 11. Cuando esté **Activa / Aprobada**, prueba un aviso fuera de la
     ventana (ver `docs/ventas-despliegue.md`).
 
-> **Ojo con `pedido_enviado`.** Tiene **3 variables en un cuerpo
-> corto**, y Meta a veces rechaza plantillas con «demasiadas variables
-> para la longitud del mensaje». Si pasa, agrega texto **fijo** (por
-> ejemplo «Puedes rastrearlo con la transportadora.») **en los dos
-> sitios a la vez**: en el cuerpo de Meta **y** en
+> **Ojo con `pedido_enviado`.** Tiene **3 variables**, y Meta a veces
+> rechaza plantillas con «demasiadas variables para la longitud del
+> mensaje». Por eso el cuerpo ya trae texto fijo alrededor de las
+> variables. Si aun así Meta la rechaza, agrega más texto **fijo** **en
+> los dos sitios a la vez**: en el cuerpo de Meta **y** en
 > `NOTICE_TEMPLATE_BODIES.shipped` de `src/modules/ventas/texts.ts`
-> (con su prueba). Deben coincidir; cambiar solo uno deja la bandeja
-> mostrando un texto distinto del que llegó.
+> (con su prueba). Deben coincidir; cambiar solo uno hace que el aviso
+> por plantilla no coincida con el mensaje libre ni con la bandeja.
 
 > **No edites una plantilla ya aprobada** que esté en uso: mientras Meta
 > revisa la edición, los envíos con esa plantilla pueden fallar. Si hay

@@ -89,9 +89,31 @@ Copia el resultado (por ejemplo, en una nota) antes de seguir.
 idempotente: agrega la función `valid_module_keys`, la columna
 `accounts.modules` (lista de texto, vacía por defecto) con su
 restricción, rellena `modules` con `agenda` en las cuentas cuyo
-`vertical_key` es `agenda` o `barberia`, y amplía la protección de la 050
-a `modules`. No borra ni reescribe columnas. El código viejo no la lee,
-así que es segura con el código actual en producción.
+`vertical_key` es `agenda` o `barberia`, amplía la protección de la 050
+a `modules` y crea el trigger `accounts_sync_modules` (abajo). No borra
+ni reescribe columnas. El código viejo no la lee, así que es segura con
+el código actual en producción.
+
+**El trigger `accounts_sync_modules`.** Corre antes de guardar una fila
+de `accounts`, al **crearla** o al **escribir su `vertical_key` o
+`modules`**, y llama a la función `sync_account_modules_from_vertical()`:
+si la cuenta tiene `vertical_key` y `modules` está **vacío**, llena
+`modules` a partir de `vertical_key` (`barberia` se convierte en
+`agenda`). Si `modules` ya trae algo, no lo toca. Así una cuenta dada de
+alta solo con `vertical_key` recibe también `modules`, y agregarle
+`ventas` después nunca le quita la agenda.
+
+- Corre con los permisos de quien escribe (`SECURITY INVOKER`) y su
+  nombre va **antes** que el guardia de la 050 (los triggers `BEFORE`
+  corren en orden alfabético): si un usuario de la app manda
+  `vertical_key`, el guardia ve el `modules` ya llenado y bloquea el
+  cambio igual.
+- **El SQL de onboarding sigue funcionando** tal cual
+  (`docs/onboarding-cliente.md`): ese SQL ya pone `agenda` en `modules`,
+  así que el trigger no tiene nada que llenar.
+- Si se le quita a una cuenta su único módulo y la cuenta tiene
+  `vertical_key`, el trigger vuelve a llenar `modules` desde
+  `vertical_key`.
 
 1. Supabase → **SQL Editor** → nueva consulta.
 2. Pega esto, con el contenido de la 053 en medio:
@@ -126,6 +148,37 @@ select count(*)
 from accounts
 where vertical_key in ('agenda', 'barberia')
   and not ('agenda' = any(modules));
+```
+
+**Verificar el trigger `accounts_sync_modules`:**
+
+```sql
+select
+  to_regprocedure('public.sync_account_modules_from_vertical()') is not null as funcion_existe,
+  (select prosecdef from pg_proc
+   where oid = to_regprocedure('public.sync_account_modules_from_vertical()')) as security_definer,
+  exists (
+    select 1 from pg_trigger
+    where tgrelid = 'public.accounts'::regclass
+      and tgname = 'accounts_sync_modules'
+      and not tgisinternal
+  ) as trigger_existe;
+```
+
+Lo esperado: `funcion_existe = true`, `security_definer = false` y
+`trigger_existe = true`.
+
+Prueba en vivo (opcional; se deshace al final): vacía `modules` de la
+cuenta smoke dentro de una transacción y mira cómo el trigger lo vuelve a
+llenar desde `vertical_key`.
+
+```sql
+BEGIN;
+update accounts set modules = '{}'
+where id = '206d8a50-1fb4-44ab-9633-a02a2e07185b';
+select vertical_key, modules from accounts
+where id = '206d8a50-1fb4-44ab-9633-a02a2e07185b';   -- modules = {agenda}
+ROLLBACK;
 ```
 
 **Verificar la protección (estructura):**
@@ -380,20 +433,28 @@ Pedido principal (inbox en el **computador**):
    `PRUEBA`, dirección `PRUEBA — borrar`, sin cédula, notas
    `PRUEBA — borrar`, «El cliente ya pagó» **apagado**. Guarda.
 3. Debe aparecer «Pedido #NNNN creado.». Anota el número.
-4. `/ventas`: el pedido sale con **Pago pendiente** y **Nuevo**, y suma
-   en **Pendiente por cobrar** y en **Pedidos este mes**.
+4. `/ventas`: el pedido sale con los estados **Pago pendiente** (pago)
+   y **Nuevo** (pedido), y suma en **Pendiente por cobrar** y en
+   **Pedidos este mes**.
 5. Pipelines: existe el pipeline **«Ventas»** (se crea con el primer
-   pedido) con sus seis etapas, y el negocio **«Pedido #NNNN»** está en
+   pedido) con sus cinco etapas (Pago pendiente, Pagado, Enviado,
+   Entregado, Cancelado), y el negocio **«Pedido #NNNN»** está en
    **Pago pendiente**.
 6. **Marcar pagado.** Debe decir «Pedido #NNNN actualizado. Le avisamos
-   al cliente por WhatsApp.», llegar al teléfono del equipo «¡Recibimos
-   tu pago! Tu pedido #NNNN está confirmado…», y el negocio pasar a
-   **Pagado**. **Vendido este mes** sube en $1.000.
+   al cliente por WhatsApp.», llegar al teléfono del equipo «¡Hola!
+   Barbería Élite recibió tu pago. Tu pedido #NNNN está confirmado.
+   ¡Gracias por tu compra! 🙌» (con el nombre que tenga la cuenta), y el
+   negocio pasar a **Pagado**. **Vendido este mes** sube en $1.000.
 7. **Marcar enviado** con transportadora `PRUEBA` y guía `PRUEBA-123`.
-   Llega «Tu pedido #NNNN salió 📦. Transportadora: PRUEBA. Guía:
-   PRUEBA-123.» y el negocio pasa a **Enviado**.
-8. **Marcar entregado.** Llega «Tu pedido #NNNN fue entregado…», el
-   negocio pasa a **Entregado** y queda **ganado**.
+   Llega «¡Hola! Tu pedido #NNNN ya va en camino 📦. Lo lleva PRUEBA con
+   el número de guía PRUEBA-123. Puedes rastrearlo en la página de la
+   transportadora.» y el negocio pasa a **Enviado**.
+8. **Marcar entregado.** Llega «¡Hola! Tu pedido #NNNN fue entregado.
+   ¡Gracias por comprarnos! 🙌», el negocio pasa a **Entregado** y queda
+   **ganado**.
+
+   Estos textos son los mismos de las plantillas de Meta: dentro y fuera
+   de la ventana de 24 h el cliente lee lo mismo.
 9. En la conversación del inbox se ven los tres avisos como mensajes
    salientes. En el detalle del pedido, la sección **«Aviso al
    cliente»** dice «Aviso de entrega mandado» y el historial tiene las
@@ -405,13 +466,14 @@ Pruebas cortas adicionales (recomendadas):
   **«Pedido»** del encabezado de la conversación abre la hoja con los
   pedidos del contacto.
 - **Retiro en tienda y cancelación:** crea otro pedido marcado
-  (`PRUEBA — borrar`), márcalo **entregado** directo desde Nuevo (no pide
-  guía). Crea un tercero y **cancélalo**: el negocio queda en
+  (`PRUEBA — borrar`), márcalo **entregado** directo desde el estado
+  Nuevo del pedido (no pide guía). Crea un tercero y **cancélalo**: el negocio queda en
   **Cancelado** y **perdido**, y no sale aviso.
 - **Plantillas** (solo si ya están aprobadas en Meta): espera a que
   pasen más de 24 h sin que el teléfono del equipo le escriba a la
   cuenta, crea un pedido marcado y márcalo pagado. El aviso debe llegar
-  con el texto de la plantilla `pedido_pagado`. Si falla, el pedido
+  por la plantilla `pedido_pagado`, con el mismo texto del paso 6. Si
+  falla, el pedido
   muestra «Aviso sin mandar» con el motivo (`docs/ventas.md` → «Aviso
   sin mandar»).
 - **Roles** (si hay usuarios de prueba): un **viewer** ve `/ventas` sin
