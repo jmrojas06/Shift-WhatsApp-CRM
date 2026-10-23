@@ -134,8 +134,9 @@ export function ActivityFeed({ items, loading }: ActivityFeedProps) {
                     type="button"
                     onClick={() => setPageSize(size)}
                     disabled={disabled}
+                    aria-pressed={pageSize === size}
                     className={cn(
-                      'rounded-md px-2 py-1 font-medium tabular-nums transition-colors',
+                      'min-h-8 min-w-8 rounded-md px-2 py-1 font-medium tabular-nums transition-colors pointer-coarse:min-h-11 pointer-coarse:min-w-11',
                       pageSize === size
                         ? 'bg-secondary text-secondary-foreground'
                         : 'text-muted-foreground hover:bg-muted hover:text-foreground',

@@ -9,7 +9,7 @@
     "passwordLabel": "Senha",
     "forgotPassword": "Esqueceu a senha?",
     "passwordPlaceholder": "Digite sua senha",
-    "signingIn": "Entrando...",
+    "signingIn": "Entrando…",
     "signIn": "Entrar",
     "noAccount": "Não tem uma conta?",
     "createAccount": "Criar conta",
@@ -264,7 +264,7 @@
       "templates": "Modelos",
       "readOnlyPlaceholder": "Somente leitura — visualizadores podem navegar, mas não responder",
       "sessionExpiredPlaceholder": "Sessão expirada - use um modelo",
-      "typeMessagePlaceholder": "Digite uma mensagem... (Shift+Enter para nova linha)",
+      "typeMessagePlaceholder": "Digite uma mensagem… (Shift+Enter para nova linha)",
       "readOnlyTitle": "Somente leitura — sua função não pode enviar mensagens",
       "recording": "Gravando… {current} / {max}",
       "cancel": "Cancelar",
@@ -347,7 +347,8 @@
       "reactWith": "Reagir com {emoji}",
       "nothingToCopy": "Nada para copiar",
       "copied": "Copiado",
-      "copyFailed": "Falha ao copiar"
+      "copyFailed": "Falha ao copiar",
+      "more": "Mais ações da mensagem"
     },
     "replyQuote": {
       "photo": "[Foto]",
@@ -385,7 +386,7 @@
       "deals": "Negócios",
       "noTags": "Sem tags",
       "noDeals": "Sem negócios",
-      "addNotePlaceholder": "Adicionar uma nota...",
+      "addNotePlaceholder": "Adicionar uma nota…",
       "newNoteLabel": "Nova nota",
       "addNote": "Salvar nota",
       "copyHandle": "Copiar {handle}"
@@ -413,7 +414,7 @@
       "selectAllOnPage": "Selecionar todos os contatos desta página",
       "importBtn": "Importar",
       "addContactBtn": "Adicionar contato",
-      "searchPlaceholder": "Buscar por nome, telefone ou e-mail...",
+      "searchPlaceholder": "Buscar por nome, telefone ou e-mail…",
       "filterByTags": "Filtrar por tags",
       "clearAll": "Limpar tudo",
       "noTagsYet": "Nenhuma tag ainda.",
@@ -428,7 +429,7 @@
         "tags": "Tags",
         "createdAt": "Criado em"
       },
-      "loading": "Carregando contatos...",
+      "loading": "Carregando contatos…",
       "noContactsMatch": "Nenhum contato corresponde aos seus filtros.",
       "noContactsYet": "Nenhum contato ainda.",
       "addFirstContact": "Adicione seu primeiro contato",
@@ -475,7 +476,7 @@
       "companyLabel": "Empresa",
       "companyPlaceholder": "Nome da empresa",
       "tagsLabel": "Tags",
-      "tagsPlaceholder": "Selecione tags...",
+      "tagsPlaceholder": "Selecione tags…",
       "noTagsFound": "Nenhuma tag encontrada.",
       "createTagAction": "Criar tag \"{value}\"",
       "cancel": "Cancelar",
@@ -489,7 +490,7 @@
       "viewExisting": "Ver {name}",
       "dupExact": "Já existe um contato com este número de telefone.",
       "dupSimilar": "Já existe um contato com um número muito parecido.",
-      "loadingTags": "Carregando tags...",
+      "loadingTags": "Carregando tags…",
       "noTagsAvailable": "Nenhuma tag disponível. Crie tags em Configurações.",
       "phoneRequired": "Digite o número de telefone com o código do país, ex.: +55 11 99999 0000.",
       "phoneNeedsCountryCode": "Inclua o código do país — o número deve começar com + (ex.: +5511999990000)",
@@ -508,7 +509,7 @@
         "tags": "Tags",
         "noTags": "Sem tags",
         "noDeals": "Sem negócios",
-        "addNotePlaceholder": "Adicionar uma nota..."
+        "addNotePlaceholder": "Adicionar uma nota…"
       },
       "actions": {
         "edit": "Editar",
@@ -526,14 +527,14 @@
       "customFields": "Campos personalizados",
       "noCustomFields": "Nenhum campo personalizado definido. Crie-os em Configurações.",
       "manageFields": "Gerenciar campos",
-      "enterCustomField": "Informe {name}...",
+      "enterCustomField": "Informe {name}…",
       "activityTab": {
         "title": "Histórico de atividade",
         "noActivity": "Nenhuma atividade ainda."
       },
       "notesTab": {
         "title": "Notas internas",
-        "placeholder": "Escreva uma nota...",
+        "placeholder": "Escreva uma nota…",
         "save": "Adicionar nota",
         "noNotes": "Nenhuma nota ainda."
       },
@@ -562,7 +563,10 @@
       "toastTemplateFailed": "Falha ao enviar o modelo: {reason}",
       "networkError": "erro de rede",
       "requiredMark": "obrigatório",
-      "deleteNoteAria": "Excluir nota"
+      "deleteNoteAria": "Excluir nota",
+      "deleteNoteTitle": "Excluir esta nota?",
+      "deleteNoteDesc": "A nota será removida deste contato. Esta ação não pode ser desfeita.",
+      "cancel": "Cancelar"
     },
     "importModal": {
       "title": "Importar contatos",
@@ -650,7 +654,7 @@
       "pipelineNamePlaceholder": "ex.: Vendas corporativas",
       "defaultStagesDesc": "As etapas padrão (Novo lead → Ganho) serão criadas automaticamente.",
       "cancel": "Cancelar",
-      "creating": "Criando...",
+      "creating": "Criando…",
       "createPipelineBtn": "Criar pipeline",
       "toastFailedLoadPipelines": "Falha ao carregar os pipelines",
       "toastFailedMoveDeal": "Falha ao mover o negócio",
@@ -664,7 +668,8 @@
         "proposalSent": "Proposta enviada",
         "negotiation": "Negociação",
         "won": "Ganho"
-      }
+      },
+      "title": "Pipeline"
     },
     "board": {
       "dropDealHere": "Solte um negócio aqui",
@@ -673,7 +678,8 @@
     "card": {
       "noContact": "Sem contato",
       "won": "Ganho",
-      "lost": "Perdido"
+      "lost": "Perdido",
+      "assignedTo": "Responsável: {name}"
     },
     "form": {
       "editDeal": "Editar negócio",
@@ -690,18 +696,18 @@
       "assignedTo": "Atribuído a",
       "unassigned": "Não atribuído",
       "notes": "Notas",
-      "notesPlaceholder": "Adicionar notas...",
+      "notesPlaceholder": "Adicionar notas…",
       "status": "Status",
       "markAsWon": "Marcar como ganho",
       "markAsLost": "Marcar como perdido",
       "reopenDeal": "Reabrir negócio",
       "cancel": "Cancelar",
-      "saving": "Salvando...",
+      "saving": "Salvando…",
       "saveChanges": "Salvar alterações",
       "createDeal": "Criar negócio",
       "deletePrompt": "Excluir este negócio?",
       "confirm": "Confirmar",
-      "deleting": "Excluindo...",
+      "deleting": "Excluindo…",
       "deleteDeal": "Excluir negócio",
       "toastRequired": "Título, contato e etapa são obrigatórios",
       "toastFailedSave": "Falha ao salvar o negócio",
@@ -730,14 +736,14 @@
       "deletePipeline": "Excluir pipeline",
       "deletePipelineDesc": "Isso arquivará todos os negócios deste pipeline. Não é possível desfazer.",
       "cancel": "Cancelar",
-      "deleting": "Excluindo...",
+      "deleting": "Excluindo…",
       "deletePipelineBtn": "Excluir pipeline",
       "pipelineName": "Nome do pipeline",
       "stages": "Etapas",
       "newStageNamePlaceholder": "Nome da nova etapa",
       "add": "Adicionar",
       "createNewPipeline": "Criar um novo pipeline",
-      "saving": "Salvando...",
+      "saving": "Salvando…",
       "saveChanges": "Salvar alterações",
       "dragToReorder": "Arraste para reordenar",
       "changeColor": "Mudar cor",
@@ -749,7 +755,33 @@
       "toastFailedDeletePipeline": "Falha ao excluir o pipeline",
       "toastDeleted": "Pipeline excluído",
       "pickColor": "Escolher a cor {color}",
-      "removeStage": "Excluir a etapa {name}"
+      "removeStage": "Excluir a etapa {name}",
+      "colorNames": {
+        "blue": "Azul",
+        "indigo": "Índigo",
+        "violet": "Violeta",
+        "pink": "Rosa",
+        "red": "Vermelho",
+        "orange": "Laranja",
+        "yellow": "Amarelo",
+        "green": "Verde",
+        "teal": "Verde-azulado",
+        "cyan": "Ciano"
+      },
+      "changeStageColor": "Alterar a cor da etapa {name}. Cor atual: {color}",
+      "newStageColor": "Cor da nova etapa",
+      "newStageNameLabel": "Nome da nova etapa",
+      "stageNameLabel": "Nome da etapa {position}",
+      "dragStage": "Mover a etapa {name}",
+      "sortableRoleDescription": "etapa reordenável",
+      "dragInstructions": "Para mover uma etapa, pressione Espaço ou Enter, use as setas para mudá-la de lugar e pressione Espaço ou Enter de novo para soltá-la. Pressione Escape para cancelar.",
+      "dragAnnounceStart": "Você pegou a etapa {name}.",
+      "dragAnnounceOver": "A etapa {name} está na posição {position} de {total}.",
+      "dragAnnounceEnd": "Você soltou a etapa {name} na posição {position} de {total}.",
+      "dragAnnounceCancel": "Movimento cancelado. A etapa {name} voltou ao seu lugar.",
+      "deleteStageTitle": "Excluir a etapa {name}?",
+      "deleteStageDesc": "A etapa é excluída na hora, mesmo que você não salve as alterações. Ela só pode ser excluída se não tiver negócios. Esta ação não pode ser desfeita.",
+      "deleteStageBtn": "Excluir etapa"
     },
     "analytics": {
       "totalDeals": "Total de negócios",
@@ -897,12 +929,12 @@
         "customFieldDesc": "Enviar para contatos que atendem a uma regra de campo personalizado.",
         "csvDesc": "Envie um CSV com números de telefone (e nomes opcionais).",
         "selectTags": "Selecionar tags",
-        "searchTags": "Buscar tags...",
+        "searchTags": "Buscar tags…",
         "noTagsFound": "Nenhuma tag encontrada.",
         "excludeTags": "Excluir tags (opcional)",
-        "searchExcludeTags": "Buscar tags para excluir...",
+        "searchExcludeTags": "Buscar tags para excluir…",
         "field": "Campo",
-        "selectField": "Selecione um campo...",
+        "selectField": "Selecione um campo…",
         "operator": "Operador",
         "operatorIs": "É",
         "operatorIsNot": "Não é",
@@ -937,16 +969,16 @@
         "typeCustom": "Campo personalizado",
         "staticValue": "Valor fixo",
         "contactField": "Campo do contato",
-        "selectContactField": "Selecione o campo...",
+        "selectContactField": "Selecione o campo…",
         "customField": "Campo personalizado",
-        "selectCustomField": "Selecione o campo personalizado...",
+        "selectCustomField": "Selecione o campo personalizado…",
         "preview": "Pré-visualização",
         "previewSample": "Mostrando pré-visualização com dados de exemplo.",
         "noPreview": "Pré-visualização indisponível.",
         "headerPreviewAlt": "Pré-visualização do cabeçalho",
         "mediaUrlRequired": "É necessária uma URL de mídia para enviar este modelo.",
         "mediaUrlInvalid": "Informe uma URL http(s) válida.",
-        "enterValue": "Informe o valor...",
+        "enterValue": "Informe o valor…",
         "loadingFields": "Carregando…",
         "noCustomFields": "Nenhum campo personalizado",
         "unmappedWarning": "Associe todas as variáveis antes de continuar — ainda faltam <mono>{keys}</mono>. Caso contrário, essas variáveis serão enviadas à Meta como strings vazias.",
@@ -955,8 +987,10 @@
           "phone": "Telefone",
           "email": "E-mail"
         },
-        "sampleName": "João Silva",
-        "sampleCompany": "Empresa Exemplo Ltda."
+        "sampleName": "Nome do cliente",
+        "sampleCompany": "Empresa",
+        "samplePhone": "+57 300 123 4567",
+        "sampleEmail": "cliente@exemplo.com"
       },
       "scheduleSend": {
         "title": "Revisar e enviar",
@@ -974,9 +1008,9 @@
         "variablesMapped": "{count} associadas",
         "saveDraft": "Salvar como rascunho",
         "sendNow": "Enviar disparo",
-        "sending": "Enviando...",
-        "preparing": "Preparando...",
-        "progressDesc": "Processando {current} de {total} destinatários...",
+        "sending": "Enviando…",
+        "preparing": "Preparando…",
+        "progressDesc": "Processando {current} de {total} destinatários…",
         "toastFailedPreview": "Falha ao carregar os dados da pré-visualização",
         "estimatedReach": "Alcance estimado",
         "language": "Idioma",
@@ -1033,7 +1067,7 @@
       "loadFailed": "Falha ao carregar as automações"
     },
     "edit": {
-      "loading": "Carregando...",
+      "loading": "Carregando…",
       "loadError": "Falha ao carregar ({status})",
       "back": "Voltar às automações"
     },
@@ -1214,7 +1248,7 @@
         "placeholderTag": "id da tag",
         "urlLabel": "URL",
         "headersLabel": "Cabeçalhos",
-        "placeholderHeaders": "{\"Authorization\": \"Bearer ...\"}",
+        "placeholderHeaders": "{\"Authorization\": \"Bearer …\"}",
         "bodyTemplateLabel": "Modelo do corpo",
         "placeholderBody": "{\"id\": \"{{ contact.id }}\"}",
         "matchType": "Tipo de correspondência",
@@ -1239,7 +1273,14 @@
         },
         "when": "quando {subject}",
         "noUrl": "sem URL"
-      }
+      },
+      "saving": "Salvando…",
+      "nameLabel": "Nome da automação",
+      "cancel": "Cancelar",
+      "deleteStep": "Excluir etapa",
+      "deleteStepConfirmTitle": "Excluir esta etapa?",
+      "deleteStepConfirmBody": "A etapa “{step}” e tudo o que você configurou nela serão removidos.",
+      "deleteConditionConfirmBody": "A condição e todas as etapas dos ramos Sim e Não serão removidas."
     }
   },
   "Flows": {
@@ -1299,7 +1340,8 @@
       "statusHandedOff": "Transferida",
       "statusTimedOut": "Tempo esgotado",
       "statusPaused": "Pausada pelo agente",
-      "statusFailed": "Falhou"
+      "statusFailed": "Falhou",
+      "loading": "Carregando execuções…"
     },
     "builder": {
       "triggerTitle": "Gatilho",
@@ -1391,7 +1433,17 @@
         "uploadFailed": "Falha no upload.",
         "fileTooLarge": "O arquivo tem {size} MB — o limite é 16 MB.",
         "defaultOptionTitle": "Opção",
-        "optionN": "Opção {n}"
+        "optionN": "Opção {n}",
+        "buttonTitleAria": "Título do botão {n}",
+        "buttonReplyIdAria": "ID de resposta do botão {n}",
+        "buttonNextAria": "Próximo nó do botão {n}",
+        "removeButtonN": "Remover botão {n}",
+        "sectionTitleAria": "Título da seção {n}",
+        "removeSectionN": "Remover seção {n}",
+        "rowTitleAria": "Título da linha {n}",
+        "rowReplyIdAria": "ID de resposta da linha {n}",
+        "rowNextAria": "Próximo nó da linha {n}",
+        "removeRowN": "Remover linha {n}"
       },
       "categories": {
         "messaging": "Mensagens",
@@ -1551,7 +1603,7 @@
       "removeDialogTitle": "Remover membro",
       "removeDialogDesc": "Remover <bold>{name}</bold> da conta? A pessoa será desconectada desta conta e receberá uma nova conta pessoal no próximo login. O login dela não é excluído.",
       "cancel": "Cancelar",
-      "removing": "Removendo...",
+      "removing": "Removendo…",
       "removeBtn": "Remover membro",
       "loadingMembers": "Carregando membros da equipe…",
       "roleSelectLabel": "Função de {name}",
@@ -1584,7 +1636,7 @@
       "labelPlaceholder": "ex.: Sara — equipe de suporte",
       "labelHint": "Ajuda você a lembrar para quem enviou o link na lista de pendentes abaixo.",
       "cancel": "Cancelar",
-      "creating": "Criando...",
+      "creating": "Criando…",
       "generateLink": "Gerar link",
       "labelTooLong": "O rótulo deve ter no máximo {max} caracteres",
       "copied": "Link do convite copiado",
@@ -1615,7 +1667,7 @@
       "deleteTag": "Excluir tag",
       "deleteConfirm": "Excluir a tag \"{name}\"? Isso a remove de todos os contatos e não pode ser desfeito.",
       "cancel": "Cancelar",
-      "deleting": "Excluindo...",
+      "deleting": "Excluindo…",
       "colors": {
         "red": "Vermelho",
         "orange": "Laranja",
@@ -1761,7 +1813,7 @@
       "title": "Conexão com o WhatsApp",
       "description": "Conecte sua API do WhatsApp Business da Meta. Credenciais, webhook e etapas de configuração ficam todos aqui.",
       "tokenCorrupted": "Não foi possível descriptografar o token armazenado",
-      "resetting": "Redefinindo...",
+      "resetting": "Redefinindo…",
       "resetConfig": "Redefinir configuração",
       "credentialsValid": "Credenciais válidas",
       "notConnected": "Não conectado",
@@ -1824,9 +1876,9 @@
       "webhookCopied": "URL do webhook copiada para a área de transferência",
       "phoneNumberIdPlaceholder": "ex.: 100234567890123",
       "wabaIdPlaceholder": "ex.: 100234567890456",
-      "saving": "Salvando...",
+      "saving": "Salvando…",
       "saveConfig": "Salvar configuração",
-      "testing": "Testando...",
+      "testing": "Testando…",
       "testConnection": "Testar conexão com a API",
       "setupInstructions": "Instruções de configuração",
       "setupInstructionsDesc": "Siga estas etapas para conectar sua API do WhatsApp Business.",
@@ -2065,7 +2117,7 @@
       "currencyLabel": "Moeda",
       "adminOnlyHint": "Somente administradores da conta podem alterar a moeda padrão.",
       "save": "Salvar",
-      "saving": "Salvando...",
+      "saving": "Salvando…",
       "saveFailed": "Não foi possível salvar a moeda. Tente novamente.",
       "saveSuccess": "Pronto. Os novos negócios usarão {currency}.",
       "currencyHint": "Afeta apenas os novos negócios e os totais. Os existentes mantêm sua moeda."
@@ -2187,7 +2239,7 @@
     "passwordPlaceholder": "Pelo menos 6 caracteres",
     "confirmPasswordLabel": "Confirmar senha",
     "confirmPasswordPlaceholder": "Repita sua senha",
-    "creating": "Criando conta...",
+    "creating": "Criando conta…",
     "submit": "Criar conta",
     "haveAccount": "Já tem uma conta?",
     "signIn": "Entrar"
@@ -2200,7 +2252,7 @@
     "desc": "Informe seu e-mail e enviaremos um link de redefinição",
     "emailLabel": "E-mail",
     "emailPlaceholder": "nome@email.com",
-    "sending": "Enviando...",
+    "sending": "Enviando…",
     "sendLink": "Enviar link de redefinição"
   },
   "ResetPasswordPage": {
@@ -2211,10 +2263,10 @@
     "confirmPasswordLabel": "Confirmar nova senha",
     "confirmPasswordPlaceholder": "Repita a nova senha",
     "submit": "Atualizar senha",
-    "saving": "Atualizando...",
+    "saving": "Atualizando…",
     "passwordsMismatch": "As senhas não coincidem. Digite-as novamente.",
     "passwordTooShort": "A senha é muito curta. Use pelo menos 6 caracteres.",
-    "checking": "Verificando seu link...",
+    "checking": "Verificando seu link…",
     "expiredTitle": "Este link não é mais válido",
     "expiredDesc": "Links de redefinição de senha funcionam uma vez e expiram em pouco tempo. Peça um novo e abra-o no mesmo navegador em que o solicitou.",
     "requestNewLink": "Pedir um novo link",
@@ -2285,7 +2337,9 @@
       "placeholder": "Digite uma mensagem de cliente…",
       "notConfigured": "Nenhum agente configurado ainda — conclua a Configuração primeiro.",
       "noReply": "Não foi possível obter uma resposta.",
-      "unreachable": "Não foi possível conectar ao agente."
+      "unreachable": "Não foi possível conectar ao agente.",
+      "inputLabel": "Mensagem de teste",
+      "send": "Enviar mensagem"
     },
     "usage": {
       "title": "Uso de tokens",
@@ -2328,10 +2382,26 @@
     "rowDescriptionPlaceholder": "Descrição (opcional)",
     "addRow": "Adicionar linha",
     "addSection": "Adicionar seção",
-    "defaultListButton": "Menu"
+    "defaultListButton": "Menu",
+    "messageType": "Tipo de mensagem",
+    "cancel": "Cancelar",
+    "switchKindTitle": "Mudar o tipo de mensagem?",
+    "switchKindBodyButtons": "Os botões que você escreveu serão apagados. O corpo, o cabeçalho e o rodapé são mantidos.",
+    "switchKindBodyList": "As seções e linhas que você escreveu serão apagadas. O corpo, o cabeçalho e o rodapé são mantidos.",
+    "switchKindConfirm": "Mudar tipo",
+    "buttonTitleAria": "Texto do botão {n}",
+    "buttonIdAria": "ID de resposta do botão {n}",
+    "removeButton": "Remover botão {n}",
+    "sectionTitleAria": "Título da seção {n}",
+    "removeSection": "Remover seção {n}",
+    "rowTitleAria": "Título da linha {n}",
+    "rowIdAria": "ID de resposta da linha {n}",
+    "rowDescriptionAria": "Descrição da linha {n}",
+    "removeRow": "Remover linha {n}"
   },
   "DashboardShell": {
-    "loading": "Carregando..."
+    "loading": "Carregando…",
+    "skipToContent": "Pular para o conteúdo"
   },
   "UiPrimitives": {
     "close": "Fechar"

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { countAudience, type AudienceConfig } from '@/lib/broadcast-audience';
 import { createClient } from '@/lib/supabase/client';
 import { MessageTemplate } from '@/types';
@@ -46,6 +46,8 @@ export function Step4ScheduleSend({
   const [showConfirm, setShowConfirm] = useState(false);
   const [estimatedReach, setEstimatedReach] = useState<number>(0);
   const [loadingReach, setLoadingReach] = useState(true);
+  const nameId = useId();
+  const clampedProgress = Math.min(100, Math.max(0, Math.round(progress)));
 
   useEffect(() => {
     async function calculateReach() {
@@ -82,8 +84,9 @@ export function Step4ScheduleSend({
 
       {/* Broadcast Name */}
       <div>
-        <label className="mb-1.5 block text-sm font-medium text-foreground">{t('scheduleSend.broadcastName')}</label>
+        <label htmlFor={nameId} className="mb-1.5 block text-sm font-medium text-foreground">{t('scheduleSend.broadcastName')}</label>
         <Input
+          id={nameId}
           value={name}
           onChange={(e) => onNameChange(e.target.value)}
           placeholder={t('scheduleSend.broadcastNamePlaceholder')}
@@ -131,12 +134,20 @@ export function Step4ScheduleSend({
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
               <p className="text-sm font-medium text-foreground">{t('scheduleSend.sending')}</p>
             </div>
-            <span className="text-xs font-medium text-primary">{progress}%</span>
+            <span className="text-xs font-medium tabular-nums text-primary">{progress}%</span>
           </div>
-          <div className="h-1.5 w-full rounded-full bg-muted">
+          <div
+            role="progressbar"
+            aria-label={t('scheduleSend.sending')}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={clampedProgress}
+            className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+          >
+            {/* scaleX instead of width so the bar animates on the compositor. */}
             <div
-              className="h-1.5 rounded-full bg-primary transition-all duration-300"
-              style={{ width: `${progress}%` }}
+              className="h-full w-full origin-left rounded-full bg-primary transition-transform duration-200"
+              style={{ transform: `scaleX(${clampedProgress / 100})` }}
             />
           </div>
         </div>

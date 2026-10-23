@@ -280,6 +280,15 @@ html[data-theme="rose"] {
   body {
     @apply bg-background text-foreground;
     line-height: 1.55;
+    /* Taps feel native: no grey flash, no 300 ms double-tap delay. */
+    -webkit-tap-highlight-color: transparent;
+  }
+  a,
+  button,
+  [role="button"],
+  [role="tab"],
+  label {
+    touch-action: manipulation;
   }
   html {
     @apply font-sans;

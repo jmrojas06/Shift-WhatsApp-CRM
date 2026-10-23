@@ -678,8 +678,19 @@ export default function ContactsPage() {
                       />
                     </label>
                   </TableCell>
-                  <TableCell className="max-w-44 truncate text-foreground font-medium sm:max-w-none">
-                    {contact.name || <span className="text-muted-foreground">{t('unnamed')}</span>}
+                  <TableCell className="max-w-44 text-foreground font-medium sm:max-w-none">
+                    {/* A real button so keyboard and screen-reader users can
+                        open the detail; the row click stays for the mouse. */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openDetail(contact.id);
+                      }}
+                      className="block max-w-full truncate rounded-md text-left outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-11"
+                    >
+                      {contact.name || <span className="text-muted-foreground">{t('unnamed')}</span>}
+                    </button>
                   </TableCell>
                   <TableCell className="text-muted-foreground font-mono text-xs">
                     {contact.phone}

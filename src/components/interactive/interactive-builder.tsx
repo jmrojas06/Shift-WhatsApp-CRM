@@ -1,13 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { hasOptionContent } from "./option-content";
 import { slugify } from "@/components/flows/shared";
 import { getT } from "@/lib/i18n/translate";
 import { INTERACTIVE_LIMITS } from "@/lib/whatsapp/meta-api";
@@ -75,19 +84,33 @@ export function InteractiveBuilder({
 }: InteractiveBuilderProps) {
   const t = useTranslations("Interactive");
   const [advanced, setAdvanced] = useState(false);
+  // Kind the author asked to switch to while the current options hold
+  // typed content; the switch waits for them to confirm.
+  const [pendingKind, setPendingKind] = useState<"buttons" | "list" | null>(null);
   const validation = validateInteractivePayload(value);
+  const advancedId = useId();
 
   const setField = (patch: Partial<InteractiveMessagePayload>) =>
     onChange({ ...value, ...patch } as InteractiveMessagePayload);
 
-  const switchKind = (kind: "buttons" | "list") => {
-    if (kind === value.kind) return;
+  const applyKind = (kind: "buttons" | "list") => {
     const shared = { body: value.body, header: value.header, footer: value.footer };
     onChange(
       kind === "buttons"
         ? { ...blankButtonsPayload(), ...shared }
         : { ...blankListPayload(), ...shared },
     );
+  };
+
+  const switchKind = (kind: "buttons" | "list") => {
+    if (kind === value.kind) return;
+    // Switching rebuilds the options from scratch; only ask when that
+    // would throw away something the author typed.
+    if (hasOptionContent(value)) {
+      setPendingKind(kind);
+      return;
+    }
+    applyKind(kind);
   };
 
   return (
@@ -102,7 +125,7 @@ export function InteractiveBuilder({
       <div className="flex flex-col gap-4 @2xl:flex-row">
         <div className="flex min-w-0 flex-1 flex-col gap-3">
           {/* Kind toggle */}
-          <div className="flex gap-2">
+          <div className="flex gap-2" role="group" aria-label={t("messageType")}>
             <KindButton
               active={value.kind === "buttons"}
               label={t("replyButtons")}
@@ -116,13 +139,16 @@ export function InteractiveBuilder({
           </div>
 
           <Field label={t("body")} counter={`${value.body.length}/${INTERACTIVE_LIMITS.bodyMaxLength}`}>
+            {(id) => (
             <Textarea
+              id={id}
               value={value.body}
               maxLength={INTERACTIVE_LIMITS.bodyMaxLength}
               onChange={(e) => setField({ body: e.target.value })}
               placeholder={t("bodyPlaceholder")}
               className="min-h-20 bg-muted text-foreground"
             />
+            )}
           </Field>
 
           <div className="grid grid-cols-2 gap-2">
@@ -130,23 +156,29 @@ export function InteractiveBuilder({
               label={t("header")}
               counter={`${(value.header ?? "").length}/${INTERACTIVE_LIMITS.headerTextMaxLength}`}
             >
+              {(id) => (
               <Input
+                id={id}
                 value={value.header ?? ""}
                 maxLength={INTERACTIVE_LIMITS.headerTextMaxLength}
                 onChange={(e) => setField({ header: e.target.value })}
                 className="bg-muted text-foreground"
               />
+              )}
             </Field>
             <Field
               label={t("footer")}
               counter={`${(value.footer ?? "").length}/${INTERACTIVE_LIMITS.footerMaxLength}`}
             >
+              {(id) => (
               <Input
+                id={id}
                 value={value.footer ?? ""}
                 maxLength={INTERACTIVE_LIMITS.footerMaxLength}
                 onChange={(e) => setField({ footer: e.target.value })}
                 className="bg-muted text-foreground"
               />
+              )}
             </Field>
           </div>
 
@@ -156,19 +188,25 @@ export function InteractiveBuilder({
             <ListEditor value={value} onChange={onChange} advanced={advanced} />
           )}
 
-          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          {/* The label row is the 44px touch target; the box itself is 16px. */}
+          <label
+            htmlFor={advancedId}
+            className="flex min-h-11 cursor-pointer items-center gap-2 self-start text-xs text-muted-foreground hover:text-foreground"
+          >
             <input
+              id={advancedId}
               type="checkbox"
               checked={advanced}
               onChange={(e) => setAdvanced(e.target.checked)}
-              className="h-3.5 w-3.5 accent-primary"
+              className="size-4 shrink-0 accent-primary focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
             />
             {t("showIds")}
           </label>
 
-          {!validation.ok && (
-            <p className="text-xs text-destructive">{validation.error}</p>
-          )}
+          {/* Always mounted so screen readers announce a new error. */}
+          <p aria-live="polite" className="text-xs text-destructive empty:hidden">
+            {validation.ok ? null : validation.error}
+          </p>
         </div>
 
         {showPreview && (
@@ -189,6 +227,38 @@ export function InteractiveBuilder({
           </div>
         )}
       </div>
+
+      <Dialog
+        open={pendingKind !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingKind(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("switchKindTitle")}</DialogTitle>
+            <DialogDescription>
+              {value.kind === "buttons"
+                ? t("switchKindBodyButtons")
+                : t("switchKindBodyList")}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingKind(null)}>
+              {t("cancel")}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (pendingKind) applyKind(pendingKind);
+                setPendingKind(null);
+              }}
+            >
+              {t("switchKindConfirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -226,9 +296,9 @@ function ButtonsEditor({
 
   return (
     <div>
-      <label className="mb-2 block text-xs text-muted-foreground">
+      <p className="mb-2 text-xs text-muted-foreground tabular-nums">
         {t("buttonsCount", { count: buttons.length, max: INTERACTIVE_LIMITS.maxButtons })}
-      </label>
+      </p>
       <div className="flex flex-col gap-2">
         {buttons.map((b, i) => (
           <div
@@ -240,7 +310,8 @@ function ButtonsEditor({
                 value={b.id}
                 onChange={(e) => update(i, { id: slugify(e.target.value, `btn_${i + 1}`) })}
                 placeholder={t("idPlaceholder")}
-                className="w-28 bg-muted font-mono text-xs"
+                aria-label={t("buttonIdAria", { n: i + 1 })}
+                className="w-28 bg-muted font-mono md:text-xs"
               />
             )}
             <Input
@@ -248,9 +319,10 @@ function ButtonsEditor({
               maxLength={INTERACTIVE_LIMITS.buttonTitleMaxLength}
               onChange={(e) => update(i, { title: e.target.value })}
               placeholder={t("buttonLabelPlaceholder")}
+              aria-label={t("buttonTitleAria", { n: i + 1 })}
               className="flex-1 bg-muted"
             />
-            <span className="w-10 shrink-0 text-right text-[10px] text-muted-foreground">
+            <span className="w-10 shrink-0 text-right text-[10px] text-muted-foreground tabular-nums">
               {b.title.length}/{INTERACTIVE_LIMITS.buttonTitleMaxLength}
             </span>
             {buttons.length > 1 && (
@@ -258,6 +330,7 @@ function ButtonsEditor({
                 variant="ghost"
                 size="sm"
                 onClick={() => remove(i)}
+                aria-label={t("removeButton", { n: i + 1 })}
                 className="text-destructive hover:bg-destructive/10 hover:text-destructive"
               >
                 <Trash2 className="h-3.5 w-3.5" />
@@ -342,17 +415,20 @@ function ListEditor({
   return (
     <div className="flex flex-col gap-3">
       <Field label={t("listButtonLabel")} counter={`${value.button_label.length}/${INTERACTIVE_LIMITS.buttonTitleMaxLength}`}>
+        {(id) => (
         <Input
+          id={id}
           value={value.button_label}
           maxLength={INTERACTIVE_LIMITS.buttonTitleMaxLength}
           onChange={(e) => onChange({ ...value, button_label: e.target.value })}
           className="bg-muted text-foreground"
         />
+        )}
       </Field>
 
-      <label className="block text-xs text-muted-foreground">
+      <p className="text-xs text-muted-foreground tabular-nums">
         {t("rowsCount", { count: totalRows, max: INTERACTIVE_LIMITS.maxListRowsTotal })}
-      </label>
+      </p>
 
       {sections.map((section, sIdx) => (
         <div key={sIdx} className="rounded-md border border-border bg-muted/40 p-2">
@@ -361,13 +437,15 @@ function ListEditor({
               value={section.title ?? ""}
               onChange={(e) => updateSection(sIdx, { title: e.target.value })}
               placeholder={t("sectionTitlePlaceholder")}
-              className="flex-1 bg-muted text-xs"
+              aria-label={t("sectionTitleAria", { n: sIdx + 1 })}
+              className="flex-1 bg-muted md:text-xs"
             />
             {sections.length > 1 && (
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => removeSection(sIdx)}
+                aria-label={t("removeSection", { n: sIdx + 1 })}
                 className="text-destructive hover:bg-destructive/10 hover:text-destructive"
               >
                 <Trash2 className="h-3.5 w-3.5" />
@@ -385,7 +463,8 @@ function ListEditor({
                         updateRow(sIdx, rIdx, { id: slugify(e.target.value, `row_${rIdx + 1}`) })
                       }
                       placeholder={t("idPlaceholder")}
-                      className="w-24 bg-muted font-mono text-xs"
+                      aria-label={t("rowIdAria", { n: rIdx + 1 })}
+                      className="w-24 bg-muted font-mono md:text-xs"
                     />
                   )}
                   <Input
@@ -393,9 +472,10 @@ function ListEditor({
                     maxLength={INTERACTIVE_LIMITS.listRowTitleMaxLength}
                     onChange={(e) => updateRow(sIdx, rIdx, { title: e.target.value })}
                     placeholder={t("rowTitlePlaceholder")}
+                    aria-label={t("rowTitleAria", { n: rIdx + 1 })}
                     className="flex-1 bg-muted"
                   />
-                  <span className="w-10 shrink-0 text-right text-[10px] text-muted-foreground">
+                  <span className="w-10 shrink-0 text-right text-[10px] text-muted-foreground tabular-nums">
                     {row.title.length}/{INTERACTIVE_LIMITS.listRowTitleMaxLength}
                   </span>
                   {totalRows > 1 && (
@@ -403,6 +483,7 @@ function ListEditor({
                       variant="ghost"
                       size="sm"
                       onClick={() => removeRow(sIdx, rIdx)}
+                      aria-label={t("removeRow", { n: rIdx + 1 })}
                       className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -414,7 +495,8 @@ function ListEditor({
                   maxLength={INTERACTIVE_LIMITS.listRowDescriptionMaxLength}
                   onChange={(e) => updateRow(sIdx, rIdx, { description: e.target.value })}
                   placeholder={t("rowDescriptionPlaceholder")}
-                  className="mt-2 bg-muted text-xs"
+                  aria-label={t("rowDescriptionAria", { n: rIdx + 1 })}
+                  className="mt-2 bg-muted md:text-xs"
                 />
               </div>
             ))}
@@ -456,11 +538,12 @@ function KindButton({
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={active}
       className={cn(
-        "flex-1 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+        "flex-1 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors pointer-coarse:min-h-11 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
         active
           ? "border-primary bg-primary/10 text-primary"
-          : "border-border bg-muted text-muted-foreground hover:text-foreground",
+          : "border-border bg-muted text-muted-foreground hover:bg-accent hover:text-foreground",
       )}
     >
       {label}
@@ -468,6 +551,8 @@ function KindButton({
   );
 }
 
+/** Labelled field. The control is rendered by `children(id)` so the
+ *  label can point at it with `htmlFor`. */
 function Field({
   label,
   counter,
@@ -475,15 +560,18 @@ function Field({
 }: {
   label: string;
   counter?: string;
-  children: React.ReactNode;
+  children: (id: string) => React.ReactNode;
 }) {
+  const id = useId();
   return (
     <div>
       <div className="mb-1 flex items-center justify-between">
-        <label className="text-xs text-muted-foreground">{label}</label>
-        {counter && <span className="text-[10px] text-muted-foreground">{counter}</span>}
+        <label htmlFor={id} className="text-xs text-muted-foreground">{label}</label>
+        {counter && (
+          <span className="text-[10px] text-muted-foreground tabular-nums">{counter}</span>
+        )}
       </div>
-      {children}
+      {children(id)}
     </div>
   );
 }

@@ -9,7 +9,7 @@
     "passwordLabel": "비밀번호",
     "forgotPassword": "비밀번호를 잊으셨나요?",
     "passwordPlaceholder": "비밀번호를 입력하세요",
-    "signingIn": "로그인 중...",
+    "signingIn": "로그인 중…",
     "signIn": "로그인",
     "noAccount": "계정이 없으신가요?",
     "createAccount": "계정 만들기",
@@ -264,7 +264,7 @@
       "templates": "템플릿",
       "readOnlyPlaceholder": "읽기 전용 — 뷰어는 열람만 가능하고 답장할 수 없습니다",
       "sessionExpiredPlaceholder": "세션 만료 - 템플릿을 사용하세요",
-      "typeMessagePlaceholder": "메시지를 입력하세요... (줄바꿈은 Shift+Enter)",
+      "typeMessagePlaceholder": "메시지를 입력하세요… (줄바꿈은 Shift+Enter)",
       "readOnlyTitle": "읽기 전용 — 현재 역할로는 메시지를 보낼 수 없습니다",
       "recording": "녹음 중… {current} / {max}",
       "cancel": "취소",
@@ -347,7 +347,8 @@
       "reactWith": "{emoji}(으)로 반응하기",
       "nothingToCopy": "복사할 내용이 없습니다",
       "copied": "복사됨",
-      "copyFailed": "복사 실패"
+      "copyFailed": "복사 실패",
+      "more": "메시지 작업 더보기"
     },
     "replyQuote": {
       "photo": "[사진]",
@@ -385,7 +386,7 @@
       "deals": "딜",
       "noTags": "태그 없음",
       "noDeals": "딜 없음",
-      "addNotePlaceholder": "메모 추가...",
+      "addNotePlaceholder": "메모 추가…",
       "newNoteLabel": "새 메모",
       "addNote": "메모 저장",
       "copyHandle": "{handle} 복사"
@@ -413,7 +414,7 @@
       "selectAllOnPage": "이 페이지의 모든 연락처 선택",
       "importBtn": "가져오기",
       "addContactBtn": "연락처 추가",
-      "searchPlaceholder": "이름, 전화번호, 이메일로 검색...",
+      "searchPlaceholder": "이름, 전화번호, 이메일로 검색…",
       "filterByTags": "태그로 필터링",
       "clearAll": "모두 지우기",
       "noTagsYet": "아직 태그가 없습니다.",
@@ -428,7 +429,7 @@
         "tags": "태그",
         "createdAt": "생성일"
       },
-      "loading": "연락처를 불러오는 중...",
+      "loading": "연락처를 불러오는 중…",
       "noContactsMatch": "필터와 일치하는 연락처가 없습니다.",
       "noContactsYet": "아직 연락처가 없습니다.",
       "addFirstContact": "첫 연락처 추가하기",
@@ -475,7 +476,7 @@
       "companyLabel": "회사",
       "companyPlaceholder": "회사 이름",
       "tagsLabel": "태그",
-      "tagsPlaceholder": "태그 선택...",
+      "tagsPlaceholder": "태그 선택…",
       "noTagsFound": "태그를 찾을 수 없습니다.",
       "createTagAction": "\"{value}\" 태그 만들기",
       "cancel": "취소",
@@ -489,7 +490,7 @@
       "viewExisting": "{name} 보기",
       "dupExact": "이 전화번호를 가진 연락처가 이미 있습니다.",
       "dupSimilar": "매우 유사한 번호를 가진 연락처가 이미 있습니다.",
-      "loadingTags": "태그를 불러오는 중...",
+      "loadingTags": "태그를 불러오는 중…",
       "noTagsAvailable": "사용 가능한 태그가 없습니다. 설정에서 태그를 만드세요.",
       "phoneRequired": "국가 코드를 포함해 전화번호를 입력하세요. 예: +82 10 1234 5678",
       "phoneNeedsCountryCode": "국가 코드를 포함하세요. 번호는 +로 시작해야 합니다 (예: +14155550123)",
@@ -508,7 +509,7 @@
         "tags": "태그",
         "noTags": "태그 없음",
         "noDeals": "딜 없음",
-        "addNotePlaceholder": "메모 추가..."
+        "addNotePlaceholder": "메모 추가…"
       },
       "actions": {
         "edit": "수정",
@@ -526,14 +527,14 @@
       "customFields": "커스텀 필드",
       "noCustomFields": "정의된 커스텀 필드가 없습니다. 설정에서 만드세요.",
       "manageFields": "필드 관리",
-      "enterCustomField": "{name} 입력...",
+      "enterCustomField": "{name} 입력…",
       "activityTab": {
         "title": "활동 내역",
         "noActivity": "아직 활동이 없습니다."
       },
       "notesTab": {
         "title": "내부 메모",
-        "placeholder": "메모를 작성하세요...",
+        "placeholder": "메모를 작성하세요…",
         "save": "메모 추가",
         "noNotes": "아직 메모가 없습니다."
       },
@@ -562,7 +563,10 @@
       "toastTemplateFailed": "템플릿을 보내지 못했습니다: {reason}",
       "networkError": "네트워크 오류",
       "requiredMark": "필수",
-      "deleteNoteAria": "메모 삭제"
+      "deleteNoteAria": "메모 삭제",
+      "deleteNoteTitle": "이 메모를 삭제할까요?",
+      "deleteNoteDesc": "이 연락처에서 메모가 삭제됩니다. 되돌릴 수 없습니다.",
+      "cancel": "취소"
     },
     "importModal": {
       "title": "연락처 가져오기",
@@ -650,7 +654,7 @@
       "pipelineNamePlaceholder": "예: 기업 영업",
       "defaultStagesDesc": "기본 단계(신규 리드 → 성사)가 자동으로 생성됩니다.",
       "cancel": "취소",
-      "creating": "만드는 중...",
+      "creating": "만드는 중…",
       "createPipelineBtn": "파이프라인 만들기",
       "toastFailedLoadPipelines": "파이프라인을 불러오지 못했습니다",
       "toastFailedMoveDeal": "딜을 이동하지 못했습니다",
@@ -664,7 +668,8 @@
         "proposalSent": "제안서 발송",
         "negotiation": "협상",
         "won": "성사"
-      }
+      },
+      "title": "파이프라인"
     },
     "board": {
       "dropDealHere": "여기에 딜을 놓으세요",
@@ -673,7 +678,8 @@
     "card": {
       "noContact": "연락처 없음",
       "won": "성사",
-      "lost": "실패"
+      "lost": "실패",
+      "assignedTo": "담당자: {name}"
     },
     "form": {
       "editDeal": "딜 수정",
@@ -690,18 +696,18 @@
       "assignedTo": "담당자",
       "unassigned": "담당자 없음",
       "notes": "메모",
-      "notesPlaceholder": "메모 추가...",
+      "notesPlaceholder": "메모 추가…",
       "status": "상태",
       "markAsWon": "성사로 표시",
       "markAsLost": "실패로 표시",
       "reopenDeal": "딜 재개",
       "cancel": "취소",
-      "saving": "저장 중...",
+      "saving": "저장 중…",
       "saveChanges": "변경 사항 저장",
       "createDeal": "딜 만들기",
       "deletePrompt": "이 딜을 삭제하시겠습니까?",
       "confirm": "확인",
-      "deleting": "삭제 중...",
+      "deleting": "삭제 중…",
       "deleteDeal": "딜 삭제",
       "toastRequired": "제목, 연락처, 단계는 필수입니다",
       "toastFailedSave": "딜을 저장하지 못했습니다",
@@ -730,14 +736,14 @@
       "deletePipeline": "파이프라인 삭제",
       "deletePipelineDesc": "이 파이프라인의 모든 딜이 보관 처리됩니다. 되돌릴 수 없습니다.",
       "cancel": "취소",
-      "deleting": "삭제 중...",
+      "deleting": "삭제 중…",
       "deletePipelineBtn": "파이프라인 삭제",
       "pipelineName": "파이프라인 이름",
       "stages": "단계",
       "newStageNamePlaceholder": "새 단계 이름",
       "add": "추가",
       "createNewPipeline": "새 파이프라인 만들기",
-      "saving": "저장 중...",
+      "saving": "저장 중…",
       "saveChanges": "변경 사항 저장",
       "dragToReorder": "드래그하여 순서 변경",
       "changeColor": "색상 변경",
@@ -749,7 +755,33 @@
       "toastFailedDeletePipeline": "파이프라인을 삭제하지 못했습니다",
       "toastDeleted": "파이프라인이 삭제되었습니다",
       "pickColor": "{color} 색상 선택",
-      "removeStage": "{name} 단계 삭제"
+      "removeStage": "{name} 단계 삭제",
+      "colorNames": {
+        "blue": "파란색",
+        "indigo": "남색",
+        "violet": "보라색",
+        "pink": "분홍색",
+        "red": "빨간색",
+        "orange": "주황색",
+        "yellow": "노란색",
+        "green": "초록색",
+        "teal": "청록색",
+        "cyan": "하늘색"
+      },
+      "changeStageColor": "{name} 단계 색상 변경. 현재 색상: {color}",
+      "newStageColor": "새 단계 색상",
+      "newStageNameLabel": "새 단계 이름",
+      "stageNameLabel": "{position}번째 단계 이름",
+      "dragStage": "{name} 단계 이동",
+      "sortableRoleDescription": "순서 변경 가능한 단계",
+      "dragInstructions": "단계를 옮기려면 Space 또는 Enter를 누르고 화살표 키로 위치를 바꾼 뒤 다시 Space 또는 Enter를 눌러 놓으세요. 취소하려면 Escape를 누르세요.",
+      "dragAnnounceStart": "{name} 단계를 선택했습니다.",
+      "dragAnnounceOver": "{name} 단계가 {total}개 중 {position}번째 위치에 있습니다.",
+      "dragAnnounceEnd": "{name} 단계를 {total}개 중 {position}번째 위치에 놓았습니다.",
+      "dragAnnounceCancel": "이동을 취소했습니다. {name} 단계가 원래 위치로 돌아갔습니다.",
+      "deleteStageTitle": "{name} 단계를 삭제할까요?",
+      "deleteStageDesc": "변경 사항을 저장하지 않아도 단계는 바로 삭제됩니다. 딜이 없는 단계만 삭제할 수 있습니다. 되돌릴 수 없습니다.",
+      "deleteStageBtn": "단계 삭제"
     },
     "analytics": {
       "totalDeals": "전체 딜",
@@ -897,12 +929,12 @@
         "customFieldDesc": "커스텀 필드 규칙과 일치하는 연락처에 보냅니다.",
         "csvDesc": "전화번호(선택적으로 이름 포함)가 담긴 CSV를 업로드하세요.",
         "selectTags": "태그 선택",
-        "searchTags": "태그 검색...",
+        "searchTags": "태그 검색…",
         "noTagsFound": "태그를 찾을 수 없습니다.",
         "excludeTags": "제외할 태그 (선택)",
-        "searchExcludeTags": "제외할 태그 검색...",
+        "searchExcludeTags": "제외할 태그 검색…",
         "field": "필드",
-        "selectField": "필드 선택...",
+        "selectField": "필드 선택…",
         "operator": "연산자",
         "operatorIs": "같음",
         "operatorIsNot": "같지 않음",
@@ -937,16 +969,16 @@
         "typeCustom": "커스텀 필드",
         "staticValue": "고정 값",
         "contactField": "연락처 필드",
-        "selectContactField": "필드 선택...",
+        "selectContactField": "필드 선택…",
         "customField": "커스텀 필드",
-        "selectCustomField": "커스텀 필드 선택...",
+        "selectCustomField": "커스텀 필드 선택…",
         "preview": "미리보기",
         "previewSample": "샘플 데이터로 미리보기를 표시합니다.",
         "noPreview": "미리보기를 사용할 수 없습니다.",
         "headerPreviewAlt": "헤더 미리보기",
         "mediaUrlRequired": "이 템플릿을 보내려면 미디어 URL이 필요합니다.",
         "mediaUrlInvalid": "올바른 http(s) URL을 입력하세요.",
-        "enterValue": "값을 입력하세요...",
+        "enterValue": "값을 입력하세요…",
         "loadingFields": "불러오는 중…",
         "noCustomFields": "커스텀 필드 없음",
         "unmappedWarning": "계속하기 전에 모든 자리표시자를 매핑하세요 — 아직 <mono>{keys}</mono>이(가) 비어 있습니다. 그대로 두면 해당 자리표시자가 빈 문자열로 Meta에 전송됩니다.",
@@ -955,8 +987,10 @@
           "phone": "전화번호",
           "email": "이메일"
         },
-        "sampleName": "홍길동",
-        "sampleCompany": "예시 주식회사"
+        "sampleName": "고객 이름",
+        "sampleCompany": "회사",
+        "samplePhone": "+57 300 123 4567",
+        "sampleEmail": "customer@example.com"
       },
       "scheduleSend": {
         "title": "검토 및 전송",
@@ -974,9 +1008,9 @@
         "variablesMapped": "{count}개 매핑됨",
         "saveDraft": "초안으로 저장",
         "sendNow": "브로드캐스트 전송",
-        "sending": "전송 중...",
-        "preparing": "준비 중...",
-        "progressDesc": "수신자 {total}명 중 {current}명 처리 중...",
+        "sending": "전송 중…",
+        "preparing": "준비 중…",
+        "progressDesc": "수신자 {total}명 중 {current}명 처리 중…",
         "toastFailedPreview": "미리보기 데이터를 불러오지 못했습니다",
         "estimatedReach": "예상 도달 수",
         "language": "언어",
@@ -1033,7 +1067,7 @@
       "loadFailed": "자동화를 불러오지 못했습니다"
     },
     "edit": {
-      "loading": "불러오는 중...",
+      "loading": "불러오는 중…",
       "loadError": "불러오지 못했습니다 ({status})",
       "back": "자동화로 돌아가기"
     },
@@ -1214,7 +1248,7 @@
         "placeholderTag": "태그 id",
         "urlLabel": "URL",
         "headersLabel": "헤더",
-        "placeholderHeaders": "{\"Authorization\": \"Bearer ...\"}",
+        "placeholderHeaders": "{\"Authorization\": \"Bearer …\"}",
         "bodyTemplateLabel": "본문 템플릿",
         "placeholderBody": "{\"id\": \"{{ contact.id }}\"}",
         "matchType": "일치 유형",
@@ -1239,7 +1273,14 @@
         },
         "when": "{subject} 조건",
         "noUrl": "URL 없음"
-      }
+      },
+      "saving": "저장 중…",
+      "nameLabel": "자동화 이름",
+      "cancel": "취소",
+      "deleteStep": "단계 삭제",
+      "deleteStepConfirmTitle": "이 단계를 삭제할까요?",
+      "deleteStepConfirmBody": "‘{step}’ 단계와 그 안에 설정한 내용이 모두 삭제됩니다.",
+      "deleteConditionConfirmBody": "조건과 예/아니요 분기에 있는 모든 단계가 삭제됩니다."
     }
   },
   "Flows": {
@@ -1299,7 +1340,8 @@
       "statusHandedOff": "인계됨",
       "statusTimedOut": "시간 초과",
       "statusPaused": "상담원이 일시 중지함",
-      "statusFailed": "실패"
+      "statusFailed": "실패",
+      "loading": "실행 기록을 불러오는 중…"
     },
     "builder": {
       "triggerTitle": "트리거",
@@ -1391,7 +1433,17 @@
         "uploadFailed": "업로드에 실패했습니다.",
         "fileTooLarge": "파일이 {size}MB입니다 — 제한은 16MB입니다.",
         "defaultOptionTitle": "옵션",
-        "optionN": "옵션 {n}"
+        "optionN": "옵션 {n}",
+        "buttonTitleAria": "버튼 {n} 제목",
+        "buttonReplyIdAria": "버튼 {n} 응답 ID",
+        "buttonNextAria": "버튼 {n} 다음 노드",
+        "removeButtonN": "버튼 {n} 제거",
+        "sectionTitleAria": "섹션 {n} 제목",
+        "removeSectionN": "섹션 {n} 제거",
+        "rowTitleAria": "행 {n} 제목",
+        "rowReplyIdAria": "행 {n} 응답 ID",
+        "rowNextAria": "행 {n} 다음 노드",
+        "removeRowN": "행 {n} 제거"
       },
       "categories": {
         "messaging": "메시징",
@@ -1551,7 +1603,7 @@
       "removeDialogTitle": "멤버 제거",
       "removeDialogDesc": "<bold>{name}</bold>을(를) 이 계정에서 제거하시겠습니까? 이 계정에서 로그아웃되며 다음 로그인 시 새로운 개인 계정이 발급됩니다. 로그인 정보 자체는 삭제되지 않습니다.",
       "cancel": "취소",
-      "removing": "제거 중...",
+      "removing": "제거 중…",
       "removeBtn": "멤버 제거",
       "loadingMembers": "팀원을 불러오는 중…",
       "roleSelectLabel": "{name}의 역할",
@@ -1584,7 +1636,7 @@
       "labelPlaceholder": "예: Sara — 지원팀",
       "labelHint": "아래 대기 목록에서 링크를 누구에게 보냈는지 기억하는 데 도움이 됩니다.",
       "cancel": "취소",
-      "creating": "만드는 중...",
+      "creating": "만드는 중…",
       "generateLink": "링크 생성",
       "labelTooLong": "라벨은 {max}자 이하여야 합니다",
       "copied": "초대 링크가 복사되었습니다",
@@ -1615,7 +1667,7 @@
       "deleteTag": "태그 삭제",
       "deleteConfirm": "\"{name}\" 태그를 삭제하시겠습니까? 모든 연락처에서 제거되며 되돌릴 수 없습니다.",
       "cancel": "취소",
-      "deleting": "삭제 중...",
+      "deleting": "삭제 중…",
       "colors": {
         "red": "빨강",
         "orange": "주황",
@@ -1761,7 +1813,7 @@
       "title": "WhatsApp 연결",
       "description": "Meta WhatsApp 비즈니스 API를 연결하세요. 자격 증명, 웹훅, 설정 단계가 모두 여기 있습니다.",
       "tokenCorrupted": "저장된 토큰을 복호화할 수 없습니다",
-      "resetting": "초기화 중...",
+      "resetting": "초기화 중…",
       "resetConfig": "설정 초기화",
       "credentialsValid": "자격 증명이 유효합니다",
       "notConnected": "연결되지 않음",
@@ -1824,9 +1876,9 @@
       "webhookCopied": "웹훅 URL이 클립보드에 복사되었습니다",
       "phoneNumberIdPlaceholder": "예: 100234567890123",
       "wabaIdPlaceholder": "예: 100234567890456",
-      "saving": "저장 중...",
+      "saving": "저장 중…",
       "saveConfig": "설정 저장",
-      "testing": "테스트 중...",
+      "testing": "테스트 중…",
       "testConnection": "API 연결 테스트",
       "setupInstructions": "설정 안내",
       "setupInstructionsDesc": "WhatsApp 비즈니스 API를 연결하려면 다음 단계를 따르세요.",
@@ -2065,7 +2117,7 @@
       "currencyLabel": "통화",
       "adminOnlyHint": "계정 관리자만 기본 통화를 변경할 수 있습니다.",
       "save": "저장",
-      "saving": "저장 중...",
+      "saving": "저장 중…",
       "saveFailed": "통화를 저장하지 못했습니다. 다시 시도해 주세요.",
       "saveSuccess": "완료되었습니다. 새 거래는 {currency}를 사용합니다.",
       "currencyHint": "새 거래와 합계에만 적용됩니다. 기존 거래는 원래 통화를 유지합니다."
@@ -2187,7 +2239,7 @@
     "passwordPlaceholder": "6자 이상",
     "confirmPasswordLabel": "비밀번호 확인",
     "confirmPasswordPlaceholder": "비밀번호를 다시 입력하세요",
-    "creating": "계정 만드는 중...",
+    "creating": "계정 만드는 중…",
     "submit": "계정 만들기",
     "haveAccount": "이미 계정이 있으신가요?",
     "signIn": "로그인"
@@ -2200,7 +2252,7 @@
     "desc": "이메일을 입력하시면 재설정 링크를 보내드립니다",
     "emailLabel": "이메일",
     "emailPlaceholder": "name@example.com",
-    "sending": "전송 중...",
+    "sending": "전송 중…",
     "sendLink": "재설정 링크 보내기"
   },
   "ResetPasswordPage": {
@@ -2211,10 +2263,10 @@
     "confirmPasswordLabel": "새 비밀번호 확인",
     "confirmPasswordPlaceholder": "새 비밀번호를 다시 입력하세요",
     "submit": "비밀번호 변경",
-    "saving": "변경 중...",
+    "saving": "변경 중…",
     "passwordsMismatch": "비밀번호가 일치하지 않습니다. 다시 입력해 주세요.",
     "passwordTooShort": "비밀번호가 너무 짧습니다. 6자 이상으로 입력해 주세요.",
-    "checking": "링크를 확인하는 중...",
+    "checking": "링크를 확인하는 중…",
     "expiredTitle": "이 링크는 더 이상 유효하지 않습니다",
     "expiredDesc": "비밀번호 재설정 링크는 한 번만 사용할 수 있으며 잠시 후 만료됩니다. 새 링크를 요청한 뒤 요청한 브라우저에서 열어 주세요.",
     "requestNewLink": "새 링크 요청",
@@ -2285,7 +2337,9 @@
       "placeholder": "고객 메시지를 입력하세요…",
       "notConfigured": "아직 에이전트가 설정되지 않았습니다 — 먼저 설정을 완료하세요.",
       "noReply": "답변을 받을 수 없습니다.",
-      "unreachable": "에이전트에 연결할 수 없습니다."
+      "unreachable": "에이전트에 연결할 수 없습니다.",
+      "inputLabel": "테스트 메시지",
+      "send": "메시지 보내기"
     },
     "usage": {
       "title": "토큰 사용량",
@@ -2328,10 +2382,26 @@
     "rowDescriptionPlaceholder": "설명 (선택)",
     "addRow": "행 추가",
     "addSection": "섹션 추가",
-    "defaultListButton": "메뉴"
+    "defaultListButton": "메뉴",
+    "messageType": "메시지 유형",
+    "cancel": "취소",
+    "switchKindTitle": "메시지 유형을 바꿀까요?",
+    "switchKindBodyButtons": "작성한 버튼이 지워집니다. 본문, 머리글, 바닥글은 유지됩니다.",
+    "switchKindBodyList": "작성한 섹션과 행이 지워집니다. 본문, 머리글, 바닥글은 유지됩니다.",
+    "switchKindConfirm": "유형 바꾸기",
+    "buttonTitleAria": "버튼 {n} 텍스트",
+    "buttonIdAria": "버튼 {n} 응답 ID",
+    "removeButton": "버튼 {n} 제거",
+    "sectionTitleAria": "섹션 {n} 제목",
+    "removeSection": "섹션 {n} 제거",
+    "rowTitleAria": "행 {n} 제목",
+    "rowIdAria": "행 {n} 응답 ID",
+    "rowDescriptionAria": "행 {n} 설명",
+    "removeRow": "행 {n} 제거"
   },
   "DashboardShell": {
-    "loading": "불러오는 중..."
+    "loading": "불러오는 중…",
+    "skipToContent": "본문으로 건너뛰기"
   },
   "UiPrimitives": {
     "close": "닫기"

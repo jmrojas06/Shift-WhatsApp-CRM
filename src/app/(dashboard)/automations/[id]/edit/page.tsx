@@ -1,7 +1,7 @@
 "use client"
 
 import { use, useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import Link from "next/link"
 import { Loader2 } from "lucide-react"
 import { useTranslations } from "next-intl"
 
@@ -19,7 +19,6 @@ export default function EditAutomationPage({
   params: Promise<{ id: string }>
 }) {
   const { id } = use(params)
-  const router = useRouter()
   const t = useTranslations("Automations.edit")
   const [initial, setInitial] = useState<BuilderInitial | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -54,21 +53,21 @@ export default function EditAutomationPage({
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-3">
         <p className="text-sm text-destructive">{error}</p>
-        <button
-          type="button"
-          onClick={() => router.push("/automations")}
-          className="min-h-11 rounded-lg px-3 text-sm text-primary outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+        <Link
+          href="/automations"
+          className="inline-flex min-h-11 items-center rounded-lg px-3 text-sm text-primary outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           {t("back")}
-        </button>
+        </Link>
       </div>
     )
   }
 
   if (!initial) {
     return (
-      <div className="flex h-screen items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+      <div className="flex h-screen items-center justify-center" role="status">
+        <Loader2 className="h-6 w-6 animate-spin text-primary" aria-hidden />
+        <span className="sr-only">{t("loading")}</span>
       </div>
     )
   }

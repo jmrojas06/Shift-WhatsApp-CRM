@@ -27,7 +27,7 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!loading && !user) {
-      router.push("/login");
+      router.replace("/login");
     }
   }, [user, loading, router]);
 
@@ -60,6 +60,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
   const { tabBarHidden } = useShellChrome();
+  const t = useTranslations("DashboardShell");
 
   return (
     <div
@@ -72,6 +73,13 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
           : "[--tabbar-h:calc(4rem+env(safe-area-inset-bottom))] lg:[--tabbar-h:0px]",
       )}
     >
+      {/* Keyboard users skip the ~15 navigation links on every page. */}
+      <a
+        href="#main-content"
+        className="sr-only z-[60] rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground focus:not-sr-only focus:fixed focus:top-3 focus:left-3"
+      >
+        {t("skipToContent")}
+      </a>
       {/* Reports this tab's online/away presence once we know a user is
           signed in. Headless — renders nothing. */}
       <PresenceHeartbeat />
@@ -82,14 +90,17 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Header />
         {/* Bottom padding clears the fixed mobile tab bar. */}
-        <main className="flex-1 overflow-y-auto p-4 pb-[calc(1rem+var(--tabbar-h))] sm:p-6 sm:pb-[calc(1.5rem+var(--tabbar-h))]">
+        <main id="main-content" tabIndex={-1} className="flex-1 focus:outline-none overflow-y-auto p-4 pb-[calc(1rem+var(--tabbar-h))] sm:p-6 sm:pb-[calc(1.5rem+var(--tabbar-h))]">
           {/* Above every page: writes are being rejected and here's why.
               Renders nothing unless the account/role failed to resolve. */}
           <AccountAccessAlert />
           {children}
         </main>
       </div>
-      <MobileTabBar onOpenMore={() => setSidebarOpen(true)} />
+      <MobileTabBar
+        onOpenMore={() => setSidebarOpen(true)}
+        moreOpen={sidebarOpen}
+      />
     </div>
   );
 }

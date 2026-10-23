@@ -164,7 +164,7 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
         ))}
 
         {sending && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
             <Bot className="h-5 w-5 text-primary" />
             <Loader2 className="h-4 w-4 animate-spin" /> {t('thinking')}
           </div>
@@ -178,19 +178,21 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={t('placeholder')}
+          aria-label={t('inputLabel')}
           rows={1}
-          className="flex-1 resize-none rounded-xl border border-border bg-muted px-4 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none focus:border-primary/50"
+          className="min-w-0 flex-1 resize-none rounded-xl border border-border bg-muted px-4 py-2.5 text-base text-foreground placeholder-muted-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 sm:text-sm"
         />
         <Button
-          size="sm"
+          size="icon"
           onClick={send}
           disabled={!input.trim() || sending}
-          className="h-9 w-9 shrink-0 p-0"
+          aria-label={sending ? t('thinking') : t('send')}
+          className="shrink-0"
         >
           {sending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
           ) : (
-            <Send className="h-4 w-4" />
+            <Send className="h-4 w-4" aria-hidden />
           )}
         </Button>
       </div>

@@ -308,6 +308,7 @@ export default function PipelinesPage() {
   if (loading) {
     return (
       <div className="min-w-0 space-y-6">
+        <h1 className="sr-only">{t("title")}</h1>
         <div className="flex items-center justify-between">
           <div className="h-8 w-48 animate-pulse rounded bg-muted" />
           <div className="h-9 w-28 animate-pulse rounded-lg bg-muted" />
@@ -323,6 +324,9 @@ export default function PipelinesPage() {
 
   return (
     <div className="min-w-0 space-y-6">
+      {/* The shell header already shows the page name visually; this keeps
+          one <h1> per page for screen readers and the document outline. */}
+      <h1 className="sr-only">{t("title")}</h1>
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 max-w-full items-center gap-3">

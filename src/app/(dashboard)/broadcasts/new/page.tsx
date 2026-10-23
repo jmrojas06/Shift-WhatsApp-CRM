@@ -189,7 +189,8 @@ export default function NewBroadcastPage() {
       {/* Step Content */}
       <div className="relative min-h-[400px]">
         <div
-          className="transition-all duration-300 ease-in-out"
+          className="transition-opacity duration-200 ease-out"
+          aria-busy={isProcessing || undefined}
           style={{
             opacity: isProcessing ? 0.6 : 1,
             pointerEvents: isProcessing ? 'none' : 'auto',

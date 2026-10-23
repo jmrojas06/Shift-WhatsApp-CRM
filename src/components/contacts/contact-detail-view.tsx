@@ -1,12 +1,12 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useId } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { addContactTag, deleteContactTag } from '@/lib/contacts/tag-api';
 import { useAuth } from '@/hooks/use-auth';
 import { formatCurrency } from '@/lib/currency';
 import { toast } from 'sonner';
-import type { Contact, Tag, ContactTag, ContactNote, CustomField, ContactCustomValue, Deal, MessageTemplate } from '@/types';
+import type { Contact, Tag, ContactNote, CustomField, Deal, MessageTemplate } from '@/types';
 import {
   TemplatePicker,
   type TemplateSendValues,
@@ -18,14 +18,20 @@ import {
   SheetTitle,
   SheetDescription,
 } from '@/components/ui/sheet';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Phone,
   Mail,
@@ -36,7 +42,6 @@ import {
   Plus,
   Trash2,
   Save,
-  X,
   DollarSign,
   LayoutTemplate,
 } from 'lucide-react';
@@ -90,6 +95,11 @@ export function ContactDetailView({
   const [newNote, setNewNote] = useState('');
   const [savingNote, setSavingNote] = useState(false);
   const [loadingNotes, setLoadingNotes] = useState(false);
+  // Note waiting for the user to confirm its deletion.
+  const [noteToDelete, setNoteToDelete] = useState<string | null>(null);
+
+  // Prefix for label/input ids so each field has a programmatic label.
+  const fieldId = useId();
 
   // Custom fields tab
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
@@ -420,8 +430,9 @@ export function ContactDetailView({
                   </SheetDescription>
                   <div className="flex flex-wrap items-center gap-3 mt-1.5 text-xs text-muted-foreground">
                     <button
+                      type="button"
                       onClick={copyPhone}
-                      className="flex items-center gap-1 hover:text-primary transition-colors cursor-pointer"
+                      className="flex items-center gap-1 rounded-md outline-none hover:text-primary transition-colors cursor-pointer focus-visible:ring-3 focus-visible:ring-ring/50"
                     >
                       <Phone className="size-3" />
                       {contactHandle(contact)}
@@ -499,41 +510,52 @@ export function ContactDetailView({
               </TabsList>
 
               {/* Details Tab */}
-              <TabsContent value="details" className="flex-1 overflow-y-auto px-4 py-3">
+              <TabsContent value="details" className="flex-1 overflow-y-auto overscroll-contain px-4 py-3">
                 <div className="space-y-3">
                   <div className="space-y-1.5">
-                    <Label className="text-muted-foreground text-xs">{t('name')}</Label>
+                    <Label htmlFor={`${fieldId}-name`} className="text-muted-foreground text-xs">{t('name')}</Label>
                     <Input
+                      id={`${fieldId}-name`}
                       value={editName}
                       onChange={(e) => setEditName(e.target.value)}
-                      className="bg-muted border-border text-foreground h-8 text-sm"
+                      className="bg-muted border-border text-foreground"
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-muted-foreground text-xs">
+                    <Label htmlFor={`${fieldId}-phone`} className="text-muted-foreground text-xs">
                       {t('phone')}
                       <span className="font-normal">({t('requiredMark')})</span>
                     </Label>
                     <Input
+                      id={`${fieldId}-phone`}
+                      type="tel"
+                      inputMode="tel"
+                      autoComplete="tel"
+                      required
                       value={editPhone}
                       onChange={(e) => setEditPhone(e.target.value)}
-                      className="bg-muted border-border text-foreground h-8 text-sm"
+                      className="bg-muted border-border text-foreground"
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-muted-foreground text-xs">{t('email')}</Label>
+                    <Label htmlFor={`${fieldId}-email`} className="text-muted-foreground text-xs">{t('email')}</Label>
                     <Input
+                      id={`${fieldId}-email`}
+                      type="email"
+                      spellCheck={false}
+                      autoComplete="email"
                       value={editEmail}
                       onChange={(e) => setEditEmail(e.target.value)}
-                      className="bg-muted border-border text-foreground h-8 text-sm"
+                      className="bg-muted border-border text-foreground"
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-muted-foreground text-xs">{t('company')}</Label>
+                    <Label htmlFor={`${fieldId}-company`} className="text-muted-foreground text-xs">{t('company')}</Label>
                     <Input
+                      id={`${fieldId}-company`}
                       value={editCompany}
                       onChange={(e) => setEditCompany(e.target.value)}
-                      className="bg-muted border-border text-foreground h-8 text-sm"
+                      className="bg-muted border-border text-foreground"
                     />
                   </div>
                   <Button
@@ -553,7 +575,7 @@ export function ContactDetailView({
               </TabsContent>
 
               {/* Tags Tab */}
-              <TabsContent value="tags" className="flex-1 overflow-y-auto px-4 py-3">
+              <TabsContent value="tags" className="flex-1 overflow-y-auto overscroll-contain px-4 py-3">
                 <div className="space-y-3">
                   <p className="text-xs text-muted-foreground">
                     {t('tagsTab.clickTagDesc')}
@@ -569,19 +591,32 @@ export function ContactDetailView({
                         return (
                           <button
                             key={tag.id}
+                            type="button"
                             onClick={() => toggleTag(tag.id)}
                             disabled={savingTags}
-                            className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition-all cursor-pointer ${
+                            aria-pressed={selected}
+                            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium outline-none transition-colors cursor-pointer focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed pointer-coarse:min-h-11 ${
                               selected
-                                ? 'ring-2 ring-primary ring-offset-1 ring-offset-border'
-                                : 'opacity-50 hover:opacity-80'
+                                ? 'border-primary text-foreground'
+                                : 'border-border bg-muted text-muted-foreground hover:text-foreground'
                             }`}
-                            style={{
-                              backgroundColor: tag.color + '20',
-                              color: tag.color,
-                            }}
+                            // Tag color is user data: keep it as a tint and a
+                            // dot, but the label stays on a text token for AA.
+                            style={
+                              selected
+                                ? { backgroundColor: tag.color + '20' }
+                                : undefined
+                            }
                           >
-                            {selected && <Check className="size-3 mr-1" />}
+                            {selected ? (
+                              <Check className="size-3 text-primary" aria-hidden="true" />
+                            ) : (
+                              <span
+                                aria-hidden="true"
+                                className="size-2 shrink-0 rounded-full"
+                                style={{ backgroundColor: tag.color }}
+                              />
+                            )}
                             {tag.name}
                           </button>
                         );
@@ -594,11 +629,15 @@ export function ContactDetailView({
               {/* Notes Tab */}
               <TabsContent value="notes" className="flex-1 flex flex-col min-h-0 px-4 py-3">
                 <div className="space-y-2 mb-3">
+                  <Label htmlFor={`${fieldId}-note`} className="sr-only">
+                    {t('notesTab.title')}
+                  </Label>
                   <Textarea
+                    id={`${fieldId}-note`}
                     value={newNote}
                     onChange={(e) => setNewNote(e.target.value)}
                     placeholder={t('notesTab.placeholder')}
-                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground min-h-[60px] text-sm resize-none"
+                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground min-h-[60px] resize-none"
                   />
                   <Button
                     onClick={addNote}
@@ -615,7 +654,7 @@ export function ContactDetailView({
                   </Button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto space-y-2">
+                <div className="flex-1 overflow-y-auto overscroll-contain space-y-2">
                   {loadingNotes ? (
                     <div className="flex items-center justify-center py-8">
                       <Loader2 className="size-5 animate-spin text-muted-foreground" />
@@ -635,11 +674,12 @@ export function ContactDetailView({
                             {note.note_text}
                           </p>
                           <button
-                            onClick={() => deleteNote(note.id)}
+                            type="button"
+                            onClick={() => setNoteToDelete(note.id)}
                             aria-label={t('deleteNoteAria')}
-                            className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all cursor-pointer shrink-0"
+                            className="-m-1.5 inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-lg text-muted-foreground opacity-0 outline-none transition-opacity hover:text-destructive focus-visible:opacity-100 focus-visible:ring-3 focus-visible:ring-ring/50 group-hover:opacity-100 pointer-coarse:size-11 pointer-coarse:opacity-100"
                           >
-                            <Trash2 className="size-3.5" />
+                            <Trash2 className="size-3.5" aria-hidden="true" />
                           </button>
                         </div>
                         <p className="text-xs text-muted-foreground mt-1.5">
@@ -658,7 +698,7 @@ export function ContactDetailView({
               </TabsContent>
 
               {/* Custom Fields Tab */}
-              <TabsContent value="custom" className="flex-1 overflow-y-auto px-4 py-3">
+              <TabsContent value="custom" className="flex-1 overflow-y-auto overscroll-contain px-4 py-3">
                 {loadingCustom ? (
                   <div className="flex items-center justify-center py-8">
                     <Loader2 className="size-5 animate-spin text-muted-foreground" />
@@ -671,10 +711,14 @@ export function ContactDetailView({
                   <div className="space-y-3">
                     {customFields.map((field) => (
                       <div key={field.id} className="space-y-1.5">
-                        <Label className="text-muted-foreground text-xs capitalize">
+                        <Label
+                          htmlFor={`${fieldId}-cf-${field.id}`}
+                          className="text-muted-foreground text-xs capitalize"
+                        >
                           {field.field_name}
                         </Label>
                         <Input
+                          id={`${fieldId}-cf-${field.id}`}
                           value={customValues[field.id] ?? ''}
                           onChange={(e) =>
                             setCustomValues((prev) => ({
@@ -683,7 +727,7 @@ export function ContactDetailView({
                             }))
                           }
                           placeholder={t('enterCustomField', { name: field.field_name })}
-                          className="bg-muted border-border text-foreground h-8 text-sm placeholder:text-muted-foreground"
+                          className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
                         />
                       </div>
                     ))}
@@ -705,7 +749,7 @@ export function ContactDetailView({
               </TabsContent>
 
               {/* Deals Tab */}
-              <TabsContent value="deals" className="flex-1 overflow-y-auto px-4 py-3">
+              <TabsContent value="deals" className="flex-1 overflow-y-auto overscroll-contain px-4 py-3">
                 {loadingDeals ? (
                   <div className="flex items-center justify-center py-8">
                     <Loader2 className="size-5 animate-spin text-primary" />
@@ -774,6 +818,34 @@ export function ContactDetailView({
       onOpenChange={setTemplatePickerOpen}
       onSelect={handleSendTemplate}
     />
+    <Dialog
+      open={noteToDelete !== null}
+      onOpenChange={(next) => {
+        if (!next) setNoteToDelete(null);
+      }}
+    >
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{t('deleteNoteTitle')}</DialogTitle>
+          <DialogDescription>{t('deleteNoteDesc')}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setNoteToDelete(null)}>
+            {t('cancel')}
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={() => {
+              const id = noteToDelete;
+              setNoteToDelete(null);
+              if (id) void deleteNote(id);
+            }}
+          >
+            {t('deleteNoteAria')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
     </>
   );
 }

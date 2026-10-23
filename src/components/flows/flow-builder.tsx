@@ -17,7 +17,7 @@
  * are list-only and have no canvas analogue.
  */
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import {
   CircleAlert,
@@ -221,10 +221,12 @@ export function FlowBuilder() {
  * seed stays in sync. Mirrors the automations builder's KeywordMatchConfig.
  */
 function KeywordsInput({
+  id,
   keywords,
   onChange,
   t,
 }: {
+  id?: string;
   keywords: string[];
   onChange: (keywords: string[]) => void;
   t: ReturnType<typeof useTranslations>;
@@ -242,6 +244,7 @@ function KeywordsInput({
 
   return (
     <Input
+      id={id}
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
@@ -272,12 +275,15 @@ function TriggerPanel({
   triggerIssues: ValidationIssue[];
   t: ReturnType<typeof useTranslations>;
 }) {
+  const uid = useId();
+  const whenId = `${uid}-when`;
+  const keywordsId = `${uid}-keywords`;
   return (
     <section className="border-border bg-card rounded-lg border p-4">
       <h2 className="text-foreground mb-3 text-sm font-semibold">{t('triggerTitle')}</h2>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <div>
-          <label className="text-muted-foreground mb-1 block text-xs">
+          <label htmlFor={whenId} className="text-muted-foreground mb-1 block text-xs">
             {t('whenLabel')}
           </label>
           <Select
@@ -291,7 +297,7 @@ function TriggerPanel({
               }))
             }
           >
-            <SelectTrigger className="bg-muted">
+            <SelectTrigger id={whenId} className="bg-muted">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -309,10 +315,11 @@ function TriggerPanel({
         </div>
         {state.trigger_type === 'keyword' && (
           <div>
-            <label className="text-muted-foreground mb-1 block text-xs">
+            <label htmlFor={keywordsId} className="text-muted-foreground mb-1 block text-xs">
               {t('keywordsLabel')}
             </label>
             <KeywordsInput
+              id={keywordsId}
               keywords={
                 Array.isArray(state.trigger_config.keywords)
                   ? (state.trigger_config.keywords as string[])
@@ -353,12 +360,14 @@ function EntryPicker({
   setState: React.Dispatch<React.SetStateAction<BuilderState>>;
   t: ReturnType<typeof useTranslations>;
 }) {
+  const entryId = useId();
   if (state.nodes.length === 0) return null;
   return (
     <section className="border-border bg-card flex items-center gap-3 rounded-lg border p-3">
-      <CornerDownRight className="text-primary h-4 w-4 shrink-0" />
-      <span className="text-muted-foreground text-xs">{t('entryNodeTitle')}</span>
+      <CornerDownRight className="text-primary h-4 w-4 shrink-0" aria-hidden />
+      <label htmlFor={entryId} className="text-muted-foreground text-xs">{t('entryNodeTitle')}</label>
       <NodeKeySelect
+        id={entryId}
         value={state.entry_node_id}
         nodes={state.nodes}
         onChange={(key) => setState((s) => ({ ...s, entry_node_id: key }))}
@@ -407,6 +416,8 @@ function NodeCard({
   const hasError = issues.some((i) => i.severity === 'error');
   const tSummary = useTranslations('Flows.summary');
   const preview = summarizeNode(node, tSummary);
+  const uid = useId();
+  const panelId = `${uid}-panel`;
   return (
     <div
       ref={cardRef}
@@ -428,7 +439,9 @@ function NodeCard({
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center gap-3 px-4 py-3 pl-5 text-left"
+        aria-expanded={expanded}
+        aria-controls={panelId}
+        className="hover:bg-muted/50 focus-visible:ring-ring/50 flex w-full items-center gap-3 px-4 py-3 pl-5 text-left transition-colors outline-none focus-visible:ring-3 focus-visible:ring-inset"
       >
         <NodeIconChip type={node.node_type} size={32} iconSize={16} />
         <div className="min-w-0 flex-1">
@@ -458,16 +471,16 @@ function NodeCard({
           )}
         </div>
         {hasError && (
-          <CircleAlert className="h-3.5 w-3.5 shrink-0 text-destructive" />
+          <CircleAlert className="h-3.5 w-3.5 shrink-0 text-destructive" aria-hidden />
         )}
         {expanded ? (
-          <ChevronUp className="text-muted-foreground h-4 w-4" />
+          <ChevronUp className="text-muted-foreground h-4 w-4" aria-hidden />
         ) : (
-          <ChevronDown className="text-muted-foreground h-4 w-4" />
+          <ChevronDown className="text-muted-foreground h-4 w-4" aria-hidden />
         )}
       </button>
       {expanded && (
-        <div className="border-border border-t px-4 py-4">
+        <div id={panelId} className="border-border border-t px-4 py-4">
           <NodeConfigWithAdvanced
             node={node}
             allNodes={allNodes}
@@ -526,6 +539,7 @@ function NodeConfigWithAdvanced({
   t: ReturnType<typeof useTranslations>;
 }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const uid = useId();
   const hasReplyIds =
     node.node_type === 'send_buttons' || node.node_type === 'send_list';
   return (
@@ -540,27 +554,32 @@ function NodeConfigWithAdvanced({
         <button
           type="button"
           onClick={() => setShowAdvanced((v) => !v)}
-          className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs"
+          aria-expanded={showAdvanced}
+          aria-controls={`${uid}-advanced`}
+          className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 inline-flex items-center gap-1 rounded text-xs outline-none focus-visible:ring-3 pointer-coarse:min-h-11"
         >
           {showAdvanced ? (
-            <ChevronUp className="h-3 w-3" />
+            <ChevronUp className="h-3 w-3" aria-hidden />
           ) : (
-            <ChevronDown className="h-3 w-3" />
+            <ChevronDown className="h-3 w-3" aria-hidden />
           )}
           {showAdvanced ? t('hideAdvanced') : t('showAdvanced')}
         </button>
         {showAdvanced && (
-          <div className="mt-3 flex flex-col gap-3">
+          <div id={`${uid}-advanced`} className="mt-3 flex flex-col gap-3">
             <div>
-              <label className="text-muted-foreground mb-1 block text-xs">
+              <label htmlFor={`${uid}-key`} className="text-muted-foreground mb-1 block text-xs">
                 {t('nodeKeyLabel')}
               </label>
               <Input
+                id={`${uid}-key`}
                 value={node.node_key}
                 onChange={(e) =>
                   onUpdate({ node_key: slugify(e.target.value, node.node_key) })
                 }
-                className="bg-muted font-mono text-xs"
+                autoComplete="off"
+                spellCheck={false}
+                className="bg-muted font-mono md:text-xs"
               />
             </div>
             {hasReplyIds && (

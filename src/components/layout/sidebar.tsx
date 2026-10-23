@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { LogOut, Settings, User, X } from "lucide-react";
 import { useTranslations } from "next-intl";
 
@@ -34,6 +34,21 @@ const ROLE_LABEL_KEY: Record<AccountRole, string> = {
   viewer: "roleViewer",
 };
 
+const DESKTOP_QUERY = "(min-width: 1024px)";
+
+/** True at Tailwind's `lg` breakpoint and up (false during SSR). */
+function useIsDesktop(): boolean {
+  return useSyncExternalStore(
+    (onChange) => {
+      const media = window.matchMedia(DESKTOP_QUERY);
+      media.addEventListener("change", onChange);
+      return () => media.removeEventListener("change", onChange);
+    },
+    () => window.matchMedia(DESKTOP_QUERY).matches,
+    () => false,
+  );
+}
+
 interface SidebarProps {
   /** Controlled on mobile by the tab bar's "Más" button. Ignored on lg+. */
   open?: boolean;
@@ -46,6 +61,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
   const { profile, account, accountRole, signOut } = useAuth();
   const { unreadConversations } = useShellChrome();
   const workspaceName = account?.name || profile?.full_name || "";
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   // Close the drawer when route changes — users opened it to navigate,
   // so once they pick a destination the drawer should get out of the way.
@@ -57,8 +73,11 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
 
   // Lock body scroll and allow Escape to close while the drawer is open on
   // mobile. No-ops on desktop because the sidebar isn't positioned there.
+  // Focus moves into the drawer on open and back to the opener on close.
   useEffect(() => {
     if (!open) return;
+    const opener = document.activeElement as HTMLElement | null;
+    closeButtonRef.current?.focus();
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const onKey = (e: KeyboardEvent) => {
@@ -68,8 +87,14 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
     return () => {
       document.body.style.overflow = prev;
       window.removeEventListener("keydown", onKey);
+      opener?.focus?.();
     };
   }, [open, onClose]);
+
+  // Below lg the closed drawer is off-screen: make it inert so its links
+  // leave the tab order and the accessibility tree.
+  const isDesktop = useIsDesktop();
+  const inert = !open && !isDesktop;
 
   const renderItem = (item: NavItem) => {
     const active = isNavActive(item.href, pathname);
@@ -98,11 +123,11 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
             </span>
           )}
           {showUnread && (
-            <span
-              aria-label={t("unreadConversations", { count: unreadConversations })}
-              className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-bold text-primary-foreground"
-            >
-              {unreadConversations > 99 ? "99+" : unreadConversations}
+            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-bold text-primary-foreground">
+              <span aria-hidden>{unreadConversations > 99 ? "99+" : unreadConversations}</span>
+              <span className="sr-only">
+                {t("unreadConversations", { count: unreadConversations })}
+              </span>
             </span>
           )}
         </Link>
@@ -129,6 +154,8 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
       />
 
       <aside
+        id="app-sidebar"
+        inert={inert}
         className={cn(
           // Mobile: fixed drawer that slides in from the left.
           "fixed inset-y-0 left-0 z-50 flex h-full w-72 max-w-[85vw] flex-col border-r border-border bg-background",
@@ -152,16 +179,17 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
             </span>
           </Link>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={onClose}
             aria-label={t("closeMenu")}
-            className="flex size-11 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
+            className="flex size-11 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none lg:hidden"
           >
             <X className="size-5" />
           </button>
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-3 pb-4">
+        <nav className="flex-1 overflow-y-auto overscroll-contain px-3 pb-4">
           {getNavGroups(account).map((group) => (
             <div key={group.labelKey} className="mt-3 first:mt-1">
               <p className="px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground">

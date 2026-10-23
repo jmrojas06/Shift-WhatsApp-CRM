@@ -4,9 +4,11 @@ import {
   createContext,
   useContext,
   useEffect,
+  useId,
   useState,
   type ReactNode,
 } from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
@@ -15,7 +17,6 @@ import {
   ChevronDown,
   Plus,
   Trash2,
-  GripVertical,
   MessageSquare,
   FileText,
   Tag,
@@ -39,6 +40,14 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -72,6 +81,7 @@ import {
   type StepPath,
 } from "@/lib/automations/builder-tree"
 import { cn } from "@/lib/utils"
+import { stepNeedsDeleteConfirm } from "./step-content"
 
 // ------------------------------------------------------------
 // Types (builder-local — mirror the flattened rows we POST)
@@ -314,16 +324,20 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
   )
 }
 
+// text-base below sm keeps iOS from zooming in on focus (it zooms any
+// field under 16px).
 const SELECT_CLASS =
-  "w-full rounded-md border border-border bg-muted px-2 py-1.5 text-sm text-foreground focus:border-primary focus:outline-none"
+  "w-full rounded-lg border border-border bg-muted px-2 py-1.5 text-base text-foreground pointer-coarse:min-h-11 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm"
 
 /** Tag dropdown by name + color, storing the tag's id. Falls back to a
  *  raw id input when no tags exist yet. */
 function TagSelect({
+  id,
   value,
   onChange,
   t,
 }: {
+  id?: string
   value: string
   onChange: (v: string) => void
   t: ReturnType<typeof useTranslations>
@@ -332,6 +346,7 @@ function TagSelect({
   if (tags.length === 0) {
     return (
       <Input
+        id={id}
         placeholder={t("tags.placeholder")}
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -348,6 +363,7 @@ function TagSelect({
         aria-hidden
       />
       <select
+        id={id}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className={SELECT_CLASS}
@@ -373,10 +389,12 @@ function TagSelect({
  *  that's since been deleted is preserved as a labelled option so editing an
  *  existing automation doesn't silently drop it. */
 function ContactFieldSelect({
+  id,
   value,
   onChange,
   t,
 }: {
+  id?: string
   value: string
   onChange: (v: string) => void
   t: ReturnType<typeof useTranslations>
@@ -387,6 +405,7 @@ function ContactFieldSelect({
     customValue && customFields.some((f) => `custom:${f.id}` === customValue)
   return (
     <select
+      id={id}
       value={value || "name"}
       onChange={(e) => onChange(e.target.value)}
       className={SELECT_CLASS}
@@ -413,10 +432,12 @@ function ContactFieldSelect({
 /** Agent dropdown by name, storing the member's user_id. Falls back to
  *  a raw id input when the member list is unavailable. */
 function AgentSelect({
+  id,
   value,
   onChange,
   t,
 }: {
+  id?: string
   value: string
   onChange: (v: string) => void
   t: ReturnType<typeof useTranslations>
@@ -425,6 +446,7 @@ function AgentSelect({
   if (members.length === 0) {
     return (
       <Input
+        id={id}
         placeholder={t("agents.placeholder")}
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -435,6 +457,7 @@ function AgentSelect({
   const selected = members.find((m) => m.user_id === value)
   return (
     <select
+      id={id}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       className={SELECT_CLASS}
@@ -471,22 +494,28 @@ function DealPipelineFields({
     return (
       <>
         <FieldBlock label={t("pipelines.pipelineIdLabel")}>
+          {(id) => (
           <Input
+            id={id}
             value={pipelineId}
             onChange={(e) =>
               onChange({ pipeline_id: e.target.value, stage_id: stageId })
             }
             className="bg-muted text-foreground"
           />
+          )}
         </FieldBlock>
         <FieldBlock label={t("pipelines.stageIdLabel")}>
+          {(id) => (
           <Input
+            id={id}
             value={stageId}
             onChange={(e) =>
               onChange({ pipeline_id: pipelineId, stage_id: e.target.value })
             }
             className="bg-muted text-foreground"
           />
+          )}
         </FieldBlock>
       </>
     )
@@ -499,7 +528,9 @@ function DealPipelineFields({
   return (
     <>
       <FieldBlock label={t("pipelines.pipelineLabel")}>
+        {(id) => (
         <select
+          id={id}
           value={pipelineId}
           onChange={(e) => {
             const nextPipelineId = e.target.value
@@ -523,9 +554,12 @@ function DealPipelineFields({
             <option value={pipelineId}>{t("pipelines.unknownPipeline", { id: pipelineId })}</option>
           )}
         </select>
+        )}
       </FieldBlock>
       <FieldBlock label={t("pipelines.stageLabel")}>
+        {(id) => (
         <select
+          id={id}
           value={stageId}
           onChange={(e) =>
             onChange({ pipeline_id: pipelineId, stage_id: e.target.value })
@@ -545,6 +579,7 @@ function DealPipelineFields({
             <option value={stageId}>{t("pipelines.unknownStage", { id: stageId })}</option>
           )}
         </select>
+        )}
       </FieldBlock>
     </>
   )
@@ -570,22 +605,28 @@ function SendTemplateFields({
     return (
       <>
         <FieldBlock label={t("templates.templateNameLabel")}>
+          {(id) => (
           <Input
+            id={id}
             value={templateName}
             onChange={(e) =>
               onChange({ template_name: e.target.value, language })
             }
             className="bg-muted text-foreground"
           />
+          )}
         </FieldBlock>
         <FieldBlock label={t("templates.languageLabel")}>
+          {(id) => (
           <Input
+            id={id}
             value={language}
             onChange={(e) =>
               onChange({ template_name: templateName, language: e.target.value })
             }
             className="bg-muted text-foreground"
           />
+          )}
         </FieldBlock>
       </>
     )
@@ -601,7 +642,9 @@ function SendTemplateFields({
 
   return (
     <FieldBlock label={t("templates.templateLabel")}>
+      {(id) => (
       <select
+        id={id}
         value={current}
         onChange={(e) => {
           const [name, lang] = e.target.value.split("::")
@@ -624,6 +667,7 @@ function SendTemplateFields({
           </option>
         )}
       </select>
+      )}
     </FieldBlock>
   )
 }
@@ -724,19 +768,19 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
           switch moves to the right of the save button, so the name input
           gets maximum width. */}
       <header className="flex flex-shrink-0 items-center gap-2 border-b border-border bg-card/80 px-3 py-3 sm:gap-3 sm:px-4">
-        <button
-          type="button"
-          onClick={() => router.push("/automations")}
-          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        <Link
+          href="/automations"
+          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none pointer-coarse:h-11 pointer-coarse:w-11"
           aria-label={t("backToAutomations")}
         >
-          <ArrowLeft className="h-4 w-4" />
-        </button>
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+        </Link>
         <input
           value={state.name}
           onChange={(e) => patchTop("name", e.target.value)}
           placeholder={t("untitled")}
-          className="min-w-0 flex-1 rounded-md bg-transparent px-2 py-1 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:bg-muted focus:outline-none sm:text-base"
+          aria-label={t("nameLabel")}
+          className="min-w-0 flex-1 rounded-lg bg-transparent px-2 py-1 text-base font-semibold text-foreground placeholder:text-muted-foreground focus:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
         />
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <span className="hidden sm:inline">{t("active")}</span>
@@ -751,8 +795,8 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
           disabled={saving}
           className="bg-primary text-primary-foreground hover:bg-primary/90"
         >
-          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-          {isEditing ? t("save") : t("saveDraft")}
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+          {saving ? t("saving") : isEditing ? t("save") : t("saveDraft")}
         </Button>
       </header>
 
@@ -804,6 +848,11 @@ function TriggerCard({
   t: ReturnType<typeof useTranslations>
 }) {
   const [open, setOpen] = useState(false)
+  const uid = useId()
+  const panelId = `${uid}-panel`
+  const typeId = `${uid}-type`
+  const tagId = `${uid}-tag`
+  const scheduleId = `${uid}-schedule`
   return (
     // Card width: full on mobile, fixed 320px on sm+. The canvas wrapper
     // (max-w-2xl + px-4) keeps this tidy on tablet/desktop.
@@ -812,10 +861,12 @@ function TriggerCard({
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="flex w-full items-center gap-3 px-4 py-3 text-left"
+          aria-expanded={open}
+          aria-controls={panelId}
+          className="flex w-full items-center gap-3 rounded-r-lg px-4 py-3 text-left transition-colors hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
         >
           <div className="flex h-8 w-8 items-center justify-center rounded-md bg-info/10 text-info">
-            <Zap className="h-4 w-4" />
+            <Zap className="h-4 w-4" aria-hidden />
           </div>
           <div className="min-w-0 flex-1">
             <div className="text-[11px] uppercase tracking-wide text-info">{t("trigger")}</div>
@@ -824,19 +875,21 @@ function TriggerCard({
             </div>
           </div>
           <ChevronDown
+            aria-hidden
             className={cn("h-4 w-4 text-muted-foreground transition-transform", open && "rotate-180")}
           />
         </button>
         {open && (
-          <div className="space-y-3 border-t border-border px-4 py-3">
+          <div id={panelId} className="space-y-3 border-t border-border px-4 py-3">
             <div>
-              <label className="mb-1 block text-xs font-medium text-muted-foreground">
+              <label htmlFor={typeId} className="mb-1 block text-xs font-medium text-muted-foreground">
                 {t("triggerType")}
               </label>
               <select
+                id={typeId}
                 value={type}
                 onChange={(e) => onTypeChange(e.target.value as AutomationTriggerType)}
-                className="w-full rounded-md border border-border bg-muted px-2 py-1.5 text-sm text-foreground focus:border-primary focus:outline-none"
+                className={SELECT_CLASS}
               >
                 {TRIGGER_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>
@@ -860,10 +913,11 @@ function TriggerCard({
             )}
             {type === "tag_added" && (
               <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                <label htmlFor={tagId} className="mb-1 block text-xs font-medium text-muted-foreground">
                   {t("config.tagLabel")}
                 </label>
                 <TagSelect
+                  id={tagId}
                   value={(config.tag_id as string) ?? ""}
                   onChange={(v) => onConfigChange({ ...config, tag_id: v })}
                   t={t}
@@ -872,10 +926,11 @@ function TriggerCard({
             )}
             {type === "time_based" && (
               <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                <label htmlFor={scheduleId} className="mb-1 block text-xs font-medium text-muted-foreground">
                   {t("schedule")}
                 </label>
                 <Input
+                  id={scheduleId}
                   placeholder={t("schedulePlaceholder")}
                   value={(config.schedule as string) ?? ""}
                   onChange={(e) =>
@@ -912,6 +967,7 @@ function KeywordMatchConfig({
   // cleaned, rejoined form. Seeded once on mount; this component remounts
   // when the trigger type changes, so the seed stays in sync.
   const [draft, setDraft] = useState(keywords.join(", "))
+  const uid = useId()
 
   // Persist the default the <select> displays. The dropdown falls back to
   // "contains" for display, but leaving it untouched would otherwise omit
@@ -937,10 +993,11 @@ function KeywordMatchConfig({
   return (
     <div className="space-y-2">
       <div>
-        <label className="mb-1 block text-xs font-medium text-muted-foreground">
+        <label htmlFor={`${uid}-keywords`} className="mb-1 block text-xs font-medium text-muted-foreground">
           {t("keywords")}
         </label>
         <Input
+          id={`${uid}-keywords`}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commit}
@@ -955,10 +1012,11 @@ function KeywordMatchConfig({
         />
       </div>
       <div>
-        <label className="mb-1 block text-xs font-medium text-muted-foreground">
+        <label htmlFor={`${uid}-match`} className="mb-1 block text-xs font-medium text-muted-foreground">
           {t("config.matchType")}
         </label>
         <select
+          id={`${uid}-match`}
           value={config?.match_type ?? "contains"}
           onChange={(e) =>
             onChange({
@@ -966,7 +1024,7 @@ function KeywordMatchConfig({
               match_type: e.target.value as "exact" | "contains" | "word",
             })
           }
-          className="w-full rounded-md border border-border bg-muted px-2 py-1.5 text-sm text-foreground focus:outline-none"
+          className={SELECT_CLASS}
         >
           <option value="contains">{t("config.matchContains")}</option>
           <option value="word">{t("config.matchWord")}</option>
@@ -998,6 +1056,7 @@ function InteractiveReplyConfig({
   // Same local-draft-then-commit pattern as KeywordMatchConfig so
   // commas + spaces survive keystrokes.
   const [draft, setDraft] = useState(ids.join(", "))
+  const inputId = useId()
 
   function commit() {
     const parsed = draft
@@ -1010,10 +1069,11 @@ function InteractiveReplyConfig({
 
   return (
     <div>
-      <label className="mb-1 block text-xs font-medium text-muted-foreground">
+      <label htmlFor={inputId} className="mb-1 block text-xs font-medium text-muted-foreground">
         {t("replyIds")}
       </label>
       <Input
+        id={inputId}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
@@ -1113,6 +1173,18 @@ function StepRenderer({
       ? "w-full max-w-[600px] sm:w-[600px]"
       : "w-full max-w-[320px] sm:w-80"
 
+  const panelId = `step-panel-${step.cid}`
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  function requestDelete() {
+    // Only interrupt when there is something to lose: typed config or
+    // steps nested in a condition's branches.
+    if (stepNeedsDeleteConfirm(step, blankConfig(step.step_type))) {
+      setConfirmDelete(true)
+      return
+    }
+    props.deleteStepAt(path)
+  }
+
   return (
     <>
       <div className={cn("z-10 flex min-w-0 flex-col", width)}>
@@ -1125,11 +1197,12 @@ function StepRenderer({
           <button
             type="button"
             onClick={() => props.setExpandedId(expanded ? null : step.cid)}
-            className="flex w-full items-center gap-3 px-4 py-3 text-left"
+            aria-expanded={expanded}
+            aria-controls={panelId}
+            className="flex w-full items-center gap-3 rounded-r-lg px-4 py-3 text-left transition-colors hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
           >
-            <GripVertical className="h-4 w-4 flex-shrink-0 text-muted-foreground" aria-hidden />
-            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-muted text-muted-foreground">
-              <Icon className="h-4 w-4" />
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+              <Icon className="h-4 w-4" aria-hidden />
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
@@ -1139,11 +1212,12 @@ function StepRenderer({
               <div className="truncate text-[11px] text-muted-foreground">{previewFor(step, t)}</div>
             </div>
             <ChevronDown
+              aria-hidden
               className={cn("h-4 w-4 text-muted-foreground transition-transform", expanded && "rotate-180")}
             />
           </button>
           {expanded && (
-            <div className="border-t border-border px-4 py-3">
+            <div id={panelId} className="border-t border-border px-4 py-3">
               <StepEditor
                 step={step}
                 onChange={(next) => props.updateStep(path, () => next)}
@@ -1172,15 +1246,42 @@ function StepRenderer({
                 <Button
                   variant="destructive"
                   size="sm"
-                  onClick={() => props.deleteStepAt(path)}
+                  onClick={requestDelete}
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  {t("delete")}
+                  <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                  {t("deleteStep")}
                 </Button>
               </div>
             </div>
           )}
         </div>
+
+        <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>{t("deleteStepConfirmTitle")}</DialogTitle>
+              <DialogDescription>
+                {isCondition
+                  ? t("deleteConditionConfirmBody")
+                  : t("deleteStepConfirmBody", { step: t(`steps.${meta.label}`) })}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setConfirmDelete(false)}>
+                {t("cancel")}
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  setConfirmDelete(false)
+                  props.deleteStepAt(path)
+                }}
+              >
+                {t("deleteStep")}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {isCondition && (
           <ConditionBranches step={step} path={path} {...props} />
@@ -1261,7 +1362,7 @@ function AddButton({ onPick }: { onPick: (t: AutomationStepType) => void }) {
       <div className="h-4 w-[2px] bg-border" aria-hidden />
       <DropdownMenu>
         <DropdownMenuTrigger
-          className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-dashed border-border bg-background text-muted-foreground transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary data-[popup-open]:border-primary data-[popup-open]:bg-primary/20 data-[popup-open]:text-primary"
+          className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-dashed border-border bg-background text-muted-foreground transition-colors pointer-coarse:h-11 pointer-coarse:w-11 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none hover:border-primary hover:bg-primary/10 hover:text-primary data-[popup-open]:border-primary data-[popup-open]:bg-primary/20 data-[popup-open]:text-primary"
           aria-label={t("addStep")}
         >
           <Plus className="h-4 w-4" />
@@ -1306,12 +1407,15 @@ function StepEditor({
     case "send_message":
       return (
         <FieldBlock label={t("config.messageText")}>
+          {(id) => (
           <Textarea
+            id={id}
             value={(cfg.text as string) ?? ""}
             onChange={(e) => set({ text: e.target.value })}
             placeholder={t("config.placeholderMessageText")}
             className="min-h-24 bg-muted text-foreground"
           />
+          )}
         </FieldBlock>
       )
     case "send_buttons":
@@ -1335,12 +1439,12 @@ function StepEditor({
               })
             }
           />
-          <label className="flex items-start gap-2 text-xs text-foreground">
+          <label className="flex cursor-pointer items-start gap-2 py-2 text-xs text-foreground pointer-coarse:min-h-11">
             <input
               type="checkbox"
               checked={cfg.wait_for_reply === true}
               onChange={(e) => set({ wait_for_reply: e.target.checked })}
-              className="mt-0.5 h-3.5 w-3.5 accent-primary"
+              className="mt-0.5 size-4 shrink-0 accent-primary focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
             />
             <span>
               {t("config.waitForReply")}
@@ -1364,33 +1468,42 @@ function StepEditor({
     case "remove_tag":
       return (
         <FieldBlock label={t("config.tagLabel")}>
+          {(id) => (
           <TagSelect
+            id={id}
             value={(cfg.tag_id as string) ?? ""}
             onChange={(v) => set({ tag_id: v })}
             t={t}
           />
+          )}
         </FieldBlock>
       )
     case "assign_conversation":
       return (
         <>
           <FieldBlock label={t("config.modeLabel")}>
+            {(id) => (
             <select
+              id={id}
               value={(cfg.mode as string) ?? "round_robin"}
               onChange={(e) => set({ mode: e.target.value })}
-              className="w-full rounded-md border border-border bg-muted px-2 py-1.5 text-sm text-foreground"
+              className={SELECT_CLASS}
             >
               <option value="round_robin">{t("config.modes.round_robin")}</option>
               <option value="specific">{t("config.modes.specific")}</option>
             </select>
+            )}
           </FieldBlock>
           {cfg.mode === "specific" && (
             <FieldBlock label={t("config.agentLabel")}>
+              {(id) => (
               <AgentSelect
+                id={id}
                 value={(cfg.agent_id as string) ?? ""}
                 onChange={(v) => set({ agent_id: v })}
                 t={t}
               />
+              )}
             </FieldBlock>
           )}
         </>
@@ -1399,19 +1512,25 @@ function StepEditor({
       return (
         <>
           <FieldBlock label={t("config.fieldLabel")}>
+            {(id) => (
             <ContactFieldSelect
+              id={id}
               value={(cfg.field as string) ?? "name"}
               onChange={(v) => set({ field: v })}
               t={t}
             />
+            )}
           </FieldBlock>
           <FieldBlock label={t("config.valueLabel")}>
+            {(id) => (
             <Input
+              id={id}
               value={(cfg.value as string) ?? ""}
               onChange={(e) => set({ value: e.target.value })}
               placeholder={t.raw("config.placeholderValue")}
               className="bg-muted text-foreground"
             />
+            )}
           </FieldBlock>
         </>
       )
@@ -1425,19 +1544,26 @@ function StepEditor({
             t={t}
           />
           <FieldBlock label={t("config.titleLabel")}>
+            {(id) => (
             <Input
+              id={id}
               value={(cfg.title as string) ?? ""}
               onChange={(e) => set({ title: e.target.value })}
               className="bg-muted text-foreground"
             />
+            )}
           </FieldBlock>
           <FieldBlock label={t("config.valueLabel")}>
+            {(id) => (
             <Input
+              id={id}
               type="number"
+              inputMode="decimal"
               value={(cfg.value as number) ?? 0}
               onChange={(e) => set({ value: Number(e.target.value) })}
-              className="bg-muted text-foreground"
+              className="bg-muted text-foreground tabular-nums"
             />
+            )}
           </FieldBlock>
         </>
       )
@@ -1445,24 +1571,31 @@ function StepEditor({
       return (
         <div className="grid grid-cols-2 gap-2">
           <FieldBlock label={t("config.amountLabel")}>
+            {(id) => (
             <Input
+              id={id}
               type="number"
+              inputMode="numeric"
               min={1}
               value={(cfg.amount as number) ?? 1}
               onChange={(e) => set({ amount: Math.max(1, Number(e.target.value)) })}
-              className="bg-muted text-foreground"
+              className="bg-muted text-foreground tabular-nums"
             />
+            )}
           </FieldBlock>
           <FieldBlock label={t("config.unitLabel")}>
+            {(id) => (
             <select
+              id={id}
               value={(cfg.unit as string) ?? "hours"}
               onChange={(e) => set({ unit: e.target.value })}
-              className="w-full rounded-md border border-border bg-muted px-2 py-1.5 text-sm text-foreground"
+              className={SELECT_CLASS}
             >
               <option value="minutes">{t("config.units.minutes")}</option>
               <option value="hours">{t("config.units.hours")}</option>
               <option value="days">{t("config.units.days")}</option>
             </select>
+            )}
           </FieldBlock>
         </div>
       )
@@ -1470,19 +1603,24 @@ function StepEditor({
       return (
         <>
           <FieldBlock label={t("config.subjectLabel")}>
+            {(id) => (
             <select
+              id={id}
               value={(cfg.subject as string) ?? "tag_presence"}
               onChange={(e) => set({ subject: e.target.value })}
-              className="w-full rounded-md border border-border bg-muted px-2 py-1.5 text-sm text-foreground"
+              className={SELECT_CLASS}
             >
               <option value="tag_presence">{t("config.subjects.tag_presence")}</option>
               <option value="contact_field">{t("config.subjects.contact_field")}</option>
               <option value="message_content">{t("config.subjects.message_content")}</option>
               <option value="time_of_day">{t("config.subjects.time_of_day")}</option>
             </select>
+            )}
           </FieldBlock>
           <FieldBlock label={t("config.operandLabel")}>
+            {(id) => (
             <Input
+              id={id}
               placeholder={
                 cfg.subject === "time_of_day"
                   ? t("config.placeholderTime")
@@ -1496,14 +1634,18 @@ function StepEditor({
               onChange={(e) => set({ operand: e.target.value })}
               className="bg-muted text-foreground"
             />
+            )}
           </FieldBlock>
           {(cfg.subject === "contact_field" || cfg.subject === "message_content") && (
             <FieldBlock label={t("config.valueLabel")}>
+              {(id) => (
               <Input
+                id={id}
                 value={(cfg.value as string) ?? ""}
                 onChange={(e) => set({ value: e.target.value })}
                 className="bg-muted text-foreground"
               />
+              )}
             </FieldBlock>
           )}
         </>
@@ -1512,18 +1654,29 @@ function StepEditor({
       return (
         <>
           <FieldBlock label={t("config.urlLabel")}>
+            {(id) => (
             <Input
+              id={id}
+              type="url"
+              inputMode="url"
+              autoComplete="off"
+              spellCheck={false}
               value={(cfg.url as string) ?? ""}
               onChange={(e) => set({ url: e.target.value })}
               className="bg-muted text-foreground"
             />
+            )}
           </FieldBlock>
           <FieldBlock label={t("config.bodyTemplateLabel")}>
+            {(id) => (
             <Textarea
+              id={id}
+              spellCheck={false}
               value={(cfg.body_template as string) ?? ""}
               onChange={(e) => set({ body_template: e.target.value })}
-              className="min-h-20 bg-muted font-mono text-xs text-foreground"
+              className="min-h-20 bg-muted font-mono text-foreground md:text-xs"
             />
+            )}
           </FieldBlock>
         </>
       )
@@ -1538,17 +1691,22 @@ function StepEditor({
   }
 }
 
+/** Labelled step field. The control is rendered by `children(id)` so the
+ *  label points at it with `htmlFor` and screen readers announce it. */
 function FieldBlock({
   label,
   children,
 }: {
   label: string
-  children: React.ReactNode
+  children: (id: string) => ReactNode
 }) {
+  const id = useId()
   return (
     <div className="mb-2 last:mb-0">
-      <label className="mb-1 block text-xs font-medium text-muted-foreground">{label}</label>
-      {children}
+      <label htmlFor={id} className="mb-1 block text-xs font-medium text-muted-foreground">
+        {label}
+      </label>
+      {children(id)}
     </div>
   )
 }

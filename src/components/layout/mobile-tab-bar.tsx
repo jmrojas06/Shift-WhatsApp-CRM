@@ -17,7 +17,14 @@ import { useShellChrome } from "./shell-chrome";
  * lg+ where the sidebar is always visible, and while a page asks for the
  * full height (an open chat).
  */
-export function MobileTabBar({ onOpenMore }: { onOpenMore: () => void }) {
+export function MobileTabBar({
+  onOpenMore,
+  moreOpen,
+}: {
+  onOpenMore: () => void;
+  /** Whether the drawer "Más" opens is currently open. */
+  moreOpen: boolean;
+}) {
   const t = useTranslations("Sidebar");
   const pathname = usePathname();
   const { account } = useAuth();
@@ -46,11 +53,11 @@ export function MobileTabBar({ onOpenMore }: { onOpenMore: () => void }) {
             <span className="relative">
               <item.icon className="size-[22px]" strokeWidth={1.75} />
               {showBadge && (
-                <span
-                  aria-label={t("unreadConversations", { count: unreadConversations })}
-                  className="absolute -top-1.5 -right-2.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground"
-                >
-                  {unreadConversations > 9 ? "9+" : unreadConversations}
+                <span className="absolute -top-1.5 -right-2.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
+                  <span aria-hidden>{unreadConversations > 9 ? "9+" : unreadConversations}</span>
+                  <span className="sr-only">
+                    {t("unreadConversations", { count: unreadConversations })}
+                  </span>
                 </span>
               )}
             </span>
@@ -63,6 +70,8 @@ export function MobileTabBar({ onOpenMore }: { onOpenMore: () => void }) {
       <button
         type="button"
         onClick={onOpenMore}
+        aria-expanded={moreOpen}
+        aria-controls="app-sidebar"
         className="flex min-h-11 flex-col items-center justify-center gap-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
       >
         <Menu className="size-[22px]" strokeWidth={1.75} />

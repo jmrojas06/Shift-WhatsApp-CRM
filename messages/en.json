@@ -9,7 +9,7 @@
     "passwordLabel": "Password",
     "forgotPassword": "Forgot password?",
     "passwordPlaceholder": "Enter your password",
-    "signingIn": "Signing in...",
+    "signingIn": "Signing in…",
     "signIn": "Sign in",
     "noAccount": "Don't have an account?",
     "createAccount": "Create account",
@@ -264,7 +264,7 @@
       "templates": "Templates",
       "readOnlyPlaceholder": "Read-only — viewers can browse but not reply",
       "sessionExpiredPlaceholder": "Session expired - use a template",
-      "typeMessagePlaceholder": "Type a message... (Shift+Enter for new line)",
+      "typeMessagePlaceholder": "Type a message… (Shift+Enter for new line)",
       "readOnlyTitle": "Read-only — your role can't send messages",
       "recording": "Recording… {current} / {max}",
       "cancel": "Cancel",
@@ -347,7 +347,8 @@
       "reactWith": "React with {emoji}",
       "nothingToCopy": "Nothing to copy",
       "copied": "Copied",
-      "copyFailed": "Copy failed"
+      "copyFailed": "Copy failed",
+      "more": "More message actions"
     },
     "replyQuote": {
       "photo": "[Photo]",
@@ -385,7 +386,7 @@
       "deals": "Deals",
       "noTags": "No tags",
       "noDeals": "No deals",
-      "addNotePlaceholder": "Add a note...",
+      "addNotePlaceholder": "Add a note…",
       "newNoteLabel": "New note",
       "addNote": "Save note",
       "copyHandle": "Copy {handle}"
@@ -413,7 +414,7 @@
       "selectAllOnPage": "Select all contacts on this page",
       "importBtn": "Import",
       "addContactBtn": "Add Contact",
-      "searchPlaceholder": "Search by name, phone, or email...",
+      "searchPlaceholder": "Search by name, phone, or email…",
       "filterByTags": "Filter by tags",
       "clearAll": "Clear all",
       "noTagsYet": "No tags yet.",
@@ -428,7 +429,7 @@
         "tags": "Tags",
         "createdAt": "Created"
       },
-      "loading": "Loading contacts...",
+      "loading": "Loading contacts…",
       "noContactsMatch": "No contacts match your filters.",
       "noContactsYet": "No contacts yet.",
       "addFirstContact": "Add your first contact",
@@ -475,7 +476,7 @@
       "companyLabel": "Company",
       "companyPlaceholder": "Company name",
       "tagsLabel": "Tags",
-      "tagsPlaceholder": "Select tags...",
+      "tagsPlaceholder": "Select tags…",
       "noTagsFound": "No tags found.",
       "createTagAction": "Create tag \"{value}\"",
       "cancel": "Cancel",
@@ -489,7 +490,7 @@
       "viewExisting": "View {name}",
       "dupExact": "A contact with this phone number already exists.",
       "dupSimilar": "A contact with a very similar number already exists.",
-      "loadingTags": "Loading tags...",
+      "loadingTags": "Loading tags…",
       "noTagsAvailable": "No tags available. Create tags in Settings.",
       "phoneRequired": "Enter the phone number with its country code, e.g. +1 415 555 0123.",
       "phoneNeedsCountryCode": "Include the country code — the number must start with + (e.g. +14155550123)",
@@ -508,7 +509,7 @@
         "tags": "Tags",
         "noTags": "No tags",
         "noDeals": "No deals",
-        "addNotePlaceholder": "Add a note..."
+        "addNotePlaceholder": "Add a note…"
       },
       "actions": {
         "edit": "Edit",
@@ -526,14 +527,14 @@
       "customFields": "Custom Fields",
       "noCustomFields": "No custom fields defined. Create them in Settings.",
       "manageFields": "Manage fields",
-      "enterCustomField": "Enter {name}...",
+      "enterCustomField": "Enter {name}…",
       "activityTab": {
         "title": "Activity History",
         "noActivity": "No activity yet."
       },
       "notesTab": {
         "title": "Internal Notes",
-        "placeholder": "Write a note...",
+        "placeholder": "Write a note…",
         "save": "Add Note",
         "noNotes": "No notes yet."
       },
@@ -562,7 +563,10 @@
       "toastTemplateFailed": "Failed to send template: {reason}",
       "networkError": "network error",
       "requiredMark": "required",
-      "deleteNoteAria": "Delete note"
+      "deleteNoteAria": "Delete note",
+      "deleteNoteTitle": "Delete this note?",
+      "deleteNoteDesc": "The note will be removed from this contact. This can't be undone.",
+      "cancel": "Cancel"
     },
     "importModal": {
       "title": "Import Contacts",
@@ -650,7 +654,7 @@
       "pipelineNamePlaceholder": "e.g., Enterprise Sales",
       "defaultStagesDesc": "Default stages (New Lead → Won) will be created automatically.",
       "cancel": "Cancel",
-      "creating": "Creating...",
+      "creating": "Creating…",
       "createPipelineBtn": "Create Pipeline",
       "toastFailedLoadPipelines": "Failed to load pipelines",
       "toastFailedMoveDeal": "Failed to move deal",
@@ -664,7 +668,8 @@
         "proposalSent": "Proposal Sent",
         "negotiation": "Negotiation",
         "won": "Won"
-      }
+      },
+      "title": "Pipeline"
     },
     "board": {
       "dropDealHere": "Drop a deal here",
@@ -673,7 +678,8 @@
     "card": {
       "noContact": "No contact",
       "won": "Won",
-      "lost": "Lost"
+      "lost": "Lost",
+      "assignedTo": "Assigned to {name}"
     },
     "form": {
       "editDeal": "Edit Deal",
@@ -690,18 +696,18 @@
       "assignedTo": "Assigned To",
       "unassigned": "Unassigned",
       "notes": "Notes",
-      "notesPlaceholder": "Add notes...",
+      "notesPlaceholder": "Add notes…",
       "status": "Status",
       "markAsWon": "Mark as Won",
       "markAsLost": "Mark as Lost",
       "reopenDeal": "Reopen deal",
       "cancel": "Cancel",
-      "saving": "Saving...",
+      "saving": "Saving…",
       "saveChanges": "Save Changes",
       "createDeal": "Create Deal",
       "deletePrompt": "Delete this deal?",
       "confirm": "Confirm",
-      "deleting": "Deleting...",
+      "deleting": "Deleting…",
       "deleteDeal": "Delete Deal",
       "toastRequired": "Title, contact, and stage are required",
       "toastFailedSave": "Failed to save deal",
@@ -730,14 +736,14 @@
       "deletePipeline": "Delete Pipeline",
       "deletePipelineDesc": "This will archive all deals in this pipeline. This cannot be undone.",
       "cancel": "Cancel",
-      "deleting": "Deleting...",
+      "deleting": "Deleting…",
       "deletePipelineBtn": "Delete Pipeline",
       "pipelineName": "Pipeline Name",
       "stages": "Stages",
       "newStageNamePlaceholder": "New stage name",
       "add": "Add",
       "createNewPipeline": "Create a new pipeline",
-      "saving": "Saving...",
+      "saving": "Saving…",
       "saveChanges": "Save Changes",
       "dragToReorder": "Drag to reorder",
       "changeColor": "Change color",
@@ -749,7 +755,33 @@
       "toastFailedDeletePipeline": "Failed to delete pipeline",
       "toastDeleted": "Pipeline deleted",
       "pickColor": "Pick color {color}",
-      "removeStage": "Delete stage {name}"
+      "removeStage": "Delete stage {name}",
+      "colorNames": {
+        "blue": "Blue",
+        "indigo": "Indigo",
+        "violet": "Violet",
+        "pink": "Pink",
+        "red": "Red",
+        "orange": "Orange",
+        "yellow": "Yellow",
+        "green": "Green",
+        "teal": "Teal",
+        "cyan": "Cyan"
+      },
+      "changeStageColor": "Change the color of stage {name}. Current color: {color}",
+      "newStageColor": "New stage color",
+      "newStageNameLabel": "New stage name",
+      "stageNameLabel": "Stage {position} name",
+      "dragStage": "Move stage {name}",
+      "sortableRoleDescription": "sortable stage",
+      "dragInstructions": "To move a stage, press Space or Enter, use the arrow keys to change its place, and press Space or Enter again to drop it. Press Escape to cancel.",
+      "dragAnnounceStart": "Picked up stage {name}.",
+      "dragAnnounceOver": "Stage {name} is at position {position} of {total}.",
+      "dragAnnounceEnd": "Dropped stage {name} at position {position} of {total}.",
+      "dragAnnounceCancel": "Move canceled. Stage {name} went back to its place.",
+      "deleteStageTitle": "Delete stage {name}?",
+      "deleteStageDesc": "The stage is deleted right away, even if you don't save your changes. It can only be deleted if it has no deals. This can't be undone.",
+      "deleteStageBtn": "Delete stage"
     },
     "analytics": {
       "totalDeals": "Total Deals",
@@ -897,12 +929,12 @@
         "customFieldDesc": "Send to contacts matching a custom field rule.",
         "csvDesc": "Upload a CSV with phone numbers (and optional names).",
         "selectTags": "Select Tags",
-        "searchTags": "Search tags...",
+        "searchTags": "Search tags…",
         "noTagsFound": "No tags found.",
         "excludeTags": "Exclude Tags (Optional)",
-        "searchExcludeTags": "Search tags to exclude...",
+        "searchExcludeTags": "Search tags to exclude…",
         "field": "Field",
-        "selectField": "Select a field...",
+        "selectField": "Select a field…",
         "operator": "Operator",
         "operatorIs": "Is",
         "operatorIsNot": "Is not",
@@ -937,16 +969,16 @@
         "typeCustom": "Custom Field",
         "staticValue": "Static Value",
         "contactField": "Contact Field",
-        "selectContactField": "Select field...",
+        "selectContactField": "Select field…",
         "customField": "Custom Field",
-        "selectCustomField": "Select custom field...",
+        "selectCustomField": "Select custom field…",
         "preview": "Preview",
         "previewSample": "Showing preview with sample data.",
         "noPreview": "Preview not available.",
         "headerPreviewAlt": "Header preview",
         "mediaUrlRequired": "A media URL is required to send this template.",
         "mediaUrlInvalid": "Enter a valid http(s) URL.",
-        "enterValue": "Enter value...",
+        "enterValue": "Enter value…",
         "loadingFields": "Loading…",
         "noCustomFields": "No custom fields",
         "unmappedWarning": "Map every placeholder before continuing — still missing <mono>{keys}</mono>. Otherwise those placeholders will ship to Meta as empty strings.",
@@ -955,8 +987,10 @@
           "phone": "Phone",
           "email": "Email"
         },
-        "sampleName": "John Doe",
-        "sampleCompany": "Acme Corp"
+        "sampleName": "Customer name",
+        "sampleCompany": "Company",
+        "samplePhone": "+57 300 123 4567",
+        "sampleEmail": "customer@example.com"
       },
       "scheduleSend": {
         "title": "Review & Send",
@@ -974,9 +1008,9 @@
         "variablesMapped": "{count} mapped",
         "saveDraft": "Save as Draft",
         "sendNow": "Send Broadcast",
-        "sending": "Sending...",
-        "preparing": "Preparing...",
-        "progressDesc": "Processing {current} of {total} recipients...",
+        "sending": "Sending…",
+        "preparing": "Preparing…",
+        "progressDesc": "Processing {current} of {total} recipients…",
         "toastFailedPreview": "Failed to load preview data",
         "estimatedReach": "Estimated Reach",
         "language": "Language",
@@ -1033,7 +1067,7 @@
       "loadFailed": "Failed to load automations"
     },
     "edit": {
-      "loading": "Loading...",
+      "loading": "Loading…",
       "loadError": "Failed to load ({status})",
       "back": "Back to Automations"
     },
@@ -1214,7 +1248,7 @@
         "placeholderTag": "tag id",
         "urlLabel": "URL",
         "headersLabel": "Headers",
-        "placeholderHeaders": "{\"Authorization\": \"Bearer ...\"}",
+        "placeholderHeaders": "{\"Authorization\": \"Bearer …\"}",
         "bodyTemplateLabel": "Body template",
         "placeholderBody": "{\"id\": \"{{ contact.id }}\"}",
         "matchType": "Match type",
@@ -1239,7 +1273,14 @@
         },
         "when": "when {subject}",
         "noUrl": "no url"
-      }
+      },
+      "saving": "Saving…",
+      "nameLabel": "Automation name",
+      "cancel": "Cancel",
+      "deleteStep": "Delete step",
+      "deleteStepConfirmTitle": "Delete this step?",
+      "deleteStepConfirmBody": "The “{step}” step and everything you set up in it will be removed.",
+      "deleteConditionConfirmBody": "The condition and every step in its Yes and No branches will be removed."
     }
   },
   "Flows": {
@@ -1299,7 +1340,8 @@
       "statusHandedOff": "Handed off",
       "statusTimedOut": "Timed out",
       "statusPaused": "Paused by agent",
-      "statusFailed": "Failed"
+      "statusFailed": "Failed",
+      "loading": "Loading runs…"
     },
     "builder": {
       "triggerTitle": "Trigger",
@@ -1391,7 +1433,17 @@
         "uploadFailed": "Upload failed.",
         "fileTooLarge": "File is {size} MB — limit is 16 MB.",
         "defaultOptionTitle": "Option",
-        "optionN": "Option {n}"
+        "optionN": "Option {n}",
+        "buttonTitleAria": "Button {n} title",
+        "buttonReplyIdAria": "Button {n} reply ID",
+        "buttonNextAria": "Button {n} next node",
+        "removeButtonN": "Remove button {n}",
+        "sectionTitleAria": "Section {n} title",
+        "removeSectionN": "Remove section {n}",
+        "rowTitleAria": "Row {n} title",
+        "rowReplyIdAria": "Row {n} reply ID",
+        "rowNextAria": "Row {n} next node",
+        "removeRowN": "Remove row {n}"
       },
       "categories": {
         "messaging": "Messaging",
@@ -1551,7 +1603,7 @@
       "removeDialogTitle": "Remove member",
       "removeDialogDesc": "Remove <bold>{name}</bold> from the account? They'll be signed out of this account and given a fresh personal account on their next sign-in. Their login isn't deleted.",
       "cancel": "Cancel",
-      "removing": "Removing...",
+      "removing": "Removing…",
       "removeBtn": "Remove member",
       "loadingMembers": "Loading team members…",
       "roleSelectLabel": "Role for {name}",
@@ -1584,7 +1636,7 @@
       "labelPlaceholder": "e.g. Sara — support team",
       "labelHint": "Helps you remember who you sent the link to in the pending list below.",
       "cancel": "Cancel",
-      "creating": "Creating...",
+      "creating": "Creating…",
       "generateLink": "Generate link",
       "labelTooLong": "Label must be {max} characters or fewer",
       "copied": "Invite link copied",
@@ -1615,7 +1667,7 @@
       "deleteTag": "Delete tag",
       "deleteConfirm": "Delete the tag \"{name}\"? This removes it from all contacts and cannot be undone.",
       "cancel": "Cancel",
-      "deleting": "Deleting...",
+      "deleting": "Deleting…",
       "colors": {
         "red": "Red",
         "orange": "Orange",
@@ -1761,7 +1813,7 @@
       "title": "WhatsApp connection",
       "description": "Connect your Meta WhatsApp Business API. Credentials, webhook, and setup steps all live here.",
       "tokenCorrupted": "Stored token can't be decrypted",
-      "resetting": "Resetting...",
+      "resetting": "Resetting…",
       "resetConfig": "Reset Configuration",
       "credentialsValid": "Credentials valid",
       "notConnected": "Not Connected",
@@ -1824,9 +1876,9 @@
       "webhookCopied": "Webhook URL copied to clipboard",
       "phoneNumberIdPlaceholder": "e.g. 100234567890123",
       "wabaIdPlaceholder": "e.g. 100234567890456",
-      "saving": "Saving...",
+      "saving": "Saving…",
       "saveConfig": "Save Configuration",
-      "testing": "Testing...",
+      "testing": "Testing…",
       "testConnection": "Test API Connection",
       "setupInstructions": "Setup Instructions",
       "setupInstructionsDesc": "Follow these steps to connect your WhatsApp Business API.",
@@ -2065,7 +2117,7 @@
       "currencyLabel": "Currency",
       "adminOnlyHint": "Only account admins can change the default currency.",
       "save": "Save",
-      "saving": "Saving...",
+      "saving": "Saving…",
       "saveFailed": "Couldn't save the currency. Try again.",
       "saveSuccess": "Done. New deals will use {currency}.",
       "currencyHint": "Only affects new deals and totals. Existing deals keep their currency."
@@ -2187,7 +2239,7 @@
     "passwordPlaceholder": "At least 6 characters",
     "confirmPasswordLabel": "Confirm password",
     "confirmPasswordPlaceholder": "Repeat your password",
-    "creating": "Creating account...",
+    "creating": "Creating account…",
     "submit": "Create account",
     "haveAccount": "Already have an account?",
     "signIn": "Sign in"
@@ -2200,7 +2252,7 @@
     "desc": "Enter your email and we'll send you a reset link",
     "emailLabel": "Email",
     "emailPlaceholder": "name@example.com",
-    "sending": "Sending...",
+    "sending": "Sending…",
     "sendLink": "Send reset link"
   },
   "ResetPasswordPage": {
@@ -2211,10 +2263,10 @@
     "confirmPasswordLabel": "Confirm new password",
     "confirmPasswordPlaceholder": "Repeat your new password",
     "submit": "Update password",
-    "saving": "Updating...",
+    "saving": "Updating…",
     "passwordsMismatch": "Passwords don't match. Type them again.",
     "passwordTooShort": "That password is too short. Use at least 6 characters.",
-    "checking": "Checking your link...",
+    "checking": "Checking your link…",
     "expiredTitle": "This link is no longer valid",
     "expiredDesc": "Password reset links work once and expire after a short while. Request a new one and open it in the same browser you requested it from.",
     "requestNewLink": "Request a new link",
@@ -2285,7 +2337,9 @@
       "placeholder": "Type a customer message…",
       "notConfigured": "No agent configured yet — finish Setup first.",
       "noReply": "Couldn't get a reply.",
-      "unreachable": "Couldn't reach the agent."
+      "unreachable": "Couldn't reach the agent.",
+      "inputLabel": "Test message",
+      "send": "Send message"
     },
     "usage": {
       "title": "Token usage",
@@ -2328,10 +2382,26 @@
     "rowDescriptionPlaceholder": "Description (optional)",
     "addRow": "Add row",
     "addSection": "Add section",
-    "defaultListButton": "Menu"
+    "defaultListButton": "Menu",
+    "messageType": "Message type",
+    "cancel": "Cancel",
+    "switchKindTitle": "Change the message type?",
+    "switchKindBodyButtons": "The buttons you wrote will be cleared. The body, header and footer are kept.",
+    "switchKindBodyList": "The sections and rows you wrote will be cleared. The body, header and footer are kept.",
+    "switchKindConfirm": "Change type",
+    "buttonTitleAria": "Button {n} text",
+    "buttonIdAria": "Button {n} reply ID",
+    "removeButton": "Remove button {n}",
+    "sectionTitleAria": "Section {n} title",
+    "removeSection": "Remove section {n}",
+    "rowTitleAria": "Row {n} title",
+    "rowIdAria": "Row {n} reply ID",
+    "rowDescriptionAria": "Row {n} description",
+    "removeRow": "Remove row {n}"
   },
   "DashboardShell": {
-    "loading": "Loading..."
+    "loading": "Loading…",
+    "skipToContent": "Skip to content"
   },
   "UiPrimitives": {
     "close": "Close"

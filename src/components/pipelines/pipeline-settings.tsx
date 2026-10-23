@@ -1,18 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import {
   DndContext,
+  KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
   closestCenter,
+  type Announcements,
   type DragEndEvent,
+  type UniqueIdentifier,
 } from "@dnd-kit/core";
 import {
   SortableContext,
   useSortable,
   arrayMove,
+  sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -21,10 +25,16 @@ import type { Pipeline, PipelineStage } from "@/types";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -49,6 +59,22 @@ const STAGE_COLORS = [
   "#14b8a6",
   "#06b6d4",
 ];
+
+// i18n key (under `Pipelines.settings.colorNames`) for each preset color, so
+// screen readers hear "Azul" instead of "#3b82f6". Stage colors saved outside
+// this list fall back to their hex value.
+const STAGE_COLOR_NAMES: Record<string, string> = {
+  "#3b82f6": "blue",
+  "#6366f1": "indigo",
+  "#8b5cf6": "violet",
+  "#ec4899": "pink",
+  "#f43f5e": "red",
+  "#f97316": "orange",
+  "#eab308": "yellow",
+  "#22c55e": "green",
+  "#14b8a6": "teal",
+  "#06b6d4": "cyan",
+};
 
 interface PipelineSettingsProps {
   open: boolean;
@@ -79,6 +105,16 @@ export function PipelineSettings({
   const [saving, setSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Stage waiting for the user to confirm its deletion.
+  const [stageToDelete, setStageToDelete] = useState<PipelineStage | null>(
+    null,
+  );
+  const fieldId = useId();
+
+  const colorName = (hex: string) => {
+    const key = STAGE_COLOR_NAMES[hex.toLowerCase()];
+    return key ? t(`colorNames.${key}`) : hex;
+  };
 
   // Reset form state when the dialog opens or its prop inputs change
   // — legitimate prop-driven sync.
@@ -93,7 +129,41 @@ export function PipelineSettings({
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    // Space/Enter on the grip picks a stage up, arrows move it, Space/Enter
+    // drops it and Escape cancels.
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
   );
+
+  // dnd-kit's default announcements are in English and read the stage UUID;
+  // these read the stage name and its position in the app's language.
+  const stageLabel = (id: UniqueIdentifier) =>
+    localStages.find((s) => s.id === id)?.name ?? "";
+  const stagePosition = (id: UniqueIdentifier) =>
+    localStages.findIndex((s) => s.id === id) + 1;
+  const announcements: Announcements = {
+    onDragStart: ({ active }) =>
+      t("dragAnnounceStart", { name: stageLabel(active.id) }),
+    onDragOver: ({ active, over }) =>
+      over
+        ? t("dragAnnounceOver", {
+            name: stageLabel(active.id),
+            position: stagePosition(over.id),
+            total: localStages.length,
+          })
+        : undefined,
+    onDragEnd: ({ active, over }) =>
+      over
+        ? t("dragAnnounceEnd", {
+            name: stageLabel(active.id),
+            position: stagePosition(over.id),
+            total: localStages.length,
+          })
+        : t("dragAnnounceCancel", { name: stageLabel(active.id) }),
+    onDragCancel: ({ active }) =>
+      t("dragAnnounceCancel", { name: stageLabel(active.id) }),
+  };
 
   function handleReorder(event: DragEndEvent) {
     const { active, over } = event;
@@ -240,8 +310,11 @@ export function PipelineSettings({
           <>
             <div className="grid gap-4 py-2">
               <div className="grid gap-2">
-                <Label className="text-muted-foreground">{t("pipelineName")}</Label>
+                <Label htmlFor={`${fieldId}-name`} className="text-muted-foreground">
+                  {t("pipelineName")}
+                </Label>
                 <Input
+                  id={`${fieldId}-name`}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   className="border-border bg-muted text-foreground"
@@ -249,21 +322,38 @@ export function PipelineSettings({
               </div>
 
               <div className="grid gap-2">
-                <Label className="text-muted-foreground">{t("stages")}</Label>
+                <h3
+                  id={`${fieldId}-stages`}
+                  className="text-sm leading-none font-medium text-muted-foreground"
+                >
+                  {t("stages")}
+                </h3>
                 <DndContext
                   sensors={sensors}
                   collisionDetection={closestCenter}
                   onDragEnd={handleReorder}
+                  accessibility={{
+                    announcements,
+                    screenReaderInstructions: {
+                      draggable: t("dragInstructions"),
+                    },
+                  }}
                 >
                   <SortableContext
                     items={localStages.map((s) => s.id)}
                     strategy={verticalListSortingStrategy}
                   >
-                    <div className="space-y-2">
+                    <div
+                      role="list"
+                      aria-labelledby={`${fieldId}-stages`}
+                      className="space-y-2"
+                    >
                       {localStages.map((stage, index) => (
                         <SortableStageRow
                           key={stage.id}
                           stage={stage}
+                          position={index + 1}
+                          colorName={colorName}
                           onNameChange={(v) => {
                             const updated = [...localStages];
                             updated[index] = { ...updated[index], name: v };
@@ -274,7 +364,7 @@ export function PipelineSettings({
                             updated[index] = { ...updated[index], color: v };
                             setLocalStages(updated);
                           }}
-                          onRemove={() => handleRemoveStage(stage.id)}
+                          onRemove={() => setStageToDelete(stage)}
                           colors={STAGE_COLORS}
                           t={t}
                         />
@@ -284,30 +374,31 @@ export function PipelineSettings({
                 </DndContext>
 
                 {/* Add new stage */}
-                <div className="mt-1 flex flex-wrap gap-1">
+                <div
+                  role="group"
+                  aria-label={t("newStageColor")}
+                  className="mt-1 flex flex-wrap gap-1"
+                >
                   {STAGE_COLORS.map((color) => (
-                    <button
+                    <SwatchButton
                       key={color}
-                      type="button"
+                      color={color}
+                      selected={newStageColor === color}
+                      label={t("pickColor", { color: colorName(color) })}
                       onClick={() => setNewStageColor(color)}
-                      className="h-5 w-5 rounded-full border-2 transition-transform hover:scale-110"
-                      style={{
-                        backgroundColor: color,
-                        borderColor:
-                          newStageColor === color
-                            ? "var(--foreground)"
-                            : "transparent",
-                      }}
-                      aria-label={t("pickColor", { color })}
                     />
                   ))}
                 </div>
                 <div className="flex items-center gap-2">
+                  <Label htmlFor={`${fieldId}-new-stage`} className="sr-only">
+                    {t("newStageNameLabel")}
+                  </Label>
                   <Input
+                    id={`${fieldId}-new-stage`}
                     value={newStageName}
                     onChange={(e) => setNewStageName(e.target.value)}
                     placeholder={t("newStageNamePlaceholder")}
-                    className="border-border bg-muted text-sm text-foreground"
+                    className="border-border bg-muted text-foreground"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") handleAddStage();
                     }}
@@ -360,13 +451,80 @@ export function PipelineSettings({
             </DialogFooter>
           </>
         )}
+
+        {/* Nested confirmation before deleting a stage. The delete runs
+            right away (it doesn't wait for "Guardar cambios"). */}
+        <Dialog
+          open={stageToDelete !== null}
+          onOpenChange={(next) => {
+            if (!next) setStageToDelete(null);
+          }}
+        >
+          <DialogContent className="sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle>
+                {t("deleteStageTitle", { name: stageToDelete?.name ?? "" })}
+              </DialogTitle>
+              <DialogDescription>{t("deleteStageDesc")}</DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setStageToDelete(null)}>
+                {t("cancel")}
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  const target = stageToDelete;
+                  setStageToDelete(null);
+                  if (target) void handleRemoveStage(target.id);
+                }}
+              >
+                {t("deleteStageBtn")}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </DialogContent>
     </Dialog>
   );
 }
 
+/** A 32px color swatch (44px on touch) with a visible focus ring. */
+function SwatchButton({
+  color,
+  selected,
+  label,
+  onClick,
+}: {
+  color: string;
+  selected: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      aria-pressed={selected}
+      className="inline-flex size-8 items-center justify-center rounded-full outline-none focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:size-11"
+    >
+      <span
+        aria-hidden="true"
+        className="size-8 rounded-full border-2 transition-transform hover:scale-110"
+        style={{
+          backgroundColor: color,
+          borderColor: selected ? "var(--foreground)" : "transparent",
+        }}
+      />
+    </button>
+  );
+}
+
 function SortableStageRow({
   stage,
+  position,
+  colorName,
   onNameChange,
   onColorChange,
   onRemove,
@@ -374,6 +532,8 @@ function SortableStageRow({
   t,
 }: {
   stage: PipelineStage;
+  position: number;
+  colorName: (hex: string) => string;
   onNameChange: (v: string) => void;
   onColorChange: (v: string) => void;
   onRemove: () => void;
@@ -382,7 +542,10 @@ function SortableStageRow({
   t: any;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: stage.id });
+    useSortable({
+      id: stage.id,
+      attributes: { roleDescription: t("sortableRoleDescription") },
+    });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -394,31 +557,40 @@ function SortableStageRow({
     <div
       ref={setNodeRef}
       style={style}
+      role="listitem"
       className="flex items-center gap-2 rounded-lg border border-border bg-muted p-2"
     >
       <button
         type="button"
         {...attributes}
         {...listeners}
-        className="cursor-grab touch-none text-muted-foreground hover:text-foreground active:cursor-grabbing"
-        aria-label={t("dragToReorder")}
+        className="inline-flex size-8 shrink-0 cursor-grab touch-none items-center justify-center rounded-lg text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 active:cursor-grabbing pointer-coarse:size-11"
+        aria-label={t("dragStage", { name: stage.name })}
       >
-        <GripVertical className="h-4 w-4" />
+        <GripVertical className="h-4 w-4" aria-hidden="true" />
       </button>
-      <ColorSwatch value={stage.color} onChange={onColorChange} colors={colors} t={t} />
+      <ColorSwatch
+        value={stage.color}
+        onChange={onColorChange}
+        colors={colors}
+        colorName={colorName}
+        stageName={stage.name}
+        t={t}
+      />
       <Input
         value={stage.name}
         onChange={(e) => onNameChange(e.target.value)}
-        className="h-7 flex-1 border-transparent bg-transparent text-sm text-foreground focus:border-border"
+        aria-label={t("stageNameLabel", { position })}
+        className="min-w-0 flex-1 border-transparent bg-transparent text-foreground focus-visible:border-border"
       />
       <Button
         variant="ghost"
-        size="icon-xs"
+        size="icon"
         onClick={onRemove}
         aria-label={t("removeStage", { name: stage.name })}
-        className="text-muted-foreground hover:text-destructive"
+        className="shrink-0 text-muted-foreground hover:text-destructive"
       >
-        <Trash2 className="h-3 w-3" />
+        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
       </Button>
     </div>
   );
@@ -428,49 +600,51 @@ function ColorSwatch({
   value,
   onChange,
   colors,
+  colorName,
+  stageName,
   t,
 }: {
   value: string;
   onChange: (v: string) => void;
   colors: string[];
+  colorName: (hex: string) => string;
+  stageName: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   t: any;
 }) {
+  // Base UI's Popover gives us Escape to close, focus returned to the
+  // trigger, aria-expanded on the trigger and a nested-dismiss that doesn't
+  // also close the surrounding settings dialog.
   const [open, setOpen] = useState(false);
   return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="h-4 w-4 rounded-full border border-border"
-        style={{ backgroundColor: value }}
-        aria-label={t("changeColor")}
-      />
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 top-6 z-20 flex flex-wrap gap-1 rounded-lg border border-border bg-popover p-2 shadow-lg w-36">
-            {colors.map((c) => (
-              <button
-                key={c}
-                type="button"
-                onClick={() => {
-                  onChange(c);
-                  setOpen(false);
-                }}
-                aria-label={t("pickColor", { color: c })}
-                aria-pressed={c === value}
-                className="h-5 w-5 rounded-full border-2 transition-transform hover:scale-110"
-                style={{
-                  backgroundColor: c,
-                  borderColor:
-                    c === value ? "var(--foreground)" : "transparent",
-                }}
-              />
-            ))}
-          </div>
-        </>
-      )}
-    </div>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        className="inline-flex size-8 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:size-11"
+        aria-label={t("changeStageColor", {
+          name: stageName,
+          color: colorName(value),
+        })}
+      >
+        <span
+          aria-hidden="true"
+          className="size-6 rounded-full border border-border"
+          style={{ backgroundColor: value }}
+        />
+      </PopoverTrigger>
+      <PopoverContent align="start" className="grid w-auto grid-cols-5 gap-1 p-2">
+        {colors.map((c) => (
+          <SwatchButton
+            key={c}
+            color={c}
+            selected={c === value}
+            label={t("pickColor", { color: colorName(c) })}
+            onClick={() => {
+              onChange(c);
+              setOpen(false);
+            }}
+          />
+        ))}
+      </PopoverContent>
+    </Popover>
   );
 }

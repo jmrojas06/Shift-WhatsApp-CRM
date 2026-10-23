@@ -48,17 +48,17 @@ export function TodaySummary({ metrics, metricsLoading, responseTime, targetMinu
       ? [
           {
             label: t('activeConversations'),
-            value: metrics.activeConversations.current.toLocaleString(),
+            value: metrics.activeConversations.current.toLocaleString(locale),
             note: { text: t('openNow'), tone: 'muted' as const },
           },
           {
             label: t('newContacts'),
-            value: metrics.newContactsToday.current.toLocaleString(),
+            value: metrics.newContactsToday.current.toLocaleString(locale),
             note: delta(metrics.newContactsToday.current, metrics.newContactsToday.previous),
           },
           {
             label: t('messagesSent'),
-            value: metrics.messagesSentToday.current.toLocaleString(),
+            value: metrics.messagesSentToday.current.toLocaleString(locale),
             note: delta(metrics.messagesSentToday.current, metrics.messagesSentToday.previous),
           },
           {

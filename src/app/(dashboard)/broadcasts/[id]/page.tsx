@@ -1,10 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Broadcast, BroadcastRecipient, RecipientStatus } from '@/types';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import {
   Table,
   TableBody,
@@ -99,10 +100,19 @@ function FunnelChart({ steps }: { steps: FunnelStep[] }) {
               <span className="w-20 shrink-0 truncate text-xs text-muted-foreground">
                 {step.label}
               </span>
-              <div className="relative h-7 min-w-0 flex-1 rounded-full bg-muted">
+              <div
+                role="progressbar"
+                aria-label={step.label}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={pctOfSent}
+                aria-valuetext={`${format.number(step.value)} (${pctOfSent}%)`}
+                className="relative h-7 min-w-0 flex-1 overflow-hidden rounded-full bg-muted"
+              >
+                {/* scaleX instead of width so the bar animates on the compositor. */}
                 <div
-                  className={`h-7 rounded-full ${step.color} transition-[width] duration-500`}
-                  style={{ width: `${pctOfMax}%` }}
+                  className={`h-7 w-full origin-left rounded-full ${step.color} transition-transform duration-200`}
+                  style={{ transform: `scaleX(${pctOfMax / 100})` }}
                 />
                 <span className="absolute inset-0 flex items-center px-3 text-xs font-medium tabular-nums text-foreground">
                   {format.number(step.value)}
@@ -320,9 +330,9 @@ export default function BroadcastDetailPage() {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2">
         <p className="text-sm text-destructive">{error ?? t('notFound')}</p>
-        <Button variant="outline" onClick={() => router.push('/broadcasts')}>
+        <Link href="/broadcasts" className={buttonVariants({ variant: 'outline' })}>
           {t('backToBroadcasts')}
-        </Button>
+        </Link>
       </div>
     );
   }
@@ -350,15 +360,14 @@ export default function BroadcastDetailPage() {
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => router.push('/broadcasts')}
+          <Link
+            href="/broadcasts"
+            className={buttonVariants({ variant: 'outline', size: 'icon' })}
             aria-label={t('backToBroadcasts')}
             title={t('backToBroadcasts')}
           >
             <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-          </Button>
+          </Link>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               <h1 className="min-w-0 text-2xl font-semibold break-words text-foreground">

@@ -603,13 +603,15 @@ function ConversationItem({
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
             {unread && (
-              <span
-                className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-semibold tabular-nums text-primary-foreground"
-                aria-label={t("unreadMessages", {
-                  count: conversation.unread_count,
-                })}
-              >
-                {conversation.unread_count}
+              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-semibold tabular-nums text-primary-foreground">
+                {/* aria-label is ignored on a plain span; the visible count
+                    is hidden and the full phrase goes in sr-only text. */}
+                <span aria-hidden="true">{conversation.unread_count}</span>
+                <span className="sr-only">
+                  {t("unreadMessages", {
+                    count: conversation.unread_count,
+                  })}
+                </span>
               </span>
             )}
             <span

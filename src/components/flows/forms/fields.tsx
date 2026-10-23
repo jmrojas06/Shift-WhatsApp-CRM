@@ -18,6 +18,7 @@
  * (introduced in this PR) mount the exact same form components.
  */
 
+import { useId } from "react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -42,11 +43,13 @@ export function TextRow({
   onChange: (v: string) => void;
   rows?: number;
 }) {
+  const id = useId();
   return (
     <div>
-      <label className="mb-1 block text-xs text-muted-foreground">{label}</label>
+      <label htmlFor={id} className="mb-1 block text-xs text-muted-foreground">{label}</label>
       {rows > 1 ? (
         <Textarea
+          id={id}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           rows={rows}
@@ -54,6 +57,7 @@ export function TextRow({
         />
       ) : (
         <Input
+          id={id}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           className="bg-muted"
@@ -76,34 +80,43 @@ export function NextNodeRow({
   onChange: (v: string) => void;
   label: string;
 }) {
+  const id = useId();
+  const t = useTranslations("Flows.builder.form");
   return (
     <div>
-      <label className="mb-1 block text-xs text-muted-foreground">{label}</label>
+      <label htmlFor={id} className="mb-1 block text-xs text-muted-foreground">{label}</label>
       <NodeKeySelect
+        id={id}
         value={value || null}
         nodes={allNodes}
         excludeKey={currentKey}
         onChange={(v) => onChange(v ?? "")}
-        placeholder={useTranslations("Flows.builder.form")("pickNextNode")}
+        placeholder={t("pickNextNode")}
       />
     </div>
   );
 }
 
 export function NodeKeySelect({
+  id,
   value,
   nodes,
   excludeKey,
   onChange,
   placeholder,
   className,
+  "aria-label": ariaLabel,
 }: {
+  /** Pairs the trigger with a visible `<label htmlFor>`. */
+  id?: string;
   value: string | null;
   nodes: BuilderNode[];
   excludeKey?: string;
   onChange: (v: string | null) => void;
   placeholder?: string;
   className?: string;
+  /** Accessible name when there is no visible label. */
+  "aria-label"?: string;
 }) {
   const t = useTranslations("Flows.builder.form");
   const options = nodes.filter((n) => n.node_key !== excludeKey);
@@ -112,7 +125,7 @@ export function NodeKeySelect({
       value={value ?? "__none__"}
       onValueChange={(v) => onChange(v === "__none__" ? null : v)}
     >
-      <SelectTrigger className={cn("bg-muted", className)}>
+      <SelectTrigger id={id} aria-label={ariaLabel} className={cn("bg-muted", className)}>
         <SelectValue placeholder={placeholder ?? "—"} />
       </SelectTrigger>
       <SelectContent>

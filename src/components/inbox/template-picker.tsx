@@ -44,6 +44,17 @@ function renderBodyPreview(body: string, params: string[]): string {
   });
 }
 
+/**
+ * Meta returns categories in upper case ("MARKETING") while the template
+ * manager stores them capitalized ("Marketing"). Both map to the same
+ * `Settings.templates.categoryLabels` key.
+ */
+export function templateCategoryKey(category: string): string {
+  const trimmed = category.trim();
+  if (!trimmed) return trimmed;
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase();
+}
+
 interface UrlButtonSlot {
   index: number;
   text: string;
@@ -80,6 +91,13 @@ export function TemplatePicker({
   onSelect,
 }: TemplatePickerProps) {
   const t = useTranslations("Inbox.templatePicker");
+  const tTemplates = useTranslations("Settings.templates");
+
+  // Same labels the template manager shows; unknown categories stay raw.
+  const categoryLabel = (category: string) => {
+    const key = `categoryLabels.${templateCategoryKey(category)}`;
+    return tTemplates.has(key) ? tTemplates(key) : category;
+  };
 
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -203,7 +221,7 @@ export function TemplatePicker({
         </DialogHeader>
 
         {!selected ? (
-          <div className="max-h-[60vh] space-y-2 overflow-y-auto">
+          <div className="max-h-[60vh] space-y-2 overflow-y-auto overscroll-contain">
             {loading ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="h-5 w-5 animate-spin text-primary" />
@@ -216,34 +234,34 @@ export function TemplatePicker({
                 </p>
               </div>
             ) : (
-              templates.map((t) => (
+              templates.map((template) => (
                 <button
-                  key={t.id}
+                  key={template.id}
                   type="button"
-                  onClick={() => pickTemplate(t)}
-                  className="w-full rounded-md border border-border bg-background/50 p-3 text-left transition-colors hover:border-primary/40 hover:bg-popover"
+                  onClick={() => pickTemplate(template)}
+                  className="w-full rounded-lg border border-border bg-background/50 p-3 text-left outline-none transition-colors hover:border-primary/40 hover:bg-popover focus-visible:ring-3 focus-visible:ring-ring/50"
                 >
-                  <div className="flex items-start gap-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="truncate text-sm font-medium text-popover-foreground">
-                          {t.name}
-                        </p>
+                  <span className="flex items-start gap-2">
+                    <span className="block min-w-0 flex-1">
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span className="truncate text-sm font-medium text-popover-foreground">
+                          {template.name}
+                        </span>
                         <Badge className="border border-primary/30 bg-primary/20 text-[10px] text-primary">
-                          {t.category}
+                          {categoryLabel(template.category)}
                         </Badge>
-                        {t.language && (
+                        {template.language && (
                           <span className="text-[10px] uppercase text-muted-foreground">
-                            {t.language}
+                            {template.language}
                           </span>
                         )}
-                      </div>
-                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                        {t.body_text}
-                      </p>
-                    </div>
-                    <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-                  </div>
+                      </span>
+                      <span className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                        {template.body_text}
+                      </span>
+                    </span>
+                    <ChevronRight aria-hidden="true" className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                  </span>
                 </button>
               ))
             )}
