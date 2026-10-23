@@ -199,6 +199,9 @@ export const VENTAS_TEXTS = {
     ordersHint: 'Creados este mes, sin contar los cancelados.',
     pending: 'Pendiente por cobrar',
     pendingHint: 'Pedidos activos que todavía no se han pagado.',
+    loadFailed: 'No pudimos calcular el resumen del mes.',
+    truncated: (limit: number | string) =>
+      `El resumen solo cuenta los primeros ${limit} pedidos del mes: las cifras pueden estar incompletas.`,
   },
 
   filters: {
@@ -283,7 +286,6 @@ export const VENTAS_TEXTS = {
     working: 'Guardando…',
     done: 'Listo.',
     groupLabel: (number: number | string) => `Acciones del pedido #${number}`,
-    readOnlyReason: 'cambiar pedidos',
     updated: (number: number | string) => `Pedido #${number} actualizado.`,
     retry: 'Reintentar',
   },
@@ -357,6 +359,14 @@ export const VENTAS_TEXTS = {
     loadFailed: 'No pudimos cargar los pedidos de este contacto.',
   },
 
+  /** Botón y hoja "Pedido" del encabezado de la conversación (móvil). */
+  mobileOrders: {
+    open: 'Pedido',
+    openLabel: (name: string) => `Pedidos de ${name}`,
+    title: 'Pedidos',
+    description: (name: string) => `Crea un pedido para ${name} o revisa los que ya tiene.`,
+  },
+
   settings: {
     title: 'Avisos al cliente',
     description: 'Mensajes automáticos de WhatsApp cuando cambia el estado de un pedido.',
@@ -370,7 +380,6 @@ export const VENTAS_TEXTS = {
       'Si el cliente no te ha escrito en las últimas 24 horas, el aviso sale con una plantilla aprobada por Meta. Mientras no esté aprobada, el pedido muestra "aviso sin mandar".',
     saved: 'Cambios guardados.',
     saveFailed: 'No pudimos guardar el cambio. Inténtalo de nuevo.',
-    adminOnly: 'Solo el dueño o un administrador puede cambiar los avisos.',
     loadFailed: 'No pudimos leer los avisos de esta cuenta.',
   },
 } as const

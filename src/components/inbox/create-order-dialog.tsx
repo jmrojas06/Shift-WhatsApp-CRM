@@ -39,6 +39,8 @@ import {
   buildOrderRequest,
   draftTotals,
   emptyOrderDraft,
+  locateOrderField,
+  normalizeAmountField,
   removeDraftLine,
   updateDraftLine,
   type OrderDraft,
@@ -170,9 +172,13 @@ export function CreateOrderForm({
     setSaving(false)
     onBusyChange?.(false)
     if (!res.ok) {
-      const err: FormError = { message: res.message }
+      // Un 400 del servidor trae el mismo mensaje del dominio: se marca su campo.
+      const err: FormError =
+        res.code === 'invalid'
+          ? { message: res.message, ...locateOrderField(res.message) }
+          : { message: res.message }
       setError(err)
-      focusAfterRender.current = errorId
+      focusError(err)
       return
     }
     onSaved(res.data)
@@ -257,6 +263,11 @@ export function CreateOrderForm({
                     onChange={(e) =>
                       setDraft((prev) => updateDraftLine(prev, line.key, { unitPrice: e.target.value }))
                     }
+                    onBlur={(e) => {
+                      // Muestra cómo se entendió el valor ('1,234.56' → '1.234,56').
+                      const shown = normalizeAmountField(e.target.value)
+                      setDraft((prev) => updateDraftLine(prev, line.key, { unitPrice: shown }))
+                    }}
                   />
                 </div>
                 <Button
@@ -286,11 +297,10 @@ export function CreateOrderForm({
             <Plus aria-hidden="true" />
             {T.addLine}
           </Button>
-          {atMax && (
-            <p className="text-xs text-muted-foreground" role="status">
-              {T.linesLimit(ORDER_LIMITS.itemsMax)}
-            </p>
-          )}
+          {/* Región viva siempre presente: solo cambia su texto. */}
+          <p className="text-xs text-muted-foreground" role="status">
+            {atMax ? T.linesLimit(ORDER_LIMITS.itemsMax) : ''}
+          </p>
         </div>
         <p id={amountHintId} className="text-xs text-muted-foreground">
           {T.amountHint}
@@ -312,6 +322,7 @@ export function CreateOrderForm({
             aria-invalid={invalid('shipping') || undefined}
             aria-describedby={describedBy('shipping', undefined, amountHintId)}
             onChange={(e) => setField('shipping', e.target.value)}
+            onBlur={(e) => setField('shipping', normalizeAmountField(e.target.value))}
           />
         </div>
         <div className="rounded-lg bg-muted/60 p-3">

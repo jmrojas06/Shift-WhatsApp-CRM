@@ -7,15 +7,17 @@
 // el resto y aquí además se bloquea el contenido por si alguien entra
 // por URL directa (mismo patrón que /agenda).
 //
-// Lecturas con el cliente del usuario (RLS: los miembros leen); los
-// cambios de estado y los ajustes van por /api/modules/ventas/*. La
-// cédula no se lee en la lista: solo en el detalle.
+// Lecturas con el cliente del usuario (queries.ts; RLS: los miembros
+// leen); los cambios de estado y los ajustes van por
+// /api/modules/ventas/*. La cédula no se lee en la lista: solo en el
+// detalle.
 //
-// `?pedido=1001` abre el detalle de ese pedido (enlace desde el inbox).
+// Enlaces: `?pedido=1001` abre el detalle de ese pedido; `?q=…` llena la
+// búsqueda (el inbox enlaza con el teléfono del contacto).
 // ============================================================
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -27,17 +29,20 @@ import { hasModule } from '@/lib/verticals/registry'
 import { ventasApi } from '@/modules/ventas/api-client'
 import type { OrderAction } from '@/modules/ventas/orders'
 import {
-  PANEL_ORDER_COLUMNS,
-  SUMMARY_ORDER_COLUMNS,
+  actionOutcome,
   filterOrders,
-  isOrderFilter,
-  noticeResult,
-  salesMonthStart,
   salesSummary,
-  type NoticeResult,
+  type ActionFeedback,
   type OrderFilter,
   type PanelOrder,
 } from '@/modules/ventas/panel'
+import {
+  fetchOrderByNumber,
+  fetchPanelOrders,
+  fetchSalesSettings,
+  fetchSummaryRows,
+  type SummaryRow,
+} from '@/modules/ventas/queries'
 import type { SalesSettings } from '@/modules/ventas/repo'
 import { VENTAS_TEXTS as T } from '@/modules/ventas/texts'
 import { isMissingMigrationError } from '@/verticals/agenda/panel'
@@ -45,11 +50,13 @@ import { isMissingMigrationError } from '@/verticals/agenda/panel'
 import { NoticeSettings } from './_components/notice-settings'
 import { CancelOrderDialog, ShipOrderDialog, type ShipExtra } from './_components/order-dialogs'
 import { OrderDetailDialog } from './_components/order-detail-dialog'
-import { OrderList, OrderToolbar } from './_components/order-list'
+import { OrderList, OrderToolbar, orderTitleId } from './_components/order-list'
 import { SalesSummaryTiles } from './_components/sales-summary'
 
 /** Pedidos que se traen para la lista (los más recientes). */
 const LIST_LIMIT = 500
+
+const FEEDBACK_ID = 'ventas-feedback'
 
 const DEFAULT_SETTINGS: SalesSettings = {
   notify_paid: true,
@@ -57,35 +64,22 @@ const DEFAULT_SETTINGS: SalesSettings = {
   notify_delivered: true,
 }
 
-type SummaryRow = Pick<
-  PanelOrder,
-  'status' | 'payment_status' | 'total' | 'currency' | 'paid_at' | 'created_at'
->
-
 type LoadState = 'loading' | 'ready' | 'failed' | 'migration'
 
-type Feedback = { kind: 'notice'; result: NoticeResult } | { kind: 'error'; text: string }
+interface SummaryState {
+  rows: SummaryRow[] | null
+  truncated: boolean
+  loading: boolean
+  failed: boolean
+}
 
-/** Columnas de la lista tomadas de la respuesta del PATCH (que trae la fila completa). */
-function toPanelOrder(row: PanelOrder): PanelOrder {
-  return {
-    id: row.id,
-    number: row.number,
-    customer_name: row.customer_name,
-    customer_phone: row.customer_phone,
-    total: row.total,
-    currency: row.currency,
-    payment_status: row.payment_status,
-    status: row.status,
-    city: row.city,
-    address: row.address,
-    carrier: row.carrier,
-    tracking_number: row.tracking_number,
-    last_notice: row.last_notice,
-    last_notice_error: row.last_notice_error,
-    paid_at: row.paid_at,
-    created_at: row.created_at,
-  }
+/** Lleva el foco al título del pedido o, si ya no está en la lista, al mensaje. */
+function focusAfterAction(orderId: string) {
+  window.setTimeout(() => {
+    const target =
+      document.getElementById(orderTitleId(orderId)) ?? document.getElementById(FEEDBACK_ID)
+    target?.focus()
+  }, 0)
 }
 
 export default function VentasPage() {
@@ -98,6 +92,7 @@ export default function VentasPage() {
 
 function VentasPageInner() {
   const { account, accountId, canSendMessages, canEditSettings, defaultCurrency } = useAuth()
+  const router = useRouter()
   const searchParams = useSearchParams()
   const deepLinkNumber = Number(searchParams.get('pedido')) || null
   const supabase = useMemo(() => createClient(), [])
@@ -107,133 +102,141 @@ function VentasPageInner() {
 
   const [orders, setOrders] = useState<PanelOrder[]>([])
   const [loadState, setLoadState] = useState<LoadState>('loading')
-  const [summaryRows, setSummaryRows] = useState<SummaryRow[] | null>(null)
-  const [summaryLoading, setSummaryLoading] = useState(true)
+  const [summaryState, setSummaryState] = useState<SummaryState>({
+    rows: null,
+    truncated: false,
+    loading: true,
+    failed: false,
+  })
   const [settings, setSettings] = useState<SalesSettings>(DEFAULT_SETTINGS)
   const [settingsFailed, setSettingsFailed] = useState(false)
 
   const [filter, setFilter] = useState<OrderFilter>('all')
-  const [query, setQuery] = useState('')
-  const [busyId, setBusyId] = useState<string | null>(null)
-  const [feedback, setFeedback] = useState<Feedback | null>(null)
+  const [query, setQuery] = useState(() => searchParams.get('q') ?? '')
+  const [busyIds, setBusyIds] = useState<ReadonlySet<string>>(() => new Set())
+  const [feedback, setFeedback] = useState<ActionFeedback | null>(null)
 
   const [shipTarget, setShipTarget] = useState<PanelOrder | null>(null)
   const [cancelTarget, setCancelTarget] = useState<PanelOrder | null>(null)
   const [detailId, setDetailId] = useState<string | null>(null)
+  // Pedido del enlace `?pedido=` que no estaba entre los cargados.
+  const [linkedOrder, setLinkedOrder] = useState<PanelOrder | null>(null)
   const deepLinkHandled = useRef(false)
+
+  // Solo la última petición de cada lectura se pinta (respuestas viejas se descartan).
+  const ordersReq = useRef(0)
+  const summaryReq = useRef(0)
+  const settingsReq = useRef(0)
 
   const loadOrders = useCallback(async () => {
     if (!accountId || !isVentas) return
-    const { data, error } = await supabase
-      .from('orders')
-      .select(PANEL_ORDER_COLUMNS)
-      .eq('account_id', accountId)
-      .order('created_at', { ascending: false })
-      .limit(LIST_LIMIT)
+    const request = ++ordersReq.current
+    const { data, error } = await fetchPanelOrders(supabase, accountId, { limit: LIST_LIMIT })
+    if (request !== ordersReq.current) return
     if (error) {
       setLoadState(isMissingMigrationError(error) ? 'migration' : 'failed')
       return
     }
-    setOrders((data ?? []) as unknown as PanelOrder[])
+    setOrders(data ?? [])
     setLoadState('ready')
   }, [accountId, isVentas, supabase])
 
-  /**
-   * Filas del resumen: pagadas o creadas desde el inicio del mes (hora de
-   * Colombia) y todas las pendientes de cobro. La suma la hace
-   * `salesSummary` (pura), que vuelve a filtrar por mes y estado.
-   */
   const loadSummary = useCallback(async () => {
     if (!accountId || !isVentas) return
-    setSummaryLoading(true)
-    const since = salesMonthStart(new Date()).toISOString()
-    const { data, error } = await supabase
-      .from('orders')
-      .select(SUMMARY_ORDER_COLUMNS)
-      .eq('account_id', accountId)
-      .or(
-        `paid_at.gte."${since}",created_at.gte."${since}",and(payment_status.eq.pending,status.neq.cancelled)`,
-      )
-    setSummaryRows(error ? null : ((data ?? []) as unknown as SummaryRow[]))
-    setSummaryLoading(false)
+    const request = ++summaryReq.current
+    setSummaryState((prev) => ({ ...prev, loading: true }))
+    const { rows, truncated, error } = await fetchSummaryRows(supabase, accountId, new Date())
+    if (request !== summaryReq.current) return
+    setSummaryState({ rows, truncated, loading: false, failed: Boolean(error) })
   }, [accountId, isVentas, supabase])
 
   const loadSettings = useCallback(async () => {
     if (!accountId || !isVentas) return
-    const { data, error } = await supabase
-      .from('sales_settings')
-      .select('notify_paid, notify_shipped, notify_delivered')
-      .eq('account_id', accountId)
-      .maybeSingle()
-    setSettingsFailed(Boolean(error))
-    const row = data as Partial<SalesSettings> | null
-    // Sin fila los avisos están prendidos (igual que en la base).
-    setSettings({
-      notify_paid: row?.notify_paid ?? true,
-      notify_shipped: row?.notify_shipped ?? true,
-      notify_delivered: row?.notify_delivered ?? true,
-    })
+    const request = ++settingsReq.current
+    const res = await fetchSalesSettings(supabase, accountId)
+    if (request !== settingsReq.current) return
+    setSettingsFailed(Boolean(res.error))
+    setSettings(res.settings)
   }, [accountId, isVentas, supabase])
 
   useEffect(() => {
-    // Los setState corren dentro de los callbacks asíncronos de Supabase.
+    // Los setState corren tras las respuestas asíncronas de Supabase.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadOrders()
     void loadSummary()
     void loadSettings()
   }, [loadOrders, loadSummary, loadSettings])
 
-  // `?pedido=1001`: abre el detalle una sola vez, cuando la lista ya cargó.
+  // `?pedido=1001`: abre el detalle una sola vez cuando la lista cargó; si
+  // el pedido no está entre los cargados, se busca por su número.
   useEffect(() => {
-    if (deepLinkHandled.current || loadState !== 'ready' || !deepLinkNumber) return
+    if (deepLinkHandled.current || loadState !== 'ready' || !deepLinkNumber || !accountId) return
     deepLinkHandled.current = true
     const match = orders.find((o) => o.number === deepLinkNumber)
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (match) setDetailId(match.id)
-  }, [deepLinkNumber, loadState, orders])
+    if (match) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setDetailId(match.id)
+      return
+    }
+    void fetchOrderByNumber(supabase, accountId, deepLinkNumber).then(({ order }) => {
+      if (!order) return
+      setLinkedOrder(order)
+      setDetailId(order.id)
+    })
+  }, [deepLinkNumber, loadState, orders, accountId, supabase])
 
   const summary = useMemo(
-    () => (summaryRows ? salesSummary(summaryRows, new Date(), currency) : null),
-    [summaryRows, currency],
+    () => (summaryState.rows ? salesSummary(summaryState.rows, new Date(), currency) : null),
+    [summaryState.rows, currency],
   )
   const visible = useMemo(() => filterOrders(orders, filter, query), [orders, filter, query])
-  const detailOrder = detailId ? (orders.find((o) => o.id === detailId) ?? null) : null
+  const detailOrder = detailId
+    ? (orders.find((o) => o.id === detailId) ??
+      (linkedOrder?.id === detailId ? linkedOrder : null))
+    : null
+
+  const closeDetail = useCallback(() => {
+    setDetailId(null)
+    // Cerrar el detalle quita `?pedido=` para que recargar no lo vuelva a abrir.
+    if (searchParams.get('pedido')) router.replace('/ventas')
+  }, [router, searchParams])
 
   /**
-   * Cambia el estado de un pedido. Devuelve null si salió bien o el
-   * mensaje de un error de datos (para mostrarlo dentro del diálogo).
-   * El resto de errores se muestran arriba de la lista; si el pedido
-   * cambió por otro lado (`stale`), se recarga la lista.
+   * Cambia el estado de un pedido. Lo que se hace con la respuesta lo
+   * decide `actionOutcome` (pura, probada en panel.test.ts). Devuelve el
+   * error a mostrar dentro del diálogo, o null si el diálogo puede cerrar.
    */
   const runAction = useCallback(
-    async (order: PanelOrder, action: OrderAction, extra: Partial<ShipExtra> = {}) => {
-      setBusyId(order.id)
+    async (
+      order: PanelOrder,
+      action: OrderAction,
+      extra: Partial<ShipExtra> = {},
+      inDialog = false,
+    ): Promise<string | null> => {
+      const setBusy = (busy: boolean) =>
+        setBusyIds((prev) => {
+          const next = new Set(prev)
+          if (busy) next.add(order.id)
+          else next.delete(order.id)
+          return next
+        })
+
+      setBusy(true)
       setFeedback(null)
       const res = await ventasApi.updateOrder(order.id, action, extra)
-      setBusyId(null)
+      setBusy(false)
 
-      if (!res.ok) {
-        if (res.code === 'invalid') return res.message
-        if (res.code === 'stale' || res.code === 'invalid_transition' || res.code === 'not_found') {
-          await Promise.all([loadOrders(), loadSummary()])
-        }
-        setFeedback({ kind: 'error', text: res.message })
-        return null
+      const outcome = actionOutcome(res, { inDialog })
+      if (outcome.ok) {
+        setOrders((prev) => prev.map((o) => (o.id === outcome.order.id ? outcome.order : o)))
+        setLinkedOrder((prev) => (prev?.id === outcome.order.id ? outcome.order : prev))
+        void loadSummary()
+      } else if (outcome.reload) {
+        await Promise.all([loadOrders(), loadSummary()])
       }
-
-      const updated = toPanelOrder(res.data.order)
-      setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)))
-      void loadSummary()
-      const notice = noticeResult(res.data.notice, updated)
-      const done = T.actions.updated(updated.number)
-      setFeedback({
-        kind: 'notice',
-        result:
-          notice?.tone === 'warning'
-            ? notice
-            : { tone: 'success', text: notice ? `${done} ${notice.text}` : done },
-      })
-      return null
+      if (outcome.feedback) setFeedback(outcome.feedback)
+      if (outcome.closeDialog) focusAfterAction(order.id)
+      return outcome.ok ? null : outcome.dialogError
     },
     [loadOrders, loadSummary],
   )
@@ -251,9 +254,7 @@ function VentasPageInner() {
   if (!account) {
     return (
       <div className="space-y-6">
-        <p className="text-sm text-muted-foreground" role="status">
-          {T.loading}
-        </p>
+        <p className="text-sm text-muted-foreground">{T.loading}</p>
       </div>
     )
   }
@@ -294,7 +295,14 @@ function VentasPageInner() {
     <div className="space-y-6">
       {header}
 
-      <SalesSummaryTiles summary={summary} currency={currency} loading={summaryLoading} />
+      <SalesSummaryTiles
+        summary={summary}
+        currency={currency}
+        loading={summaryState.loading}
+        failed={summaryState.failed}
+        truncated={summaryState.truncated}
+        onRetry={() => void loadSummary()}
+      />
 
       <Card>
         <CardHeader>
@@ -306,23 +314,34 @@ function VentasPageInner() {
           <OrderToolbar
             orders={orders}
             filter={filter}
-            onFilterChange={(next) => isOrderFilter(next) && setFilter(next)}
+            onFilterChange={setFilter}
             query={query}
             onQueryChange={setQuery}
           />
 
-          {/* Resultado de la última acción: aviso tranquilo o error. */}
-          {feedback?.kind === 'notice' && <NoticeResultAlert result={feedback.result} />}
-          {feedback?.kind === 'error' && (
-            <Alert variant="destructive">
-              <AlertDescription>{feedback.text}</AlertDescription>
-            </Alert>
-          )}
+          {/* Regiones vivas siempre presentes: solo cambia su contenido. */}
+          <p className="sr-only" role="status">
+            {busyIds.size > 0 ? T.actions.working : ''}
+          </p>
+          <div
+            id={FEEDBACK_ID}
+            role="status"
+            aria-live="polite"
+            tabIndex={-1}
+            className="outline-none empty:hidden"
+          >
+            {feedback?.kind === 'notice' && (
+              <NoticeResultAlert result={feedback.result} live={false} />
+            )}
+            {feedback?.kind === 'error' && (
+              <Alert variant="destructive" role="none">
+                <AlertDescription>{feedback.text}</AlertDescription>
+              </Alert>
+            )}
+          </div>
 
           {loadState === 'loading' ? (
-            <p className="py-6 text-sm text-muted-foreground" role="status">
-              {T.loading}
-            </p>
+            <p className="py-6 text-sm text-muted-foreground">{T.loading}</p>
           ) : loadState === 'failed' ? (
             <Alert variant="destructive">
               <AlertDescription className="flex flex-wrap items-center gap-3">
@@ -349,7 +368,7 @@ function VentasPageInner() {
                 hasAny={orders.length > 0}
                 hasQuery={query.trim().length > 0}
                 canAct={canSendMessages}
-                busyId={busyId}
+                busyIds={busyIds}
                 onAction={handleAction}
                 onOpenDetail={(order) => setDetailId(order.id)}
               />
@@ -359,19 +378,14 @@ function VentasPageInner() {
       </Card>
 
       {canEditSettings && (
-        <NoticeSettings
-          settings={settings}
-          loadFailed={settingsFailed}
-          canEdit={canEditSettings}
-          onSaved={setSettings}
-        />
+        <NoticeSettings settings={settings} loadFailed={settingsFailed} onSaved={setSettings} />
       )}
 
       <ShipOrderDialog
         order={shipTarget}
         onClose={() => setShipTarget(null)}
         onSubmit={async (order, extra) => {
-          const error = await runAction(order, 'mark_shipped', extra)
+          const error = await runAction(order, 'mark_shipped', extra, true)
           if (!error) setShipTarget(null)
           return error
         }}
@@ -380,12 +394,12 @@ function VentasPageInner() {
         order={cancelTarget}
         onClose={() => setCancelTarget(null)}
         onConfirm={async (order) => {
-          const error = await runAction(order, 'cancel')
+          const error = await runAction(order, 'cancel', {}, true)
           if (!error) setCancelTarget(null)
           return error
         }}
       />
-      <OrderDetailDialog order={detailOrder} onClose={() => setDetailId(null)} />
+      <OrderDetailDialog order={detailOrder} accountId={accountId} onClose={closeDetail} />
     </div>
   )
 }

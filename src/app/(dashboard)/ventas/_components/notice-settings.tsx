@@ -1,10 +1,11 @@
 'use client'
 
 // ============================================================
-// Ajustes de Ventas (owner/admin): los tres interruptores de avisos al
+// Ajustes de Ventas: los tres interruptores de avisos al
 // cliente. Cada uno se guarda al tocarlo (PATCH
 // /api/modules/ventas/settings), se ve al instante y se revierte si el
 // servidor lo rechaza. Mismo patrón que las "Piezas" de la agenda.
+// La página solo la muestra a owner/admin (la ruta exige admin).
 // ============================================================
 
 import { useState } from 'react'
@@ -38,12 +39,10 @@ const ITEMS: Record<SettingKey, { title: string; hint: string }> = {
 export function NoticeSettings({
   settings,
   loadFailed,
-  canEdit,
   onSaved,
 }: {
   settings: SalesSettings
   loadFailed: boolean
-  canEdit: boolean
   onSaved: (settings: SalesSettings) => void
 }) {
   const [optimistic, setOptimistic] = useState<Partial<SalesSettings>>({})
@@ -100,10 +99,9 @@ export function NoticeSettings({
                   <Switch
                     checked={values[key]}
                     onCheckedChange={(next) => void toggle(key, Boolean(next))}
-                    disabled={!canEdit || saving !== null || loadFailed}
+                    disabled={saving !== null || loadFailed}
                     aria-labelledby={`ventas-${key}-title`}
                     aria-describedby={`ventas-${key}-hint`}
-                    title={canEdit ? undefined : T.adminOnly}
                   />
                 </div>
               </li>

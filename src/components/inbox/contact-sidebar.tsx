@@ -3,14 +3,12 @@
 import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
-import { cn } from "@/lib/utils";
 import type { Contact, Deal, ContactNote, Tag } from "@/types";
 import {
   Phone,
   Mail,
   Copy,
   Check,
-  User,
   Tag as TagIcon,
   DollarSign,
   StickyNote,
@@ -189,8 +187,10 @@ export function ContactSidebar({ contact, conversationId = null }: ContactSideba
 
           {/* Sales (Ventas module): renders its own divider, or nothing. */}
           <ContactOrders
+            key={contact.id}
             contactId={contact.id}
             contactName={displayName}
+            contactPhone={contact.phone}
             conversationId={conversationId}
           />
 

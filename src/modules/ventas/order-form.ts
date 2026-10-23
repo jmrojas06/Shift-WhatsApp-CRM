@@ -11,6 +11,7 @@
 import {
   ORDER_LIMITS,
   orderTotals,
+  toCents,
   validateOrderCreate,
   type OrderTotals,
   type ValidOrderCreate,
@@ -81,13 +82,18 @@ export function updateDraftLine(
 // Números escritos a mano
 // ------------------------------------------------------------
 
-const GROUPED = (sep: string) => new RegExp(`^\\d{1,3}(\\${sep}\\d{3})+$`)
+/** Grupos de miles: el primero de 1 a 3 dígitos y sin cero a la izquierda. */
+const GROUPED = (sep: string) => new RegExp(`^[1-9]\\d{0,2}(\\${sep}\\d{3})+$`)
+
+/** Parte entera que puede ir antes de un separador de miles (no 0, no 01). */
+const THOUSANDS_HEAD = /^[1-9]\d{0,2}$/
 
 /**
  * Importe como lo escribe la gente en Colombia: '150.000', '12.000,50',
  * '1,5'. También tolera '1,234.56'. Reglas: con punto y coma a la vez,
  * el último es el decimal; con un solo separador repetido son miles; con
- * uno solo, seguido de exactamente 3 dígitos son miles y si no, decimal.
+ * uno solo, seguido de exactamente 3 dígitos y con parte entera distinta
+ * de cero son miles ('1.500'); si no, decimal ('1,5', '0,500' = 0,5).
  * Vacío → null. Texto ilegible o negativo → NaN (el dominio lo rechaza
  * con su mensaje).
  */
@@ -112,7 +118,7 @@ export function parseAmountInput(raw: string): number | null {
     if (parts.length > 2) {
       if (!GROUPED(sep).test(text)) return Number.NaN
       normalized = parts.join('')
-    } else if (parts[1].length === 3 && parts[0].length > 0) {
+    } else if (parts[1].length === 3 && THOUSANDS_HEAD.test(parts[0])) {
       normalized = parts.join('')
     } else {
       normalized = `${parts[0] || '0'}.${parts[1]}`
@@ -123,6 +129,29 @@ export function parseAmountInput(raw: string): number | null {
 
   const value = Number(normalized)
   return Number.isFinite(value) ? value : Number.NaN
+}
+
+/**
+ * Importe en formato colombiano, sin símbolo, para el campo de texto:
+ * 150000 → '150.000', 12000.5 → '12.000,50', 0.5 → '0,50'.
+ */
+export function formatAmountInput(value: number): string {
+  const cents = toCents(value)
+  const whole = Math.trunc(cents / 100)
+  const rest = Math.abs(cents % 100)
+  const grouped = String(whole).replace(/\B(?=(\d{3})+(?!\d))/g, '.')
+  return rest === 0 ? grouped : `${grouped},${String(rest).padStart(2, '0')}`
+}
+
+/**
+ * Al salir de un campo de dinero se reescribe tal como se entendió
+ * ('1,234.56' → '1.234,56'), para que la persona vea el valor real antes
+ * de guardar. Vacío o ilegible se deja igual: el error lo da el dominio.
+ */
+export function normalizeAmountField(raw: string): string {
+  const value = parseAmountInput(raw)
+  if (value === null || !Number.isFinite(value)) return raw
+  return formatAmountInput(value)
 }
 
 /** Cantidad entera; cualquier otra cosa es NaN. */
@@ -169,8 +198,12 @@ export type OrderRequestResult =
   | { ok: true; value: ValidOrderCreate }
   | { ok: false; message: string; field?: OrderFormField; line?: number }
 
-/** Campo al que apunta un mensaje del dominio (para marcarlo y enfocarlo). */
-function locate(message: string): { field?: OrderFormField; line?: number } {
+/**
+ * Campo al que apunta un mensaje del dominio (para marcarlo y enfocarlo).
+ * Sirve igual para la validación local y para un 400 del servidor, que
+ * responde con los mismos mensajes de `validateOrderCreate`.
+ */
+export function locateOrderField(message: string): { field?: OrderFormField; line?: number } {
   const item = /^Producto (\d+):\s*(.*)$/.exec(message)
   if (item) {
     const line = Number(item[1]) - 1
@@ -217,6 +250,6 @@ export function buildOrderRequest(
   }
 
   const result = validateOrderCreate(body)
-  if (!result.ok) return { ok: false, message: result.message, ...locate(result.message) }
+  if (!result.ok) return { ok: false, message: result.message, ...locateOrderField(result.message) }
   return { ok: true, value: result.value }
 }

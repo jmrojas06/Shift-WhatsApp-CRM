@@ -97,7 +97,21 @@ describe('<CreateOrderForm />', () => {
   it('con una sola línea no se puede quitar', () => {
     const html = renderForm()
     const remove = new RegExp(`<button[^>]*aria-label="${T.createOrder.removeLine(1)}"[^>]*>`).exec(html)?.[0]
-    expect(remove).toContain('disabled')
+    expect(remove).toMatch(/\sdisabled=""/)
+  })
+
+  it('con dos líneas sí se pueden quitar, y agregar sigue disponible', () => {
+    const html = renderForm({
+      ...emptyOrderDraft(),
+      lines: [
+        { key: 'a', name: 'A', quantity: '1', unitPrice: '1' },
+        { key: 'b', name: 'B', quantity: '1', unitPrice: '1' },
+      ],
+    })
+    const remove = new RegExp(`<button[^>]*aria-label="${T.createOrder.removeLine(1)}"[^>]*>`).exec(html)?.[0]
+    expect(remove).not.toMatch(/\sdisabled=""/)
+    const add = /<button[^>]*>(?:(?!<\/button>)[\s\S])*Agregar producto/.exec(html)?.[0] ?? ''
+    expect(add).not.toMatch(/\sdisabled=""/)
   })
 
   it('en el máximo de líneas no deja agregar más y lo dice', () => {
@@ -110,7 +124,7 @@ describe('<CreateOrderForm />', () => {
     const html = renderForm({ ...emptyOrderDraft(), lines })
     expect(html).toContain(T.createOrder.linesLimit(ORDER_LIMITS.itemsMax))
     const add = /<button[^>]*>(?:(?!<\/button>)[\s\S])*Agregar producto/.exec(html)?.[0] ?? ''
-    expect(add).toContain('disabled')
+    expect(add).toMatch(/\sdisabled=""/)
   })
 
   it('la cédula es opcional y avisa que no sale en las listas', () => {

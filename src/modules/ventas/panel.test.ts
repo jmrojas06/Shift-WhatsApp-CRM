@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest'
 
 import {
   ORDER_FILTERS,
+  PANEL_ORDER_COLUMNS,
+  SUMMARY_LIMIT,
+  SUMMARY_ORDER_COLUMNS,
+  actionOutcome,
   availableOrderActions,
+  isSummaryTruncated,
   filterOrders,
   formatAmounts,
   formatOrderDate,
@@ -150,17 +155,117 @@ describe('formatAmounts', () => {
     expect(formatAmounts([], 'COP')).toBe('$0')
   })
 
-  it('una o varias monedas', () => {
+  it('una sola moneda: sin código', () => {
     expect(formatAmounts([{ currency: 'COP', cents: 15_000_050 }], 'COP')).toBe('$150.000,50')
+  })
+
+  it('varias monedas: cada una con su código ISO para no confundir los "$"', () => {
     expect(
       formatAmounts(
         [
           { currency: 'COP', cents: 2_000_000 },
-          { currency: 'USD', cents: 1000 },
+          { currency: 'MXN', cents: 1000 },
         ],
         'COP',
       ),
-    ).toBe('$20.000 + US$10')
+    ).toBe('$20.000 COP + $10 MXN')
+  })
+})
+
+describe('columnas de las listas', () => {
+  it('la lista nunca pide la cédula', () => {
+    expect(PANEL_ORDER_COLUMNS).not.toMatch(/id_number/)
+    expect(SUMMARY_ORDER_COLUMNS).not.toMatch(/id_number/)
+  })
+})
+
+describe('actionOutcome: qué hace la pantalla con la respuesta de una acción', () => {
+  const updated = { ...base, payment_status: 'paid' as const, paid_at: '2026-10-22T12:00:00Z' }
+  const ok = (notice: 'sent' | 'failed' | 'skipped' | null, patch: Partial<PanelOrder> = {}) =>
+    ({ ok: true, data: { order: { ...updated, ...patch, items: [] }, notice } }) as const
+  const fail = (status: number, code: string | null, message: string) =>
+    ({ ok: false, status, code, message }) as const
+
+  it('éxito sin aviso: "actualizado", cierra el diálogo y deja solo las columnas de la lista', () => {
+    const outcome = actionOutcome(ok(null), { inDialog: true })
+    expect(outcome).toMatchObject({
+      ok: true,
+      closeDialog: true,
+      reload: false,
+      feedback: { kind: 'notice', result: { tone: 'success', text: T.actions.updated(1001) } },
+    })
+    if (outcome.ok) expect(outcome.order).not.toHaveProperty('items')
+  })
+
+  it('éxito con aviso mandado: lo suma al mensaje', () => {
+    expect(actionOutcome(ok('sent'), { inDialog: false }).feedback).toEqual({
+      kind: 'notice',
+      result: { tone: 'success', text: `${T.actions.updated(1001)} ${T.notice.sent}` },
+    })
+  })
+
+  it('éxito con aviso fallido: advertencia con el motivo', () => {
+    const outcome = actionOutcome(
+      ok('failed', { last_notice: 'paid', last_notice_error: 'Plantilla no aprobada en Meta' }),
+      { inDialog: false },
+    )
+    expect(outcome.feedback).toEqual({
+      kind: 'notice',
+      result: { tone: 'warning', text: T.notice.failed('Plantilla no aprobada en Meta') },
+    })
+  })
+
+  it('datos inválidos en un diálogo: el error queda en el diálogo, que sigue abierto', () => {
+    expect(actionOutcome(fail(400, 'invalid', 'Escribe el número de guía.'), { inDialog: true })).toEqual({
+      ok: false,
+      closeDialog: false,
+      reload: false,
+      dialogError: 'Escribe el número de guía.',
+      feedback: null,
+    })
+  })
+
+  it('datos inválidos en una acción de un clic: se muestra arriba de la lista', () => {
+    expect(actionOutcome(fail(400, 'invalid', 'La acción no es válida.'), { inDialog: false })).toEqual({
+      ok: false,
+      closeDialog: true,
+      reload: false,
+      dialogError: null,
+      feedback: { kind: 'error', text: 'La acción no es válida.' },
+    })
+  })
+
+  it('el pedido cambió por otro lado (stale, transición, no existe): recarga y lo dice', () => {
+    for (const [status, code] of [
+      [409, 'stale'],
+      [409, 'invalid_transition'],
+      [404, 'not_found'],
+    ] as const) {
+      expect(actionOutcome(fail(status, code, 'x'), { inDialog: true })).toMatchObject({
+        ok: false,
+        closeDialog: true,
+        reload: true,
+        dialogError: null,
+        feedback: { kind: 'error', text: 'x' },
+      })
+    }
+  })
+
+  it('otros errores (permiso, red, 500): mensaje arriba, sin recargar', () => {
+    expect(actionOutcome(fail(0, null, T.errors.network), { inDialog: true })).toMatchObject({
+      ok: false,
+      closeDialog: true,
+      reload: false,
+      feedback: { kind: 'error', text: T.errors.network },
+    })
+  })
+})
+
+describe('isSummaryTruncated', () => {
+  it('avisa cuando el resumen llegó al tope de filas', () => {
+    expect(SUMMARY_LIMIT).toBe(1000)
+    expect(isSummaryTruncated(999)).toBe(false)
+    expect(isSummaryTruncated(1000)).toBe(true)
   })
 })
 

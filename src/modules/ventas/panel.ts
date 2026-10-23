@@ -44,7 +44,7 @@ export type PanelOrder = Pick<
   | 'created_at'
 >
 
-/** Columnas de `orders` para las listas: sin `id_number` a propósito. */
+/** Columnas de `orders` para las listas: sin `id_number` a propósito (lo prueba panel.test.ts). */
 export const PANEL_ORDER_COLUMNS =
   'id, number, customer_name, customer_phone, total, currency, payment_status, status, city, address, carrier, tracking_number, last_notice, last_notice_error, paid_at, created_at'
 
@@ -161,10 +161,23 @@ export function salesSummary(
   }
 }
 
-/** '$150.000' o '$20.000 + US$10'; sin montos, cero en la moneda de la cuenta. */
+/**
+ * '$150.000'; con varias monedas cada una lleva su código ISO
+ * ('$20.000 COP + $10 MXN'), porque varias comparten el símbolo '$'.
+ * Sin montos, cero en la moneda de la cuenta.
+ */
 export function formatAmounts(amounts: readonly MoneyAmount[], fallbackCurrency: string): string {
   if (amounts.length === 0) return formatMoney(0, fallbackCurrency)
-  return amounts.map((a) => formatMoney(a.cents / 100, a.currency)).join(' + ')
+  if (amounts.length === 1) return formatMoney(amounts[0].cents / 100, amounts[0].currency)
+  return amounts.map((a) => `${formatMoney(a.cents / 100, a.currency)} ${a.currency}`).join(' + ')
+}
+
+/** Tope de filas que se leen para el resumen (ver `isSummaryTruncated`). */
+export const SUMMARY_LIMIT = 1000
+
+/** El resumen llegó al tope: las cifras pueden estar incompletas. */
+export function isSummaryTruncated(rowCount: number, limit: number = SUMMARY_LIMIT): boolean {
+  return rowCount >= limit
 }
 
 // ------------------------------------------------------------
@@ -353,4 +366,87 @@ export function orderNoticeLine(
   const reason = order.last_notice_error?.trim() || null
   const text = noticeStatusText(kind, reason !== null)
   return text ? { failed: reason !== null, text, reason } : null
+}
+
+// ------------------------------------------------------------
+// Resultado de una acción sobre un pedido
+// ------------------------------------------------------------
+
+/** Mensaje arriba de la lista tras una acción. */
+export type ActionFeedback =
+  | { kind: 'notice'; result: NoticeResult }
+  | { kind: 'error'; text: string }
+
+/** Respuesta de PATCH /orders/[id] tal como la entrega api-client. */
+export type ActionResponse =
+  | { ok: true; data: { order: PanelOrder; notice: NoticeOutcome | null } }
+  | { ok: false; status: number; code: string | null; message: string }
+
+export type ActionOutcome =
+  | { ok: true; order: PanelOrder; closeDialog: true; reload: false; feedback: ActionFeedback }
+  | {
+      ok: false
+      /** false = el error es de datos y se corrige en el mismo diálogo. */
+      closeDialog: boolean
+      /** El pedido cambió por otro lado: hay que releer la lista. */
+      reload: boolean
+      dialogError: string | null
+      feedback: ActionFeedback | null
+    }
+
+/** Solo las columnas de la lista (la respuesta trae la fila completa y las líneas). */
+export function toPanelOrder(row: PanelOrder): PanelOrder {
+  return {
+    id: row.id,
+    number: row.number,
+    customer_name: row.customer_name,
+    customer_phone: row.customer_phone,
+    total: row.total,
+    currency: row.currency,
+    payment_status: row.payment_status,
+    status: row.status,
+    city: row.city,
+    address: row.address,
+    carrier: row.carrier,
+    tracking_number: row.tracking_number,
+    last_notice: row.last_notice,
+    last_notice_error: row.last_notice_error,
+    paid_at: row.paid_at,
+    created_at: row.created_at,
+  }
+}
+
+const RELOAD_CODES = new Set(['stale', 'invalid_transition', 'not_found'])
+
+/**
+ * Qué hace la pantalla con la respuesta de una acción:
+ *   - éxito: actualiza el pedido, cierra el diálogo y cuenta el aviso;
+ *   - 400 dentro de un diálogo (transportadora, guía…): el error queda en
+ *     el diálogo, que sigue abierto para corregir;
+ *   - el pedido cambió por otro lado (stale, transición, no existe):
+ *     recarga la lista y lo dice arriba;
+ *   - cualquier otro error (o un 400 de un clic): mensaje arriba.
+ */
+export function actionOutcome(res: ActionResponse, opts: { inDialog: boolean }): ActionOutcome {
+  if (!res.ok) {
+    if (res.code === 'invalid' && opts.inDialog) {
+      return { ok: false, closeDialog: false, reload: false, dialogError: res.message, feedback: null }
+    }
+    return {
+      ok: false,
+      closeDialog: true,
+      reload: RELOAD_CODES.has(res.code ?? ''),
+      dialogError: null,
+      feedback: { kind: 'error', text: res.message },
+    }
+  }
+
+  const order = toPanelOrder(res.data.order)
+  const notice = noticeResult(res.data.notice, order)
+  const done = T.actions.updated(order.number)
+  const result: NoticeResult =
+    notice?.tone === 'warning'
+      ? notice
+      : { tone: 'success', text: notice ? `${done} ${notice.text}` : done }
+  return { ok: true, order, closeDialog: true, reload: false, feedback: { kind: 'notice', result } }
 }

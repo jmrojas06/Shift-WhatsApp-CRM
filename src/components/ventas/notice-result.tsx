@@ -12,16 +12,19 @@ import type { NoticeResult } from '@/modules/ventas/panel'
 
 export function NoticeResultAlert({
   result,
+  live = true,
   className,
 }: {
   result: NoticeResult | null
+  /** false cuando ya está dentro de una región viva persistente de la página. */
+  live?: boolean
   className?: string
 }) {
   if (!result) return null
   const success = result.tone === 'success'
   return (
     <Alert
-      role="status"
+      role={live ? 'status' : 'none'}
       data-tone={result.tone}
       className={cn(
         success

@@ -48,10 +48,12 @@ function ShipForm({
   order,
   onSubmit,
   onCancel,
+  onBusyChange,
 }: {
   order: PanelOrder
   onSubmit: (extra: ShipExtra) => Promise<DialogSubmitResult>
   onCancel: () => void
+  onBusyChange: (busy: boolean) => void
 }) {
   const uid = useId()
   const missing = missingShippingPlace(order)
@@ -67,6 +69,7 @@ function ShipForm({
     event.preventDefault()
     if (saving) return
     setSaving(true)
+    onBusyChange(true)
     setError(null)
     const result = await onSubmit({
       carrier,
@@ -75,6 +78,7 @@ function ShipForm({
       ...(missing.address ? { address } : {}),
     })
     setSaving(false)
+    onBusyChange(false)
     if (result) setError(result)
   }
 
@@ -187,14 +191,23 @@ export function ShipOrderDialog({
   onClose: () => void
   onSubmit: (order: PanelOrder, extra: ShipExtra) => Promise<DialogSubmitResult>
 }) {
+  // Mientras se guarda no se cierra (igual que cancelar): la respuesta
+  // todavía puede traer un error que se muestra aquí.
+  const [busy, setBusy] = useState(false)
   return (
-    <Dialog open={order !== null} onOpenChange={(open) => !open && onClose()}>
+    <Dialog
+      open={order !== null}
+      onOpenChange={(open) => {
+        if (!open && !busy) onClose()
+      }}
+    >
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain sm:max-w-md">
         {order && (
           <ShipForm
             key={order.id}
             order={order}
             onCancel={onClose}
+            onBusyChange={setBusy}
             onSubmit={(extra) => onSubmit(order, extra)}
           />
         )}

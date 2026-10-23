@@ -5,7 +5,9 @@
 // estado del último aviso al cliente (con el motivo si falló).
 //
 // Es el ÚNICO lugar donde se lee y se muestra la cédula: se pide aquí,
-// con el cliente del usuario (RLS: miembros de la cuenta), al abrir.
+// con el cliente del usuario (RLS: miembros de la cuenta) y filtrado por
+// la cuenta, al abrir. El estado guarda de qué pedido es, así nunca se
+// muestra el cuerpo del pedido anterior mientras carga el nuevo.
 // ============================================================
 
 import { useEffect, useState } from 'react'
@@ -25,17 +27,17 @@ import { OrderStatusBadges } from '@/components/ventas/order-badges'
 import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
 import { formatOrderDate, orderNoticeLine, type PanelOrder } from '@/modules/ventas/panel'
-import type { OrderItemRow, OrderRow } from '@/modules/ventas/repo'
+import { fetchOrderDetail, type OrderDetail } from '@/modules/ventas/queries'
 import { VENTAS_TEXTS, formatMoney } from '@/modules/ventas/texts'
 
 const T = VENTAS_TEXTS.detail
 
-type Detail = OrderRow & { items: OrderItemRow[] }
+type Detail = OrderDetail
 
 type DetailState =
-  | { kind: 'loading' }
-  | { kind: 'failed' }
-  | { kind: 'ready'; order: Detail }
+  | { orderId: string | null; kind: 'loading' }
+  | { orderId: string; kind: 'failed' }
+  | { orderId: string; kind: 'ready'; order: Detail }
 
 function Field({ label, value, note }: { label: string; value: string | null; note?: string }) {
   return (
@@ -163,45 +165,40 @@ export function OrderDetailBody({ order }: { order: Detail }) {
 
 export function OrderDetailDialog({
   order,
+  accountId,
   onClose,
 }: {
   /** Pedido de la lista (sin cédula); null = cerrado. */
   order: PanelOrder | null
+  accountId: string | null
   onClose: () => void
 }) {
-  const [state, setState] = useState<DetailState>({ kind: 'loading' })
+  const [state, setState] = useState<DetailState>({ orderId: null, kind: 'loading' })
   const orderId = order?.id ?? null
   // Cambia cuando el pedido de la lista cambió (acción hecha mientras tanto).
   const version = order ? `${order.status}:${order.payment_status}:${order.last_notice ?? ''}:${order.last_notice_error ?? ''}` : ''
 
   useEffect(() => {
-    if (!orderId) return
+    if (!orderId || !accountId) return
     let alive = true
-    const supabase = createClient()
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setState({ kind: 'loading' })
-    Promise.all([
-      supabase.from('orders').select('*').eq('id', orderId).maybeSingle(),
-      supabase.from('order_items').select('*').eq('order_id', orderId).order('position', { ascending: true }),
-    ])
-      .then(([orderRes, itemsRes]) => {
+    setState({ orderId, kind: 'loading' })
+    fetchOrderDetail(createClient(), accountId, orderId)
+      .then(({ order: detail }) => {
         if (!alive) return
-        if (orderRes.error || itemsRes.error || !orderRes.data) {
-          setState({ kind: 'failed' })
-          return
-        }
-        setState({
-          kind: 'ready',
-          order: { ...(orderRes.data as OrderRow), items: (itemsRes.data ?? []) as OrderItemRow[] },
-        })
+        setState(detail ? { orderId, kind: 'ready', order: detail } : { orderId, kind: 'failed' })
       })
       .catch(() => {
-        if (alive) setState({ kind: 'failed' })
+        if (alive) setState({ orderId, kind: 'failed' })
       })
     return () => {
       alive = false
     }
-  }, [orderId, version])
+  }, [orderId, accountId, version])
+
+  // Un estado de otro pedido cuenta como "cargando": nunca se ve el cuerpo anterior.
+  const current: DetailState =
+    state.orderId === orderId ? state : { orderId, kind: 'loading' }
 
   return (
     <Dialog open={order !== null} onOpenChange={(open) => !open && onClose()}>
@@ -214,17 +211,15 @@ export function OrderDetailDialog({
                 <OrderStatusBadges order={order} />
               </DialogDescription>
             </DialogHeader>
-            {state.kind === 'loading' && (
-              <p className="text-sm text-muted-foreground" role="status">
-                {VENTAS_TEXTS.loading}
-              </p>
+            {current.kind === 'loading' && (
+              <p className="text-sm text-muted-foreground">{VENTAS_TEXTS.loading}</p>
             )}
-            {state.kind === 'failed' && (
+            {current.kind === 'failed' && (
               <Alert variant="destructive">
                 <AlertDescription>{T.loadFailed}</AlertDescription>
               </Alert>
             )}
-            {state.kind === 'ready' && <OrderDetailBody order={state.order} />}
+            {current.kind === 'ready' && <OrderDetailBody order={current.order} />}
             <DialogFooter>
               <Button type="button" variant="outline" className="h-11 sm:h-9" onClick={onClose}>
                 {T.close}

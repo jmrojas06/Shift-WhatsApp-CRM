@@ -6,18 +6,55 @@
 
 import { Banknote, ReceiptText, Wallet } from 'lucide-react'
 
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
-import { formatAmounts, type SalesSummary } from '@/modules/ventas/panel'
+import { SUMMARY_LIMIT, formatAmounts, type SalesSummary } from '@/modules/ventas/panel'
 import { VENTAS_TEXTS as T } from '@/modules/ventas/texts'
 
 interface SalesSummaryProps {
   summary: SalesSummary | null
   currency: string
   loading: boolean
+  /** No se pudo leer: se muestra un error con "Reintentar" en vez de cifras. */
+  failed?: boolean
+  /** Se llegó al tope de filas: las cifras pueden estar incompletas. */
+  truncated?: boolean
+  onRetry?: () => void
 }
 
-export function SalesSummaryTiles({ summary, currency, loading }: SalesSummaryProps) {
+export function SalesSummaryTiles({
+  summary,
+  currency,
+  loading,
+  failed = false,
+  truncated = false,
+  onRetry,
+}: SalesSummaryProps) {
+  if (failed && !loading) {
+    return (
+      <section aria-label={T.summary.label}>
+        <Alert variant="destructive">
+          <AlertDescription className="flex flex-wrap items-center gap-3">
+            {T.summary.loadFailed}
+            {onRetry && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-11 sm:h-8"
+                onClick={onRetry}
+              >
+                {T.actions.retry}
+              </Button>
+            )}
+          </AlertDescription>
+        </Alert>
+      </section>
+    )
+  }
+
   const value = (text: string) => (loading || !summary ? '…' : text)
 
   const tiles = [
@@ -83,6 +120,9 @@ export function SalesSummaryTiles({ summary, currency, loading }: SalesSummaryPr
           )
         })}
       </ul>
+      {truncated && !loading && (
+        <p className="mt-2 text-xs text-muted-foreground">{T.summary.truncated(SUMMARY_LIMIT)}</p>
+      )}
     </section>
   )
 }

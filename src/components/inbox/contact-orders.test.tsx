@@ -33,17 +33,23 @@ vi.mock('@/lib/supabase/client', () => ({
 
 vi.mock('next-intl', () => ({ useTranslations: () => (key: string) => key }))
 
-import { ContactOrders } from './contact-orders'
+import { ContactOrders, salesLinkForContact } from './contact-orders'
+import { MobileOrdersButton } from './mobile-orders-button'
 import { VENTAS_TEXTS as T } from '@/modules/ventas/texts'
 
-function render(): string {
-  return renderToStaticMarkup(
-    React.createElement(ContactOrders, {
-      contactId: '11111111-1111-4111-8111-111111111111',
-      contactName: 'Valentina Restrepo',
-      conversationId: null,
-    }),
-  )
+const PROPS = {
+  contactId: '11111111-1111-4111-8111-111111111111',
+  contactName: 'Valentina Restrepo',
+  contactPhone: '+57 300 123 4567',
+  conversationId: null,
+}
+
+function render(extra: Record<string, unknown> = {}): string {
+  return renderToStaticMarkup(React.createElement(ContactOrders, { ...PROPS, ...extra }))
+}
+
+function renderMobile(): string {
+  return renderToStaticMarkup(React.createElement(MobileOrdersButton, PROPS))
 }
 
 describe('<ContactOrders />', () => {
@@ -64,13 +70,22 @@ describe('<ContactOrders />', () => {
     expect(render()).toBe('')
   })
 
-  it('con Ventas y rol agent+: muestra el botón y los pedidos del contacto', () => {
+  it('con Ventas y rol agent+: muestra el botón, el título y el enlace a Ventas filtrado por el contacto', () => {
     authState.account = { modules: ['agenda', 'ventas'] }
     authState.canSendMessages = true
     const html = render()
     expect(html).toContain(T.createOrder.open)
     expect(html).toContain(T.contactOrders.title)
-    expect(html).toContain('href="/ventas"')
+    expect(html).toContain('href="/ventas?q=%2B57%20300%20123%204567"')
+    // Antes de que responda la base (los efectos no corren aquí) se ve "cargando".
+    expect(html).toContain(T.loading)
+  })
+
+  it('en la hoja móvil va sin separador propio', () => {
+    authState.account = { modules: ['ventas'] }
+    authState.canSendMessages = true
+    expect(render()).toContain('my-4 border-t border-border')
+    expect(render({ withDivider: false })).not.toContain('my-4 border-t border-border')
   })
 
   it('viewer: ve la sección pero no puede crear pedidos', () => {
@@ -79,5 +94,43 @@ describe('<ContactOrders />', () => {
     const html = render()
     expect(html).toContain(T.contactOrders.title)
     expect(html).not.toContain(T.createOrder.open)
+  })
+})
+
+describe('salesLinkForContact', () => {
+  it('con teléfono: /ventas buscando ese teléfono', () => {
+    expect(salesLinkForContact('+57 300 123 4567')).toBe('/ventas?q=%2B57%20300%20123%204567')
+  })
+
+  it('sin teléfono (solo usuario de WhatsApp): /ventas a secas', () => {
+    expect(salesLinkForContact(null)).toBe('/ventas')
+    expect(salesLinkForContact('  ')).toBe('/ventas')
+  })
+})
+
+describe('<MobileOrdersButton />: entrada a Ventas en el celular', () => {
+  beforeEach(() => {
+    authState.account = null
+    authState.canSendMessages = false
+  })
+
+  it('con Ventas y rol agent+: botón "Pedido" solo en móvil, de 44 px', () => {
+    authState.account = { modules: ['ventas'] }
+    authState.canSendMessages = true
+    const html = renderMobile()
+    expect(html).toContain(T.mobileOrders.open)
+    expect(html).toContain(`aria-label="${T.mobileOrders.openLabel('Valentina Restrepo')}"`)
+    expect(html).toContain('lg:hidden')
+    expect(html).toContain('h-11')
+  })
+
+  it('sin el módulo o como viewer: nada', () => {
+    authState.account = { modules: ['agenda'] }
+    authState.canSendMessages = true
+    expect(renderMobile()).toBe('')
+
+    authState.account = { modules: ['ventas'] }
+    authState.canSendMessages = false
+    expect(renderMobile()).toBe('')
   })
 })

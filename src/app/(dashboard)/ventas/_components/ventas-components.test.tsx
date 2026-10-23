@@ -11,10 +11,10 @@ import { renderToStaticMarkup } from 'react-dom/server'
 
 vi.mock('next-intl', () => ({ useTranslations: () => (key: string) => key }))
 
-import { OrderList, OrderToolbar } from './order-list'
+import { OrderList, OrderToolbar, orderTitleId } from './order-list'
 import { OrderDetailBody } from './order-detail-dialog'
 import { SalesSummaryTiles } from './sales-summary'
-import type { PanelOrder } from '@/modules/ventas/panel'
+import { SUMMARY_LIMIT, type PanelOrder } from '@/modules/ventas/panel'
 import type { OrderItemRow, OrderRow } from '@/modules/ventas/repo'
 import { VENTAS_TEXTS as T } from '@/modules/ventas/texts'
 
@@ -46,7 +46,7 @@ function renderList(orders: PanelOrder[], props: Partial<React.ComponentProps<ty
       hasAny: orders.length > 0,
       hasQuery: false,
       canAct: true,
-      busyId: null,
+      busyIds: new Set<string>(),
       onAction: () => {},
       onOpenDetail: () => {},
       ...props,
@@ -91,11 +91,24 @@ describe('<OrderList />', () => {
     expect(html).toContain('title="Plantilla no aprobada en Meta"')
   })
 
-  it('mientras se guarda: botones desactivados y estado anunciado', () => {
-    const html = renderList([order()], { busyId: base.id })
+  it('mientras se guarda: botones desactivados; el aviso para lectores lo da la página', () => {
+    const html = renderList([order()], { busyIds: new Set([base.id]) })
     expect(html).toContain(T.actions.working)
-    expect(html).toContain('role="status"')
-    expect(html).toMatch(/<button[^>]*disabled[^>]*>(?:(?!<\/button>)[\s\S])*Marcar pagado/)
+    expect(html).not.toContain('role="status"')
+    expect(html).toMatch(/<button[^>]*\sdisabled=""[^>]*>(?:(?!<\/button>)[\s\S])*Marcar pagado/)
+  })
+
+  it('varios pedidos guardando a la vez: cada uno bloquea solo los suyos', () => {
+    const a = order({ id: 'a', number: 1001 })
+    const b = order({ id: 'b', number: 1002 })
+    const c = order({ id: 'c', number: 1003 })
+    const html = renderList([a, b, c], { busyIds: new Set(['a', 'c']) })
+    const disabledPaid = html.match(/<button[^>]*\sdisabled=""[^>]*>(?:(?!<\/button>)[\s\S])*?Marcar pagado/g) ?? []
+    expect(disabledPaid).toHaveLength(2)
+  })
+
+  it('el título de cada pedido tiene id para devolverle el foco tras una acción', () => {
+    expect(renderList([order()])).toContain(`id="${orderTitleId(base.id)}"`)
   })
 
   it('estados vacíos: cuenta sin pedidos, filtro y búsqueda', () => {
@@ -140,6 +153,39 @@ describe('<SalesSummaryTiles />', () => {
     expect(html).toContain('$450.000')
     expect(html).toContain('>7<')
     expect(html).toContain('$0')
+  })
+})
+
+describe('<SalesSummaryTiles />: fallos y tope', () => {
+  const summary = { soldThisMonth: [], ordersThisMonth: 0, pendingToCollect: [] }
+
+  it('si no se pudo leer: error con "Reintentar", sin cifras', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(SalesSummaryTiles, {
+        summary: null,
+        currency: 'COP',
+        loading: false,
+        failed: true,
+        onRetry: () => {},
+      }),
+    )
+    expect(html).toContain(T.summary.loadFailed)
+    expect(html).toContain(T.actions.retry)
+    expect(html).not.toContain(T.summary.soldThisMonth)
+  })
+
+  it('si llegó al tope de filas: avisa que puede estar incompleto', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(SalesSummaryTiles, { summary, currency: 'COP', loading: false, truncated: true }),
+    )
+    expect(html).toContain(T.summary.truncated(SUMMARY_LIMIT))
+  })
+
+  it('sin tope no dice nada', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(SalesSummaryTiles, { summary, currency: 'COP', loading: false }),
+    )
+    expect(html).not.toContain(T.summary.truncated(SUMMARY_LIMIT))
   })
 })
 

@@ -5,6 +5,9 @@ import {
   buildOrderRequest,
   draftTotals,
   emptyOrderDraft,
+  formatAmountInput,
+  locateOrderField,
+  normalizeAmountField,
   parseAmountInput,
   parseQuantityInput,
   removeDraftLine,
@@ -29,8 +32,18 @@ describe('parseAmountInput: valores como los escribe la gente en Colombia', () =
     ['1,234.56', 1234.56],
     ['$ 45.900', 45900],
     ['  0 ', 0],
+    // Con parte entera cero, tres decimales no son miles: 0,500 es medio peso.
+    ['0,500', 0.5],
+    ['0.500', 0.5],
+    ['0,5', 0.5],
+    [',5', 0.5],
   ])('%s → %s', (raw, expected) => {
     expect(parseAmountInput(raw)).toBe(expected)
+  })
+
+  it('grupos de miles que empiezan en cero no son miles válidos', () => {
+    expect(parseAmountInput('0.500.000')).toBeNaN()
+    expect(parseAmountInput('0.500,25')).toBeNaN()
   })
 
   it('vacío es null (el que llama decide)', () => {
@@ -42,6 +55,51 @@ describe('parseAmountInput: valores como los escribe la gente en Colombia', () =
     expect(parseAmountInput('abc')).toBeNaN()
     expect(parseAmountInput('-500')).toBeNaN()
     expect(parseAmountInput('1.2.3,4,5')).toBeNaN()
+  })
+})
+
+describe('formatAmountInput / normalizeAmountField: mostrar cómo se entendió', () => {
+  it.each([
+    [150000, '150.000'],
+    [12000.5, '12.000,50'],
+    [0.5, '0,50'],
+    [0, '0'],
+    [1500000, '1.500.000'],
+  ])('%s → %s', (value, text) => {
+    expect(formatAmountInput(value)).toBe(text)
+  })
+
+  it.each([
+    ['150000', '150.000'],
+    ['1,234.56', '1.234,56'],
+    ['0,500', '0,50'],
+    ['1,500', '1.500'],
+    [' 45900 ', '45.900'],
+  ])('al salir del campo, %s se reescribe como %s', (raw, text) => {
+    expect(normalizeAmountField(raw)).toBe(text)
+  })
+
+  it('vacío o ilegible se deja como está (el error lo da el dominio)', () => {
+    expect(normalizeAmountField('')).toBe('')
+    expect(normalizeAmountField('gratis')).toBe('gratis')
+    expect(normalizeAmountField('-5')).toBe('-5')
+  })
+})
+
+describe('locateOrderField: a qué campo apunta un mensaje (cliente o servidor)', () => {
+  it.each([
+    ['Producto 2: escribe el nombre.', { field: 'name', line: 1 }],
+    ['Producto 1: la cantidad debe ser un número entero entre 1 y 9999.', { field: 'quantity', line: 0 }],
+    ['Producto 3: el precio admite máximo 2 decimales.', { field: 'unitPrice', line: 2 }],
+    ['El envío no puede ser negativo.', { field: 'shipping' }],
+    ['La ciudad no puede pasar de 80 caracteres.', { field: 'city' }],
+    ['La dirección tiene caracteres no permitidos.', { field: 'address' }],
+    ['La cédula solo admite letras, números, puntos y guiones.', { field: 'idNumber' }],
+    ['Las notas no pueden pasar de 500 caracteres.', { field: 'notes' }],
+    ['Agrega al menos un producto.', { field: 'lines' }],
+    ['El contacto o la conversación no existe en tu cuenta.', {}],
+  ])('%s', (message, expected) => {
+    expect(locateOrderField(message)).toEqual(expected)
   })
 })
 

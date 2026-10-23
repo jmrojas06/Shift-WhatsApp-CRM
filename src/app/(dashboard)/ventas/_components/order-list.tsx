@@ -37,6 +37,9 @@ const ACTION_META: Record<
 
 const TOUCH = 'h-11 sm:h-8'
 
+/** Id del título de un pedido en la lista (para devolverle el foco tras una acción). */
+export const orderTitleId = (orderId: string): string => `order-title-${orderId}`
+
 // ------------------------------------------------------------
 // Filtros y búsqueda
 // ------------------------------------------------------------
@@ -120,7 +123,8 @@ interface OrderListProps {
   hasAny: boolean
   hasQuery: boolean
   canAct: boolean
-  busyId: string | null
+  /** Pedidos con una acción en curso (pueden ser varios a la vez). */
+  busyIds: ReadonlySet<string>
   onAction: (order: PanelOrder, action: OrderAction) => void
   onOpenDetail: (order: PanelOrder) => void
 }
@@ -130,7 +134,7 @@ export function OrderList({
   hasAny,
   hasQuery,
   canAct,
-  busyId,
+  busyIds,
   onAction,
   onOpenDetail,
 }: OrderListProps) {
@@ -155,7 +159,7 @@ export function OrderList({
   return (
     <ul className="divide-y divide-border">
       {orders.map((order) => {
-        const busy = busyId === order.id
+        const busy = busyIds.has(order.id)
         const actions = canAct ? availableOrderActions(order) : []
         const created = formatOrderDate(order.created_at)
         return (
@@ -167,6 +171,7 @@ export function OrderList({
               <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                 <button
                   type="button"
+                  id={orderTitleId(order.id)}
                   onClick={() => onOpenDetail(order)}
                   className="rounded-sm text-sm font-semibold text-foreground underline-offset-4 hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
                 >
@@ -224,9 +229,10 @@ export function OrderList({
                   {T.actions.viewDetail}
                 </Button>
               </div>
+              {/* Lo anuncia la región viva de la página; aquí es solo visual. */}
               {busy && (
                 <p
-                  role="status"
+                  aria-hidden="true"
                   className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
                 >
                   <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
