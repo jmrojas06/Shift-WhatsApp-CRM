@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   calendarDateForFormat,
+  contactMatchesQuery,
   contactOptionLabel,
   filterContactOptions,
 } from "./deal-utils";
@@ -35,10 +36,41 @@ describe("filterContactOptions", () => {
   });
 });
 
+describe("contactMatchesQuery", () => {
+  it("matches everyone for an empty query", () => {
+    expect(contactMatchesQuery(contacts[0], "")).toBe(true);
+    expect(contactMatchesQuery(contacts[2], "   ")).toBe(true);
+  });
+
+  it("matches name, email and phone digits", () => {
+    expect(contactMatchesQuery(contacts[0], "GOMEZ")).toBe(true);
+    expect(contactMatchesQuery(contacts[0], "correo.com")).toBe(true);
+    expect(contactMatchesQuery(contacts[0], "300 123")).toBe(true);
+    expect(contactMatchesQuery(contacts[1], "gómez")).toBe(false);
+  });
+
+  it("matches the WhatsApp username with or without the @", () => {
+    const bsuid = { name: undefined, phone: "", wa_username: "juanito.cuts" };
+    expect(contactMatchesQuery(bsuid, "juanito")).toBe(true);
+    expect(contactMatchesQuery(bsuid, "@juanito")).toBe(true);
+    expect(contactMatchesQuery(bsuid, "pedro")).toBe(false);
+  });
+
+  it("a lone @ does not match a contact without email or username", () => {
+    expect(contactMatchesQuery(contacts[1], "@")).toBe(false);
+  });
+});
+
 describe("contactOptionLabel", () => {
   it("prefers the name and falls back to the phone", () => {
     expect(contactOptionLabel(contacts[0])).toBe("José Gómez");
     expect(contactOptionLabel(contacts[2])).toBe("+34 600 111 222");
+  });
+
+  it("falls back to the @username for a contact without phone", () => {
+    expect(
+      contactOptionLabel({ name: undefined, phone: "", wa_username: "juanito.cuts" }),
+    ).toBe("@juanito.cuts");
   });
 });
 

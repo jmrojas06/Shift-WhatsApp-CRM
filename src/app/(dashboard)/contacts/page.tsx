@@ -59,8 +59,26 @@ import { useCan } from '@/hooks/use-can';
 import { useAuth } from '@/hooks/use-auth';
 import { GatedButton } from '@/components/ui/gated-button';
 import { useFormatter, useTranslations } from 'next-intl';
+import { contactHandle } from '@/lib/whatsapp/wa-identity';
 
 const PAGE_SIZE = 25;
+
+/** Placeholder rows while a page of contacts loads (table and cards alike). */
+function ContactRowsSkeleton({ rows = 6 }: { rows?: number }) {
+  return (
+    <div aria-hidden className="divide-y divide-border">
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="flex items-center gap-3 px-4 py-3.5">
+          <div className="size-[18px] shrink-0 animate-pulse rounded bg-muted motion-reduce:animate-none" />
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="h-3.5 w-2/5 animate-pulse rounded bg-muted motion-reduce:animate-none" />
+            <div className="h-3 w-3/5 animate-pulse rounded bg-muted motion-reduce:animate-none" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 interface ContactWithTags extends Contact {
   tags?: Tag[];
@@ -350,6 +368,58 @@ export default function ContactsPage() {
     setPage(0);
   }
 
+  function formatCreatedAt(contact: Contact) {
+    return format.dateTime(new Date(contact.created_at), {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+  }
+
+  // The "more" menu is the same in the table row (md+) and in the phone card.
+  function renderRowActions(contact: Contact) {
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={t('rowActions', { name: contact.name || contactHandle(contact) })}
+              className="text-muted-foreground hover:text-foreground pointer-coarse:size-11"
+              onClick={(e) => e.stopPropagation()}
+            />
+          }
+        >
+          <MoreHorizontal className="size-4" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="bg-popover border-border">
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation();
+              openEditForm(contact);
+            }}
+            className="text-popover-foreground focus:bg-muted focus:text-foreground"
+          >
+            <Pencil className="size-4" />
+            {t('editAction')}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator className="bg-border" />
+          <DropdownMenuItem
+            variant="destructive"
+            onClick={(e) => {
+              e.stopPropagation();
+              confirmDelete(contact);
+            }}
+          >
+            <Trash2 className="size-4" />
+            {t('deleteAction')}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  }
+
   return (
     <div className="min-w-0 space-y-6">
       {/* Header */}
@@ -577,7 +647,7 @@ export default function ContactsPage() {
               variant="ghost"
               size="sm"
               onClick={() => setSelected(new Set())}
-              className="text-muted-foreground hover:text-foreground"
+              className="text-muted-foreground hover:text-foreground pointer-coarse:h-11"
             >
               {t('clearSelection')}
             </Button>
@@ -587,6 +657,7 @@ export default function ContactsPage() {
               canAct={canEdit}
               gateReason={tGate('reasons.deleteContacts')}
               onClick={() => setBulkDeleteOpen(true)}
+              className="pointer-coarse:h-11"
             >
               <Trash2 className="size-4" />
               {t('deleteSelected')}
@@ -595,195 +666,217 @@ export default function ContactsPage() {
         </div>
       )}
 
-      {/* Table */}
-      {/* The Table primitive scrolls horizontally inside its own box, so
-          a wide row never makes the page itself scroll sideways. */}
+      {/* List: a table from md up and cards on phones. Both read the same
+          `contacts`, the same selection and the same row actions. */}
       <div className="min-w-0 rounded-xl border border-border bg-card shadow-(--shadow-card) overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow className="border-border hover:bg-transparent">
-              {/* Selection column: a visible checkbox inside a label so the
-                  whole cell is the tap target. */}
-              <TableHead className="w-12 pl-3">
-                <label className="inline-flex size-8 cursor-pointer items-center justify-center pointer-coarse:size-11">
-                  <Checkbox
-                    checked={allOnPageSelected}
-                    indeterminate={!allOnPageSelected && someOnPageSelected}
-                    onCheckedChange={toggleSelectAll}
-                    disabled={contacts.length === 0}
-                    aria-label={t('selectAllOnPage')}
-                    className="size-[18px] border-muted-foreground/60"
-                  />
-                </label>
-              </TableHead>
-              <TableHead className="text-muted-foreground">{t('tableColumns.name')}</TableHead>
-              <TableHead className="text-muted-foreground">{t('tableColumns.phone')}</TableHead>
-              <TableHead className="text-muted-foreground hidden md:table-cell">{t('tableColumns.email')}</TableHead>
-              <TableHead className="text-muted-foreground hidden lg:table-cell">{t('tableColumns.company')}</TableHead>
-              <TableHead className="text-muted-foreground hidden md:table-cell">{t('tableColumns.tags')}</TableHead>
-              <TableHead className="text-muted-foreground hidden lg:table-cell">{t('tableColumns.createdAt')}</TableHead>
-              <TableHead className="text-muted-foreground w-12" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow className="border-border">
-                <TableCell colSpan={8} className="text-center py-12">
-                  <div className="flex flex-col items-center gap-2">
-                    <Loader2 className="size-6 animate-spin text-primary" />
-                    <p className="text-sm text-muted-foreground">{t('loading')}</p>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ) : contacts.length === 0 ? (
-              <TableRow className="border-border">
-                <TableCell colSpan={8} className="text-center py-12">
-                  <div className="flex flex-col items-center gap-2">
-                    <Users className="size-8 text-muted-foreground" />
-                    <p className="text-sm text-muted-foreground">
-                      {hasActiveFilters
-                        ? t('noContactsMatch')
-                        : t('noContactsYet')}
-                    </p>
-                    {!hasActiveFilters && (
-                      <GatedButton
-                        canAct={canEdit}
-                        gateReason={tGate('reasons.addOrImportContacts')}
-                        variant="outline"
-                        size="sm"
-                        onClick={openAddForm}
-                        className="mt-2 border-border"
-                      >
-                        <Plus className="size-3.5" />
-                        {t('addFirstContact')}
-                      </GatedButton>
-                    )}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ) : (
-              contacts.map((contact) => (
-                <TableRow
-                  key={contact.id}
-                  className="border-border hover:bg-muted/50 cursor-pointer"
-                  onClick={() => openDetail(contact.id)}
-                >
-                  <TableCell className="pl-3" onClick={(e) => e.stopPropagation()}>
-                    <label className="inline-flex size-8 cursor-pointer items-center justify-center pointer-coarse:size-11">
+        {loading ? (
+          <>
+            <p role="status" className="sr-only">
+              {t('loading')}
+            </p>
+            <ContactRowsSkeleton />
+          </>
+        ) : contacts.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
+            <Users aria-hidden className="size-8 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">
+              {hasActiveFilters ? t('noContactsMatch') : t('noContactsYet')}
+            </p>
+            {!hasActiveFilters && (
+              <GatedButton
+                canAct={canEdit}
+                gateReason={tGate('reasons.addOrImportContacts')}
+                variant="outline"
+                size="sm"
+                onClick={openAddForm}
+                className="mt-2 border-border pointer-coarse:h-11"
+              >
+                <Plus className="size-3.5" />
+                {t('addFirstContact')}
+              </GatedButton>
+            )}
+          </div>
+        ) : (
+          <>
+            {/* md and up: the table scrolls horizontally inside its own box,
+                so a wide row never makes the page itself scroll sideways. */}
+            <div className="hidden md:block">
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-border hover:bg-transparent">
+                    {/* Selection column: a visible checkbox inside a label so
+                        the whole cell is the tap target. */}
+                    <TableHead className="w-12 pl-3">
+                      <label className="inline-flex size-8 cursor-pointer items-center justify-center pointer-coarse:size-11">
+                        <Checkbox
+                          checked={allOnPageSelected}
+                          indeterminate={!allOnPageSelected && someOnPageSelected}
+                          onCheckedChange={toggleSelectAll}
+                          aria-label={t('selectAllOnPage')}
+                          className="size-[18px] border-muted-foreground/60"
+                        />
+                      </label>
+                    </TableHead>
+                    <TableHead className="text-muted-foreground">{t('tableColumns.name')}</TableHead>
+                    <TableHead className="text-muted-foreground">{t('tableColumns.phone')}</TableHead>
+                    <TableHead className="text-muted-foreground">{t('tableColumns.email')}</TableHead>
+                    <TableHead className="text-muted-foreground hidden lg:table-cell">{t('tableColumns.company')}</TableHead>
+                    <TableHead className="text-muted-foreground">{t('tableColumns.tags')}</TableHead>
+                    <TableHead className="text-muted-foreground hidden lg:table-cell">{t('tableColumns.createdAt')}</TableHead>
+                    <TableHead className="text-muted-foreground w-12" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {contacts.map((contact) => (
+                    <TableRow
+                      key={contact.id}
+                      className="border-border hover:bg-muted/50 cursor-pointer"
+                      onClick={() => openDetail(contact.id)}
+                    >
+                      <TableCell className="pl-3" onClick={(e) => e.stopPropagation()}>
+                        <label className="inline-flex size-8 cursor-pointer items-center justify-center pointer-coarse:size-11">
+                          <Checkbox
+                            checked={selected.has(contact.id)}
+                            onCheckedChange={() => toggleSelect(contact.id)}
+                            aria-label={t('selectContact', { name: contact.name || contactHandle(contact) })}
+                            className="size-[18px] border-muted-foreground/60"
+                          />
+                        </label>
+                      </TableCell>
+                      <TableCell className="max-w-44 text-foreground font-medium sm:max-w-none">
+                        {/* A real button so keyboard and screen-reader users can
+                            open the detail; the row click stays for the mouse. */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openDetail(contact.id);
+                          }}
+                          className="block max-w-full truncate rounded-md text-left outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-11"
+                        >
+                          {contact.name || <span className="text-muted-foreground">{t('unnamed')}</span>}
+                        </button>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground font-mono text-xs">
+                        {contactHandle(contact)}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground text-sm">
+                        {contact.email || <span className="text-muted-foreground">-</span>}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground hidden lg:table-cell text-sm">
+                        {contact.company || <span className="text-muted-foreground">-</span>}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {contact.tags && contact.tags.length > 0 ? (
+                            contact.tags.slice(0, 3).map((tag) => (
+                              <span
+                                key={tag.id}
+                                className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted px-2 py-0.5 text-xs font-medium text-foreground"
+                              >
+                                <span
+                                  aria-hidden
+                                  className="size-2 shrink-0 rounded-full"
+                                  style={{ backgroundColor: tag.color }}
+                                />
+                                {tag.name}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-muted-foreground text-xs">-</span>
+                          )}
+                          {contact.tags && contact.tags.length > 3 && (
+                            <span className="self-center text-xs text-muted-foreground">
+                              +{contact.tags.length - 3}
+                            </span>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground text-xs hidden lg:table-cell">
+                        {formatCreatedAt(contact)}
+                      </TableCell>
+                      <TableCell>{renderRowActions(contact)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+
+            {/* Phones: one card per contact. Tapping the card opens the
+                detail; the checkbox and the "more" menu keep their own
+                44 px targets. */}
+            <div className="md:hidden">
+              <label className="flex min-h-11 cursor-pointer items-center gap-3 border-b border-border px-4 text-sm text-muted-foreground">
+                <Checkbox
+                  checked={allOnPageSelected}
+                  indeterminate={!allOnPageSelected && someOnPageSelected}
+                  onCheckedChange={toggleSelectAll}
+                  aria-label={t('selectAllOnPage')}
+                  className="size-[18px] border-muted-foreground/60"
+                />
+                {t('selectAll')}
+              </label>
+              <ul className="divide-y divide-border">
+                {contacts.map((contact) => (
+                  <li
+                    key={contact.id}
+                    className={`flex items-start gap-1 px-2 py-1 ${
+                      selected.has(contact.id) ? 'bg-muted/40' : ''
+                    }`}
+                  >
+                    <label className="inline-flex size-11 shrink-0 cursor-pointer items-center justify-center">
                       <Checkbox
                         checked={selected.has(contact.id)}
                         onCheckedChange={() => toggleSelect(contact.id)}
-                        aria-label={t('selectContact', { name: contact.name || contact.phone })}
+                        aria-label={t('selectContact', { name: contact.name || contactHandle(contact) })}
                         className="size-[18px] border-muted-foreground/60"
                       />
                     </label>
-                  </TableCell>
-                  <TableCell className="max-w-44 text-foreground font-medium sm:max-w-none">
-                    {/* A real button so keyboard and screen-reader users can
-                        open the detail; the row click stays for the mouse. */}
                     <button
                       type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openDetail(contact.id);
-                      }}
-                      className="block max-w-full truncate rounded-md text-left outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-11"
+                      onClick={() => openDetail(contact.id)}
+                      className="min-w-0 flex-1 rounded-lg px-1 py-2.5 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
                     >
-                      {contact.name || <span className="text-muted-foreground">{t('unnamed')}</span>}
-                    </button>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground font-mono text-xs">
-                    {contact.phone}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground hidden md:table-cell text-sm">
-                    {contact.email || <span className="text-muted-foreground">-</span>}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground hidden lg:table-cell text-sm">
-                    {contact.company || <span className="text-muted-foreground">-</span>}
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell">
-                    <div className="flex flex-wrap gap-1">
-                      {contact.tags && contact.tags.length > 0 ? (
-                        contact.tags.slice(0, 3).map((tag) => (
-                          <span
-                            key={tag.id}
-                            className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted px-2 py-0.5 text-xs font-medium text-foreground"
-                          >
+                      <span className="block truncate text-sm font-medium text-foreground">
+                        {contact.name || <span className="text-muted-foreground">{t('unnamed')}</span>}
+                      </span>
+                      <span className="mt-0.5 block truncate font-mono text-xs text-muted-foreground">
+                        {contactHandle(contact)}
+                      </span>
+                      {contact.tags && contact.tags.length > 0 && (
+                        <span className="mt-2 flex flex-wrap items-center gap-1">
+                          {contact.tags.slice(0, 3).map((tag) => (
                             <span
-                              aria-hidden
-                              className="size-2 shrink-0 rounded-full"
-                              style={{ backgroundColor: tag.color }}
-                            />
-                            {tag.name}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="text-muted-foreground text-xs">-</span>
-                      )}
-                      {contact.tags && contact.tags.length > 3 && (
-                        <span className="self-center text-xs text-muted-foreground">
-                          +{contact.tags.length - 3}
+                              key={tag.id}
+                              className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border bg-muted px-2 py-0.5 text-xs font-medium text-foreground"
+                            >
+                              <span
+                                aria-hidden
+                                className="size-2 shrink-0 rounded-full"
+                                style={{ backgroundColor: tag.color }}
+                              />
+                              <span className="truncate">{tag.name}</span>
+                            </span>
+                          ))}
+                          {contact.tags.length > 3 && (
+                            <span className="text-xs text-muted-foreground">
+                              +{contact.tags.length - 3}
+                            </span>
+                          )}
                         </span>
                       )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-xs hidden lg:table-cell">
-                    {format.dateTime(new Date(contact.created_at), {
-                      day: 'numeric',
-                      month: 'short',
-                      year: 'numeric',
-                    })}
-                  </TableCell>
-                  <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger
-                        render={
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={t('rowActions', { name: contact.name || contact.phone })}
-                            className="text-muted-foreground hover:text-foreground"
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                        }
-                      >
-                        <MoreHorizontal className="size-4" />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent
-                        align="end"
-                        className="bg-popover border-border"
-                      >
-                        <DropdownMenuItem
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openEditForm(contact);
-                          }}
-                          className="text-popover-foreground focus:bg-muted focus:text-foreground"
-                        >
-                          <Pencil className="size-4" />
-                          {t('editAction')}
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator className="bg-border" />
-                        <DropdownMenuItem
-                          variant="destructive"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            confirmDelete(contact);
-                          }}
-                        >
-                          <Trash2 className="size-4" />
-                          {t('deleteAction')}
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
+                      <span className="mt-1.5 block text-xs text-muted-foreground">
+                        {t('tableColumns.createdAt')} {formatCreatedAt(contact)}
+                      </span>
+                    </button>
+                    <div className="shrink-0">{renderRowActions(contact)}</div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </>
+        )}
       </div>
-
       {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -801,7 +894,7 @@ export default function ContactsPage() {
               disabled={!hasPrev}
               onClick={() => setPage((p) => p - 1)}
               aria-label={t('previousPage')}
-              className="border-border"
+              className="border-border pointer-coarse:size-11"
             >
               <ChevronLeft className="size-4" />
             </Button>
@@ -814,7 +907,7 @@ export default function ContactsPage() {
               disabled={!hasNext}
               onClick={() => setPage((p) => p + 1)}
               aria-label={t('nextPage')}
-              className="border-border"
+              className="border-border pointer-coarse:size-11"
             >
               <ChevronRight className="size-4" />
             </Button>
