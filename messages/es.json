@@ -81,26 +81,13 @@
   },
   "Dashboard": {
     "page": {
-      "title": "Panel",
-      "description": "Métricas en vivo de conversaciones, contactos, oportunidades, difusiones y automatizaciones.",
-      "activeConversations": "Conversaciones activas",
-      "newContactsToday": "Contactos nuevos hoy",
-      "openDealsValue": "Valor de oportunidades abiertas",
-      "messagesSentToday": "Mensajes enviados hoy",
-      "newTodayVsYesterday": "nuevos hoy vs. ayer",
-      "vsYesterday": "vs. ayer",
-      "openDeals": "{count} {count, plural, =1 {oportunidad abierta} other {oportunidades abiertas}}",
-      "noChange": "Sin cambios {suffix}"
-    },
-    "quickActions": {
-      "newContact": "Nuevo contacto",
-      "newDeal": "Nueva oportunidad",
-      "newBroadcast": "Nueva difusión",
-      "newAutomation": "Nueva automatización"
+      "greeting": "Hola, {name}",
+      "greetingNoName": "Hola",
+      "subtitle": "{date}. Esto es lo que necesita tu atención."
     },
     "activityFeed": {
       "title": "Actividad reciente",
-      "viewAll": "Ver todo →",
+      "viewAll": "Ver todo",
       "noActivity": "Aún no hay actividad",
       "noActivityHint": "La actividad de mensajes, oportunidades, difusiones y automatizaciones aparecerá aquí.",
       "showingOf": "Mostrando {visible} de {totalLoaded}{plus}",
@@ -128,19 +115,20 @@
         "unknown": "Desconocido",
         "aContact": "un contacto",
         "automationFallback": "Automatización"
-      }
+      },
+      "repeated": "{count} veces"
     },
     "conversationsChart": {
-      "title": "Conversaciones a lo largo del tiempo",
-      "description": "Volumen diario de mensajes por dirección",
+      "title": "Mensajes por día",
+      "description": "Recibidos y enviados",
       "days": "{count} días",
       "noActivity": "No hay actividad de mensajes en este rango",
       "noActivityHint": "Envía o recibe mensajes para empezar a llenar este gráfico.",
-      "incoming": "Entrantes",
-      "outgoing": "Salientes",
-      "tooltipIncoming": "{count} entrantes",
-      "tooltipOutgoing": "{count} salientes",
-      "ariaLabel": "Conversaciones por día"
+      "incoming": "Recibidos",
+      "outgoing": "Enviados",
+      "tooltipIncoming": "{count} recibidos",
+      "tooltipOutgoing": "{count} enviados",
+      "ariaLabel": "Mensajes recibidos y enviados por día"
     },
     "pipelineDonut": {
       "title": "Valor del embudo",
@@ -152,17 +140,53 @@
       "ariaLabel": "Valor del embudo por etapa"
     },
     "responseTimeChart": {
-      "title": "Tiempo promedio de primera respuesta",
-      "description": "Minutos para responder al primer mensaje sin respuesta de un cliente, por día de la semana",
-      "target": "objetivo {minutes}min",
+      "title": "Primera respuesta",
+      "description": "Tiempo promedio para responder el primer mensaje de un cliente, por día de la semana",
+      "target": "Meta: {minutes} min",
       "thisWeek": "Esta semana:",
       "lastWeek": "Semana pasada:",
       "noReplies": "Aún no hay respuestas registradas",
       "noRepliesHint": "Este gráfico se llena a medida que respondes a los mensajes de los clientes.",
-      "avgMinutes": "Promedio en minutos"
+      "avgMinutes": "Promedio"
     },
     "emptyState": {
       "title": "Aún no hay datos suficientes"
+    },
+    "attention": {
+      "title": "Para atender",
+      "unreadTitle": "Conversaciones sin leer",
+      "unknownContact": "Contacto sin nombre",
+      "reply": "Responder",
+      "noUnread": "Todo al día: no tienes conversaciones sin leer.",
+      "openInbox": "Ir a la bandeja",
+      "whatsappReconnectTitle": "WhatsApp necesita reconectarse",
+      "whatsappReconnectBody": "Mientras tanto no llegan ni salen mensajes. Reconectarlo toma un minuto.",
+      "whatsappSetupTitle": "Conecta tu WhatsApp",
+      "whatsappSetupBody": "Así empiezan a llegar aquí los chats de tus clientes.",
+      "reconnect": "Reconectar",
+      "connect": "Conectar WhatsApp",
+      "appointmentsTitle": "Citas de hoy",
+      "noAppointments": "No hay citas para hoy. Cuando alguien reserve por WhatsApp, aparece aquí.",
+      "noMoreAppointments": "No quedan citas pendientes por hoy.",
+      "viewAgenda": "Ver agenda",
+      "salesTitle": "Por cobrar",
+      "soldThisMonth": "Vendido este mes: {amount}",
+      "viewSales": "Ver ventas",
+      "loadError": "No se pudo cargar. Recarga la página para intentarlo de nuevo."
+    },
+    "summary": {
+      "title": "Resumen de hoy",
+      "activeConversations": "Conversaciones activas",
+      "openNow": "Abiertas ahora",
+      "newContacts": "Contactos nuevos",
+      "messagesSent": "Mensajes enviados",
+      "firstResponse": "Primera respuesta, semana",
+      "sameAsYesterday": "Igual que ayer",
+      "moreThanYesterday": "{count} más que ayer",
+      "lessThanYesterday": "{count} menos que ayer",
+      "withinTarget": "Dentro de tu meta de {minutes} min",
+      "aboveTarget": "Por encima de tu meta de {minutes} min",
+      "noDataYet": "Aún sin datos"
     }
   },
   "Inbox": {

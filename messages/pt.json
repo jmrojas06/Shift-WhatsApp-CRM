@@ -81,26 +81,13 @@
   },
   "Dashboard": {
     "page": {
-      "title": "Painel",
-      "description": "Métricas ao vivo de conversas, contatos, negócios, disparos e automações.",
-      "activeConversations": "Conversas ativas",
-      "newContactsToday": "Novos contatos hoje",
-      "openDealsValue": "Valor dos negócios abertos",
-      "messagesSentToday": "Mensagens enviadas hoje",
-      "newTodayVsYesterday": "novos hoje vs. ontem",
-      "vsYesterday": "vs. ontem",
-      "openDeals": "{count} {count, plural, =1 {negócio aberto} other {negócios abertos}}",
-      "noChange": "Sem alteração {suffix}"
-    },
-    "quickActions": {
-      "newContact": "Novo contato",
-      "newDeal": "Novo negócio",
-      "newBroadcast": "Novo disparo",
-      "newAutomation": "Nova automação"
+      "greeting": "Olá, {name}",
+      "greetingNoName": "Olá",
+      "subtitle": "{date}. Isto é o que precisa da sua atenção."
     },
     "activityFeed": {
       "title": "Atividade recente",
-      "viewAll": "Ver tudo →",
+      "viewAll": "Ver tudo",
       "noActivity": "Nenhuma atividade ainda",
       "noActivityHint": "A atividade de mensagens, negócios, disparos e automações aparecerá aqui.",
       "showingOf": "Mostrando {visible} de {totalLoaded}{plus}",
@@ -128,11 +115,12 @@
         "unknown": "Desconhecido",
         "aContact": "um contato",
         "automationFallback": "Automação"
-      }
+      },
+      "repeated": "{count} vezes"
     },
     "conversationsChart": {
-      "title": "Conversas ao longo do tempo",
-      "description": "Volume diário de mensagens por direção",
+      "title": "Mensagens por dia",
+      "description": "Recebidas e enviadas",
       "days": "{count} dias",
       "noActivity": "Nenhuma atividade de mensagens neste período",
       "noActivityHint": "Envie ou receba mensagens para começar a preencher este gráfico.",
@@ -140,7 +128,7 @@
       "outgoing": "Enviadas",
       "tooltipIncoming": "{count} recebidas",
       "tooltipOutgoing": "{count} enviadas",
-      "ariaLabel": "Conversas por dia"
+      "ariaLabel": "Mensagens recebidas e enviadas por dia"
     },
     "pipelineDonut": {
       "title": "Valor do pipeline",
@@ -152,17 +140,53 @@
       "ariaLabel": "Valor do pipeline por etapa"
     },
     "responseTimeChart": {
-      "title": "Tempo médio da primeira resposta",
-      "description": "Minutos para responder à primeira mensagem sem resposta de um cliente, por dia da semana",
-      "target": "meta {minutes}min",
+      "title": "Primeira resposta",
+      "description": "Tempo médio para responder a primeira mensagem de um cliente, por dia da semana",
+      "target": "Meta: {minutes} min",
       "thisWeek": "Esta semana:",
       "lastWeek": "Semana passada:",
       "noReplies": "Nenhuma resposta registrada ainda",
       "noRepliesHint": "Este gráfico é preenchido conforme você responde às mensagens dos clientes.",
-      "avgMinutes": "Média em minutos"
+      "avgMinutes": "Média"
     },
     "emptyState": {
       "title": "Ainda não há dados suficientes"
+    },
+    "attention": {
+      "title": "Para atender",
+      "unreadTitle": "Conversas não lidas",
+      "unknownContact": "Contato sem nome",
+      "reply": "Responder",
+      "noUnread": "Tudo em dia: nenhuma conversa não lida.",
+      "openInbox": "Ir para a caixa de entrada",
+      "whatsappReconnectTitle": "O WhatsApp precisa ser reconectado",
+      "whatsappReconnectBody": "Enquanto isso, nenhuma mensagem chega nem sai. Reconectar leva um minuto.",
+      "whatsappSetupTitle": "Conecte seu WhatsApp",
+      "whatsappSetupBody": "Assim as conversas dos seus clientes começam a chegar aqui.",
+      "reconnect": "Reconectar",
+      "connect": "Conectar WhatsApp",
+      "appointmentsTitle": "Agendamentos de hoje",
+      "noAppointments": "Nenhum agendamento hoje. Quando alguém reservar pelo WhatsApp, aparece aqui.",
+      "noMoreAppointments": "Não restam agendamentos pendentes hoje.",
+      "viewAgenda": "Ver agenda",
+      "salesTitle": "A receber",
+      "soldThisMonth": "Vendido este mês: {amount}",
+      "viewSales": "Ver vendas",
+      "loadError": "Não foi possível carregar. Recarregue a página para tentar de novo."
+    },
+    "summary": {
+      "title": "Resumo de hoje",
+      "activeConversations": "Conversas ativas",
+      "openNow": "Abertas agora",
+      "newContacts": "Contatos novos",
+      "messagesSent": "Mensagens enviadas",
+      "firstResponse": "Primeira resposta, semana",
+      "sameAsYesterday": "Igual a ontem",
+      "moreThanYesterday": "{count} a mais que ontem",
+      "lessThanYesterday": "{count} a menos que ontem",
+      "withinTarget": "Dentro da sua meta de {minutes} min",
+      "aboveTarget": "Acima da sua meta de {minutes} min",
+      "noDataYet": "Ainda sem dados"
     }
   },
   "Inbox": {

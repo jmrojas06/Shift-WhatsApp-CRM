@@ -13,6 +13,8 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-info: var(--info);
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -113,6 +115,11 @@ html[data-mode="dark"] {
   --info: #7fb0f5;
   --border: #2b2b31;
   --input: #3a3a42;
+  /* Two-series chart palette (aqua / blue), validated for CVD and 3:1
+   * on the card surface with the dataviz checker. Independent of the
+   * accent so charts read the same in every theme. */
+  --series-1: #199e70;
+  --series-2: #3987e5;
   --chart-2: #5f5f6a;
   --chart-3: #7a7a85;
   --chart-4: #4a4a53;
@@ -147,6 +154,8 @@ html[data-mode="light"] {
   --info: #1d5fd1;
   --border: #e3e4e8;
   --input: #d2d4da;
+  --series-1: #14936a;
+  --series-2: #2a78d6;
   --chart-2: #b8bac2;
   --chart-3: #9a9ca6;
   --chart-4: #d2d4da;

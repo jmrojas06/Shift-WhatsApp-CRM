@@ -19,7 +19,8 @@ interface ResponseTimeChartProps {
   thresholdMinutes?: number
 }
 
-import { useFormatter, useTranslations } from 'next-intl'
+import { useFormatter, useLocale, useTranslations } from 'next-intl'
+import { formatMinutes } from './today-summary'
 
 // Single category, single colour — the data is "average minutes
 // per weekday". Tremor expects categories as the second tuple in
@@ -34,6 +35,7 @@ export function ResponseTimeChart({
 }: ResponseTimeChartProps) {
   const t = useTranslations('Dashboard.responseTimeChart')
   const format = useFormatter()
+  const locale = useLocale()
   const category = t('avgMinutes')
   const hasData = data?.buckets.some((b) => b.avgMinutes != null) ?? false
 
@@ -56,8 +58,8 @@ export function ResponseTimeChart({
 
   return (
     <section className="rounded-xl border border-border bg-card">
-      <header className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
-        <div>
+      <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 border-b border-border px-5 py-4">
+        <div className="min-w-0 flex-1 basis-60">
           <h2 className="text-sm font-semibold text-foreground">
             {t('title')}
           </h2>
@@ -65,9 +67,9 @@ export function ResponseTimeChart({
             {t('description')}
           </p>
         </div>
-        <div className="flex items-center gap-3 text-right text-xs">
+        <div className="flex shrink-0 items-center gap-3 text-xs whitespace-nowrap">
           {thresholdMinutes > 0 && (
-            <span className="rounded-full border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 font-medium text-rose-300 tabular-nums">
+            <span className="rounded-full border border-border bg-muted px-2 py-0.5 font-medium text-muted-foreground tabular-nums">
               {t('target', { minutes: thresholdMinutes })}
             </span>
           )}
@@ -76,12 +78,12 @@ export function ResponseTimeChart({
               <div className="text-muted-foreground">
                 {t('thisWeek')}{' '}
                 <span className="font-medium text-foreground tabular-nums">
-                  {fmt(data.thisWeekAvg)}
+                  {fmt(data.thisWeekAvg, locale)}
                 </span>
               </div>
               <div className="text-muted-foreground">
                 {t('lastWeek')}{' '}
-                <span className="tabular-nums">{fmt(data.lastWeekAvg)}</span>
+                <span className="tabular-nums">{fmt(data.lastWeekAvg, locale)}</span>
               </div>
             </div>
           )}
@@ -104,8 +106,8 @@ export function ResponseTimeChart({
             categories={[category]}
             // 'violet' maps to Tailwind's `fill-violet-500` — matches
             // the brand accent the hand-rolled bars used (#7c3aed).
-            colors={['violet']}
-            valueFormatter={(value) => `${value.toFixed(1)}m`}
+            colors={['series1']}
+            valueFormatter={(value) => formatMinutes(value, locale)}
             showLegend={false}
             yAxisWidth={48}
             // Compact height so the chart sits well inside the card
@@ -118,9 +120,7 @@ export function ResponseTimeChart({
   )
 }
 
-function fmt(mins: number | null): string {
+function fmt(mins: number | null, locale: string): string {
   if (mins == null) return '—'
-  if (mins < 1) return `${Math.max(1, Math.round(mins * 60))}s`
-  if (mins < 60) return `${mins.toFixed(1)}m`
-  return `${(mins / 60).toFixed(1)}h`
+  return formatMinutes(mins, locale)
 }

@@ -81,26 +81,13 @@
   },
   "Dashboard": {
     "page": {
-      "title": "Dashboard",
-      "description": "Live analytics across conversations, contacts, deals, broadcasts, and automations.",
-      "activeConversations": "Active Conversations",
-      "newContactsToday": "New Contacts Today",
-      "openDealsValue": "Open Deals Value",
-      "messagesSentToday": "Messages Sent Today",
-      "newTodayVsYesterday": "new today vs yesterday",
-      "vsYesterday": "vs yesterday",
-      "openDeals": "{count} open {count, plural, =1 {deal} other {deals}}",
-      "noChange": "No change {suffix}"
-    },
-    "quickActions": {
-      "newContact": "New Contact",
-      "newDeal": "New Deal",
-      "newBroadcast": "New Broadcast",
-      "newAutomation": "New Automation"
+      "greeting": "Hi, {name}",
+      "greetingNoName": "Hi",
+      "subtitle": "{date}. Here is what needs your attention."
     },
     "activityFeed": {
       "title": "Recent Activity",
-      "viewAll": "View all →",
+      "viewAll": "View all",
       "noActivity": "No activity yet",
       "noActivityHint": "Activity from messages, deals, broadcasts, and automations will appear here.",
       "showingOf": "Showing {visible} of {totalLoaded}{plus}",
@@ -128,19 +115,20 @@
         "unknown": "Unknown",
         "aContact": "a contact",
         "automationFallback": "Automation"
-      }
+      },
+      "repeated": "{count} times"
     },
     "conversationsChart": {
-      "title": "Conversations Over Time",
-      "description": "Daily message volume by direction",
+      "title": "Messages per day",
+      "description": "Received and sent",
       "days": "{count} days",
       "noActivity": "No message activity in this range",
       "noActivityHint": "Send or receive messages to start populating this chart.",
-      "incoming": "Incoming",
-      "outgoing": "Outgoing",
-      "tooltipIncoming": "{count} incoming",
-      "tooltipOutgoing": "{count} outgoing",
-      "ariaLabel": "Conversations per day"
+      "incoming": "Received",
+      "outgoing": "Sent",
+      "tooltipIncoming": "{count} received",
+      "tooltipOutgoing": "{count} sent",
+      "ariaLabel": "Messages received and sent per day"
     },
     "pipelineDonut": {
       "title": "Pipeline Value",
@@ -152,17 +140,53 @@
       "ariaLabel": "Pipeline value by stage"
     },
     "responseTimeChart": {
-      "title": "Average First Response Time",
-      "description": "Minutes to reply to a customer's first unreplied message, by weekday",
-      "target": "target {minutes}m",
+      "title": "First response",
+      "description": "Average time to answer a customer's first message, by day of the week",
+      "target": "Goal: {minutes} min",
       "thisWeek": "This week:",
       "lastWeek": "Last week:",
       "noReplies": "No replies recorded yet",
       "noRepliesHint": "This chart fills in as you reply to customer messages.",
-      "avgMinutes": "Avg minutes"
+      "avgMinutes": "Average"
     },
     "emptyState": {
       "title": "Not enough data yet"
+    },
+    "attention": {
+      "title": "Needs attention",
+      "unreadTitle": "Unread conversations",
+      "unknownContact": "Unnamed contact",
+      "reply": "Reply",
+      "noUnread": "All caught up: no unread conversations.",
+      "openInbox": "Go to inbox",
+      "whatsappReconnectTitle": "WhatsApp needs reconnecting",
+      "whatsappReconnectBody": "Until then no messages come in or go out. Reconnecting takes a minute.",
+      "whatsappSetupTitle": "Connect your WhatsApp",
+      "whatsappSetupBody": "That is how your customers' chats start arriving here.",
+      "reconnect": "Reconnect",
+      "connect": "Connect WhatsApp",
+      "appointmentsTitle": "Today's appointments",
+      "noAppointments": "No appointments today. When someone books on WhatsApp, it shows up here.",
+      "noMoreAppointments": "No pending appointments left today.",
+      "viewAgenda": "View schedule",
+      "salesTitle": "To collect",
+      "soldThisMonth": "Sold this month: {amount}",
+      "viewSales": "View sales",
+      "loadError": "Couldn't load this. Reload the page to try again."
+    },
+    "summary": {
+      "title": "Today at a glance",
+      "activeConversations": "Active conversations",
+      "openNow": "Open right now",
+      "newContacts": "New contacts",
+      "messagesSent": "Messages sent",
+      "firstResponse": "First response, this week",
+      "sameAsYesterday": "Same as yesterday",
+      "moreThanYesterday": "{count} more than yesterday",
+      "lessThanYesterday": "{count} fewer than yesterday",
+      "withinTarget": "Within your {minutes} min goal",
+      "aboveTarget": "Above your {minutes} min goal",
+      "noDataYet": "No data yet"
     }
   },
   "Inbox": {
