@@ -24,6 +24,7 @@ import {
   type MediaHeaderKind,
 } from '@/lib/whatsapp/media-header-types';
 import { useAuth } from '@/hooks/use-auth';
+import { useCan } from '@/hooks/use-can';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -32,6 +33,8 @@ import { Badge } from '@/components/ui/badge';
 import { useTranslations } from 'next-intl';
 import { Card, CardContent } from '@/components/ui/card';
 import { SettingsPanelHead } from './settings-panel-head';
+import { LoadError } from './load-error';
+import { ReadOnlyNote } from './readonly-note';
 import {
   Dialog,
   DialogContent,
@@ -132,13 +135,37 @@ function emptyButton(type: TemplateButton['type']): TemplateButton {
 
 export function TemplateManager() {
   const t = useTranslations('Settings.templates');
+  const tReadOnly = useTranslations('Settings.readOnly');
   // Meta's category ids (stored as-is) → display label in the UI language.
   const categoryLabel = (category: string) =>
     t.has(`categoryLabels.${category}`) ? t(`categoryLabels.${category}`) : category;
+  // Display label for each header format / button type. The Select
+  // triggers below need it spelled out: left to itself a Base UI
+  // SelectValue prints the raw value ("none", "QUICK_REPLY").
+  const headerFormatLabel = (type: HeaderFormat) =>
+    type === 'none'
+      ? t('headerNone')
+      : type === 'text'
+        ? t('headerText')
+        : type === 'image'
+          ? t('headerImage')
+          : type === 'video'
+            ? t('headerVideo')
+            : t('headerDocument');
+  const buttonTypeLabel = (type: TemplateButton['type']) =>
+    type === 'QUICK_REPLY'
+      ? t('btnQuickReply')
+      : type === 'URL'
+        ? t('btnUrl')
+        : type === 'PHONE_NUMBER'
+          ? t('btnPhone')
+          : t('btnCopyCode');
   const supabase = createClient();
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, profileLoading } = useAuth();
+  const canEdit = useCan('edit-settings');
 
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -200,6 +227,7 @@ export function TemplateManager() {
   async function fetchTemplates(userId: string) {
     try {
       setLoading(true);
+      setLoadFailed(false);
       const { data, error } = await supabase
         .from('message_templates')
         .select('*')
@@ -209,6 +237,7 @@ export function TemplateManager() {
       setTemplates(data || []);
     } catch (err) {
       console.error('Failed to fetch templates:', err);
+      setLoadFailed(true);
       toast.error(t('toastLoadFailed'));
     } finally {
       setLoading(false);
@@ -545,17 +574,17 @@ export function TemplateManager() {
         title={t('title')}
         description={t('description')}
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="outline"
               onClick={handleSyncFromMeta}
-              disabled={syncing}
+              disabled={syncing || !canEdit}
               title={t('syncTitle')}
             >
               <RefreshCw className={`size-4 ${syncing ? 'animate-spin' : ''}`} />
               {syncing ? t('syncing') : t('syncFromMeta')}
             </Button>
-            <Button onClick={openCreate}>
+            <Button onClick={openCreate} disabled={!canEdit}>
               <Plus className="size-4" />
               {t('newTemplate')}
             </Button>
@@ -563,7 +592,16 @@ export function TemplateManager() {
         }
       />
 
-      {templates.length === 0 ? (
+      {!canEdit && !profileLoading && (
+        <ReadOnlyNote>{tReadOnly('templates')}</ReadOnlyNote>
+      )}
+
+      {loadFailed ? (
+        <LoadError
+          message={t('toastLoadFailed')}
+          onRetry={() => user && void fetchTemplates(user.id)}
+        />
+      ) : templates.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
             <p className="text-muted-foreground text-sm">{t('noTemplates')}</p>
@@ -634,6 +672,7 @@ export function TemplateManager() {
                         variant="ghost"
                         size="sm"
                         onClick={() => openEdit(template)}
+                        disabled={!canEdit}
                         title={t('editTitle')}
                         aria-label={t('editLabel')}
                         className="text-muted-foreground hover:text-primary hover:bg-primary/10 h-8 px-2"
@@ -647,6 +686,7 @@ export function TemplateManager() {
                         variant="ghost"
                         size="sm"
                         onClick={() => openEdit(template)}
+                        disabled={!canEdit}
                         title={t('resubmitTitle')}
                         aria-label={t('resubmitLabel')}
                         className="text-muted-foreground hover:text-primary hover:bg-primary/10 h-8 px-2"
@@ -659,7 +699,7 @@ export function TemplateManager() {
                       variant="ghost"
                       size="icon"
                       onClick={() => setTemplateToDelete(template)}
-                      disabled={deletingId === template.id}
+                      disabled={deletingId === template.id || !canEdit}
                       aria-label={
                         template.meta_template_id
                           ? t('deleteMetaLocallyAria')
@@ -733,7 +773,7 @@ export function TemplateManager() {
               </p>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="tpl-category">{t('category')}</Label>
                 <Select
@@ -746,7 +786,7 @@ export function TemplateManager() {
                   }
                 >
                   <SelectTrigger id="tpl-category" className="w-full">
-                    <SelectValue />
+                    <SelectValue>{categoryLabel(form.category)}</SelectValue>
                   </SelectTrigger>
                   <SelectContent className="bg-popover border-border">
                     {CATEGORIES.map((cat) => (
@@ -808,7 +848,7 @@ export function TemplateManager() {
                 }
               >
                 <SelectTrigger id="tpl-header" className="w-full">
-                  <SelectValue />
+                  <SelectValue>{headerFormatLabel(form.header_format)}</SelectValue>
                 </SelectTrigger>
                 <SelectContent className="bg-popover border-border">
                   {HEADER_FORMATS.map((type) => (
@@ -817,15 +857,7 @@ export function TemplateManager() {
                       value={type}
                       className="text-popover-foreground focus:bg-muted focus:text-popover-foreground"
                     >
-                      {type === 'none'
-                        ? t('headerNone')
-                        : type === 'text'
-                          ? t('headerText')
-                          : type === 'image'
-                            ? t('headerImage')
-                            : type === 'video'
-                              ? t('headerVideo')
-                              : t('headerDocument')}
+                      {headerFormatLabel(type)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1005,7 +1037,7 @@ export function TemplateManager() {
                       key={i}
                       className="space-y-2 rounded border border-border bg-muted/50 p-2"
                     >
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <Select
                           value={btn.type}
                           onValueChange={(val) => {
@@ -1017,7 +1049,7 @@ export function TemplateManager() {
                           }}
                         >
                           <SelectTrigger className="w-40 bg-muted border-border text-foreground h-8 text-xs">
-                            <SelectValue />
+                            <SelectValue>{buttonTypeLabel(btn.type)}</SelectValue>
                           </SelectTrigger>
                           <SelectContent className="bg-popover border-border">
                             <SelectItem
@@ -1053,7 +1085,7 @@ export function TemplateManager() {
                           onChange={(e) =>
                             updateButton(i, { text: e.target.value })
                           }
-                          className="flex-1 bg-muted border-border text-foreground placeholder:text-muted-foreground h-8 text-xs"
+                          className="min-w-32 flex-1 bg-muted border-border text-foreground placeholder:text-muted-foreground h-8 text-xs"
                         />
                         <Button
                           type="button"

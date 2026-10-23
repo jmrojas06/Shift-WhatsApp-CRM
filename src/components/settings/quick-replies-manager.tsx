@@ -17,6 +17,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { SettingsPanelHead } from "./settings-panel-head";
+import { ConfirmDialog } from "./confirm-dialog";
+import { LoadError } from "./load-error";
+import { ReadOnlyNote } from "./readonly-note";
+import { useAuth } from "@/hooks/use-auth";
+import { useCan } from "@/hooks/use-can";
 import {
   InteractiveBuilder,
   blankButtonsPayload,
@@ -46,17 +51,29 @@ function emptyDraft(): DraftState {
 
 export function QuickRepliesManager() {
   const t = useTranslations("Settings.quickReplies");
+  const tReadOnly = useTranslations("Settings.readOnly");
+  const { profileLoading } = useAuth();
+  // The API takes writes from agents up (viewers are read-only).
+  const canWrite = useCan("send-messages");
   const [items, setItems] = useState<QuickReply[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [draft, setDraft] = useState<DraftState | null>(null);
   const [saving, setSaving] = useState(false);
+  // Reply waiting for the "delete it?" confirmation.
+  const [toDelete, setToDelete] = useState<QuickReply | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadFailed(false);
     try {
       const res = await fetch("/api/quick-replies", { cache: "no-store" });
       const data = await res.json().catch(() => ({}));
       if (res.ok) setItems((data.quick_replies as QuickReply[]) ?? []);
+      else setLoadFailed(true);
+    } catch {
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
@@ -113,18 +130,27 @@ export function QuickRepliesManager() {
     }
   }, [draft, load, t]);
 
-  const remove = useCallback(
-    async (id: string) => {
-      if (!window.confirm(t("deleteConfirm"))) return;
-      const res = await fetch(`/api/quick-replies/${id}`, { method: "DELETE" });
+  // Runs from the confirmation dialog; a failed request (including a
+  // network error) now reports instead of failing silently.
+  const remove = useCallback(async () => {
+    if (!toDelete) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/quick-replies/${toDelete.id}`, {
+        method: "DELETE",
+      });
       if (!res.ok) {
         toast.error(t("deleteError"));
         return;
       }
+      setToDelete(null);
       await load();
-    },
-    [load, t],
-  );
+    } catch {
+      toast.error(t("deleteError"));
+    } finally {
+      setDeleting(false);
+    }
+  }, [toDelete, load, t]);
 
   return (
     <div>
@@ -132,14 +158,20 @@ export function QuickRepliesManager() {
         title={t("title")}
         description={t("description")}
         action={
-          <Button onClick={openCreate}>
+          <Button onClick={openCreate} disabled={!canWrite}>
             <Plus className="mr-1 h-4 w-4" />
             {t("new")}
           </Button>
         }
       />
 
-      {loading ? (
+      {!canWrite && !profileLoading && (
+        <ReadOnlyNote className="mb-4">{tReadOnly("quickReplies")}</ReadOnlyNote>
+      )}
+
+      {loadFailed && !loading ? (
+        <LoadError message={t("loadFailed")} onRetry={() => void load()} />
+      ) : loading ? (
         // Skeleton rows shaped like the list (icon, name, preview line).
         <ul role="status" className="flex flex-col gap-2">
           <span className="sr-only">{t("loading")}</span>
@@ -186,6 +218,7 @@ export function QuickRepliesManager() {
                   variant="ghost"
                   size="icon"
                   onClick={() => openEdit(qr)}
+                  disabled={!canWrite}
                   aria-label={t("editLabel", { name: qr.title })}
                 >
                   <Pencil className="h-4 w-4" aria-hidden />
@@ -193,7 +226,8 @@ export function QuickRepliesManager() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => remove(qr.id)}
+                  onClick={() => setToDelete(qr)}
+                  disabled={!canWrite}
                   aria-label={t("deleteLabel", { name: qr.title })}
                   className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                 >
@@ -267,6 +301,20 @@ export function QuickRepliesManager() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={toDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setToDelete(null);
+        }}
+        title={t("deleteTitle")}
+        description={t("deleteDesc", { name: toDelete?.title ?? "" })}
+        confirmLabel={t("delete")}
+        busyLabel={t("deleting")}
+        cancelLabel={t("cancel")}
+        busy={deleting}
+        onConfirm={remove}
+      />
     </div>
   );
 }
