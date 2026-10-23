@@ -239,10 +239,23 @@ describe('054_ventas.sql — libro de pedidos (orders_ledger_guard)', () => {
     expect(code).toContain('ALTER FUNCTION public.orders_ledger_guard() OWNER TO postgres')
   })
 
-  it('el estado solo avanza: new→shipped→delivered y new|shipped→cancelled', () => {
-    expect(fn).toContain("OLD.status = 'new' AND NEW.status IN ('shipped', 'cancelled')")
+  it('el estado solo avanza: new→shipped|delivered|cancelled y shipped→delivered|cancelled', () => {
+    // new→delivered: retiro en tienda / entrega local sin guía.
+    expect(fn).toContain("OLD.status = 'new' AND NEW.status IN ('shipped', 'delivered', 'cancelled')")
     expect(fn).toContain("OLD.status = 'shipped' AND NEW.status IN ('delivered', 'cancelled')")
     expect(fn).toMatch(/NEW\.status IS DISTINCT FROM OLD\.status/)
+  })
+
+  it('delivered y cancelled son finales: no hay transición que salga de ellos', () => {
+    expect(fn).not.toMatch(/OLD\.status = 'delivered'/)
+    expect(fn).not.toMatch(/OLD\.status = 'cancelled'/)
+  })
+
+  it('al fijar una marca de tiempo desde el navegador se fuerza now() (sin fechas atrasadas)', () => {
+    for (const col of ['paid_at', 'shipped_at', 'delivered_at', 'cancelled_at']) {
+      expect(fn).toContain(`OLD.${col} IS NULL AND NEW.${col} IS NOT NULL`)
+      expect(fn).toContain(`NEW.${col} := now();`)
+    }
   })
 
   it('el pago nunca vuelve de paid a pending, y paid exige paid_at', () => {
@@ -272,9 +285,22 @@ describe('054_ventas.sql — create_order()', () => {
     expect(fn).not.toBe('')
     expect(fn).toMatch(/SECURITY DEFINER/)
     expect(fn).not.toMatch(/SECURITY INVOKER/)
-    expect(fn).toMatch(/SET search_path = public/)
+    expect(fn).toContain('SET search_path = public, pg_temp')
     expect(fn).toMatch(/RETURNS orders/)
     expect(code).toContain(`ALTER FUNCTION ${signature} OWNER TO postgres;`)
+  })
+
+  it('borra la firma anterior (con p_currency) antes de crear la nueva', () => {
+    const drop = code.indexOf(
+      'DROP FUNCTION IF EXISTS public.create_order(uuid,uuid,uuid,jsonb,numeric,text,boolean,jsonb);',
+    )
+    const create = code.indexOf('CREATE OR REPLACE FUNCTION public.create_order(')
+    expect(drop).toBeGreaterThan(-1)
+    expect(create).toBeGreaterThan(drop)
+  })
+
+  it('documenta que las llamadas sin JWT (SQL Editor, pg_cron) se rechazan a propósito', () => {
+    expect(raw).toMatch(/sin JWT[\s\S]*SQL Editor[\s\S]*pg_cron[\s\S]*A PROPÓSITO/)
   })
 
   it('no recibe la moneda: la lee de la cuenta', () => {
@@ -368,11 +394,18 @@ describe('verify-schema.sql (054)', () => {
   })
 
   it('comprueba que create_order es DEFINER de postgres con su guarda', () => {
+    expect(sql).toContain("'search_path=public, pg_temp' = ANY(proconfig)")
     expect(sql).toMatch(/NOT prosecdef/)
     expect(sql).toContain("pg_get_userbyid(proowner) <> 'postgres'")
     expect(sql).toContain("NOT LIKE '%is_account_member%'")
     expect(sql).toContain("NOT LIKE '%service_role%'")
     expect(sql).toContain("NOT LIKE '%''ventas''%'")
+  })
+
+  it('comprueba que la firma vieja de create_order (con p_currency) ya no existe', () => {
+    expect(sql).toContain(
+      "to_regprocedure('public.create_order(uuid,uuid,uuid,jsonb,numeric,text,boolean,jsonb)') IS NOT NULL",
+    )
   })
 
   it('comprueba que no hay política INSERT en orders ni order_items', () => {

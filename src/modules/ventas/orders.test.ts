@@ -712,8 +712,48 @@ describe('applyOrderAction', () => {
       expect(r.patch).not.toHaveProperty('payment_status')
     })
 
+    describe('retiro en tienda / entrega local (new → delivered)', () => {
+      it('se puede entregar directo desde new, con aviso de entrega', () => {
+        expect(applied(state('new', 'paid'), 'mark_delivered')).toEqual({
+          ok: true,
+          changed: true,
+          notice: 'delivered',
+          patch: { status: 'delivered', delivered_at: '2026-10-23T15:30:00.000Z' },
+        })
+      })
+
+      it('no pide ciudad, dirección, transportadora ni guía', () => {
+        const r = applied(state('new', 'paid', { city: null, address: null }), 'mark_delivered', {})
+        expect(r.patch).not.toHaveProperty('shipped_at')
+        expect(r.patch).not.toHaveProperty('carrier')
+        expect(r.patch).not.toHaveProperty('tracking_number')
+        expect(r.patch).not.toHaveProperty('city')
+      })
+
+      it('sin cobrar también (queda pendiente por cobrar, y el cobro se marca aparte)', () => {
+        const r = applied(state('new', 'pending', {}), 'mark_delivered')
+        expect(r.patch).not.toHaveProperty('payment_status')
+        expect(pipelineStageFor({ status: 'delivered', payment_status: 'pending' })).toBe('Entregado')
+      })
+
+      it('después de entregado ya no se envía, ni se cancela, ni se entrega otra vez', () => {
+        const delivered = state('delivered', 'paid')
+        expect(applyOrderAction(delivered, 'mark_shipped', ship, NOW).ok).toBe(false)
+        expect(applyOrderAction(delivered, 'cancel', {}, NOW).ok).toBe(false)
+        expect(applyOrderAction(delivered, 'mark_delivered', {}, NOW).ok).toBe(false)
+      })
+
+      it('el camino corto new → paid → delivered encadena', () => {
+        let order = state('new')
+        for (const action of ['mark_paid', 'mark_delivered'] as const) {
+          const r = applied(order, action)
+          order = { ...order, ...(r.patch as Partial<OrderState>) }
+        }
+        expect(order).toMatchObject({ status: 'delivered', payment_status: 'paid' })
+      })
+    })
+
     it.each([
-      ['new', 'Primero marca el pedido como enviado.'],
       ['delivered', 'El pedido ya fue entregado.'],
       ['cancelled', 'El pedido está cancelado.'],
     ] as const)('desde %s no se puede', (status, message) => {

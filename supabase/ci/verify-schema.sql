@@ -750,10 +750,17 @@ BEGIN
       AND (NOT prosecdef
            OR pg_get_userbyid(proowner) <> 'postgres'
            OR proconfig IS NULL
-           OR NOT ('search_path=public' = ANY(proconfig)))
+           OR NOT ('search_path=public, pg_temp' = ANY(proconfig)))
   ) THEN
     RAISE EXCEPTION
-      'create_order must be SECURITY DEFINER owned by postgres with search_path=public — migration 054 did not apply';
+      'create_order must be SECURITY DEFINER owned by postgres with search_path=public, pg_temp — migration 054 did not apply';
+  END IF;
+
+  -- The earlier signature (with p_currency) must be gone: two versions of
+  -- create_order would leave the old, currency-trusting one callable.
+  IF to_regprocedure('public.create_order(uuid,uuid,uuid,jsonb,numeric,text,boolean,jsonb)') IS NOT NULL THEN
+    RAISE EXCEPTION
+      'the old create_order(..., p_currency, ...) still exists — migration 054 did not apply';
   END IF;
 
   IF has_function_privilege('anon', 'public.create_order(uuid,uuid,uuid,jsonb,numeric,boolean,jsonb)', 'EXECUTE') THEN

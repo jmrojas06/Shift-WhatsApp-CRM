@@ -222,11 +222,14 @@ CREATE TRIGGER orders_freeze_columns
   BEFORE UPDATE ON orders
   FOR EACH ROW EXECUTE FUNCTION public.orders_freeze_columns();
 
--- 6b) El estado solo avanza (new→shipped→delivered; new|shipped→
--- cancelled; entregado y cancelado son finales), el pago nunca vuelve
--- de paid a pending, un pago exige su paid_at (de ahí sale "vendido este
--- mes") y las marcas de tiempo se fijan una sola vez. Avisos, negocio,
--- transportadora, guía, ciudad y dirección siguen editables.
+-- 6b) El estado solo avanza (new→shipped→delivered; new→delivered para
+-- retiro en tienda o entrega local sin guía; new|shipped→cancelled;
+-- entregado y cancelado son finales), el pago nunca vuelve de paid a
+-- pending, un pago exige su paid_at (de ahí sale "vendido este mes"), las
+-- marcas de tiempo se fijan una sola vez y, al fijarlas desde el
+-- navegador, se fuerzan a now() (no se puede atrasar un cobro para
+-- moverlo de mes). Avisos, negocio, transportadora, guía, ciudad y
+-- dirección siguen editables.
 CREATE OR REPLACE FUNCTION public.orders_ledger_guard()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -236,7 +239,7 @@ BEGIN
   IF current_user IN ('authenticated', 'anon') THEN
     IF NEW.status IS DISTINCT FROM OLD.status
        AND NOT (
-         (OLD.status = 'new' AND NEW.status IN ('shipped', 'cancelled'))
+         (OLD.status = 'new' AND NEW.status IN ('shipped', 'delivered', 'cancelled'))
          OR (OLD.status = 'shipped' AND NEW.status IN ('delivered', 'cancelled'))
        )
     THEN
@@ -261,6 +264,21 @@ BEGIN
     THEN
       RAISE EXCEPTION 'order timestamps cannot be changed once set'
         USING ERRCODE = 'insufficient_privilege';
+    END IF;
+
+    -- Primera vez que se fija: la hora es la del servidor, no la que mande
+    -- el cliente.
+    IF OLD.paid_at IS NULL AND NEW.paid_at IS NOT NULL THEN
+      NEW.paid_at := now();
+    END IF;
+    IF OLD.shipped_at IS NULL AND NEW.shipped_at IS NOT NULL THEN
+      NEW.shipped_at := now();
+    END IF;
+    IF OLD.delivered_at IS NULL AND NEW.delivered_at IS NOT NULL THEN
+      NEW.delivered_at := now();
+    END IF;
+    IF OLD.cancelled_at IS NULL AND NEW.cancelled_at IS NOT NULL THEN
+      NEW.cancelled_at := now();
     END IF;
   END IF;
   RETURN NEW;
@@ -314,6 +332,11 @@ CREATE TRIGGER order_items_freeze
 --   4. La moneda sale de accounts.default_currency, nunca del llamador.
 --   5. El total se calcula aquí; los CHECK de las tablas son la red.
 --
+-- Las llamadas sin JWT (SQL Editor, pg_cron, una conexión directa como
+-- postgres) se rechazan A PROPÓSITO: auth.role() es NULL y auth.uid() es
+-- NULL, así que no pasan la guarda 1. Solo entran el backend con la
+-- llave de servicio y los agentes de la cuenta con su sesión.
+--
 -- p_items: [{ "name": text, "quantity": int, "unit_price": numeric }, …]
 --   (1 a 50). Los rangos finos los vigilan los CHECK de las tablas.
 -- p_fields: { "city", "address", "id_number", "notes" } (todo opcional).
@@ -321,12 +344,19 @@ CREATE TRIGGER order_items_freeze
 -- El max()+1 va dentro de un lock advisory por cuenta tomado en la
 -- misma transacción del INSERT: dos pedidos a la vez nunca repiten
 -- número (y UNIQUE (account_id, number) es la última red).
+--
+-- La firma anterior (con p_currency) se borra primero: CREATE OR REPLACE
+-- no puede quitar un parámetro y dejaría dos versiones de la función.
+-- search_path = public, pg_temp: pg_temp al final para que nadie pueda
+-- sombrear objetos de public con tablas temporales.
+DROP FUNCTION IF EXISTS public.create_order(uuid,uuid,uuid,jsonb,numeric,text,boolean,jsonb);
+
 CREATE OR REPLACE FUNCTION public.create_order(
   p_account_id uuid, p_contact_id uuid, p_conversation_id uuid,
   p_items jsonb, p_shipping numeric,
   p_paid boolean, p_fields jsonb
 ) RETURNS orders
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE
   v_number integer;
   v_subtotal numeric(12,2);

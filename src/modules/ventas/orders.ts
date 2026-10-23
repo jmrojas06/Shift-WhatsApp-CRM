@@ -494,7 +494,10 @@ const refuse = (message: string): OrderActionResult => ({ ok: false, message })
  *                   Ya pagado: no-op (`changed: false`, sin aviso).
  *   mark_shipped    new → shipped. Exige transportadora, guía, ciudad
  *                   y dirección (las dos últimas, del pedido o de `extra`).
- *   mark_delivered  shipped → delivered.
+ *   mark_delivered  new | shipped → delivered. Desde `new` es el retiro
+ *                   en tienda o la entrega local sin guía: no pide
+ *                   ciudad, dirección ni transportadora, y el aviso de
+ *                   entrega se manda igual.
  *   cancel          new | shipped → cancelled.
  *
  * Un pedido entregado o cancelado no se reabre (se crea otro).
@@ -572,7 +575,6 @@ export function applyOrderAction(
     }
 
     case 'mark_delivered': {
-      if (order.status === 'new') return refuse('Primero marca el pedido como enviado.')
       if (order.status === 'delivered') return refuse('El pedido ya fue entregado.')
       if (order.status === 'cancelled') return refuse('El pedido está cancelado.')
       return {
