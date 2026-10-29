@@ -34,6 +34,21 @@ export function resolveAiBannerMode(args: {
   return "active";
 }
 
+/**
+ * Copy for the paused banner. "Bot" wording only when the account truly
+ * has no AI auto-reply (`false`): while the status is loading (`null`)
+ * the neutral AI wording is the safe default, so an AI-enabled account
+ * never flashes bot-only copy.
+ */
+export function resolvePausedCopy(args: { autoReplyOn: boolean | null }): {
+  titleKey: "pausedTitle" | "botPausedTitle";
+  buttonKey: "resume" | "resumeBot";
+} {
+  return args.autoReplyOn === false
+    ? { titleKey: "botPausedTitle", buttonKey: "resumeBot" }
+    : { titleKey: "pausedTitle", buttonKey: "resume" };
+}
+
 // ------------------------------------------------------------
 // Account AI status is the same for every conversation, so cache it per
 // account and reuse it across thread switches instead of hitting
@@ -155,7 +170,11 @@ export function AiThreadBanner({
             : { assigned_agent_id: null }),
         });
         toast.success(
-          paused ? t("tookOver") : autoReplyOn ? t("resumed") : t("botResumed"),
+          paused
+            ? t("tookOver")
+            : autoReplyOn === false
+              ? t("botResumed")
+              : t("resumed"),
         );
       } catch {
         toast.error(t("networkError"));
@@ -178,13 +197,11 @@ export function AiThreadBanner({
   // off). Without AI auto-reply only the vertical's bot is paused, so
   // the copy names the bot instead of the AI.
   if (mode === "paused") {
-    const botOnly = !autoReplyOn;
+    const copy = resolvePausedCopy({ autoReplyOn });
     return (
       <Banner tone="muted">
         <div className="min-w-0 flex-1">
-          <p className="font-medium text-foreground">
-            {botOnly ? t("botPausedTitle") : t("pausedTitle")}
-          </p>
+          <p className="font-medium text-foreground">{t(copy.titleKey)}</p>
           {handoffSummary && (
             <p className="truncate text-muted-foreground" title={handoffSummary}>
               {handoffSummary}
@@ -192,7 +209,7 @@ export function AiThreadBanner({
           )}
         </div>
         <BannerButton onClick={() => toggle(false)} busy={busy} icon={Undo2}>
-          {botOnly ? t("resumeBot") : t("resume")}
+          {t(copy.buttonKey)}
         </BannerButton>
       </Banner>
     );
