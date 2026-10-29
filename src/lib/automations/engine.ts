@@ -25,6 +25,7 @@ import { engineSendText, engineSendTemplate, engineSendInteractive } from './met
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive'
 import { isDeliverableUrl } from '@/lib/webhooks/ssrf'
 import { getT } from '@/lib/i18n/translate'
+import { minutesOfDayInZone } from '@/lib/time-zone'
 import { ASSIGNABLE_ROLES, pickLeastLoadedAgent } from './assign'
 
 /** Step errors land in automation_logs and are shown on the logs page. */
@@ -1074,11 +1075,11 @@ async function evaluateCondition(cfg: ConditionStepConfig, args: ExecuteArgs): P
     }
     case 'time_of_day': {
       // operand form "HH:mm-HH:mm" — true if now is within that window
-      // (supports over-midnight ranges like "18:00-09:00").
+      // (supports over-midnight ranges like "18:00-09:00"). The window is
+      // the business's local time, not the server's (UTC on Vercel).
       const [from, to] = (cfg.operand ?? '').split('-')
       if (!from || !to) return false
-      const now = new Date()
-      const mins = now.getHours() * 60 + now.getMinutes()
+      const mins = minutesOfDayInZone(new Date())
       const parse = (s: string) => {
         const [h, m] = s.split(':').map(Number)
         return (h || 0) * 60 + (m || 0)

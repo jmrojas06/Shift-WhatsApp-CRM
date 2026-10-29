@@ -18,6 +18,8 @@
 //     (0.1 + 0.2 no es 0.30000000000000004).
 // ============================================================
 
+import { ACCOUNT_TIME_ZONE } from '@/lib/time-zone'
+
 export type Valid<T> = { ok: true; value: T } | { ok: false; message: string }
 
 // ------------------------------------------------------------
@@ -391,7 +393,7 @@ export interface OrderState {
 }
 
 /** Zona horaria con la que se mide el mes de "vendido este mes". */
-export const SALES_TIME_ZONE = 'America/Bogota'
+export const SALES_TIME_ZONE = ACCOUNT_TIME_ZONE
 
 /**
  * ¿El pedido cuenta como venta? Definición única de "vendido este mes"
