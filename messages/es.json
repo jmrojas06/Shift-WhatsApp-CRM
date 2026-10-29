@@ -45,7 +45,9 @@
     "groupDaily": "Día a día",
     "groupGrowth": "Crecimiento",
     "inboxShort": "Bandeja",
-    "more": "Más"
+    "more": "Más",
+    "menuPreviewAsBusiness": "Ver como el negocio",
+    "menuFullView": "Volver a la vista completa"
   },
   "Header": {
     "dashboard": "Panel",
@@ -65,7 +67,8 @@
     "createDeal": "Oportunidad",
     "createBroadcast": "Difusión",
     "createAutomation": "Automatización",
-    "notificationsWithCount": "Notificaciones: {count} sin leer"
+    "notificationsWithCount": "Notificaciones: {count} sin leer",
+    "newContact": "Nuevo contacto"
   },
   "ModeToggle": {
     "toLight": "Cambiar a modo claro",
@@ -173,7 +176,8 @@
       "salesTitle": "Por cobrar",
       "soldThisMonth": "Vendido este mes: {amount}",
       "viewSales": "Ver ventas",
-      "loadError": "No se pudo cargar. Recarga la página para intentarlo de nuevo."
+      "loadError": "No se pudo cargar. Recarga la página para intentarlo de nuevo.",
+      "whatsappAskShift": "Mientras tanto no llegan ni salen mensajes. Escríbele a tu asesor de Shift y lo reconectamos por ti."
     },
     "summary": {
       "title": "Resumen de hoy",
@@ -2498,7 +2502,9 @@
   },
   "DashboardShell": {
     "loading": "Cargando…",
-    "skipToContent": "Saltar al contenido"
+    "skipToContent": "Saltar al contenido",
+    "previewAsBusiness": "Estás viendo la app como la ve el negocio.",
+    "previewExit": "Volver a la vista completa"
   },
   "UiPrimitives": {
     "close": "Cerrar"

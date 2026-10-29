@@ -45,7 +45,9 @@
     "groupDaily": "일상 업무",
     "groupGrowth": "성장",
     "inboxShort": "받은함",
-    "more": "더보기"
+    "more": "더보기",
+    "menuPreviewAsBusiness": "비즈니스 화면으로 보기",
+    "menuFullView": "전체 보기로 돌아가기"
   },
   "Header": {
     "dashboard": "대시보드",
@@ -65,7 +67,8 @@
     "createDeal": "딜",
     "createBroadcast": "브로드캐스트",
     "createAutomation": "자동화",
-    "notificationsWithCount": "알림: 읽지 않음 {count}개"
+    "notificationsWithCount": "알림: 읽지 않음 {count}개",
+    "newContact": "새 연락처"
   },
   "ModeToggle": {
     "toLight": "라이트 모드로 전환",
@@ -173,7 +176,8 @@
       "salesTitle": "미수금",
       "soldThisMonth": "이번 달 판매: {amount}",
       "viewSales": "판매 보기",
-      "loadError": "불러오지 못했습니다. 페이지를 새로고침해 다시 시도하세요."
+      "loadError": "불러오지 못했습니다. 페이지를 새로고침해 다시 시도하세요.",
+      "whatsappAskShift": "그동안 메시지를 주고받을 수 없습니다. Shift 담당자에게 연락하시면 다시 연결해 드립니다."
     },
     "summary": {
       "title": "오늘 요약",
@@ -2498,7 +2502,9 @@
   },
   "DashboardShell": {
     "loading": "불러오는 중…",
-    "skipToContent": "본문으로 건너뛰기"
+    "skipToContent": "본문으로 건너뛰기",
+    "previewAsBusiness": "비즈니스가 보는 화면으로 앱을 보고 있습니다.",
+    "previewExit": "전체 보기로 돌아가기"
   },
   "UiPrimitives": {
     "close": "닫기"

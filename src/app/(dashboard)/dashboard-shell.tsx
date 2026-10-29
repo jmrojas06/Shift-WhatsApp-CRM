@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
+import { ViewModeProvider, useViewMode } from "@/hooks/use-view-mode";
+import { isRouteHidden } from "@/lib/view-mode";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { MobileTabBar } from "@/components/layout/mobile-tab-bar";
@@ -23,13 +25,22 @@ import { cn } from "@/lib/utils";
 function DashboardShellInner({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
   const t = useTranslations("DashboardShell");
+  const { simple, hasModules } = useViewMode();
+  // Vista sencilla: las pantallas que configura Shift no existen para el
+  // local, ni desde un enlace guardado (ver lib/view-mode).
+  const hidden = isRouteHidden(pathname, { simple, hasModules });
 
   useEffect(() => {
     if (!loading && !user) {
       router.replace("/login");
     }
   }, [user, loading, router]);
+
+  useEffect(() => {
+    if (hidden) router.replace("/dashboard");
+  }, [hidden, router]);
 
   if (loading) {
     return (
@@ -45,7 +56,7 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!user) return null;
+  if (!user || hidden) return null;
 
   return (
     <ShellChromeProvider>
@@ -94,6 +105,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
           {/* Above every page: writes are being rejected and here's why.
               Renders nothing unless the account/role failed to resolve. */}
           <AccountAccessAlert />
+          <BusinessPreviewBanner />
           {children}
         </main>
       </div>
@@ -105,10 +117,40 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function DashboardShell({ children }: { children: React.ReactNode }) {
+/** Aviso para Shift mientras ve la app como la ve el local. */
+function BusinessPreviewBanner() {
+  const { previewAsBusiness, setPreviewAsBusiness } = useViewMode();
+  const t = useTranslations("DashboardShell");
+  if (!previewAsBusiness) return null;
+  return (
+    <div
+      role="status"
+      className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-foreground"
+    >
+      <span>{t("previewAsBusiness")}</span>
+      <button
+        type="button"
+        onClick={() => setPreviewAsBusiness(false)}
+        className="min-h-9 rounded-md px-2 font-medium text-primary underline-offset-4 hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+      >
+        {t("previewExit")}
+      </button>
+    </div>
+  );
+}
+
+export function DashboardShell({
+  children,
+  isShiftStaff,
+}: {
+  children: React.ReactNode;
+  isShiftStaff: boolean;
+}) {
   return (
     <AuthProvider>
-      <DashboardShellInner>{children}</DashboardShellInner>
+      <ViewModeProvider isShiftStaff={isShiftStaff}>
+        <DashboardShellInner>{children}</DashboardShellInner>
+      </ViewModeProvider>
     </AuthProvider>
   );
 }
