@@ -285,6 +285,10 @@ export function AiConfig() {
                 <Label htmlFor="ai-provider">{t('provider')}</Label>
                 <Select
                   value={provider}
+                  items={{
+                    ...PROVIDER_LABEL,
+                    openai_compatible: t('providerOpenAiCompatible'),
+                  }}
                   onValueChange={(v) => handleProviderChange(v as AiProvider)}
                   disabled={disabled}
                 >
@@ -508,6 +512,12 @@ export function AiConfig() {
               </p>
               <Select
                 value={handoffAgentId || HANDOFF_QUEUE}
+                items={{
+                  [HANDOFF_QUEUE]: t('handoffQueue'),
+                  ...Object.fromEntries(
+                    members.map((m) => [m.user_id, memberLabel(m)]),
+                  ),
+                }}
                 onValueChange={(v) =>
                   setHandoffAgentId(!v || v === HANDOFF_QUEUE ? '' : v)
                 }

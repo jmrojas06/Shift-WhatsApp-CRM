@@ -14,6 +14,12 @@ vi.mock('@/lib/whatsapp/encryption', () => ({
 vi.mock('@/lib/api/v1/contacts', () => ({
   findOrCreateContact: vi.fn(async () => ({ id: 'c1' })),
 }));
+// Opted-out phones (digits only) the account has; see lib/contacts/opt-out.
+const optedOutPhones = vi.hoisted(() => new Set<string>());
+vi.mock('@/lib/contacts/opt-out', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/contacts/opt-out')>()),
+  fetchOptedOutPhones: vi.fn(async () => optedOutPhones),
+}));
 
 // These assertions all fire in the pure validation prologue, before
 // any Supabase call — a bare stub is enough.
@@ -122,6 +128,23 @@ describe('createBroadcast recipient validation (#586)', () => {
     expect(plan.planned).toEqual([
       { recipientRowId: 'r-1', phone: '14155550123', params: [] },
     ]);
+  });
+
+  it('rejects a contact who opted out ("BAJA") instead of messaging them', async () => {
+    optedOutPhones.add('14155550999');
+    const { db } = makeDb({
+      data: [{ broadcast_id: 'b-1', recipient_id: 'r-1', contact_id: 'c1' }],
+      error: null,
+    });
+
+    const plan = await createBroadcast(db, 'acc', 'user', {
+      templateName: 'promo',
+      recipients: [{ to: '+1 415 555 0999' }, { to: '+14155550123' }],
+    });
+    optedOutPhones.clear();
+
+    expect(plan.rejected).toBe(1);
+    expect(plan.planned.map((p) => p.phone)).toEqual(['14155550123']);
   });
 
   it('fails the whole request when no recipient carries a country code', async () => {

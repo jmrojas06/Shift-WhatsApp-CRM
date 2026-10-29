@@ -286,6 +286,12 @@ export function InviteMemberDialog({
                 <Label htmlFor="invite-expiry">{t('validForLabel')}</Label>
                 <Select
                   value={expiry}
+                  items={Object.fromEntries(
+                    EXPIRY_OPTIONS.map((opt) => [
+                      opt.value,
+                      t(opt.labelKey as Parameters<typeof t>[0]),
+                    ]),
+                  )}
                   onValueChange={(v) => v && setExpiry(v)}
                 >
                   <SelectTrigger id="invite-expiry" className="w-full">

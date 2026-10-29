@@ -14,7 +14,9 @@
 // estos helpers sin cambios.
 // ============================================================
 
-export const AGENDA_TZ = 'America/Bogota'
+import { ACCOUNT_TIME_ZONE } from '@/lib/time-zone'
+
+export const AGENDA_TZ = ACCOUNT_TIME_ZONE
 
 const formatters = new Map<string, Intl.DateTimeFormat>()
 

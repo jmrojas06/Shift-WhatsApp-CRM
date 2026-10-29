@@ -16,6 +16,7 @@ import {
   RATE_LIMITS,
 } from '@/lib/rate-limit'
 import { getT } from '@/lib/i18n/translate'
+import { fetchOptedOutPhones, isOptedOutPhone } from '@/lib/contacts/opt-out'
 
 const t = getT('Api')
 
@@ -163,11 +164,25 @@ export async function POST(request: Request) {
     }
     const templateRow = resolvedTemplate.row
 
+    // Contacts who wrote "BAJA"/"STOP" never get a broadcast, whatever
+    // audience the browser assembled (lib/contacts/opt-out).
+    const optedOut = await fetchOptedOutPhones(supabase, accountId)
+
     const results: BroadcastResult[] = []
     let sentCount = 0
     let failedCount = 0
 
     for (const recipient of recipients) {
+      if (isOptedOutPhone(optedOut, recipient.phone)) {
+        results.push({
+          phone: recipient.phone,
+          status: 'failed',
+          error: t('broadcast.optedOut'),
+        })
+        failedCount++
+        continue
+      }
+
       const sanitized = sanitizePhoneForMeta(recipient.phone)
 
       if (!isValidE164(sanitized)) {

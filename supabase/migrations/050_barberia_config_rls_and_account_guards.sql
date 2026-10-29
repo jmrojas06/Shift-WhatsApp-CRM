@@ -4,9 +4,11 @@
 --   D3 — accounts.owner_user_id / vertical_key protegidas
 -- ============================================================
 --
--- NO destructiva: no borra tablas, columnas ni datos. Solo reemplaza
--- políticas (DROP POLICY IF EXISTS + CREATE POLICY con el mismo nombre)
--- y agrega una función + trigger. Idempotente: se puede correr de nuevo.
+-- NO destructiva: no borra tablas, columnas ni datos. Reemplaza las
+-- políticas de escritura de 047/048 (DROP POLICY IF EXISTS + CREATE
+-- POLICY con el mismo nombre), agrega la política DELETE que
+-- booking_settings nunca tuvo, y agrega una función + trigger para
+-- proteger columnas de accounts. Idempotente: se puede correr de nuevo.
 --
 -- D2 — El problema
 --

@@ -679,6 +679,12 @@ export function buildAgentTexts(l: AgendaLabels) {
     rescheduleRequestNotificationTitle: 'Cliente quiere reprogramar (Agenda)',
     rescheduleRequestNotificationBody: (a: { who: string; date: string; time: string }) =>
       `${a.who} tocó "Reprogramar" en el recordatorio de su ${l.cita} del ${a.date} a las ${a.time}. Respóndele por este chat.`,
+    /** La reprogramación no se pudo deshacer: la agenda puede quedar con dos citas. */
+    rescheduleBroken: `Uy, tu ${l.cita} quedó en revisión y no alcancé a dejarla como estaba 😅. Ya avisé al equipo para que lo arreglen por este chat; no necesitas hacer nada más. 🙏`,
+    rescheduleBrokenNotificationTitle: 'Reprogramación a medias (Agenda)',
+    rescheduleBrokenNotificationBody: (a: { who: string }) =>
+      `${a.who} intentó reprogramar y el cambio no se pudo deshacer: puede tener dos ${l.citas} a su nombre. Revísalo en la agenda y respóndele por este chat.`,
+    rescheduleBrokenNote: `La reprogramación desde el bot quedó a medias (cambio sin deshacer): revisar si quedaron dos ${l.citas}. Bot en pausa en este hilo.`,
     handoffNotificationTitle: 'Cliente pide un asesor (Agenda)',
     handoffNotificationBody: (name: string) =>
       `${name} pidió hablar con una persona desde el flujo de ${l.citas}.`,

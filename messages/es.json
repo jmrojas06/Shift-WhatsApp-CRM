@@ -2959,7 +2959,8 @@
       "recipientsRequired": "Proporciona `recipients` (preferido) o `phone_numbers`; debe ser una lista no vacía",
       "templateNameRequired": "El nombre de la plantilla es obligatorio",
       "templateMalformed": "El registro local de la plantilla está dañado: usa \"Sincronizar desde Meta\" en Configuración para repararlo antes de enviar la difusión.",
-      "invalidPhoneFormat": "Formato de número de teléfono no válido"
+      "invalidPhoneFormat": "Formato de número de teléfono no válido",
+      "optedOut": "El contacto pidió no recibir más mensajes masivos (BAJA)"
     },
     "whatsappConfig": {
       "fetchFailed": "No se pudo obtener la configuración. Inténtalo de nuevo.",
@@ -3024,6 +3025,9 @@
       "submitFailed": "No se pudo enviar la plantilla. Inténtalo de nuevo.",
       "metaApiStatus": "Error de la API de Meta: {status}",
       "syncFailed": "No se pudieron sincronizar las plantillas. Recarga la página para intentarlo de nuevo."
+    },
+    "optOut": {
+      "confirmation": "Listo, no te enviaremos más mensajes promocionales por aquí. Si nos escribes, te seguimos atendiendo como siempre. 🙌"
     }
   },
   "AuthErrors": {

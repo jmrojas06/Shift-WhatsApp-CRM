@@ -576,6 +576,39 @@ describe('runAgendaReminders', () => {
     expect(summary2.due).toBe(0)
   })
 
+  it('el cupo de la corrida es uno solo aunque las dos señales tengan pendientes', async () => {
+    const seed = baseSeed()
+    seed.booking_settings = [
+      { account_id: ACCOUNT, reminders_2h_enabled: true },
+    ]
+    seed.booking_appointments.push({
+      id: 'ap-2',
+      account_id: ACCOUNT,
+      contact_id: CONTACT_2,
+      conversation_id: CONV,
+      service_id: SERVICE,
+      staff_id: STAFF,
+      starts_at: STARTS_IN_23H,
+      status: 'confirmed',
+      reminder_sent_at: null,
+      reminder_2h_sent_at: null,
+    })
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    const summary = await runAgendaReminders({
+      db: asClient(db),
+      now: NOW,
+      send: rec.send,
+      limit: 1,
+    })
+
+    // Las consultas de 24 h y de 2 h traen una cita cada una; el total
+    // lo corta el cupo de la corrida, no cada consulta por su lado.
+    expect(summary.due).toBe(1)
+    expect(rec.deliveries).toHaveLength(1)
+  })
+
   it('fuera de la ventana de 24 h usa plantilla; los mensajes del bot no cuentan', async () => {
     const db = makeFakeDb(baseSeed())
     db._tables.messages = [

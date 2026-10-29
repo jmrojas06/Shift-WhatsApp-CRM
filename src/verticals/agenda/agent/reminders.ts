@@ -436,9 +436,13 @@ async function loadPendingAppointments(
   ]) {
     byId.set(row.id, row)
   }
-  return [...byId.values()].sort((a, b) =>
-    a.starts_at < b.starts_at ? -1 : a.starts_at > b.starts_at ? 1 : 0,
-  )
+  // El cupo es de la corrida, no de cada consulta: las dos señales lo
+  // comparten para que `maxDuration` siga cubriendo el peor caso.
+  return [...byId.values()]
+    .sort((a, b) =>
+      a.starts_at < b.starts_at ? -1 : a.starts_at > b.starts_at ? 1 : 0,
+    )
+    .slice(0, args.limit)
 }
 
 /**

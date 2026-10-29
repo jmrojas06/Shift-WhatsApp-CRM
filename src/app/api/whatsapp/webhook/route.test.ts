@@ -280,6 +280,17 @@ vi.mock('@/lib/ai/auto-reply', () => ({
 vi.mock('@/lib/webhooks/deliver', () => ({
   dispatchWebhookEvent: h.dispatchWebhookEvent,
 }))
+const optOut = vi.hoisted(() => ({
+  markContactOptedOut: vi.fn(),
+  sendMessageToConversation: vi.fn(),
+}))
+vi.mock('@/lib/contacts/opt-out', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/contacts/opt-out')>()),
+  markContactOptedOut: optOut.markContactOptedOut,
+}))
+vi.mock('@/lib/whatsapp/send-message', () => ({
+  sendMessageToConversation: optOut.sendMessageToConversation,
+}))
 
 import { POST } from './route'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
@@ -1052,5 +1063,45 @@ describe('inbound webhook: automation waiting for a reply', () => {
     await runWebhook()
 
     expect(h.resumeAwaitingReply).not.toHaveBeenCalled()
+  })
+})
+
+describe('inbound webhook: BAJA / STOP opts the contact out of broadcasts', () => {
+  const triggersFired = () =>
+    h.runAutomationsForTrigger.mock.calls.map(
+      (call) => (call[0] as { triggerType: string }).triggerType,
+    )
+
+  it('tags the contact, confirms once and keeps every bot quiet', async () => {
+    optOut.markContactOptedOut.mockResolvedValue(undefined)
+
+    await runWebhook({ ...TEXT_MESSAGE, text: { body: 'BAJA' } })
+
+    expect(optOut.markContactOptedOut).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ accountId: 'acc-1', conversationId: 'conv-1' }),
+    )
+    expect(optOut.sendMessageToConversation).toHaveBeenCalledTimes(1)
+    expect(h.dispatchInboundToFlows).not.toHaveBeenCalled()
+    expect(h.resumeAwaitingReply).not.toHaveBeenCalled()
+    expect(triggersFired()).not.toContain('new_message_received')
+    expect(h.dispatchInboundToAiReply).not.toHaveBeenCalled()
+  })
+
+  it('a normal message is not an opt-out', async () => {
+    await runWebhook()
+
+    expect(optOut.markContactOptedOut).not.toHaveBeenCalled()
+    expect(h.dispatchInboundToFlows).toHaveBeenCalled()
+  })
+
+  it('if the tag cannot be saved, promises nothing and lets the message through', async () => {
+    optOut.markContactOptedOut.mockRejectedValueOnce(new Error('timeout'))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await runWebhook({ ...TEXT_MESSAGE, text: { body: 'stop' } })
+
+    expect(optOut.sendMessageToConversation).not.toHaveBeenCalled()
+    expect(h.dispatchInboundToFlows).toHaveBeenCalled()
   })
 })

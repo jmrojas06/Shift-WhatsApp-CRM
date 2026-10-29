@@ -653,6 +653,11 @@ function ConditionForm({
           <label htmlFor={subjectId} className="mb-1 block text-xs text-muted-foreground">{t("ifLabel")}</label>
           <Select
             value={subject}
+            items={{
+              var: t("capturedVariable"),
+              tag: t("contactHasTag"),
+              contact_field: t("contactField"),
+            }}
             onValueChange={(v) =>
               onUpdateConfig({ subject: v as ConditionCfg["subject"] })
             }
@@ -732,6 +737,12 @@ function ConditionForm({
           <label htmlFor={operatorId} className="mb-1 block text-xs text-muted-foreground">{t("operatorLabel")}</label>
           <Select
             value={operator}
+            items={{
+              present: t("isPresent"),
+              absent: t("isAbsent"),
+              equals: t("equals"),
+              contains: t("contains"),
+            }}
             onValueChange={(v) =>
               onUpdateConfig({ operator: v as ConditionCfg["operator"] })
             }
@@ -815,6 +826,7 @@ function SetTagForm({
           <label htmlFor={modeId} className="mb-1 block text-xs text-muted-foreground">{t("actionLabel")}</label>
           <Select
             value={cfg.mode ?? "add"}
+            items={{ add: t("addTag"), remove: t("removeTag") }}
             onValueChange={(v) =>
               onUpdateConfig({ mode: v as SetTagCfg["mode"] })
             }
@@ -987,6 +999,11 @@ function SendMediaForm({
         <label htmlFor={typeId} className="mb-1 block text-xs text-muted-foreground">{t("mediaTypeLabel")}</label>
         <Select
           value={mediaType}
+          items={{
+            image: t("imageLabel"),
+            video: t("videoLabel"),
+            document: t("documentLabel"),
+          }}
           onValueChange={(v) => {
             // Changing type clears the existing file — the bucket
             // accepts different MIME sets per type and a previously

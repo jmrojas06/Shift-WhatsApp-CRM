@@ -572,18 +572,19 @@ export async function replaceWorkingHours(
   // Primero se insertan los bloques nuevos y DESPUÉS se borran los
   // viejos: si el insert falla, el barbero conserva su horario anterior
   // en vez de quedar sin horario. Cualquier fallo sube como error.
+  const insertedIds: string[] = []
   if (toAdd.length) {
-    const { error } = await db.from('booking_working_hours').insert(
-      toAdd.map((block) => ({
-        id: randomUUID(),
-        account_id: accountId,
-        staff_id: staffId,
-        weekday: block.weekday,
-        start_time: block.startTime,
-        end_time: block.endTime,
-      })),
-    )
+    const rows = toAdd.map((block) => ({
+      id: randomUUID(),
+      account_id: accountId,
+      staff_id: staffId,
+      weekday: block.weekday,
+      start_time: block.startTime,
+      end_time: block.endTime,
+    }))
+    const { error } = await db.from('booking_working_hours').insert(rows)
     assertWrite(error, 'guardar el horario')
+    insertedIds.push(...rows.map((row) => row.id))
   }
   if (toRemoveIds.length) {
     const { error } = await db
@@ -591,10 +592,37 @@ export async function replaceWorkingHours(
       .delete()
       .eq('account_id', accountId)
       .in('id', toRemoveIds)
-    assertWrite(error, 'quitar los bloques viejos del horario')
+    if (error) {
+      // Sin el borrado viejo el profesional quedaría con bloques
+      // duplicados: se deshace el insert nuevo antes de subir el error.
+      await undoInsertedHours(db, accountId, insertedIds)
+      throw new Error(
+        `No se pudo quitar los bloques viejos del horario: ${error.message ?? 'error'}`,
+      )
+    }
   }
 
   return blocks.length
+}
+
+/** Compensación best-effort del insert de horario que no llegó a reemplazar nada. */
+async function undoInsertedHours(
+  db: SupabaseClient,
+  accountId: string,
+  ids: string[],
+): Promise<void> {
+  if (!ids.length) return
+  const { error } = await db
+    .from('booking_working_hours')
+    .delete()
+    .eq('account_id', accountId)
+    .in('id', ids)
+  if (error) {
+    console.error(
+      '[agenda] no se pudieron deshacer los bloques nuevos del horario:',
+      error.message ?? error,
+    )
+  }
 }
 
 // ------------------------------------------------------------

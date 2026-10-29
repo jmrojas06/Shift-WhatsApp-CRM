@@ -28,7 +28,7 @@ vi.mock('next-intl', () => ({
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
-import { AiThreadBanner, resolveAiBannerMode } from './ai-thread-banner'
+import { AiThreadBanner, resolveAiBannerMode, resolvePausedCopy } from './ai-thread-banner'
 
 function render(props: { disabled: boolean; assignedAgentId?: string | null }) {
   return renderToStaticMarkup(
@@ -83,6 +83,29 @@ describe('resolveAiBannerMode', () => {
   })
 })
 
+describe('resolvePausedCopy', () => {
+  it('sin IA (false) usa el copy del bot', () => {
+    expect(resolvePausedCopy({ autoReplyOn: false })).toEqual({
+      titleKey: 'botPausedTitle',
+      buttonKey: 'resumeBot',
+    })
+  })
+
+  it('con IA activa usa el copy de la IA', () => {
+    expect(resolvePausedCopy({ autoReplyOn: true })).toEqual({
+      titleKey: 'pausedTitle',
+      buttonKey: 'resume',
+    })
+  })
+
+  it('mientras carga (null) no parpadea copy de bot en una cuenta con IA', () => {
+    expect(resolvePausedCopy({ autoReplyOn: null })).toEqual({
+      titleKey: 'pausedTitle',
+      buttonKey: 'resume',
+    })
+  })
+})
+
 describe('<AiThreadBanner /> render', () => {
   beforeEach(() => {
     authState.account = null
@@ -91,10 +114,14 @@ describe('<AiThreadBanner /> render', () => {
   it('cuenta con vertical y sin IA: muestra el bot en pausa y el botón para reanudarlo', () => {
     authState.account = { vertical_key: 'agenda' }
 
+    // El render estático no corre efectos: `autoReplyOn` sigue en null
+    // (cargando), así que sale el copy neutral de IA. El copy de bot
+    // se elige solo cuando el fetch ya resolvió `false`, cubierto en
+    // resolvePausedCopy.
     const html = render({ disabled: true, assignedAgentId: 'user-agent' })
 
-    expect(html).toContain('botPausedTitle')
-    expect(html).toContain('resumeBot')
+    expect(html).toContain('pausedTitle')
+    expect(html).toContain('resume')
     expect(html).toContain('<button')
     expect(html).toContain('El cliente pidió hablar con una persona.')
   })
@@ -102,9 +129,11 @@ describe('<AiThreadBanner /> render', () => {
   it('cuenta con la agenda en modules: muestra el bot en pausa', () => {
     authState.account = { modules: ['agenda', 'ventas'], vertical_key: null }
 
+    // Mientras carga el estado de la IA sale el copy neutral (ver arriba).
     const html = render({ disabled: true, assignedAgentId: 'user-agent' })
 
-    expect(html).toContain('botPausedTitle')
+    expect(html).toContain('pausedTitle')
+    expect(html).toContain('<button')
   })
 
   it('cuenta solo con ventas (sin bot) y sin IA: no renderiza nada', () => {
