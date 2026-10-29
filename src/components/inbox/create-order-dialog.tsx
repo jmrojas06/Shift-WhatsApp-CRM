@@ -442,7 +442,8 @@ export function CreateOrderForm({
         </Alert>
       )}
 
-      <DialogFooter>
+      {/* Fijo al borde: el formulario es largo y Guardar siempre debe estar a la vista. */}
+      <DialogFooter className="sticky -bottom-5 z-10 bg-muted">
         <Button type="button" variant="outline" className={BUTTON} onClick={onCancel} disabled={saving}>
           {T.cancel}
         </Button>

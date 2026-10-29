@@ -42,6 +42,7 @@ import {
   getRecipientStatus,
 } from '@/lib/broadcast-status';
 import { useFormatter, useTranslations } from 'next-intl';
+import { Skeleton } from '@/components/dashboard/skeleton';
 
 interface StatCardProps {
   label: string;
@@ -206,7 +207,13 @@ export default function BroadcastDetailPage() {
       if (recsError) throw recsError;
       setRecipients(recs ?? []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('notFound'));
+      // `.single()` reports "no rows" as PGRST116; say "not found" in the
+      // user's language instead of showing the raw database message.
+      const code =
+        typeof err === 'object' && err !== null && 'code' in err
+          ? String((err as { code?: unknown }).code)
+          : '';
+      setError(code === 'PGRST116' ? t('notFound') : t('errorLoad'));
     } finally {
       setLoading(false);
     }
@@ -319,9 +326,23 @@ export default function BroadcastDetailPage() {
   }
 
   if (loading) {
+    // Skeleton shaped like the final page (header, stat cards, table).
     return (
-      <div className="flex h-64 items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+      <div className="space-y-6" role="status" aria-busy="true">
+        <span className="sr-only">{t('loading')}</span>
+        <div className="flex items-center gap-3" aria-hidden>
+          <Skeleton className="size-9 shrink-0 rounded-lg" />
+          <div className="min-w-0 flex-1 space-y-2">
+            <Skeleton className="h-7 w-1/2" />
+            <Skeleton className="h-4 w-2/3" />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6" aria-hidden>
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <Skeleton key={i} className="h-24 rounded-xl" />
+          ))}
+        </div>
+        <Skeleton className="h-48 rounded-xl" />
       </div>
     );
   }
@@ -329,7 +350,7 @@ export default function BroadcastDetailPage() {
   if (error || !broadcast) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2">
-        <p className="text-sm text-destructive">{error ?? t('notFound')}</p>
+        <p role="alert" className="text-sm text-destructive">{error ?? t('notFound')}</p>
         <Link href="/broadcasts" className={buttonVariants({ variant: 'outline' })}>
           {t('backToBroadcasts')}
         </Link>

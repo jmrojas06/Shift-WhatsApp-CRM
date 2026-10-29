@@ -92,7 +92,7 @@ function MediaActionButton({
       // Own surface rather than inheriting the bubble's, so the same button
       // reads on the muted inbound fill, the primary outbound fill, and on
       // top of an arbitrary photo.
-      className="flex h-7 w-7 items-center justify-center rounded-full border border-border/60 bg-background/85 text-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-background disabled:opacity-60"
+      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border/60 bg-background/85 text-foreground shadow-sm outline-none backdrop-blur-sm transition-colors hover:bg-background focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-60 pointer-coarse:h-11 pointer-coarse:w-11"
     >
       {busy ? (
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -105,7 +105,7 @@ function MediaActionButton({
 
 function MediaPlaceholder({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-40 w-60 items-center justify-center rounded-lg bg-muted">
+    <div className="flex h-40 w-60 max-w-full items-center justify-center rounded-lg bg-muted">
       {children}
     </div>
   );
@@ -168,7 +168,9 @@ export function MediaImageBubble({
       )}
       {/* Hover-only: on touch there is no hover, but tapping the image opens
           the viewer, which carries a full-size Download button. */}
-      <div className="absolute bottom-2 right-2 opacity-0 transition-opacity group-hover/media:opacity-100 group-focus-within/media:opacity-100">
+      {/* Invisible = not tappable: on touch the hidden button must not steal
+          taps meant for the image (it is 44px there). */}
+      <div className="pointer-events-none absolute bottom-2 right-2 opacity-0 transition-opacity group-hover/media:pointer-events-auto group-hover/media:opacity-100 group-has-[:focus-visible]/media:pointer-events-auto group-has-[:focus-visible]/media:opacity-100">
         <MediaActionButton
           icon={Download}
           label={t("download")}
@@ -234,7 +236,9 @@ export function MediaAudioBubble({
 
   return (
     <div className="flex items-center gap-2">
-      <audio src={message.media_url} controls className="max-w-60" />
+      {/* `min-w-0 flex-1`: without it the player keeps its own minimum width
+          and spills out of the bubble on a 375px screen. */}
+      <audio src={message.media_url} controls className="min-w-0 max-w-60 flex-1" />
       <MediaActionButton
         icon={Download}
         label={t("download")}
@@ -260,9 +264,9 @@ export function MediaDocumentBubble({
         href={message.media_url}
         target="_blank"
         rel="noopener noreferrer"
-        className="flex min-w-0 flex-1 items-center gap-2 rounded-lg bg-muted/50 px-3 py-2 text-sm hover:bg-muted"
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-lg bg-muted/50 px-3 py-2 text-sm outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-11"
       >
-        <FileText className="h-5 w-5 shrink-0 text-muted-foreground" />
+        <FileText aria-hidden="true" className="h-5 w-5 shrink-0 text-muted-foreground" />
         <span className="truncate">{message.content_text || t("document")}</span>
       </a>
       <MediaActionButton

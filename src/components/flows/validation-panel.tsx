@@ -33,7 +33,7 @@ export function ValidationPanel() {
     // bg-success/10 would bleed through ugly).
     return (
       <div className="flex items-center gap-2 rounded-lg border border-success/50 bg-background p-3 text-sm font-medium text-success">
-        <CircleCheck className="h-4 w-4 shrink-0" />
+        <CircleCheck className="h-4 w-4 shrink-0" aria-hidden />
         {t("noIssues")}
       </div>
     );
@@ -49,13 +49,14 @@ export function ValidationPanel() {
     >
       <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
         {errors.length > 0 ? (
-          <CircleAlert className="h-4 w-4 text-destructive" />
+          <CircleAlert className="h-4 w-4 text-destructive" aria-hidden />
         ) : (
-          <CircleAlert className="h-4 w-4 text-warning" />
+          <CircleAlert className="h-4 w-4 text-warning" aria-hidden />
         )}
         {t("summary", { errorCount: errors.length, warningCount: warnings.length })}
       </div>
-      <div className="flex flex-col gap-1">
+      {/* Capped so a long list can't push the editor off a phone screen. */}
+      <div className="flex max-h-40 flex-col gap-1 overflow-y-auto sm:max-h-56">
         {issues.map((i, ix) => (
           <IssueLine key={ix} issue={i} onJump={requestFlash} t={t} />
         ))}
@@ -85,10 +86,10 @@ export function IssueLine({
     issue.severity === "error" ? "text-destructive" : "text-warning";
   const body = (
     <>
-      <CircleAlert className={cn("mt-0.5 h-3 w-3 shrink-0", iconTone)} />
+      <CircleAlert className={cn("mt-0.5 h-3 w-3 shrink-0", iconTone)} aria-hidden />
       <span className="min-w-0 flex-1">
         {issue.node_key && (
-          <code className="mr-1 rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
+          <code className="mr-1 rounded bg-muted px-1 py-0.5 text-[11px] text-muted-foreground">
             {issue.node_key}
           </code>
         )}
@@ -106,10 +107,12 @@ export function IssueLine({
         type="button"
         onClick={() => onJump(issue.node_key!)}
         className={cn(
-          "flex w-full items-start gap-2 rounded-md px-2 py-1 text-left text-xs transition-colors hover:bg-muted/60",
+          "flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs outline-none transition-colors hover:bg-muted/60 focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-11",
           tone,
         )}
-        aria-label={t ? t("jumpToNode", { key: issue.node_key! }) : `Jump to node ${issue.node_key}`}
+        // `title` (not aria-label): an aria-label would replace the visible
+        // message for screen readers, which is the useful part.
+        title={t ? t("jumpToNode", { key: issue.node_key! }) : undefined}
       >
         {body}
       </button>

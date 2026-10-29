@@ -757,6 +757,9 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
       if (!isEditing && body?.automation?.id) {
         router.replace(`/automations/${body.automation.id}/edit`)
       }
+    } catch {
+      // Network drop while saving: say so instead of failing silently.
+      toast.error(t("toasts.saveFailed"))
     } finally {
       setSaving(false)
     }
@@ -1683,7 +1686,7 @@ function StepEditor({
     case "close_conversation":
       return (
         <p className="text-xs text-muted-foreground">
-          {t("config.closeConversationHint", { defaultValue: "Sets the conversation status to \"closed\". No configuration needed." })}
+          {t("config.closeConversationHint")}
         </p>
       )
     default:
@@ -1739,8 +1742,19 @@ function previewFor(
         unit: unitLabel,
       })
     }
-    case "condition":
-      return t("preview.when", { subject: String(step.step_config.subject ?? "?") })
+    case "condition": {
+      // Show the human label ("Presencia de etiqueta"), not the raw
+      // enum value ("tag_presence").
+      const subject = step.step_config.subject as string | undefined
+      const subjectLabel =
+        subject === "tag_presence" ||
+        subject === "contact_field" ||
+        subject === "message_content" ||
+        subject === "time_of_day"
+          ? t(`config.subjects.${subject}`).toLowerCase()
+          : String(subject ?? "?")
+      return t("preview.when", { subject: subjectLabel })
+    }
     case "send_webhook":
       return (step.step_config.url as string) || t("preview.noUrl")
     default:

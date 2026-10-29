@@ -193,6 +193,7 @@ export function StaffSection({
         <CardAction>
           <Button
             size="sm"
+            className="pointer-coarse:h-11"
             onClick={openCreate}
             disabled={!canEdit || busyId !== null}
             title={canEdit ? undefined : T.readOnly(T.config.viewerGate)}
@@ -249,7 +250,8 @@ export function StaffSection({
                 <div className="flex flex-wrap items-center gap-2">
                   <Button
                     variant="outline"
-                    size="sm"
+                    size="icon-sm"
+                    className="pointer-coarse:size-11"
                     onClick={() => void move(index, -1)}
                     disabled={!canEdit || busyId !== null || index === 0}
                     aria-label={T.config.services.moveUp}
@@ -259,7 +261,8 @@ export function StaffSection({
                   </Button>
                   <Button
                     variant="outline"
-                    size="sm"
+                    size="icon-sm"
+                    className="pointer-coarse:size-11"
                     onClick={() => void move(index, 1)}
                     disabled={
                       !canEdit || busyId !== null || index === staff.length - 1
@@ -272,6 +275,7 @@ export function StaffSection({
                   <Button
                     variant="outline"
                     size="sm"
+                    className="pointer-coarse:h-11"
                     onClick={() => openEdit(member)}
                     disabled={!canEdit || busyId !== null}
                   >
@@ -281,6 +285,7 @@ export function StaffSection({
                   <Button
                     variant="outline"
                     size="sm"
+                    className="pointer-coarse:h-11"
                     onClick={() => void toggleActive(member)}
                     disabled={!canEdit || busyId !== null}
                   >
@@ -364,9 +369,10 @@ export function StaffSection({
                           onCheckedChange={() => toggleService(service.id)}
                           disabled={saving}
                         />
+                        {/* The whole row is the tap target, not just the 16px box. */}
                         <label
                           htmlFor={`staff-svc-${service.id}`}
-                          className="text-sm"
+                          className="flex-1 cursor-pointer py-1.5 text-sm pointer-coarse:py-3"
                         >
                           {service.name}
                           {!service.is_active && (

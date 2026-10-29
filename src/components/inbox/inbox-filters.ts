@@ -24,6 +24,44 @@ export function matchesInboxFilter(
   return conversation.status === filter;
 }
 
+/** Lower-case, accent-free text: typing "jose" finds "José". */
+export function foldText(text: string): string {
+  return text.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+}
+
+/**
+ * Whether a conversation matches what was typed in the search box: the
+ * contact's name, phone (as typed, or digits only so "300 123" finds
+ * "+57 300 123 4567"), @username, or the last message. Accents and case
+ * don't matter. An empty query matches everything.
+ */
+export function matchesSearch(
+  conversation: {
+    last_message_text?: string | null;
+    contact?: {
+      name?: string | null;
+      phone?: string | null;
+      wa_username?: string | null;
+    } | null;
+  },
+  query: string,
+): boolean {
+  const q = foldText(query.trim());
+  if (!q) return true;
+  const contact = conversation.contact;
+  const phone = (contact?.phone ?? "").toLowerCase();
+  if (
+    foldText(contact?.name ?? "").includes(q) ||
+    phone.includes(q) ||
+    foldText(contact?.wa_username ?? "").includes(q) ||
+    foldText(conversation.last_message_text ?? "").includes(q)
+  ) {
+    return true;
+  }
+  const digits = q.replace(/\D/g, "");
+  return digits.length >= 3 && phone.replace(/\D/g, "").includes(digits);
+}
+
 /** How many conversations have at least one unread message. */
 export function countUnreadConversations(
   conversations: ReadonlyArray<Pick<Conversation, "unread_count">>,

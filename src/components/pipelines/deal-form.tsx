@@ -20,6 +20,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
+import { Combobox } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -29,11 +30,10 @@ import {
   Trash2,
   MessageSquare,
   Loader2,
-  Search,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslations } from "next-intl";
-import { contactOptionLabel, filterContactOptions } from "./deal-utils";
+import { contactMatchesQuery, contactOptionLabel } from "./deal-utils";
 
 // Native selects styled like the Input primitive (40 px, 44 px on touch).
 const SELECT_CLASS =
@@ -82,8 +82,9 @@ export function DealForm({
   const [statusAction, setStatusAction] = useState<DealStatus | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  // Filters the contact select; doesn't change what gets saved.
-  const [contactQuery, setContactQuery] = useState("");
+  // False until the contact list answers, so the picker can say "loading"
+  // instead of "no matches".
+  const [contactsLoaded, setContactsLoaded] = useState(false);
   // Required-field messages show only after a save attempt.
   const [showErrors, setShowErrors] = useState(false);
 
@@ -94,7 +95,6 @@ export function DealForm({
   useEffect(() => {
     if (!open) return;
     setConfirmDelete(false);
-    setContactQuery("");
     setShowErrors(false);
     if (deal) {
       setTitle(deal.title);
@@ -132,6 +132,7 @@ export function DealForm({
       if (cancelled) return;
       setContacts((c.data ?? []) as Contact[]);
       setProfiles((p.data ?? []) as Profile[]);
+      setContactsLoaded(true);
     })();
     return () => {
       cancelled = true;
@@ -172,7 +173,13 @@ export function DealForm({
   const fieldError = (field: RequiredField) =>
     showErrors && missing.includes(field);
 
-  const visibleContacts = filterContactOptions(contacts, contactQuery, contactId);
+  // The picker works with the Contact object; only its id is saved.
+  const selectedContact = contacts.find((c) => c.id === contactId) ?? null;
+  const contactEmptyText = !contactsLoaded
+    ? t("loadingContacts")
+    : contacts.length === 0
+      ? t("noContactsYet")
+      : t("noContactMatches");
 
   async function handleSave() {
     if (missing.length > 0) {
@@ -315,43 +322,23 @@ export function DealForm({
                   ({t("requiredMark")})
                 </span>
               </Label>
-              {/* No combobox primitive exists in the app yet, so a search
-                  box narrows the native select's options instead. */}
-              <div className="relative">
-                <Search
-                  aria-hidden
-                  className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                />
-                <Input
-                  type="search"
-                  value={contactQuery}
-                  onChange={(e) => setContactQuery(e.target.value)}
-                  placeholder={t("searchContactPlaceholder")}
-                  aria-label={t("searchContactLabel")}
-                  aria-controls="deal-contact"
-                  autoComplete="off"
-                  className="border-border bg-muted pl-8 text-foreground"
-                />
-              </div>
-              <select
+              <Combobox
                 id="deal-contact"
-                value={contactId}
-                onChange={(e) => setContactId(e.target.value)}
-                aria-invalid={fieldError("contact") || undefined}
+                items={contacts}
+                value={selectedContact}
+                onValueChange={(c) => setContactId(c?.id ?? "")}
+                getItemKey={(c) => c.id}
+                getItemLabel={contactOptionLabel}
+                getItemDescription={(c) => (c.name ? c.phone : c.email)}
+                filter={contactMatchesQuery}
+                placeholder={t("searchContactPlaceholder")}
+                emptyText={contactEmptyText}
+                triggerLabel={t("showContacts")}
+                clearLabel={t("clearContact")}
+                invalid={fieldError("contact")}
                 aria-describedby={fieldError("contact") ? "deal-contact-error" : undefined}
-                className={SELECT_CLASS}
-              >
-                <option value="">
-                  {contactQuery.trim() && visibleContacts.length === 0
-                    ? t("noContactMatches")
-                    : t("selectContact")}
-                </option>
-                {visibleContacts.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {contactOptionLabel(c)}
-                  </option>
-                ))}
-              </select>
+                className="border-border bg-muted"
+              />
               {fieldError("contact") && (
                 <p id="deal-contact-error" role="alert" className="text-xs text-destructive">
                   {t("contactRequired")}

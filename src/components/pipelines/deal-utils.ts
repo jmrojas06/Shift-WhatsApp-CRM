@@ -1,4 +1,5 @@
 import type { Contact } from "@/types";
+import { contactHandle } from "@/lib/whatsapp/wa-identity";
 
 /**
  * `expected_close_date` is a plain calendar date ("2026-10-22"). Parsed
@@ -16,29 +17,47 @@ export function calendarDateForFormat(value: string): {
   return { date: new Date(value) };
 }
 
-/** What a contact is called in pickers: its name, else its phone. */
-export function contactOptionLabel(contact: Pick<Contact, "name" | "phone">): string {
-  return contact.name || contact.phone;
+type PickableContact = Pick<Contact, "name" | "phone"> &
+  Partial<Pick<Contact, "email" | "wa_username" | "wa_user_id">>;
+
+/**
+ * What a contact is called in pickers: its name, else its phone, else its
+ * WhatsApp @username (a contact Meta only identified by BSUID has no phone),
+ * so an option is never a blank row.
+ */
+export function contactOptionLabel(contact: PickableContact): string {
+  return contact.name || contactHandle(contact);
 }
 
 /**
- * Filters the deal form's contact picker by name, phone or email
- * (case- and accent-insensitive; phone matched on digits). The currently
- * selected contact is always kept so the select never loses its value.
+ * Does the contact match what was typed in the picker? Looks at name,
+ * email and WhatsApp username (case- and accent-insensitive) and at the
+ * phone by digits, so "300 1234" finds "+57 300 123 4567". An empty query
+ * matches everyone.
+ */
+export function contactMatchesQuery(
+  contact: PickableContact,
+  query: string,
+): boolean {
+  const q = normalize(query.trim());
+  if (!q) return true;
+  if (normalize(contact.name ?? "").includes(q)) return true;
+  if (normalize(contact.email ?? "").includes(q)) return true;
+  const qUser = q.replace(/^@/, "");
+  if (qUser && normalize(contact.wa_username ?? "").includes(qUser)) return true;
+  const qDigits = q.replace(/\D/g, "");
+  return !!qDigits && (contact.phone ?? "").replace(/\D/g, "").includes(qDigits);
+}
+
+/**
+ * Filters a contact list with {@link contactMatchesQuery}. The currently
+ * selected contact is always kept so a select never loses its value.
  */
 export function filterContactOptions<
   T extends Pick<Contact, "id" | "name" | "phone" | "email">,
 >(contacts: T[], query: string, selectedId: string): T[] {
-  const q = normalize(query.trim());
-  if (!q) return contacts;
-  const qDigits = q.replace(/\D/g, "");
-  return contacts.filter((c) => {
-    if (c.id === selectedId) return true;
-    if (normalize(c.name ?? "").includes(q)) return true;
-    if (normalize(c.email ?? "").includes(q)) return true;
-    if (qDigits && (c.phone ?? "").replace(/\D/g, "").includes(qDigits)) return true;
-    return false;
-  });
+  if (!query.trim()) return contacts;
+  return contacts.filter((c) => c.id === selectedId || contactMatchesQuery(c, query));
 }
 
 function normalize(s: string): string {

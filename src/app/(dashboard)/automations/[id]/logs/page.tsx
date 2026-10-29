@@ -20,7 +20,7 @@ import type {
 } from "@/types"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { formatRelative } from "@/lib/automations/trigger-meta"
+import { formatRelative, isKnownTrigger } from "@/lib/automations/trigger-meta"
 
 export default function AutomationLogsPage({
   params,
@@ -31,6 +31,8 @@ export default function AutomationLogsPage({
   const router = useRouter()
   const t = useTranslations("Automations.logs")
   const tRelative = useTranslations("Automations.relative")
+  const tTriggers = useTranslations("Automations.builder.triggers")
+  const tSteps = useTranslations("Automations.builder.steps")
 
   const [automation, setAutomation] = useState<Automation | null>(null)
   const [logs, setLogs] = useState<AutomationLog[] | null>(null)
@@ -58,8 +60,9 @@ export default function AutomationLogsPage({
         if (logRes.error) throw logRes.error
         setAutomation(autRes.data as Automation | null)
         setLogs((logRes.data ?? []) as AutomationLog[])
-      } catch (err) {
-        setError(err instanceof Error ? err.message : t("loadError"))
+      } catch {
+        // Friendly copy instead of the raw database message.
+        setError(t("loadError"))
       }
     }
     load()
@@ -76,10 +79,24 @@ export default function AutomationLogsPage({
     )
   }
 
-  if (!automation || logs === null) {
+  if (logs === null) {
     return (
-      <div className="flex h-64 items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+      <div className="flex h-64 items-center justify-center" role="status">
+        <Loader2 className="h-6 w-6 animate-spin text-primary" aria-hidden />
+        <span className="sr-only">{t("loading")}</span>
+      </div>
+    )
+  }
+
+  // Loaded fine but the automation isn't there (deleted, or belongs to
+  // another account): say so instead of spinning forever.
+  if (!automation) {
+    return (
+      <div className="flex h-64 flex-col items-center justify-center gap-3 text-center">
+        <p className="text-sm text-muted-foreground">{t("notFound")}</p>
+        <Button variant="outline" onClick={() => router.push("/automations")}>
+          {t("back")}
+        </Button>
       </div>
     )
   }
@@ -134,8 +151,10 @@ export default function AutomationLogsPage({
                       {log.contact?.name ?? log.contact?.phone ?? t("unknownContact")}
                     </div>
                     <div className="truncate text-xs text-muted-foreground">
-                      {log.trigger_event} · {log.steps_executed?.length ?? 0}{" "}
-                      {log.steps_executed?.length === 1 ? t("step", { count: 1 }).replace("1 ", "") : t("stepPlural", { count: log.steps_executed?.length ?? 0 }).replace(/^[0-9]+ /, "")}
+                      {isKnownTrigger(log.trigger_event)
+                        ? tTriggers(`${log.trigger_event}.label`)
+                        : log.trigger_event}{" "}
+                      · {t("stepsCount", { count: log.steps_executed?.length ?? 0 })}
                     </div>
                   </div>
                   <div className="shrink-0 text-xs text-muted-foreground">
@@ -151,7 +170,7 @@ export default function AutomationLogsPage({
                     )}
                     <ul className="space-y-1.5">
                       {(log.steps_executed ?? []).map((r, i) => (
-                        <StepRow key={i} result={r} />
+                        <StepRow key={i} result={r} t={tSteps} />
                       ))}
                       {(log.steps_executed ?? []).length === 0 && (
                         <li className="text-xs text-muted-foreground">{t("noSteps")}</li>
@@ -187,7 +206,29 @@ function StatusBadge({ status, t }: { status: AutomationLog["status"], t: Return
   )
 }
 
-function StepRow({ result }: { result: AutomationLogStepResult }) {
+const KNOWN_STEP_TYPES = new Set([
+  "send_message",
+  "send_buttons",
+  "send_list",
+  "send_template",
+  "add_tag",
+  "remove_tag",
+  "assign_conversation",
+  "update_contact_field",
+  "create_deal",
+  "wait",
+  "condition",
+  "send_webhook",
+  "close_conversation",
+])
+
+function StepRow({
+  result,
+  t,
+}: {
+  result: AutomationLogStepResult
+  t: ReturnType<typeof useTranslations>
+}) {
   const ok = result.status === "success"
   return (
     <li className="flex items-start gap-2 text-xs">
@@ -200,9 +241,13 @@ function StepRow({ result }: { result: AutomationLogStepResult }) {
       >
         {ok ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
       </span>
-      <span className="text-muted-foreground">{result.step_type}</span>
+      <span className="shrink-0 text-foreground">
+        {KNOWN_STEP_TYPES.has(result.step_type)
+          ? t(result.step_type)
+          : result.step_type}
+      </span>
       {result.detail && (
-        <span className="truncate text-muted-foreground">— {result.detail}</span>
+        <span className="min-w-0 break-words text-muted-foreground">— {result.detail}</span>
       )}
     </li>
   )

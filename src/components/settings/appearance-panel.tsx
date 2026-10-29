@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import { Check, Monitor, Moon, Palette, SunMoon, Sun } from "lucide-react";
 
 import { useTheme } from "@/hooks/use-theme";
@@ -34,6 +35,24 @@ const MODE_ICONS: Record<ModePreference, typeof Sun> = {
 export function AppearancePanel() {
   const { theme, setTheme, modePreference, setModePreference } = useTheme();
   const t = useTranslations("Settings.appearance");
+  const modeRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  // A radio group is one Tab stop, moved with the arrow keys (the active
+  // option is the stop). Without this, keyboard users tabbed through all
+  // three options and arrows did nothing.
+  const onModeKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const count = MODE_PREFERENCES.length;
+    const current = MODE_PREFERENCES.indexOf(modePreference);
+    let next = current;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (current + 1) % count;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (current - 1 + count) % count;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = count - 1;
+    else return;
+    e.preventDefault();
+    setModePreference(MODE_PREFERENCES[next]);
+    modeRefs.current[next]?.focus();
+  };
 
   return (
     <section className="max-w-3xl animate-in fade-in-50 duration-200">
@@ -51,11 +70,15 @@ export function AppearancePanel() {
         <div
           role="radiogroup"
           aria-label={t("colorMode")}
+          onKeyDown={onModeKeyDown}
           className="grid grid-cols-1 gap-3 sm:grid-cols-3"
         >
-          {MODE_PREFERENCES.map((m) => (
+          {MODE_PREFERENCES.map((m, i) => (
             <ModeCard
               key={m}
+              buttonRef={(el) => {
+                modeRefs.current[i] = el;
+              }}
               mode={m}
               isActive={m === modePreference}
               onPick={() => setModePreference(m)}
@@ -90,23 +113,27 @@ function ModeCard({
   mode,
   isActive,
   onPick,
+  buttonRef,
 }: {
   mode: ModePreference;
   isActive: boolean;
   onPick: () => void;
+  buttonRef: (el: HTMLButtonElement | null) => void;
 }) {
   const t = useTranslations("Settings.appearance");
   const Icon = MODE_ICONS[mode];
   const name = t(`modes.${mode}`);
   return (
     <button
+      ref={buttonRef}
       type="button"
       role="radio"
+      tabIndex={isActive ? 0 : -1}
       onClick={onPick}
       aria-checked={isActive}
       aria-label={t("useMode", { mode: name })}
       className={cn(
-        "flex min-h-11 items-center gap-3 rounded-xl border bg-card p-4 text-left transition-colors",
+        "flex min-h-11 items-center gap-3 rounded-xl border bg-card p-4 text-left outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
         isActive
           ? "border-primary/60 ring-2 ring-primary/40"
           : "border-border hover:bg-muted/60",
@@ -153,7 +180,7 @@ function ThemeCard({
       aria-pressed={isActive}
       aria-label={t("useTheme", { name })}
       className={cn(
-        "flex flex-col gap-3 rounded-xl border bg-card p-4 text-left transition-colors",
+        "flex flex-col gap-3 rounded-xl border bg-card p-4 text-left outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
         isActive
           ? "border-primary/60 ring-2 ring-primary/40"
           : "border-border hover:bg-muted/60",

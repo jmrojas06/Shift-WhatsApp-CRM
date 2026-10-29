@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { toast } from "sonner";
 import { useFormatter, useTranslations } from "next-intl";
 import { contactHandle } from "@/lib/whatsapp/wa-identity";
 import { ContactOrders } from "./contact-orders";
@@ -24,10 +25,21 @@ interface ContactSidebarProps {
   contact: Contact | null;
   /** Open conversation, linked to orders created from this panel. */
   conversationId?: string | null;
+  /**
+   * `panel` (default): fixed-width column with its own scroll, for lg+.
+   * `sheet`: the same content at full width with no frame of its own, for
+   * the phone's bottom sheet (the sheet does the scrolling).
+   */
+  variant?: "panel" | "sheet";
 }
 
-export function ContactSidebar({ contact, conversationId = null }: ContactSidebarProps) {
+export function ContactSidebar({
+  contact,
+  conversationId = null,
+  variant = "panel",
+}: ContactSidebarProps) {
   const tSidebar = useTranslations("Inbox.sidebar");
+  const tActions = useTranslations("Inbox.actions");
   const formatter = useFormatter();
 
   const { accountId } = useAuth();
@@ -86,13 +98,19 @@ export function ContactSidebar({ contact, conversationId = null }: ContactSideba
     // phone number to copy, but its @username still identifies them.
     const handle = contact ? contactHandle(contact) : '';
     if (!handle) return;
-    await navigator.clipboard.writeText(handle);
+    try {
+      await navigator.clipboard.writeText(handle);
+    } catch {
+      // Insecure context / permission denied: say so instead of failing silently.
+      toast.error(tActions("copyFailed"));
+      return;
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
     // Dep is the whole `contact` object (not `contact?.phone`) so the
     // React Compiler's inference agrees with the manual dep list —
     // fixes the `preserve-manual-memoization` lint error.
-  }, [contact]);
+  }, [contact, tActions]);
 
   const handleAddNote = useCallback(async () => {
     if (!contact || !newNote.trim()) return;
@@ -119,9 +137,12 @@ export function ContactSidebar({ contact, conversationId = null }: ContactSideba
     if (!error && data) {
       setNotes((prev) => [data, ...prev]);
       setNewNote("");
+    } else {
+      // The text stays in the box so nothing typed is lost.
+      toast.error(tSidebar("noteSaveFailed"));
     }
     setAddingNote(false);
-  }, [contact, newNote, accountId]);
+  }, [contact, newNote, accountId, tSidebar]);
 
   // Nothing to show without a contact. The inbox page only mounts this
   // panel once a conversation is open, so this is just a safety net.
@@ -130,9 +151,7 @@ export function ContactSidebar({ contact, conversationId = null }: ContactSideba
   const displayName = contact.name || contactHandle(contact);
   const initials = displayName.charAt(0).toUpperCase();
 
-  return (
-    <div className="flex h-full w-70 flex-col border-l border-border bg-card">
-      <ScrollArea className="min-h-0 flex-1">
+  const body = (
         <div className="p-4">
           {/* Contact Info */}
           <div className="flex flex-col items-center text-center">
@@ -164,7 +183,7 @@ export function ContactSidebar({ contact, conversationId = null }: ContactSideba
               onClick={handleCopyPhone}
               aria-label={tSidebar("copyHandle", { handle: contactHandle(contact) })}
               title={tSidebar("copyHandle", { handle: contactHandle(contact) })}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-11"
             >
               <Phone aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground" />
               <span className="min-w-0 flex-1 truncate text-left">
@@ -179,7 +198,7 @@ export function ContactSidebar({ contact, conversationId = null }: ContactSideba
 
             {contact.email && (
               <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground">
-                <Mail className="h-4 w-4 text-muted-foreground" />
+                <Mail aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <span className="truncate">{contact.email}</span>
               </div>
             )}
@@ -283,11 +302,11 @@ export function ContactSidebar({ contact, conversationId = null }: ContactSideba
                   onChange={(e) => setNewNote(e.target.value)}
                   placeholder={tSidebar("addNotePlaceholder")}
                   rows={2}
-                  className="min-w-0 flex-1 resize-none rounded-lg border border-input bg-muted px-3 py-2 text-[13px] text-foreground outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                  className="min-w-0 flex-1 resize-none rounded-lg border border-input bg-muted px-3 py-2 text-base text-foreground outline-none lg:text-[13px] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                 />
                 <Button
                   size="sm"
-                  className="h-auto px-2"
+                  className="h-auto px-2 pointer-coarse:min-w-11"
                   onClick={handleAddNote}
                   disabled={!newNote.trim() || addingNote}
                   aria-label={tSidebar("addNote")}
@@ -318,7 +337,14 @@ export function ContactSidebar({ contact, conversationId = null }: ContactSideba
             </div>
           </div>
         </div>
-      </ScrollArea>
+  );
+
+  // Phone bottom sheet: the sheet itself scrolls, so no frame or ScrollArea.
+  if (variant === "sheet") return <div className="min-w-0">{body}</div>;
+
+  return (
+    <div className="flex h-full w-70 flex-col border-l border-border bg-card">
+      <ScrollArea className="min-h-0 flex-1">{body}</ScrollArea>
     </div>
   );
 }

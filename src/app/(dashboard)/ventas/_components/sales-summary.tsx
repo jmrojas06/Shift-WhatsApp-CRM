@@ -86,11 +86,11 @@ export function SalesSummaryTiles({
 
   return (
     <section aria-label={T.summary.label} aria-busy={loading}>
-      <ul className="grid gap-3 sm:grid-cols-3">
+      <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         {tiles.map((tile) => {
           const Icon = tile.icon
           return (
-            <li key={tile.key}>
+            <li key={tile.key} className={cn(tile.highlight && 'col-span-2 sm:col-span-1')}>
               <Card
                 size="sm"
                 className={cn('h-full', tile.highlight && 'bg-primary/5 ring-primary/25')}

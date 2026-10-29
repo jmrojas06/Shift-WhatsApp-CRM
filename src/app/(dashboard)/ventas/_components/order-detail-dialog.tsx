@@ -212,7 +212,9 @@ export function OrderDetailDialog({
               </DialogDescription>
             </DialogHeader>
             {current.kind === 'loading' && (
-              <p className="text-sm text-muted-foreground">{VENTAS_TEXTS.loading}</p>
+              <p role="status" className="text-sm text-muted-foreground">
+                {VENTAS_TEXTS.loading}
+              </p>
             )}
             {current.kind === 'failed' && (
               <Alert variant="destructive">
@@ -221,7 +223,7 @@ export function OrderDetailDialog({
             )}
             {current.kind === 'ready' && <OrderDetailBody order={current.order} />}
             <DialogFooter>
-              <Button type="button" variant="outline" className="max-sm:h-11" onClick={onClose}>
+              <Button type="button" variant="outline" className="max-sm:h-11 pointer-coarse:h-11" onClick={onClose}>
                 {T.close}
               </Button>
             </DialogFooter>

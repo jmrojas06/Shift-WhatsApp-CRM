@@ -22,6 +22,7 @@
  * /flows/[id]/runs) — those don't belong in the hook.
  */
 
+import { useState } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import {
@@ -37,6 +38,14 @@ import {
 } from "lucide-react";
 
 import { Button, buttonVariants } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import {
   useFlowEditor,
@@ -45,6 +54,9 @@ import {
 
 export function EditorHeader() {
   const t = useTranslations("Flows.header");
+  const tState = useTranslations("Flows.editorState");
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const {
     flow,
     state,
@@ -59,7 +71,7 @@ export function EditorHeader() {
   } = useFlowEditor();
 
   return (
-    <div className="flex flex-col gap-1.5 px-6 pt-5">
+    <div className="flex flex-col gap-1.5 px-1 pt-1 sm:px-6 sm:pt-5">
       <div className="flex flex-wrap items-center gap-3">
         {/* ---- left: back · icon · name · status · edited ---- */}
         <Link
@@ -88,7 +100,7 @@ export function EditorHeader() {
             title={t("unsavedHint")}
             aria-live="polite"
           >
-            <span className="h-1.5 w-1.5 rounded-full bg-warning" />
+            <span className="h-1.5 w-1.5 rounded-full bg-warning" aria-hidden />
             {t("edited")}
           </span>
         )}
@@ -108,10 +120,10 @@ export function EditorHeader() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => void deleteFlow()}
+            onClick={() => setConfirmDelete(true)}
             className="text-destructive hover:bg-destructive/10 hover:text-destructive"
           >
-            <Trash2 className="h-3.5 w-3.5" />
+            <Trash2 className="h-3.5 w-3.5" aria-hidden />
             {t("delete")}
           </Button>
           {state.status === "active" ? (
@@ -122,9 +134,9 @@ export function EditorHeader() {
               disabled={activating}
             >
               {activating ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
               ) : (
-                <PauseCircle className="h-3.5 w-3.5" />
+                <PauseCircle className="h-3.5 w-3.5" aria-hidden />
               )}
               {t("pause")}
             </Button>
@@ -139,23 +151,65 @@ export function EditorHeader() {
               }
             >
               {activating ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
               ) : (
-                <PlayCircle className="h-3.5 w-3.5" />
+                <PlayCircle className="h-3.5 w-3.5" aria-hidden />
               )}
               {t("activate")}
             </Button>
           )}
           <Button onClick={() => void save()} disabled={saving} size="sm">
             {saving ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
             ) : (
-              <Save className="h-3.5 w-3.5" />
+              <Save className="h-3.5 w-3.5" aria-hidden />
             )}
             {t("save")}
           </Button>
         </div>
       </div>
+
+      <Dialog
+        open={confirmDelete}
+        onOpenChange={(open) => {
+          if (!open && !deleting) setConfirmDelete(false);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("deleteTitle")}</DialogTitle>
+            <DialogDescription>
+              {tState("deleteConfirm", { name: state.name })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setConfirmDelete(false)}
+              disabled={deleting}
+            >
+              {t("cancel")}
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={deleting}
+              onClick={async () => {
+                setDeleting(true);
+                await deleteFlow();
+                setDeleting(false);
+                setConfirmDelete(false);
+              }}
+            >
+              {deleting ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              ) : (
+                <Trash2 className="h-4 w-4" aria-hidden />
+              )}
+              {t("delete")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ---- description note (subtle, inline-editable) ---- */}
       <input
@@ -198,7 +252,7 @@ function StatusChip({ status }: { status: BuilderState["status"] }) {
         cfg.cls,
       )}
     >
-      <CircleDot className="h-3 w-3" />
+      <CircleDot className="h-3 w-3" aria-hidden />
       {cfg.label}
     </span>
   );

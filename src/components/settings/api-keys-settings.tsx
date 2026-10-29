@@ -35,13 +35,25 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RequireRole } from '@/components/auth/require-role';
 import { useAuth } from '@/hooks/use-auth';
-import {
-  API_SCOPES,
-  SCOPE_DESCRIPTIONS,
-  type ApiScope,
-} from '@/lib/api-keys/scopes';
+import { API_SCOPES, type ApiScope } from '@/lib/api-keys/scopes';
 import { useFormatter, useTranslations } from 'next-intl';
 import { SettingsPanelHead } from './settings-panel-head';
+import { ConfirmDialog } from './confirm-dialog';
+import { LoadError } from './load-error';
+
+// Message key (under `Settings.apiKeys.scopeDescriptions`) for each scope.
+// `SCOPE_DESCRIPTIONS` in lib/api-keys/scopes.ts is English-only, so the
+// dialog reads these instead. Typed as a Record so a new scope without a
+// description fails the build.
+const SCOPE_DESCRIPTION_KEY: Record<ApiScope, string> = {
+  'messages:send': 'messagesSend',
+  'messages:read': 'messagesRead',
+  'contacts:read': 'contactsRead',
+  'contacts:write': 'contactsWrite',
+  'conversations:read': 'conversationsRead',
+  'broadcasts:send': 'broadcastsSend',
+  'webhooks:manage': 'webhooksManage',
+};
 
 interface ApiKey {
   id: string;
@@ -79,14 +91,19 @@ export function ApiKeysSettings() {
 
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [revoking, setRevoking] = useState<string | null>(null);
+  // Key waiting for the "revoke it?" confirmation.
+  const [keyToRevoke, setKeyToRevoke] = useState<ApiKey | null>(null);
 
   const load = useCallback(async () => {
+    setLoadFailed(false);
     try {
       const res = await fetch('/api/account/api-keys', { cache: 'no-store' });
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
+        setLoadFailed(true);
         toast.error(payload.error || t('loadFailed'));
         return;
       }
@@ -94,10 +111,12 @@ export function ApiKeysSettings() {
       setKeys(data.keys);
     } catch (err) {
       console.error('[ApiKeysSettings] load error:', err);
+      setLoadFailed(true);
       toast.error(t('networkError'));
     } finally {
       setLoading(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -171,7 +190,9 @@ export function ApiKeysSettings() {
         }
       />
 
-      {keys.length === 0 ? (
+      {loadFailed ? (
+        <LoadError message={t('loadFailed')} onRetry={() => void load()} />
+      ) : keys.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-10 text-center">
             <KeyRound className="text-muted-foreground size-6" />
@@ -263,13 +284,11 @@ export function ApiKeysSettings() {
                         <Button
                           variant="destructive"
                           size="sm"
-                          onClick={() => {
-                            // Revoking breaks every integration using
-                            // this key, so it asks first.
-                            if (!window.confirm(t('revokeConfirm', { name: k.name }))) return;
-                            void handleRevoke(k);
-                          }}
+                          // Revoking breaks every integration using this
+                          // key, so it asks first (dialog below).
+                          onClick={() => setKeyToRevoke(k)}
                           disabled={revoking === k.id}
+                          aria-label={t('revokeLabel', { name: k.name })}
                           className="self-start sm:self-auto"
                         >
                           {revoking === k.id ? (
@@ -293,6 +312,24 @@ export function ApiKeysSettings() {
         open={createOpen}
         onOpenChange={setCreateOpen}
         onCreated={load}
+      />
+
+      <ConfirmDialog
+        open={keyToRevoke !== null}
+        onOpenChange={(open) => {
+          if (!open) setKeyToRevoke(null);
+        }}
+        title={t('revokeDialogTitle')}
+        description={keyToRevoke ? t('revokeConfirm', { name: keyToRevoke.name }) : null}
+        confirmLabel={t('revoke')}
+        busyLabel={t('revoking')}
+        cancelLabel={t('cancel')}
+        busy={revoking !== null}
+        onConfirm={async () => {
+          if (!keyToRevoke) return;
+          await handleRevoke(keyToRevoke);
+          setKeyToRevoke(null);
+        }}
       />
     </section>
   );
@@ -468,7 +505,7 @@ function CreateKeyDialog({
                           {scope}
                         </span>
                         <span className="text-muted-foreground block text-xs">
-                          {SCOPE_DESCRIPTIONS[scope]}
+                          {t(`scopeDescriptions.${SCOPE_DESCRIPTION_KEY[scope]}`)}
                         </span>
                       </span>
                     </label>

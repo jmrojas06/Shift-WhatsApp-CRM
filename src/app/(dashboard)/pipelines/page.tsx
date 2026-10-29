@@ -84,10 +84,11 @@ export default function PipelinesPage() {
       .order("created_at");
     if (error) {
       console.error("Failed to load pipelines:", error.message);
+      toast.error(t("toastFailedLoadPipelines"));
       return [];
     }
     return data ?? [];
-  }, [supabase]);
+  }, [supabase, t]);
 
   const loadStages = useCallback(
     async (pipelineId: string) => {
@@ -307,15 +308,18 @@ export default function PipelinesPage() {
 
   if (loading) {
     return (
-      <div className="min-w-0 space-y-6">
+      <div className="min-w-0 space-y-6" aria-busy="true">
         <h1 className="sr-only">{t("title")}</h1>
+        <span role="status" className="sr-only">
+          {t("loading")}
+        </span>
         <div className="flex items-center justify-between">
           <div className="h-8 w-48 animate-pulse rounded bg-muted" />
           <div className="h-9 w-28 animate-pulse rounded-lg bg-muted" />
         </div>
         <div className="flex gap-3 overflow-hidden">
           {[1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="h-96 w-72 shrink-0 animate-pulse rounded-xl bg-muted/50" />
+            <div key={i} className="h-96 w-[85vw] min-w-[260px] max-w-[320px] shrink-0 animate-pulse rounded-xl bg-muted/50" />
           ))}
         </div>
       </div>
@@ -354,6 +358,7 @@ export default function PipelinesPage() {
                 <DropdownMenuItem
                   key={p.id}
                   onClick={() => setSelectedPipelineId(p.id)}
+                  aria-current={p.id === selectedPipelineId ? "true" : undefined}
                   className={
                     p.id === selectedPipelineId
                       ? "text-primary"

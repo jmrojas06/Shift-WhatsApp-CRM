@@ -39,6 +39,7 @@ import {
 import { Button, buttonVariants } from '@/components/ui/button';
 import { CardContent } from '@/components/ui/card';
 import { AuthCard, AuthCardHeader } from '@/components/auth/auth-shell';
+import { redeemErrorKey } from '@/components/auth/redeem-error';
 import { cn } from '@/lib/utils';
 import {
   Dialog,
@@ -76,6 +77,7 @@ export default function JoinPage() {
   const params = useParams<{ token: string }>();
   const token = params?.token;
   const t = useTranslations('JoinPage');
+  const tErrors = useTranslations('AuthErrors');
   // Role labels are shared with Settings → Members so the invite page
   // and the member list always agree on what a role is called.
   const tRoles = useTranslations('Settings.roles');
@@ -167,10 +169,29 @@ export default function JoinPage() {
         // enough to show directly; we open a modal so the user has
         // a clear next-action (sign out → use different email)
         // rather than a 3-second toast.
+        // The RPC's refusal text is English; swap in a translated one
+        // when we recognise it, otherwise keep what the server sent.
+        const known = redeemErrorKey(res.status, payload.error);
+        const localized =
+          known === 'alreadyMember'
+            ? t('conflictAlreadyMember')
+            : known === 'sharedAccount'
+              ? t('conflictSharedAccount')
+              : known === 'hasData'
+                ? t('conflictHasData')
+                : known === 'notFound'
+                  ? t('fail.notFoundBody')
+                  : known === 'used'
+                    ? t('fail.usedBody')
+                    : known === 'expired'
+                      ? t('fail.expiredBody')
+                      : known === 'unauthorized'
+                        ? tErrors('sessionExpired')
+                        : null;
         if (res.status === 409) {
-          setConflictMessage(payload.error || t('conflictDefault'));
+          setConflictMessage(localized || payload.error || t('conflictDefault'));
         } else {
-          toast.error(payload.error || t('acceptFailed'));
+          toast.error(localized || payload.error || t('acceptFailed'));
         }
         setAccepting(false);
         return;
@@ -184,7 +205,7 @@ export default function JoinPage() {
       toast.error(t('serverUnreachable'));
       setAccepting(false);
     }
-  }, [token, t]);
+  }, [token, t, tErrors]);
 
   const handleSignOutAndRetry = useCallback(async () => {
     setSigningOut(true);

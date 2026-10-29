@@ -53,7 +53,7 @@ export function Header() {
       <div className="flex min-w-0 items-center gap-2">
         <Link
           href="/dashboard"
-          className="flex min-w-0 items-center gap-2.5 lg:hidden"
+          className="flex min-w-0 items-center gap-2.5 rounded-lg focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none lg:hidden"
         >
           <WorkspaceBadge name={workspaceName} />
           <span className="truncate text-sm font-semibold text-foreground">
@@ -69,13 +69,14 @@ export function Header() {
         <CreateMenu />
         <Link
           href="/notifications"
+          aria-current={pathname.startsWith("/notifications") ? "page" : undefined}
           aria-label={
             unreadNotifications > 0
               ? t("notificationsWithCount", { count: unreadNotifications })
               : t("notifications")
           }
           className={cn(
-            "relative inline-flex size-11 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:size-9",
+            "relative inline-flex size-11 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none lg:size-9",
             pathname.startsWith("/notifications") && "bg-muted text-foreground",
           )}
         >

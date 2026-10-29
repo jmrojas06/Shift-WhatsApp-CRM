@@ -193,7 +193,8 @@ export function QuestionsSection({
                   <div className="flex items-center gap-2">
                     <Button
                       variant="outline"
-                      size="sm"
+                      size="icon-sm"
+                      className="pointer-coarse:size-11"
                       onClick={() => startEdit(question)}
                       disabled={!canEdit || busy}
                       aria-label={`${T.config.questions.edit}: ${question.label}`}
@@ -203,8 +204,8 @@ export function QuestionsSection({
                     </Button>
                     <Button
                       variant="outline"
-                      size="sm"
-                      className="hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
+                      size="icon-sm"
+                      className="hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive pointer-coarse:size-11"
                       onClick={() => {
                         setRemoving(question)
                         setRemoveOpen(true)
