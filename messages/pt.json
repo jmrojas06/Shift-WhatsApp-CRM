@@ -2929,7 +2929,8 @@
         "saveDocFailed": "Falha ao salvar o documento",
         "savedIndexFailed": "Salvo, mas a indexação semântica falhou ({message}). A busca por palavras-chave continua funcionando; use Reindexar para tentar novamente.",
         "savedKeywordOnly": "Salvo apenas com busca por palavras-chave — não foi possível descriptografar sua chave de embeddings (verifique a ENCRYPTION_KEY e informe a chave novamente)."
-      }
+      },
+      "offTopicReply": "Por aqui eu te ajudo com tudo sobre o negócio: preços, horários, agendamentos e pedidos. Para outra coisa, escreva «atendente» e uma pessoa te atende."
     },
     "automations": {
       "copyName": "{name} (Cópia)",

@@ -7,12 +7,16 @@ import { buildSystemPrompt } from './defaults'
 import { buildHandoffSummary } from './handoff'
 import { logAiUsage } from './usage'
 import { latestUserMessage } from './query'
+import { isOnTopic, loadBusinessVocabulary } from './relevance'
 import {
   engineSendText,
   loadAccountMetaCredentials,
 } from '@/lib/flows/meta-send'
 import { sendTypingIndicator } from '@/lib/whatsapp/meta-api'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
+import { getT } from '@/lib/i18n/translate'
+
+const tApi = getT('Api')
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -42,6 +46,11 @@ interface DispatchArgs {
  *   - auto-reply was disabled for this conversation (prior handoff)
  *   - the per-conversation reply cap is reached
  *   - there's nothing to reply to
+ *
+ * Before paying for an LLM call, a free lexical check (`relevance.ts`)
+ * asks whether the message is about the business at all. Off-topic
+ * messages get one fixed reply instead of a generated one; it still
+ * takes a reply slot, so the cap bounds it too.
  *
  * The 24h WhatsApp session window is inherently open here — we're
  * reacting to a customer message that just landed — so no separate
@@ -109,6 +118,26 @@ export async function dispatchInboundToAiReply(
       console.warn(
         `[ai auto-reply] account ${accountId} hit the per-account rate limit — skipping this inbound.`,
       )
+      return
+    }
+
+    // Free gate before any paid call: a message unrelated to the business
+    // ("write me an essay…") never reaches the LLM.
+    const vocabulary = await loadBusinessVocabulary(db, accountId, config.systemPrompt)
+    if (!isOnTopic(latestUserMessage(messages), vocabulary)) {
+      const { data: claimed, error: claimErr } = await db.rpc('claim_ai_reply_slot', {
+        conversation_id: conversationId,
+        max_replies: config.autoReplyMaxPerConversation,
+      })
+      if (claimErr || claimed !== true) return
+      await engineSendText({
+        accountId,
+        userId: configOwnerUserId,
+        conversationId,
+        contactId,
+        text: tApi('ai.offTopicReply'),
+        aiGenerated: true,
+      })
       return
     }
 
