@@ -2862,7 +2862,8 @@
       "recipientsRequired": "Informe `recipients` (preferencial) ou `phone_numbers` — deve ser uma lista não vazia",
       "templateNameRequired": "O nome do modelo é obrigatório",
       "templateMalformed": "O registro local do modelo está corrompido — use \"Sincronizar da Meta\" em Configurações para corrigi-lo antes de disparar.",
-      "invalidPhoneFormat": "Formato de número de telefone inválido"
+      "invalidPhoneFormat": "Formato de número de telefone inválido",
+      "optedOut": "O contato pediu para não receber mais mensagens em massa (SAIR)"
     },
     "whatsappConfig": {
       "fetchFailed": "Falha ao buscar a configuração",
@@ -2927,6 +2928,9 @@
       "submitFailed": "Falha ao enviar o modelo.",
       "metaApiStatus": "Erro da API da Meta: {status}",
       "syncFailed": "Falha ao sincronizar os modelos"
+    },
+    "optOut": {
+      "confirmation": "Pronto, não vamos mais enviar mensagens promocionais por aqui. Se você nos escrever, continuamos atendendo normalmente."
     }
   },
   "AuthErrors": {

@@ -28,6 +28,7 @@ import {
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body';
 import type { MessageTemplate } from '@/types';
 import { findOrCreateContact } from '@/lib/api/v1/contacts';
+import { fetchOptedOutPhones, isOptedOutPhone } from '@/lib/contacts/opt-out';
 
 /** Thrown by createBroadcast on a caller-visible failure; route maps it. */
 export class BroadcastError extends Error {
@@ -145,12 +146,14 @@ export async function createBroadcast(
   // `to` is raw integrator input, so the leading `+` is required — a
   // national-format number would otherwise be delivered to whichever
   // country its leading digits spell (issue #586).
+  // Contacts who opted out ("BAJA"/"STOP") count as rejected too.
+  const optedOut = await fetchOptedOutPhones(db, accountId);
   const resolved: { contactId: string; phone: string; params: string[] }[] = [];
   let rejected = 0;
   for (const r of recipients) {
     const to = typeof r.to === 'string' ? r.to : '';
     const sanitized = parseInternationalPhone(to);
-    if (!sanitized) {
+    if (!sanitized || isOptedOutPhone(optedOut, sanitized)) {
       rejected++;
       continue;
     }

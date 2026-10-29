@@ -2862,7 +2862,8 @@
       "recipientsRequired": "`recipients`(권장) 또는 `phone_numbers`를 제공하세요 — 비어 있지 않은 배열이어야 합니다",
       "templateNameRequired": "템플릿 이름은 필수입니다",
       "templateMalformed": "로컬 템플릿 데이터가 손상되었습니다 — 브로드캐스트 전에 설정에서 \"Meta에서 동기화\"를 실행해 복구하세요.",
-      "invalidPhoneFormat": "전화번호 형식이 올바르지 않습니다"
+      "invalidPhoneFormat": "전화번호 형식이 올바르지 않습니다",
+      "optedOut": "연락처가 대량 메시지 수신 거부를 요청했습니다 (STOP)"
     },
     "whatsappConfig": {
       "fetchFailed": "설정을 가져오지 못했습니다",
@@ -2927,6 +2928,9 @@
       "submitFailed": "템플릿을 제출하지 못했습니다.",
       "metaApiStatus": "Meta API 오류: {status}",
       "syncFailed": "템플릿을 동기화하지 못했습니다"
+    },
+    "optOut": {
+      "confirmation": "알겠습니다. 이제 이곳으로 홍보 메시지를 보내지 않습니다. 문의하시면 평소처럼 도와드리겠습니다."
     }
   },
   "AuthErrors": {

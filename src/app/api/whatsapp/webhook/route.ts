@@ -19,6 +19,9 @@ import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { dispatchInboundToVertical } from '@/lib/verticals/dispatch'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
+import { isOptOutMessage, markContactOptedOut } from '@/lib/contacts/opt-out'
+import { sendMessageToConversation } from '@/lib/whatsapp/send-message'
+import { getT } from '@/lib/i18n/translate'
 import {
   handleTemplateWebhookChange,
   isTemplateWebhookField,
@@ -29,6 +32,8 @@ import {
 // give it headroom beyond the platform default (Vercel clamps this to the
 // plan's ceiling). Tune as needed.
 export const maxDuration = 60
+
+const tApi = getT('Api')
 
 // Lazy-initialized to avoid build-time crash when env vars are missing
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -571,6 +576,35 @@ async function flagBroadcastReplyIfAny(accountId: string, contactId: string) {
 }
 
 /**
+ * Tags the contact as opted out of bulk messaging and confirms it to
+ * them. Returns false when the tag could not be saved: then nothing is
+ * promised and the message continues through the normal pipeline.
+ */
+async function handleOptOut(args: {
+  accountId: string
+  contactId: string
+  conversationId: string
+  userId: string
+}): Promise<boolean> {
+  try {
+    await markContactOptedOut(supabaseAdmin(), args)
+  } catch (err) {
+    console.error('[opt-out] could not tag the contact:', err)
+    return false
+  }
+  try {
+    await sendMessageToConversation(supabaseAdmin(), args.accountId, {
+      conversationId: args.conversationId,
+      messageType: 'text',
+      contentText: tApi('optOut.confirmation'),
+    })
+  } catch (err) {
+    console.error('[opt-out] confirmation not sent:', err)
+  }
+  return true
+}
+
+/**
  * Resolve a Meta-side message_id into the matching internal UUID, scoped
  * to one conversation. Returns null when we never received the parent
  * (e.g. a swipe-reply to a message older than this CRM install).
@@ -858,6 +892,19 @@ async function processMessage(
   // trigger installed in migration 003).
   await flagBroadcastReplyIfAny(accountId, contactRecord.id)
 
+  // "BAJA" / "STOP": the contact leaves bulk messaging (see
+  // lib/contacts/opt-out). Treated like a consumed message so no flow,
+  // bot, automation or AI answers the opt-out word itself.
+  const optedOut =
+    !interactiveReplyId && isOptOutMessage(message.text?.body ?? '')
+      ? await handleOptOut({
+          accountId,
+          contactId: contactRecord.id,
+          conversationId: conversation.id,
+          userId: configOwnerUserId,
+        })
+      : false
+
   // ============================================================
   // Flow runner dispatch.
   //
@@ -877,7 +924,7 @@ async function processMessage(
   // no active flows take the runner's early-exit "no_match" path
   // basically for free (one indexed SELECT for the active run).
   // ============================================================
-  const flowResult = await dispatchInboundToFlows({
+  const flowResult = optedOut ? { consumed: true } : await dispatchInboundToFlows({
     accountId,
     userId: configOwnerUserId,
     contactId: contactRecord.id,
