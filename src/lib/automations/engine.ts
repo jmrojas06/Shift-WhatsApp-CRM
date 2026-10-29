@@ -25,6 +25,7 @@ import { engineSendText, engineSendTemplate, engineSendInteractive } from './met
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive'
 import { isDeliverableUrl } from '@/lib/webhooks/ssrf'
 import { getT } from '@/lib/i18n/translate'
+import { ASSIGNABLE_ROLES, pickLeastLoadedAgent } from './assign'
 
 /** Step errors land in automation_logs and are shown on the logs page. */
 const tErr = getT('LibErrors.engine')
@@ -768,15 +769,25 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       if (!args.contactId) throw new Error(tErr('needsContact', { step: 'assign_conversation' }))
       let agentId = cfg.agent_id
       if (cfg.mode === 'round_robin') {
-        // Pick any member of the account. The existing implementation
-        // only ever returned the automation's author; preserving that
-        // shape until a real round-robin algorithm replaces it.
-        const { data: profiles } = await db
+        const accountId = args.automation.account_id
+        const { data: members, error: membersErr } = await db
           .from('profiles')
           .select('user_id')
-          .eq('account_id', args.automation.account_id)
-          .limit(1)
-        agentId = profiles?.[0]?.user_id
+          .eq('account_id', accountId)
+          .in('account_role', ASSIGNABLE_ROLES)
+        if (membersErr) throw new Error(membersErr.message)
+        const { data: open, error: openErr } = await db
+          .from('conversations')
+          .select('assigned_agent_id')
+          .eq('account_id', accountId)
+          .in('status', ['open', 'pending'])
+          .not('assigned_agent_id', 'is', null)
+        if (openErr) throw new Error(openErr.message)
+        agentId =
+          pickLeastLoadedAgent(
+            (members ?? []).map((m) => m.user_id as string),
+            (open ?? []).map((c) => c.assigned_agent_id as string | null),
+          ) ?? undefined
       }
       if (!agentId) return 'no agent resolved'
       await db
