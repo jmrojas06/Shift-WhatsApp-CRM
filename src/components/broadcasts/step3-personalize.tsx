@@ -352,6 +352,11 @@ export function Step3Personalize({
                     </label>
                     <Select
                       value={mapping.type}
+                      items={{
+                        static: t('personalize.typeStatic'),
+                        field: t('personalize.typeContact'),
+                        custom_field: t('personalize.typeCustom'),
+                      }}
                       onValueChange={(val) =>
                         updateVariable(key, {
                           type: val as VariableType,

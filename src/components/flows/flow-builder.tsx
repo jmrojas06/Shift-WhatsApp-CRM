@@ -288,6 +288,11 @@ function TriggerPanel({
           </label>
           <Select
             value={state.trigger_type}
+            items={{
+              keyword: t('triggerKeywordTitle'),
+              first_inbound_message: t('triggerFirstInboundTitle'),
+              manual: t('triggerManualTitle'),
+            }}
             onValueChange={(v) =>
               setState((s) => ({
                 ...s,

@@ -120,6 +120,9 @@ export function AiUsageCard() {
           </div>
           <Select
             value={String(days)}
+            items={Object.fromEntries(
+              WINDOWS.map((w) => [String(w), t('window', { days: w })]),
+            )}
             onValueChange={(v) => setDays(Number(v))}
           >
             <SelectTrigger className="w-32 flex-shrink-0">

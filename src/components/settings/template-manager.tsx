@@ -738,6 +738,9 @@ export function TemplateManager() {
                 <Label htmlFor="tpl-category">{t('category')}</Label>
                 <Select
                   value={form.category}
+                  items={Object.fromEntries(
+                    CATEGORIES.map((cat) => [cat, categoryLabel(cat)]),
+                  )}
                   onValueChange={(val) =>
                     setForm({
                       ...form,
@@ -794,6 +797,13 @@ export function TemplateManager() {
               <Label htmlFor="tpl-header">{t('header')}</Label>
               <Select
                 value={form.header_format}
+                items={{
+                  none: t('headerNone'),
+                  text: t('headerText'),
+                  image: t('headerImage'),
+                  video: t('headerVideo'),
+                  document: t('headerDocument'),
+                }}
                 onValueChange={(val) =>
                   // Preserve header_content, header_media_url, and
                   // header_sample across format switches. The submit
@@ -1008,6 +1018,12 @@ export function TemplateManager() {
                       <div className="flex items-center gap-2">
                         <Select
                           value={btn.type}
+                          items={{
+                            QUICK_REPLY: t('btnQuickReply'),
+                            URL: t('btnUrl'),
+                            PHONE_NUMBER: t('btnPhone'),
+                            COPY_CODE: t('btnCopyCode'),
+                          }}
                           onValueChange={(val) => {
                             // Same null guard as the Header Select
                             // (per PR 148): @base-ui Select fires
