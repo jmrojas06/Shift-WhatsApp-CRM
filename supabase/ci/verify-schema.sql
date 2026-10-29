@@ -307,6 +307,21 @@ BEGIN
           v_table, v_cmd;
       END IF;
     END LOOP;
+    -- The EXISTS above finds ONE admin policy; a second, permissive
+    -- policy (or a FOR ALL, which reports as cmd = 'ALL') would still
+    -- let agents write. No write policy on these tables may mention
+    -- 'agent' at all.
+    IF EXISTS (
+      SELECT 1 FROM pg_policies
+      WHERE schemaname = 'public'
+        AND tablename = v_table
+        AND cmd IN ('INSERT', 'UPDATE', 'DELETE', 'ALL')
+        AND coalesce(qual, '') || coalesce(with_check, '') LIKE '%''agent''%'
+    ) THEN
+      RAISE EXCEPTION
+        '% has a write policy that still allows agents — migration 050 did not apply',
+        v_table;
+    END IF;
     -- Reads stay open to every member (viewer included).
     IF NOT EXISTS (
       SELECT 1 FROM pg_policies
@@ -338,16 +353,22 @@ BEGIN
   END LOOP;
 
   -- 050 (D3): owner_user_id / vertical_key are guarded by a BEFORE
-  -- UPDATE trigger on accounts (034's pattern for profiles).
+  -- UPDATE trigger on accounts (034's pattern for profiles). The
+  -- function must stay SECURITY INVOKER — that is what makes
+  -- `current_user` the writer — and the trigger enabled for normal
+  -- writes ('O') or always ('A'); 'D'/'R' would let the guard sleep.
   IF NOT EXISTS (
-    SELECT 1 FROM pg_trigger
-    WHERE tgrelid = 'public.accounts'::regclass
-      AND tgname = 'enforce_account_protected_columns'
-      AND NOT tgisinternal
-      AND tgenabled <> 'D'
+    SELECT 1
+    FROM pg_trigger t
+    JOIN pg_proc p ON p.oid = t.tgfoid
+    WHERE t.tgrelid = 'public.accounts'::regclass
+      AND t.tgname = 'enforce_account_protected_columns'
+      AND NOT t.tgisinternal
+      AND t.tgenabled IN ('O', 'A')
+      AND NOT p.prosecdef
   ) THEN
     RAISE EXCEPTION
-      'enforce_account_protected_columns trigger is missing on accounts — migration 050 did not apply';
+      'enforce_account_protected_columns trigger is missing, disabled, or SECURITY DEFINER — migration 050 did not apply';
   END IF;
 
   -- 051: agenda armable. The new settings columns are read by the bot

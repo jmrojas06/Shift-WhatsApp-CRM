@@ -57,9 +57,14 @@ function effectivePolicies(): Map<string, Policy> {
   return policies
 }
 
+// Las políticas permisivas se OR-ean en Postgres: una FOR ALL
+// (cmd='ALL') que mencione 'agent' vuelve inútil a la política
+// admin-only aunque aquella siga existiendo. Por eso acá se recolectan
+// las 'ALL' junto a las del comando exacto (mismo criterio que
+// supabase/ci/verify-schema.sql).
 function policiesFor(table: string, cmd: string): Policy[] {
   return [...effectivePolicies().values()].filter(
-    (p) => p.table === table && p.cmd === cmd,
+    (p) => p.table === table && (p.cmd === cmd || p.cmd === 'ALL'),
   )
 }
 
@@ -77,29 +82,34 @@ describe('RLS de configuración del vertical (050 / D2)', () => {
     for (const cmd of ['INSERT', 'UPDATE', 'DELETE']) {
       it(`${table} ${cmd}: solo owner/admin`, () => {
         const found = policiesFor(table, cmd)
-        expect(found).toHaveLength(1)
-        expect(found[0].body).toContain("'admin'")
-        expect(found[0].body).not.toContain("'agent'")
+        expect(found.length).toBeGreaterThan(0)
+        for (const policy of found) {
+          expect(policy.body).toContain("'admin'")
+          expect(policy.body).not.toContain("'agent'")
+        }
       })
     }
 
     it(`${table} SELECT: cualquier miembro (viewer incluido)`, () => {
       const found = policiesFor(table, 'SELECT')
-      expect(found).toHaveLength(1)
-      expect(found[0].body).toMatch(/is_account_member\(account_id\)/)
+      expect(
+        found.some((p) => /is_account_member\(account_id\)/.test(p.body)),
+      ).toBe(true)
     })
   }
 
   it('los agentes no pueden crear bloqueos (time off)', () => {
-    const [insert] = policiesFor('booking_time_off', 'INSERT')
-    expect(insert.body).toContain("'admin'")
+    const found = policiesFor('booking_time_off', 'INSERT')
+    expect(found.length).toBeGreaterThan(0)
+    for (const policy of found) expect(policy.body).not.toContain("'agent'")
   })
 
   for (const table of ['booking_appointments', 'booking_sessions']) {
     it(`${table}: la escritura sigue abierta a agent (operación)`, () => {
       for (const cmd of ['INSERT', 'UPDATE']) {
-        const [policy] = policiesFor(table, cmd)
-        expect(policy.body).toContain("'agent'")
+        const found = policiesFor(table, cmd)
+        expect(found.length).toBeGreaterThan(0)
+        expect(found.some((p) => p.body.includes("'agent'"))).toBe(true)
       }
     })
   }
