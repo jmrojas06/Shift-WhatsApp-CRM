@@ -1189,6 +1189,42 @@ describe('escrituras críticas que fallan', () => {
     expect(sessionRow(db)).toBeDefined()
   })
 
+  it('si tampoco se puede deshacer la cita nueva, avisa al equipo y pasa el hilo a un humano', async () => {
+    silence()
+    const seed = baseSeed()
+    seed.booking_appointments = [appointmentRow()]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'cita' })
+    await send(db, rec, { replyId: 'act:reschedule' })
+    await send(db, rec, { replyId: dayId(MONDAY) })
+    await send(db, rec, { replyId: slotId('2026-10-19T16:00:00.000Z') })
+    // Fallan las dos: cancelar la original y deshacer la nueva.
+    db._failNext('update', 'booking_appointments', { message: 'timeout' })
+    db._failNext('update', 'booking_appointments', { message: 'timeout' })
+    const res = await send(db, rec, { replyId: 'act:confirm' })
+
+    expect(res.consumed).toBe(true)
+    // Las dos citas quedan activas: no se puede fingir que no pasó nada.
+    const active = db._tables.booking_appointments.filter(
+      (a) => a.status === 'confirmed' || a.status === 'pending',
+    )
+    expect(active).toHaveLength(2)
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.rescheduleBroken)
+    expect(
+      db._tables.notifications.some(
+        (n) =>
+          n.user_id === OWNER &&
+          n.title === AGENDA_AGENT_TEXTS.rescheduleBrokenNotificationTitle,
+      ),
+    ).toBe(true)
+    // El hilo queda en pausa y la sesión cerrada: el bot no lo toca más.
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(sessionRow(db)).toBeUndefined()
+    expect(db._tables.booking_sessions.map((s) => s.status)).toEqual(['completed'])
+  })
+
   it('si pausar el bot falla en el handoff, el error sube y no se promete un humano', async () => {
     const db = makeFakeDb(baseSeed())
     const rec = makeRecorder()

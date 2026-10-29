@@ -25,6 +25,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import type { VerticalDispatchResult, VerticalSession } from '@/lib/verticals/types'
+import { notifyAlert } from '@/lib/ops/alert'
 
 import type { AgendaAppointmentSummary } from '../texts'
 import { mergeBotTexts, type AgendaAgentTextsMerged } from '../bot-texts'
@@ -1153,21 +1154,40 @@ async function confirmAppointment(
       })
     } catch (err) {
       console.error('[agenda] cancelar la cita anterior falló:', err)
-      await bestEffort('deshacer la cita nueva', () =>
-        cancelAppointment(dialog.db, {
+      let undone = false
+      try {
+        await cancelAppointment(dialog.db, {
           accountId: dialog.accountId,
           id: appointmentId,
           reason: 'error_reprogramacion',
           cancelledAtIso: dialog.nowIso,
-        }),
-      )
-      await releaseSession(dialog.db, {
-        id: sessionId,
-        accountId: dialog.accountId,
-        updatedAtIso: dialog.nowIso,
-      })
-      await dialog.sender.sendText({ text: dialog.texts.confirmError })
-      await conclude(dialog, sessionId, state)
+        })
+        undone = true
+      } catch (undoErr) {
+        // La cita nueva tampoco se pudo deshacer: pueden quedar dos
+        // citas activas. El error no se silencia.
+        console.error('[agenda] no se pudo deshacer la cita nueva:', undoErr)
+        await escalateBrokenReschedule(dialog, {
+          newAppointmentId: appointmentId,
+          oldAppointmentId: oldAppt.id,
+        })
+      }
+
+      if (undone) {
+        // Deshecho: el cliente conserva solo su cita original y su
+        // sesión sigue activa para reintentar.
+        await releaseSession(dialog.db, {
+          id: sessionId,
+          accountId: dialog.accountId,
+          updatedAtIso: dialog.nowIso,
+        })
+        await dialog.sender.sendText({
+          text: dialog.texts.confirmError,
+        })
+        await conclude(dialog, sessionId, state)
+      }
+      // Sin deshacer: la sesión se queda 'completed' y el hilo pasa a
+      // un humano; el bot no vuelve a tocar la agenda de este cliente.
       return
     }
     await bestEffort('etiqueta cita-reprogramada', () =>
@@ -2080,6 +2100,55 @@ async function handoffChangeRequest(
 
   await closeOwnSession()
   await dialog.sender.sendText({ text: dialog.texts.changesByHuman })
+}
+
+/**
+ * La reprogramación quedó a medias: la cita nueva no se pudo deshacer
+ * y pueden quedar dos activas. Se deja rastro visible (alerta de ops,
+ * aviso en la app), se pausa el bot en ese hilo y se le dice al
+ * cliente que un humano lo arregla — sin pedirle que reintente, para
+ * no multiplicar el problema.
+ */
+async function escalateBrokenReschedule(
+  dialog: Dialog,
+  ids: { newAppointmentId: string; oldAppointmentId: string },
+): Promise<void> {
+  await notifyAlert(
+    `Agenda: la reprogramación de la cita ${ids.oldAppointmentId} quedó a medias (cuenta ${dialog.accountId}). ` +
+      `La cita nueva ${ids.newAppointmentId} no se pudo deshacer y puede haber dos citas activas; hay que revisarlo en la agenda.`,
+  )
+
+  const agentId = await loadHandoffAgentId(dialog.db, dialog.accountId)
+  await bestEffort('pausar el bot tras una reprogramación rota', () =>
+    markConversationHandoff(dialog.db, {
+      accountId: dialog.accountId,
+      conversationId: dialog.conversationId,
+      note: dialog.texts.rescheduleBrokenNote,
+      agentId,
+    }),
+  )
+
+  const owner = dialog.account?.ownerUserId ?? null
+  if (owner && owner !== agentId) {
+    const contact = await loadContact(
+      dialog.db,
+      dialog.accountId,
+      dialog.contactId,
+    )
+    const who = contact?.name?.trim() || contact?.phone || 'Un cliente'
+    await bestEffort('aviso de reprogramación rota al equipo', () =>
+      insertNotification(dialog.db, {
+        accountId: dialog.accountId,
+        userId: owner,
+        conversationId: dialog.conversationId,
+        contactId: dialog.contactId,
+        title: dialog.texts.rescheduleBrokenNotificationTitle,
+        body: dialog.texts.rescheduleBrokenNotificationBody({ who }),
+      }),
+    )
+  }
+
+  await dialog.sender.sendText({ text: dialog.texts.rescheduleBroken })
 }
 
 async function bestEffort(label: string, fn: () => Promise<unknown>) {
