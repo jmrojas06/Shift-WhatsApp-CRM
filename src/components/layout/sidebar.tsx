@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useSyncExternalStore } from "react";
-import { LogOut, Settings, User, X } from "lucide-react";
+import { Eye, LogOut, Settings, User, X } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 import { cn } from "@/lib/utils";
@@ -24,6 +24,7 @@ import {
 import { ModeToggle } from "@/components/layout/mode-toggle";
 
 import { getNavGroups, isNavActive, SETTINGS_ITEM, type NavItem } from "./nav-config";
+import { useViewMode } from "@/hooks/use-view-mode";
 import { useShellChrome } from "./shell-chrome";
 import { WorkspaceBadge } from "./workspace-badge";
 
@@ -59,6 +60,8 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
   const t = useTranslations("Sidebar");
   const pathname = usePathname();
   const { profile, account, accountRole, signOut } = useAuth();
+  const { simple, hasModules, isShiftStaff, previewAsBusiness, setPreviewAsBusiness } =
+    useViewMode();
   const { unreadConversations } = useShellChrome();
   const workspaceName = account?.name || profile?.full_name || "";
   const closeButtonRef = useRef<HTMLButtonElement>(null)
@@ -225,7 +228,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
         </div>
 
         <nav className="flex-1 overflow-y-auto overscroll-contain px-3 pb-4">
-          {getNavGroups(account).map((group) => (
+          {getNavGroups(account, { simple, hasModules }).map((group) => (
             <div key={group.labelKey} className="mt-3 first:mt-1">
               <p className="px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground">
                 {t(group.labelKey)}
@@ -300,6 +303,15 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                   <Settings className="size-4" />
                   {t("menuSettings")}
                 </DropdownMenuItem>
+                {isShiftStaff ? (
+                  <DropdownMenuItem
+                    onClick={() => setPreviewAsBusiness(!previewAsBusiness)}
+                    className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
+                  >
+                    <Eye className="size-4" />
+                    {previewAsBusiness ? t("menuFullView") : t("menuPreviewAsBusiness")}
+                  </DropdownMenuItem>
+                ) : null}
                 <DropdownMenuSeparator className="bg-border" />
                 <DropdownMenuItem
                   onClick={signOut}

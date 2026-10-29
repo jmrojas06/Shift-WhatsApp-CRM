@@ -6,6 +6,8 @@ import { useTranslations } from 'next-intl';
 
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
+import { useViewMode } from '@/hooks/use-view-mode';
+import { isSettingsSectionHidden } from '@/lib/view-mode';
 import { useTheme } from '@/hooks/use-theme';
 import { CURRENCIES } from '@/lib/currency';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -38,6 +40,7 @@ export function SettingsOverview({
   const { user, profile, accountId, accountRole, defaultCurrency, canManageMembers } =
     useAuth();
   const { modePreference, theme } = useTheme();
+  const { simple } = useViewMode();
   const t = useTranslations('Settings.overview');
   const tAppearance = useTranslations('Settings.appearance');
   const tRoles = useTranslations('Settings.roles');
@@ -253,7 +256,9 @@ export function SettingsOverview({
 
       {/* Status tiles */}
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {tiles.map(({ section, loading, subtitle }) => {
+        {tiles
+          .filter(({ section }) => !isSettingsSectionHidden(section, simple))
+          .map(({ section, loading, subtitle }) => {
           const meta = SECTION_META[section];
           const Icon = meta.icon;
           return (
