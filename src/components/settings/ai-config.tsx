@@ -244,8 +244,7 @@ export function AiConfig() {
   if (loading || profileLoading) {
     return (
       <div className="flex items-center justify-center py-16 text-muted-foreground">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {t('loadFailed')} {/* Re-using label or a global one, wait, loading is better. Let's use useTranslations from overview or just hardcode Loading... actually I should add loading to aiConfig */}
-        {/* Wait, I didn't add loading to aiConfig. I'll just use loading. */}
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {t('loading')}
       </div>
     );
   }
@@ -281,6 +280,10 @@ export function AiConfig() {
                 <Label>{t('provider')}</Label>
                 <Select
                   value={provider}
+                  items={{
+                    ...PROVIDER_LABEL,
+                    openai_compatible: t('providerOpenAiCompatible'),
+                  }}
                   onValueChange={(v) => handleProviderChange(v as AiProvider)}
                   disabled={disabled}
                 >
@@ -492,6 +495,12 @@ export function AiConfig() {
               </p>
               <Select
                 value={handoffAgentId || HANDOFF_QUEUE}
+                items={{
+                  [HANDOFF_QUEUE]: t('handoffQueue'),
+                  ...Object.fromEntries(
+                    members.map((m) => [m.user_id, memberLabel(m)]),
+                  ),
+                }}
                 onValueChange={(v) =>
                   setHandoffAgentId(!v || v === HANDOFF_QUEUE ? '' : v)
                 }

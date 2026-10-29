@@ -2164,7 +2164,8 @@
       "providerOpenAiCompatible": "OpenAI 호환 API",
       "baseUrl": "기본 URL",
       "baseUrlHint": "OpenAI 호환 API의 기본 URL입니다. 예: https://api.groq.com/openai/v1. /chat/completions 경로는 직접 입력하지 않는 경우 자동으로 추가됩니다.",
-      "missingBaseUrl": "OpenAI 호환 API의 기본 URL을 입력하세요."
+      "missingBaseUrl": "OpenAI 호환 API의 기본 URL을 입력하세요.",
+      "loading": "AI 설정을 불러오는 중…"
     },
     "aiKnowledge": {
       "loadFailed": "지식베이스를 불러오지 못했습니다",

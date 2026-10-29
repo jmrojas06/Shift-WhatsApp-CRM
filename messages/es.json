@@ -2164,7 +2164,8 @@
       "providerOpenAiCompatible": "API compatible con OpenAI",
       "baseUrl": "URL base",
       "baseUrlHint": "URL base de la API compatible con OpenAI, por ejemplo https://api.groq.com/openai/v1. /chat/completions se añade automáticamente, salvo que incluyas esa ruta.",
-      "missingBaseUrl": "Introduce la URL base de la API compatible con OpenAI."
+      "missingBaseUrl": "Introduce la URL base de la API compatible con OpenAI.",
+      "loading": "Cargando la configuración de IA…"
     },
     "aiKnowledge": {
       "loadFailed": "No se pudo cargar la base de conocimiento. Recarga la página para intentarlo de nuevo.",
