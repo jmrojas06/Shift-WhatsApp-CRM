@@ -440,7 +440,7 @@ describe('replaceWorkingHours', () => {
     expect(findRow(db, 'booking_working_hours', 'wh-1')).toBeDefined()
   })
 
-  it('si borrar los bloques viejos falla, lanza (no reporta guardado)', async () => {
+  it('si borrar los bloques viejos falla, deshace el insert y lanza (no reporta guardado)', async () => {
     const db = makeFakeDb(baseSeed())
     db._failNext('delete', 'booking_working_hours', { message: 'delete failed' })
 
@@ -449,6 +449,13 @@ describe('replaceWorkingHours', () => {
         { weekday: 2, startTime: '10:00', endTime: '16:00' },
       ]),
     ).rejects.toThrow('No se pudo quitar los bloques viejos')
+
+    // El bloque viejo sigue y el nuevo se deshizo: sin duplicados.
+    const rows = rowsOf(db, 'booking_working_hours').filter(
+      (r) => r.staff_id === 'st-1',
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0].id).toBe('wh-1')
   })
 })
 
