@@ -101,6 +101,8 @@ export function TemplatePicker({
 
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(true);
+  // A failed load must not read as "no approved templates".
+  const [loadFailed, setLoadFailed] = useState(false);
   const [selected, setSelected] = useState<MessageTemplate | null>(null);
   const [params, setParams] = useState<string[]>([]);
   const [headerText, setHeaderText] = useState<string>("");
@@ -112,6 +114,7 @@ export function TemplatePicker({
     let cancelled = false;
     (async () => {
       setLoading(true);
+      setLoadFailed(false);
       const supabase = createClient();
       const {
         data: { user },
@@ -139,6 +142,7 @@ export function TemplatePicker({
       if (error) {
         console.error("Failed to fetch templates:", error);
         setTemplates([]);
+        setLoadFailed(true);
       } else {
         setTemplates((data as MessageTemplate[]) ?? []);
       }
@@ -221,11 +225,15 @@ export function TemplatePicker({
         </DialogHeader>
 
         {!selected ? (
-          <div className="max-h-[60vh] space-y-2 overflow-y-auto overscroll-contain">
+          <div className="max-h-[60dvh] space-y-2 overflow-y-auto overscroll-contain">
             {loading ? (
               <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                <Loader2 aria-hidden="true" className="h-5 w-5 animate-spin text-primary" />
               </div>
+            ) : loadFailed ? (
+              <p role="alert" className="py-8 text-center text-sm text-destructive">
+                {t("loadFailed")}
+              </p>
             ) : templates.length === 0 ? (
               <div className="rounded-md border border-border bg-background/50 p-6 text-center">
                 <p className="text-sm text-popover-foreground">{t("noApprovedTemplates")}</p>

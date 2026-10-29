@@ -4,6 +4,7 @@ import {
   INBOX_FILTERS,
   countUnreadConversations,
   matchesInboxFilter,
+  matchesSearch,
 } from "./inbox-filters";
 
 const open = { status: "open" as const, unread_count: 0 };
@@ -45,5 +46,52 @@ describe("countUnreadConversations", () => {
 
   it("is 0 for an empty inbox", () => {
     expect(countUnreadConversations([])).toBe(0);
+  });
+});
+
+describe("matchesSearch", () => {
+  const conv = {
+    last_message_text: "¿Cuánto vale el corte?",
+    contact: {
+      name: "José Peña",
+      phone: "+57 300 123 4567",
+      wa_username: "jose_barber",
+    },
+  };
+
+  it("an empty query matches everything", () => {
+    expect(matchesSearch(conv, "")).toBe(true);
+    expect(matchesSearch(conv, "   ")).toBe(true);
+  });
+
+  it("ignores accents and case in names and messages", () => {
+    expect(matchesSearch(conv, "jose")).toBe(true);
+    expect(matchesSearch(conv, "PEÑA")).toBe(true);
+    expect(matchesSearch(conv, "pena")).toBe(true);
+    expect(matchesSearch(conv, "cuanto vale")).toBe(true);
+  });
+
+  it("finds a phone by its digits however it is written", () => {
+    expect(matchesSearch(conv, "+57 300")).toBe(true);
+    expect(matchesSearch(conv, "3001234567")).toBe(true);
+    expect(matchesSearch(conv, "300-123")).toBe(true);
+  });
+
+  it("does not use the digits-only match for runs shorter than 3", () => {
+    // "12" is inside the digits "5712" but not inside "+57 1 2" as typed.
+    expect(matchesSearch({ contact: { phone: "+57 1 2" } }, "12")).toBe(false);
+    expect(matchesSearch({ contact: { phone: "+57 1 2" } }, "712")).toBe(true);
+  });
+
+  it("finds a WhatsApp username", () => {
+    expect(matchesSearch(conv, "jose_bar")).toBe(true);
+  });
+
+  it("misses when nothing matches and tolerates empty contacts", () => {
+    expect(matchesSearch(conv, "zapatos")).toBe(false);
+    expect(matchesSearch({}, "x")).toBe(false);
+    expect(matchesSearch({ contact: null, last_message_text: null }, "x")).toBe(
+      false,
+    );
   });
 });

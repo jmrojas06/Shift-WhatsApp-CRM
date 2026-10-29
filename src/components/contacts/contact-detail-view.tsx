@@ -206,7 +206,13 @@ export function ContactDetailView({
 
   async function copyPhone() {
     if (!contact) return;
-    await navigator.clipboard.writeText(contactHandle(contact));
+    try {
+      await navigator.clipboard.writeText(contactHandle(contact));
+    } catch {
+      // Clipboard blocked (insecure context or denied permission): don't
+      // claim it was copied.
+      return;
+    }
     setCopiedPhone(true);
     setTimeout(() => setCopiedPhone(false), 2000);
   }
@@ -409,7 +415,9 @@ export function ContactDetailView({
       >
         {loading || !contact ? (
           <div className="flex items-center justify-center h-full">
-            <Loader2 className="size-6 animate-spin text-primary" />
+            {/* The dialog needs a name even while the contact loads. */}
+            <SheetTitle className="sr-only">{t('contactDetailsDesc')}</SheetTitle>
+            <Loader2 aria-hidden className="size-6 animate-spin text-primary" />
           </div>
         ) : (
           <div className="flex flex-col h-full">
@@ -432,26 +440,31 @@ export function ContactDetailView({
                     <button
                       type="button"
                       onClick={copyPhone}
-                      className="flex items-center gap-1 rounded-md outline-none hover:text-primary transition-colors cursor-pointer focus-visible:ring-3 focus-visible:ring-ring/50"
+                      aria-label={
+                        copiedPhone
+                          ? t('phoneCopied')
+                          : t('copyPhone', { phone: contactHandle(contact) })
+                      }
+                      className="flex min-h-8 items-center gap-1 rounded-md outline-none hover:text-primary transition-colors cursor-pointer focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-11"
                     >
-                      <Phone className="size-3" />
+                      <Phone aria-hidden className="size-3" />
                       {contactHandle(contact)}
                       {copiedPhone ? (
-                        <Check className="size-3 text-primary" />
+                        <Check aria-hidden className="size-3 text-primary" />
                       ) : (
-                        <Copy className="size-3" />
+                        <Copy aria-hidden className="size-3" />
                       )}
                     </button>
                     {contact.email && (
-                      <span className="flex items-center gap-1">
-                        <Mail className="size-3" />
-                        {contact.email}
+                      <span className="flex min-w-0 max-w-full items-center gap-1">
+                        <Mail aria-hidden className="size-3 shrink-0" />
+                        <span className="break-all">{contact.email}</span>
                       </span>
                     )}
                     {contact.company && (
-                      <span className="flex items-center gap-1">
-                        <Building2 className="size-3" />
-                        {contact.company}
+                      <span className="flex min-w-0 max-w-full items-center gap-1">
+                        <Building2 aria-hidden className="size-3 shrink-0" />
+                        <span className="break-words">{contact.company}</span>
                       </span>
                     )}
                   </div>
@@ -459,7 +472,6 @@ export function ContactDetailView({
               </div>
               <div className="mt-3">
                 <Button
-                  size="sm"
                   onClick={() => setTemplatePickerOpen(true)}
                   disabled={sendingTemplate}
                   className="bg-primary text-primary-foreground hover:bg-primary/90"
@@ -476,7 +488,9 @@ export function ContactDetailView({
 
             {/* Tabs */}
             <Tabs defaultValue="details" className="flex-1 flex flex-col min-h-0">
-              <TabsList className="bg-muted/50 border-b border-border mx-4 mt-3">
+              {/* Five tabs don't fit in 375 px: the strip scrolls sideways
+                  inside its own box instead of pushing the sheet wider. */}
+              <TabsList className="mx-4 mt-3 max-w-[calc(100%-2rem)] shrink-0 justify-start overflow-x-auto overscroll-x-contain border-b border-border bg-muted/50 [scrollbar-width:none] pointer-coarse:h-11 [&::-webkit-scrollbar]:hidden">
                 <TabsTrigger
                   value="details"
                   className="data-active:bg-muted data-active:text-primary text-muted-foreground"
@@ -534,8 +548,13 @@ export function ContactDetailView({
                       required
                       value={editPhone}
                       onChange={(e) => setEditPhone(e.target.value)}
-                      className="bg-muted border-border text-foreground"
+                      placeholder={t('phonePlaceholder')}
+                      aria-describedby={`${fieldId}-phone-hint`}
+                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
                     />
+                    <p id={`${fieldId}-phone-hint`} className="text-xs text-muted-foreground">
+                      {t('phoneHint')}
+                    </p>
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor={`${fieldId}-email`} className="text-muted-foreground text-xs">{t('email')}</Label>
@@ -562,7 +581,6 @@ export function ContactDetailView({
                     onClick={saveDetails}
                     disabled={savingDetails}
                     className="bg-primary hover:bg-primary/90 text-primary-foreground w-full"
-                    size="sm"
                   >
                     {savingDetails ? (
                       <Loader2 className="size-3.5 animate-spin" />
@@ -643,7 +661,6 @@ export function ContactDetailView({
                     onClick={addNote}
                     disabled={!newNote.trim() || savingNote}
                     className="bg-primary hover:bg-primary/90 text-primary-foreground"
-                    size="sm"
                   >
                     {savingNote ? (
                       <Loader2 className="size-3.5 animate-spin" />
@@ -735,7 +752,6 @@ export function ContactDetailView({
                       onClick={saveCustomFields}
                       disabled={savingCustom}
                       className="bg-primary hover:bg-primary/90 text-primary-foreground w-full"
-                      size="sm"
                     >
                       {savingCustom ? (
                         <Loader2 className="size-3.5 animate-spin" />
@@ -768,14 +784,15 @@ export function ContactDetailView({
                             {deal.title}
                           </p>
                           {deal.stage && (
-                            <span
-                              className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
-                              style={{
-                                backgroundColor: `${deal.stage.color}20`,
-                                color: deal.stage.color,
-                              }}
-                            >
-                              {deal.stage.name}
+                            // The stage color is user data: it only tints the
+                            // dot; the label stays on a text token for contrast.
+                            <span className="inline-flex max-w-[50%] shrink-0 items-center gap-1.5 rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground">
+                              <span
+                                aria-hidden
+                                className="size-2 shrink-0 rounded-full"
+                                style={{ backgroundColor: deal.stage.color }}
+                              />
+                              <span className="truncate">{deal.stage.name}</span>
                             </span>
                           )}
                         </div>

@@ -15,11 +15,11 @@ import {
   ChevronDown,
   ChevronRight,
 } from "lucide-react";
-import { toast } from "sonner";
 
 import { useFormatter, useLocale, useTranslations } from "next-intl";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { formatRunDuration } from "@/components/flows/run-duration";
 import { cn } from "@/lib/utils";
 
@@ -101,11 +101,15 @@ export default function FlowRunsPage() {
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [notFound, setNotFound] = useState(false);
+  // A real load failure (network/500) is not "flow not found".
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (!params.id) return;
     let cancelled = false;
     (async () => {
+      setLoadFailed(false);
       try {
         const res = await fetch(`/api/flows/${params.id}/runs`);
         if (res.status === 404) {
@@ -126,7 +130,7 @@ export default function FlowRunsPage() {
       } catch (err) {
         if (!cancelled) {
           console.error(err);
-          toast.error(t("loadError"));
+          setLoadFailed(true);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -135,7 +139,7 @@ export default function FlowRunsPage() {
     return () => {
       cancelled = true;
     };
-  }, [params.id]);
+  }, [params.id, reloadKey]);
 
   function toggle(runId: string) {
     setExpanded((prev) => {
@@ -148,15 +152,33 @@ export default function FlowRunsPage() {
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center" role="status">
+      <div className="flex h-64 items-center justify-center" role="status">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden />
         <span className="sr-only">{t("loading")}</span>
       </div>
     );
   }
+  if (loadFailed) {
+    return (
+      <div className="flex h-64 flex-col items-center justify-center gap-3 text-center">
+        <p role="alert" className="text-sm text-destructive">
+          {t("loadError")}
+        </p>
+        <Button
+          variant="outline"
+          onClick={() => {
+            setLoading(true);
+            setReloadKey((k) => k + 1);
+          }}
+        >
+          {t("retry")}
+        </Button>
+      </div>
+    );
+  }
   if (notFound || !flow) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3">
+      <div className="flex h-64 flex-col items-center justify-center gap-3">
         <p className="text-sm text-muted-foreground">{tEdit("notFound")}</p>
         <Link
           href="/flows"
@@ -169,7 +191,7 @@ export default function FlowRunsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl p-6">
+    <div className="mx-auto max-w-4xl">
       <Link
         href={`/flows/${flow.id}`}
         className="mb-2 inline-flex items-center gap-1 rounded text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-11"
@@ -263,7 +285,7 @@ function RunCard({
               )}
             </Badge>
             {run.status === "active" && run.current_node_key && (
-              <code className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              <code className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
                 {t("atNode", { node: run.current_node_key })}
               </code>
             )}
@@ -278,7 +300,7 @@ function RunCard({
               })}
             </span>
             {run.reprompt_count > 0 && (
-              <span>· {t("reprompts", { count: run.reprompt_count })}</span>
+              <span>· {t("repromptsCount", { count: run.reprompt_count })}</span>
             )}
             {duration && <span className="tabular-nums">· {t("ranFor", { duration })}</span>}
           </div>
@@ -302,7 +324,7 @@ function RunCard({
                 {t("noEvents")}
               </p>
             ) : (
-              events.map((ev, ix) => <EventLine key={ix} ev={ev} />)
+              events.map((ev, ix) => <EventLine key={ix} ev={ev} t={t} />)
             )}
           </div>
         </div>
@@ -323,29 +345,40 @@ const EVENT_COLOR: Record<string, string> = {
   completed: "text-success",
 };
 
-function EventLine({ ev }: { ev: EventRow }) {
+function EventLine({
+  ev,
+  t,
+}: {
+  ev: EventRow;
+  t: ReturnType<typeof useTranslations>;
+}) {
   const format = useFormatter();
   const cls = EVENT_COLOR[ev.event_type] ?? "text-muted-foreground";
+  const summary = Object.keys(ev.payload).length > 0 ? summarizePayload(ev.payload) : "";
+  // Wraps on phones (two fixed 8rem columns alone overflowed 375px); keeps
+  // the aligned columns from `sm` up.
   return (
-    <div className="flex items-start gap-2 rounded-md px-2 py-1 text-xs">
-      <span className="w-32 shrink-0 text-[10px] text-muted-foreground tabular-nums">
+    <div className="flex flex-wrap items-start gap-x-2 gap-y-0.5 rounded-md px-2 py-1 text-xs">
+      <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums sm:w-32">
         {format.dateTime(new Date(ev.created_at), {
           hour: "2-digit",
           minute: "2-digit",
           second: "2-digit",
         })}
       </span>
-      <span className={cn("w-32 shrink-0 font-mono text-[10px]", cls)}>
-        {ev.event_type}
+      <span className={cn("shrink-0 text-[11px] font-medium sm:w-32", cls)}>
+        {Object.hasOwn(EVENT_COLOR, ev.event_type)
+          ? t(`eventTypes.${ev.event_type}`)
+          : ev.event_type}
       </span>
       {ev.node_key && (
-        <code className="shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
+        <code className="max-w-full shrink-0 rounded bg-muted px-1 py-0.5 text-[11px] break-all text-muted-foreground">
           {ev.node_key}
         </code>
       )}
-      {Object.keys(ev.payload).length > 0 && (
-        <span className="min-w-0 truncate text-[10px] text-muted-foreground">
-          {summarizePayload(ev.payload)}
+      {summary && (
+        <span className="min-w-0 basis-full text-[11px] break-all text-muted-foreground sm:basis-auto sm:flex-1">
+          {summary}
         </span>
       )}
     </div>

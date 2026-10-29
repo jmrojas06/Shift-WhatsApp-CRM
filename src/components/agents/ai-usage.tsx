@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import { BarChart3, Bot, PencilLine } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/use-auth';
 import { canEditSettings } from '@/lib/auth/roles';
 import {
@@ -23,7 +24,7 @@ import {
 import { Skeleton } from '@/components/dashboard/skeleton';
 import { BarChart } from '@/components/tremor/bar-chart';
 import { formatCompactNumber } from '@/lib/currency';
-import { format, parseISO } from 'date-fns';
+import { parseISO } from 'date-fns';
 
 interface UsageResponse {
   window_days: number;
@@ -56,16 +57,20 @@ const WINDOWS = [7, 30, 90] as const;
  */
 export function AiUsageCard() {
   const t = useTranslations('Agents.usage');
+  const locale = useLocale();
   const { accountId, accountRole, profileLoading } = useAuth();
   const canView = accountRole ? canEditSettings(accountRole) : false;
 
   const [days, setDays] = useState<number>(30);
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<UsageResponse | null>(null);
+  // A failed load must not look like an endless skeleton.
+  const [failed, setFailed] = useState(false);
   const loadedRef = useRef<string | null>(null);
 
   const fetchUsage = useCallback(async (windowDays: number) => {
     setLoading(true);
+    setFailed(false);
     try {
       const res = await fetch(`/api/ai/usage?days=${windowDays}`, {
         cache: 'no-store',
@@ -74,12 +79,14 @@ export function AiUsageCard() {
       if (!res.ok) {
         toast.error(json?.error ?? t('loadFailed'));
         setData(null);
+        setFailed(true);
         return;
       }
       setData(json as UsageResponse);
     } catch {
       toast.error(t('loadFailed'));
       setData(null);
+      setFailed(true);
     } finally {
       setLoading(false);
     }
@@ -101,7 +108,11 @@ export function AiUsageCard() {
   const tokensLabel = t('tokens');
   const chartData =
     data?.daily.map((d) => ({
-      day: format(parseISO(d.date), 'MMM d'),
+      // Localised ("22 oct" / "Oct 22"), not date-fns' fixed English format.
+      day: parseISO(d.date).toLocaleDateString(locale, {
+        month: 'short',
+        day: 'numeric',
+      }),
       [tokensLabel]: d.tokens,
     })) ?? [];
   const hasSpend = (data?.totals.total_tokens ?? 0) > 0;
@@ -112,7 +123,7 @@ export function AiUsageCard() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <CardTitle className="flex items-center gap-2 text-base">
-              <BarChart3 className="h-4 w-4 text-primary" /> {t('title')}
+              <BarChart3 className="h-4 w-4 text-primary" aria-hidden /> {t('title')}
             </CardTitle>
             <CardDescription>
               {t('description')}
@@ -139,11 +150,23 @@ export function AiUsageCard() {
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
-        {loading || !data ? (
-          <Skeleton className="h-[220px] w-full" />
+        {failed && !loading ? (
+          <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
+            <p role="alert" className="text-sm text-destructive">
+              {t('loadFailed')}
+            </p>
+            <Button variant="outline" onClick={() => void fetchUsage(days)}>
+              {t('retry')}
+            </Button>
+          </div>
+        ) : loading || !data ? (
+          <div role="status" aria-busy="true">
+            <span className="sr-only">{t('loading')}</span>
+            <Skeleton className="h-[220px] w-full" />
+          </div>
         ) : !hasSpend ? (
           <div className="flex flex-col items-center justify-center gap-2 py-10 text-center text-sm text-muted-foreground">
-            <BarChart3 className="h-8 w-8 opacity-40" />
+            <BarChart3 className="h-8 w-8 opacity-40" aria-hidden />
             <p>{t('empty', { days: data.window_days })}</p>
             <p className="text-xs">
               {t('emptyHint')}
@@ -174,7 +197,8 @@ export function AiUsageCard() {
                 data={chartData}
                 index="day"
                 categories={[tokensLabel]}
-                colors={['violet']}
+                // `series1` = the validated accent aqua of the chart palette.
+                colors={['series1']}
                 valueFormatter={(v) => formatCompactNumber(v)}
                 showLegend={false}
                 yAxisWidth={48}
@@ -235,7 +259,7 @@ function Stat({
   return (
     <div className="rounded-md border border-border p-3">
       <p className="flex items-center gap-1 text-xs text-muted-foreground">
-        {Icon && <Icon className="h-3 w-3" />}
+        {Icon && <Icon className="h-3 w-3" aria-hidden />}
         {label}
       </p>
       <p className="mt-1 text-lg font-semibold tabular-nums text-foreground">

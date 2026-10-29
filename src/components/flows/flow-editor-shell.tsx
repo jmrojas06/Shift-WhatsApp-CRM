@@ -140,7 +140,7 @@ export function FlowEditorShell({ initialFlow, initialNodes }: Props) {
         )}
 
         {/* ---- stage: the active view, owning its own overflow ---- */}
-        <div className="relative mx-6 min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-card-2">
+        <div className="relative mx-0 min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-card-2 sm:mx-6">
           {effectiveView === "canvas" ? (
             <FlowCanvas />
           ) : (
@@ -151,7 +151,7 @@ export function FlowEditorShell({ initialFlow, initialNodes }: Props) {
         </div>
 
         {/* ---- validation / activate-readiness bar ---- */}
-        <div className="px-6 pb-5 pt-3">
+        <div className="px-0 pb-3 pt-3 sm:px-6 sm:pb-5">
           <ValidationPanel />
         </div>
       </div>
@@ -198,7 +198,7 @@ function SegButton({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12.5px] font-medium transition-colors",
+        "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12.5px] font-medium outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
         active
           ? "bg-card text-foreground shadow-sm"
           : "text-muted-foreground hover:text-foreground",

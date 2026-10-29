@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/dialog"
 import { AUTOMATION_TEMPLATES, type TemplateSlug } from "@/lib/automations/templates"
 import { triggerMeta, formatRelative, isKnownTrigger } from "@/lib/automations/trigger-meta"
+import { Skeleton } from "@/components/dashboard/skeleton"
 import { cn } from "@/lib/utils"
 
 const TEMPLATE_ORDER: TemplateSlug[] = [
@@ -67,6 +68,7 @@ export default function AutomationsPage() {
   const [error, setError] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<Automation | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null)
 
   async function load() {
     try {
@@ -77,8 +79,9 @@ export default function AutomationsPage() {
         .order("created_at", { ascending: false })
       if (fetchErr) throw fetchErr
       setAutomations((data ?? []) as Automation[])
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("loadFailed"))
+    } catch {
+      // Friendly copy instead of the raw database message.
+      setError(t("loadFailed"))
     }
   }
 
@@ -91,16 +94,25 @@ export default function AutomationsPage() {
     setAutomations((prev) =>
       prev?.map((x) => (x.id === a.id ? { ...x, is_active: next } : x)) ?? prev,
     )
-    const res = await fetch(`/api/automations/${a.id}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ is_active: next }),
-    })
-    if (!res.ok) {
-      // Roll back on error.
+    const rollback = () =>
       setAutomations((prev) =>
         prev?.map((x) => (x.id === a.id ? { ...x, is_active: !next } : x)) ?? prev,
       )
+    let res: Response
+    try {
+      res = await fetch(`/api/automations/${a.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ is_active: next }),
+      })
+    } catch {
+      rollback()
+      toast.error(t("toasts.updateError"))
+      return
+    }
+    if (!res.ok) {
+      // Roll back on error.
+      rollback()
       const body = await res.json().catch(() => ({}))
       toast.error(body?.error ?? t("toasts.updateError"))
       return
@@ -109,7 +121,19 @@ export default function AutomationsPage() {
   }
 
   async function duplicate(a: Automation) {
-    const res = await fetch(`/api/automations/${a.id}/duplicate`, { method: "POST" })
+    // Ignore a second tap while the first copy is still being created
+    // (a double tap on the menu item would otherwise make two copies).
+    if (duplicatingId) return
+    setDuplicatingId(a.id)
+    let res: Response
+    try {
+      res = await fetch(`/api/automations/${a.id}/duplicate`, { method: "POST" })
+    } catch {
+      setDuplicatingId(null)
+      toast.error(t("toasts.duplicateError"))
+      return
+    }
+    setDuplicatingId(null)
     if (!res.ok) {
       const body = await res.json().catch(() => ({}))
       toast.error(body?.error ?? t("toasts.duplicateError"))
@@ -122,7 +146,15 @@ export default function AutomationsPage() {
   async function confirmDelete() {
     if (!pendingDelete) return
     setDeleting(true)
-    const res = await fetch(`/api/automations/${pendingDelete.id}`, { method: "DELETE" })
+    let res: Response
+    try {
+      res = await fetch(`/api/automations/${pendingDelete.id}`, { method: "DELETE" })
+    } catch {
+      // Network drop: don't leave the dialog stuck in its busy state.
+      setDeleting(false)
+      toast.error(t("toasts.deleteError"))
+      return
+    }
     setDeleting(false)
     if (!res.ok) {
       const body = await res.json().catch(() => ({}))
@@ -141,7 +173,7 @@ export default function AutomationsPage() {
   if (error) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2">
-        <p className="text-sm text-destructive">{error}</p>
+        <p role="alert" className="text-sm text-destructive">{error}</p>
         <Button variant="outline" onClick={() => window.location.reload()}>
           {t("retry")}
         </Button>
@@ -150,9 +182,29 @@ export default function AutomationsPage() {
   }
 
   if (automations === null) {
+    // Skeleton rows shaped like the final list instead of a bare spinner.
     return (
-      <div className="flex h-64 items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+      <div className="space-y-6" role="status" aria-busy="true">
+        <span className="sr-only">{t("loading")}</span>
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-56" />
+          <Skeleton className="h-4 w-full max-w-md" />
+        </div>
+        <div className="space-y-3" aria-hidden>
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="flex items-center gap-4 rounded-xl border border-border bg-card p-4"
+            >
+              <Skeleton className="hidden size-10 shrink-0 rounded-lg sm:block" />
+              <div className="min-w-0 flex-1 space-y-2">
+                <Skeleton className="h-4 w-1/2" />
+                <Skeleton className="h-3 w-3/4" />
+              </div>
+              <Skeleton className="h-6 w-11 shrink-0 rounded-full" />
+            </div>
+          ))}
+        </div>
       </div>
     )
   }
@@ -339,8 +391,12 @@ function AutomationCard({
             <span className="tabular-nums">
               {t("runs", { count: automation.execution_count })}
             </span>
-            <span aria-hidden>·</span>
-            <span>{t("lastRun", { time: formatRelative(automation.last_executed_at, tRelative) })}</span>
+            {automation.last_executed_at && (
+              <>
+                <span aria-hidden>·</span>
+                <span>{t("lastRun", { time: formatRelative(automation.last_executed_at, tRelative) })}</span>
+              </>
+            )}
           </div>
         </button>
 

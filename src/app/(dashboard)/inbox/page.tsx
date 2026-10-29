@@ -74,6 +74,9 @@ function InboxPageInner() {
     try {
       const stored = localStorage.getItem(CONTACT_PANEL_STORAGE_KEY);
       if (stored !== null) setContactPanelOpen(stored === "true");
+      // Without a saved choice, below xl (1280px) the three columns would
+      // leave the thread ~180px wide: start closed; the header toggle opens it.
+      else if (window.matchMedia("(max-width: 1279px)").matches) setContactPanelOpen(false);
     } catch {
       // localStorage can throw in private-browsing / sandboxed contexts.
     }

@@ -381,7 +381,9 @@ function VentasPageInner() {
           </div>
 
           {loadState === 'loading' ? (
-            <p className="py-6 text-sm text-muted-foreground">{T.loading}</p>
+            <p role="status" className="py-6 text-sm text-muted-foreground">
+              {T.loading}
+            </p>
           ) : loadState === 'failed' ? (
             <Alert variant="destructive">
               <AlertDescription className="flex flex-wrap items-center gap-3">

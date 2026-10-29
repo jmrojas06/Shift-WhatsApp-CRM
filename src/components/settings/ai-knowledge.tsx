@@ -15,6 +15,7 @@ import {
   CardDescription,
 } from '@/components/ui/card';
 import { useTranslations } from 'next-intl';
+import { ConfirmDialog } from './confirm-dialog';
 
 interface DocSummary {
   id: string;
@@ -41,6 +42,9 @@ export function AiKnowledgeCard({
   const [content, setContent] = useState('');
   const [saving, setSaving] = useState(false);
   const [reindexing, setReindexing] = useState(false);
+  // Document waiting for the "delete it?" confirmation.
+  const [docToDelete, setDocToDelete] = useState<DocSummary | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const loadedAccountIdRef = useRef<string | null>(null);
   const t = useTranslations('Settings.aiKnowledge');
 
@@ -125,7 +129,9 @@ export function AiKnowledgeCard({
     }
   };
 
+  // Runs from the confirmation dialog (deleting a document is permanent).
   const remove = async (id: string) => {
+    setDeleting(true);
     try {
       const res = await fetch(`/api/ai/knowledge/${id}`, { method: 'DELETE' });
       if (res.ok) {
@@ -137,6 +143,9 @@ export function AiKnowledgeCard({
       }
     } catch {
       toast.error(t('removeFailed'));
+    } finally {
+      setDeleting(false);
+      setDocToDelete(null);
     }
   };
 
@@ -196,21 +205,22 @@ export function AiKnowledgeCard({
                       <span className="flex shrink-0 gap-1">
                         <Button
                           variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0"
+                          size="icon-sm"
                           onClick={() => void openEdit(doc.id)}
                           title={t('editDoc')}
+                          aria-label={t('editDocLabel', { name: doc.title })}
                         >
-                          <Pencil className="h-4 w-4" />
+                          <Pencil className="h-4 w-4" aria-hidden />
                         </Button>
                         <Button
                           variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                          onClick={() => void remove(doc.id)}
+                          size="icon-sm"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => setDocToDelete(doc)}
                           title={t('deleteDoc')}
+                          aria-label={t('deleteDocLabel', { name: doc.title })}
                         >
-                          <Trash2 className="h-4 w-4" />
+                          <Trash2 className="h-4 w-4" aria-hidden />
                         </Button>
                       </span>
                     )}
@@ -280,6 +290,20 @@ export function AiKnowledgeCard({
           </>
         )}
       </CardContent>
+
+      <ConfirmDialog
+        open={docToDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setDocToDelete(null);
+        }}
+        title={t('deleteDocTitle')}
+        description={t('deleteDocConfirm', { name: docToDelete?.title ?? '' })}
+        confirmLabel={t('deleteDoc')}
+        busyLabel={t('deleting')}
+        cancelLabel={t('cancel')}
+        busy={deleting}
+        onConfirm={() => docToDelete && void remove(docToDelete.id)}
+      />
     </Card>
   );
 }

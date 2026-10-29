@@ -159,7 +159,7 @@ export function NodeConfigForm({
               aria-describedby={`${varKeyId}-help`}
               className="bg-muted font-mono md:text-xs"
             />
-            <p id={`${varKeyId}-help`} className="mt-1 text-[10px] text-muted-foreground">
+            <p id={`${varKeyId}-help`} className="mt-1 text-[11px] text-muted-foreground">
               {t("varKeyHelp")}{" "}
               <code className="rounded bg-muted px-1">
                 {"{{vars."}
@@ -331,12 +331,12 @@ function SendButtonsForm({
               />
               <Button
                 variant="ghost"
-                size="sm"
+                size="icon-sm"
                 onClick={() => removeButton(i)}
                 aria-label={t("removeButtonN", { n: i + 1 })}
                 className="text-destructive hover:bg-destructive/10 hover:text-destructive"
               >
-                <Trash2 className="h-3.5 w-3.5" />
+                <Trash2 className="h-3.5 w-3.5" aria-hidden />
               </Button>
             </div>
           ))}
@@ -508,12 +508,12 @@ function SendListForm({
               {sections.length > 1 && (
                 <Button
                   variant="ghost"
-                  size="sm"
+                  size="icon-sm"
                   onClick={() => removeSection(sIdx)}
                   className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
                   aria-label={t("removeSectionN", { n: sIdx + 1 })}
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
+                  <Trash2 className="h-3.5 w-3.5" aria-hidden />
                 </Button>
               )}
             </div>
@@ -567,12 +567,12 @@ function SendListForm({
                 />
                 <Button
                   variant="ghost"
-                  size="sm"
+                  size="icon-sm"
                   onClick={() => removeRow(sIdx, rIdx)}
                   aria-label={t("removeRowN", { n: rIdx + 1 })}
                   className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
+                  <Trash2 className="h-3.5 w-3.5" aria-hidden />
                 </Button>
               </div>
             ))}

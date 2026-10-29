@@ -24,6 +24,9 @@ import {
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { useTranslations } from 'next-intl';
+import { useCan } from '@/hooks/use-can';
+import { LoadError } from './load-error';
+import { ReadOnlyNote } from './readonly-note';
 import type { Tag } from '@/types';
 
 const PRESET_COLORS = [
@@ -44,10 +47,15 @@ const PRESET_COLORS = [
  */
 export function TagManager() {
   const t = useTranslations('Settings.tagsAndFields');
+  const tReadOnly = useTranslations('Settings.readOnly');
   const supabase = createClient();
-  const { user, accountId, loading: authLoading } = useAuth();
+  const { user, accountId, loading: authLoading, profileLoading } = useAuth();
+  // Creating and deleting tags is admin-only (tags RLS), so for anyone
+  // else the controls are removed and the reason is written on the card.
+  const canEdit = useCan('edit-settings');
 
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [tags, setTags] = useState<Tag[]>([]);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [tagToDelete, setTagToDelete] = useState<Tag | null>(null);
@@ -69,6 +77,7 @@ export function TagManager() {
   async function fetchTags(userId: string) {
     try {
       setLoading(true);
+      setLoadFailed(false);
       const { data, error } = await supabase
         .from('tags')
         .select('*')
@@ -79,6 +88,7 @@ export function TagManager() {
       setTags(data || []);
     } catch (err) {
       console.error('Failed to fetch tags:', err);
+      setLoadFailed(true);
       toast.error(t('failedToLoadTags'));
     } finally {
       setLoading(false);
@@ -175,8 +185,16 @@ export function TagManager() {
               />
             ))}
           </div>
+        ) : loadFailed ? (
+          <LoadError
+            message={t('failedToLoadTags')}
+            onRetry={() => user && void fetchTags(user.id)}
+          />
         ) : (
           <>
+            {!canEdit && !profileLoading && (
+              <ReadOnlyNote>{tReadOnly('tags')}</ReadOnlyNote>
+            )}
             {tags.length > 0 ? (
               <div className="flex flex-wrap gap-2">
                 {tags.map((tag) => (
@@ -185,7 +203,11 @@ export function TagManager() {
                     className="group inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition-colors"
                     style={{
                       backgroundColor: `${tag.color}20`,
-                      color: tag.color,
+                      // The tag's own colour is a light hue (amber, cyan)
+                      // that fails contrast as text on a pale tint. Mixing
+                      // it toward the theme foreground keeps the hue but
+                      // darkens it in light mode and lightens it in dark.
+                      color: `color-mix(in oklab, ${tag.color} 55%, var(--foreground))`,
                       border: `1px solid ${tag.color}40`,
                     }}
                   >
@@ -194,24 +216,29 @@ export function TagManager() {
                       style={{ backgroundColor: tag.color }}
                     />
                     {tag.name}
-                    <button
-                      type="button"
-                      onClick={() => confirmDelete(tag)}
-                      aria-label={t('deleteAria', { name: tag.name })}
-                      className="ml-0.5 rounded-full p-0.5 opacity-70 outline-none transition-opacity hover:bg-foreground/10 hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:p-1.5"
-                    >
-                      <X className="size-3" aria-hidden />
-                    </button>
+                    {canEdit && (
+                      <button
+                        type="button"
+                        onClick={() => confirmDelete(tag)}
+                        aria-label={t('deleteAria', { name: tag.name })}
+                        // On touch the visible icon stays small, but an
+                        // invisible pseudo-element grows the tap target.
+                        className="relative ml-0.5 rounded-full p-0.5 opacity-70 outline-none transition-opacity hover:bg-foreground/10 hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:after:absolute pointer-coarse:after:-inset-3 pointer-coarse:after:content-['']"
+                      >
+                        <X className="size-3" aria-hidden />
+                      </button>
+                    )}
                   </span>
                 ))}
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">
-                {t('noTags')}
+                {canEdit ? t('noTags') : t('noTagsReadOnly')}
               </p>
             )}
 
             {/* Inline create row */}
+            {canEdit && (
             <div className="flex flex-wrap items-center gap-2.5">
               <Input
                 aria-label={t('newTagLabel')}
@@ -225,7 +252,7 @@ export function TagManager() {
                 maxLength={40}
                 className="min-w-[180px] flex-1"
               />
-              <div role="group" aria-label={t('colorGroupLabel')} className="flex gap-1.5">
+              <div role="group" aria-label={t('colorGroupLabel')} className="flex flex-wrap gap-1.5 pointer-coarse:gap-2">
                 {PRESET_COLORS.map((color) => (
                   <button
                     key={color.value}
@@ -234,7 +261,7 @@ export function TagManager() {
                     aria-label={t('useColor', { color: t(`colors.${color.name}` as Parameters<typeof t>[0]) })}
                     aria-pressed={selectedColor === color.value}
                     className={cn(
-                      'size-6 rounded-md transition-transform hover:scale-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring pointer-coarse:size-8',
+                      'size-6 rounded-md transition-transform hover:scale-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring pointer-coarse:size-10',
                       selectedColor === color.value &&
                         'outline outline-2 outline-offset-2 outline-primary',
                     )}
@@ -257,6 +284,7 @@ export function TagManager() {
                 {t('addTag')}
               </Button>
             </div>
+            )}
           </>
         )}
       </CardContent>

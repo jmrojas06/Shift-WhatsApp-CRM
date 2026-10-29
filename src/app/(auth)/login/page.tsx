@@ -18,6 +18,7 @@ import {
   authLinkClass,
 } from "@/components/auth/auth-shell";
 import { authErrorKey } from "@/components/auth/auth-error";
+import { PasswordInput } from "@/components/auth/password-input";
 
 // `useSearchParams` opts the component out of static prerendering
 // unless it sits under a Suspense boundary. We split the form into
@@ -108,6 +109,8 @@ function LoginPageInner() {
                 type="email"
                 autoComplete="email"
                 inputMode="email"
+                autoCapitalize="none"
+                spellCheck={false}
                 placeholder={t("emailPlaceholder")}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -122,9 +125,8 @@ function LoginPageInner() {
                   {t("forgotPassword")}
                 </Link>
               </div>
-              <Input
+              <PasswordInput
                 id="password"
-                type="password"
                 autoComplete="current-password"
                 placeholder={t("passwordPlaceholder")}
                 value={password}

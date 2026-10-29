@@ -69,7 +69,7 @@ export function NoticeSettings({
     <Card>
       <CardHeader>
         <CardTitle>
-          <h2>{T.title}</h2>
+          <h2 className="text-[15px] font-semibold">{T.title}</h2>
         </CardTitle>
         <CardDescription>{T.description}</CardDescription>
       </CardHeader>

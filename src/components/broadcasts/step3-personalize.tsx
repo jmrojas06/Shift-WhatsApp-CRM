@@ -257,17 +257,23 @@ export function Step3Personalize({
       {mediaHeaderType && (
         <div className="rounded-xl border border-border bg-card/50 p-4">
           <div className="mb-3 flex items-center gap-2">
-            <ImageIcon className="h-4 w-4 text-primary" />
-            <p className="text-sm font-medium text-foreground">{t('personalize.headerImage')}</p>
-            <span className="inline-flex items-center rounded-md bg-primary/10 px-2 py-0.5 text-xs font-medium uppercase text-primary">
-              {mediaHeaderType}
+            <ImageIcon className="h-4 w-4 text-primary" aria-hidden />
+            <p className="text-sm font-medium text-foreground">
+              {mediaHeaderType === 'image'
+                ? t('personalize.headerImage')
+                : t('personalize.headerMedia')}
+            </p>
+            <span className="inline-flex items-center rounded-md bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+              {t(`personalize.mediaTypes.${mediaHeaderType}`)}
             </span>
           </div>
           <label
             htmlFor={`${uid}-media-url`}
             className="mb-1.5 block text-xs font-medium text-muted-foreground"
           >
-            {t('personalize.imageUrl')}
+            {mediaHeaderType === 'image'
+              ? t('personalize.imageUrl')
+              : t('personalize.mediaUrl')}
           </label>
           <Input
             id={`${uid}-media-url`}
@@ -287,7 +293,9 @@ export function Step3Personalize({
             className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
           />
           <p id={`${uid}-media-desc`} className="mt-1.5 text-xs text-muted-foreground">
-            {t('personalize.headerImageDesc')}
+            {mediaHeaderType === 'image'
+              ? t('personalize.headerImageDesc')
+              : t('personalize.headerMediaDesc')}
           </p>
           {mediaHeaderType === 'image' &&
             headerMediaError === null &&
@@ -455,11 +463,11 @@ export function Step3Personalize({
           sees approximately what the recipient will see. */}
       <div className="rounded-xl border border-border bg-card/50 p-4">
         <div className="mb-3 flex items-center gap-2">
-          <Eye className="h-4 w-4 text-primary" />
+          <Eye className="h-4 w-4 text-primary" aria-hidden />
           <p className="text-sm font-medium text-foreground">{t('personalize.preview')}</p>
           <span className="text-xs text-muted-foreground">({previewLabel})</span>
           {loadingPreview && (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" aria-hidden />
           )}
         </div>
         <div className="rounded-lg bg-muted p-3">

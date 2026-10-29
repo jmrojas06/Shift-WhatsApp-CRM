@@ -94,6 +94,8 @@ export default function ForgotPasswordPage() {
                 type="email"
                 autoComplete="email"
                 inputMode="email"
+                autoCapitalize="none"
+                spellCheck={false}
                 placeholder={t("emailPlaceholder")}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}

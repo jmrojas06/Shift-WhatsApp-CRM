@@ -177,6 +177,7 @@ export function ServicesSection({
         <CardAction>
           <Button
             size="sm"
+            className="pointer-coarse:h-11"
             onClick={openCreate}
             disabled={!canEdit || busyId !== null}
             title={canEdit ? undefined : T.readOnly(T.config.viewerGate)}
@@ -237,7 +238,8 @@ export function ServicesSection({
                 <div className="flex flex-wrap items-center gap-2">
                   <Button
                     variant="outline"
-                    size="sm"
+                    size="icon-sm"
+                    className="pointer-coarse:size-11"
                     onClick={() => void move(index, -1)}
                     disabled={!canEdit || busyId !== null || index === 0}
                     aria-label={T.config.services.moveUp}
@@ -247,7 +249,8 @@ export function ServicesSection({
                   </Button>
                   <Button
                     variant="outline"
-                    size="sm"
+                    size="icon-sm"
+                    className="pointer-coarse:size-11"
                     onClick={() => void move(index, 1)}
                     disabled={
                       !canEdit ||
@@ -262,6 +265,7 @@ export function ServicesSection({
                   <Button
                     variant="outline"
                     size="sm"
+                    className="pointer-coarse:h-11"
                     onClick={() => openEdit(service)}
                     disabled={!canEdit || busyId !== null}
                   >
@@ -271,6 +275,7 @@ export function ServicesSection({
                   <Button
                     variant="outline"
                     size="sm"
+                    className="pointer-coarse:h-11"
                     onClick={() => void toggleActive(service)}
                     disabled={!canEdit || busyId !== null}
                   >

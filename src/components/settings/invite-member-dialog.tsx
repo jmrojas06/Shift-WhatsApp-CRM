@@ -295,7 +295,14 @@ export function InviteMemberDialog({
                   onValueChange={(v) => v && setExpiry(v)}
                 >
                   <SelectTrigger id="invite-expiry" className="w-full">
-                    <SelectValue />
+                    {/* Without explicit content the trigger shows the raw
+                        value ("7") instead of "7 días". */}
+                    <SelectValue>
+                      {t(
+                        (EXPIRY_OPTIONS.find((o) => o.value === expiry)?.labelKey ??
+                          'days7') as Parameters<typeof t>[0],
+                      )}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {EXPIRY_OPTIONS.map((opt) => (

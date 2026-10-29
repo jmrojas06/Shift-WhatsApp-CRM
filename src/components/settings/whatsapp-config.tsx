@@ -26,6 +26,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Switch } from '@/components/ui/switch';
 import { SettingsPanelHead } from './settings-panel-head';
+import { classifyMetaError, localizeMetaError } from './meta-error-i18n';
+import { ConfirmDialog } from './confirm-dialog';
+import { ReadOnlyNote } from './readonly-note';
 import {
   Accordion,
   AccordionItem,
@@ -64,11 +67,23 @@ type WabaSubscription = {
 
 export function WhatsAppConfig() {
   const t = useTranslations('Settings.whatsapp');
+  const tReadOnly = useTranslations('Settings.readOnly');
   const format = useFormatter();
   const supabase = createClient();
   // The reconnect action in the status banner moves focus here: a
   // dropped connection is fixed by pasting a fresh token and saving.
   const accessTokenRef = useRef<HTMLInputElement>(null);
+  const phoneNumberIdRef = useRef<HTMLInputElement>(null);
+  const wabaIdRef = useRef<HTMLInputElement>(null);
+  // The route words Meta failures in English; this swaps in the
+  // translated, actionable text from the failure's code/step and keeps
+  // the server's wording only when there is nothing to map (validation
+  // and auth errors are already translated server-side).
+  const metaText = useCallback(
+    (meta: MetaErrorMeta | null | undefined, fallback: string) =>
+      localizeMetaError(meta, t) ?? fallback,
+    [t],
+  );
   // After multi-user, whatsapp_config is one-row-per-account, not
   // one-row-per-user. We pull `accountId` straight off the auth
   // context and key every read off it — so a teammate who just
@@ -86,6 +101,7 @@ export function WhatsAppConfig() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
   const [showToken, setShowToken] = useState(false);
   const [config, setConfig] = useState<WhatsAppConfigType | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('unknown');
@@ -95,6 +111,12 @@ export function WhatsAppConfig() {
   // save) — rendered as small muted text under the actionable message.
   const [statusMeta, setStatusMeta] = useState<MetaErrorMeta | null>(null);
   const [saveFailure, setSaveFailure] = useState<MetaFailure | null>(null);
+  // A form mistake caught before any request: shown under the field
+  // (and the field gets focus) instead of only in a toast that fades.
+  const [fieldError, setFieldError] = useState<{
+    field: 'phone' | 'waba' | 'token';
+    message: string;
+  } | null>(null);
   const [wabaSubscription, setWabaSubscription] = useState<WabaSubscription | null>(null);
   // Guards against re-hydrating the form when the load effect below
   // re-runs for reasons unrelated to actually switching accounts —
@@ -209,7 +231,7 @@ export function WhatsAppConfig() {
           } else {
             setConnectionStatus('disconnected');
             setResetReason(payload.needs_reset ? 'token_corrupted' : payload.reason === 'meta_api_error' ? 'meta_api_error' : null);
-            setStatusMessage(payload.message || '');
+            setStatusMessage(metaText(payload.meta, payload.message || ''));
             setStatusMeta(payload.meta ?? null);
             setWabaSubscription(null);
           }
@@ -230,7 +252,7 @@ export function WhatsAppConfig() {
     } finally {
       setLoading(false);
     }
-  }, [supabase, t]);
+  }, [supabase, t, metaText]);
 
   useEffect(() => {
     // Need both the auth session (`!authLoading`) AND the profile
@@ -272,21 +294,36 @@ export function WhatsAppConfig() {
     }
   }
 
+  // Puts a form mistake under its field and moves focus there. The
+  // toast stays too: it is what a screen reader announces first.
+  function failField(field: 'phone' | 'waba' | 'token', message: string) {
+    setFieldError({ field, message });
+    toast.error(message);
+    const target =
+      field === 'phone'
+        ? phoneNumberIdRef.current
+        : field === 'waba'
+          ? wabaIdRef.current
+          : accessTokenRef.current;
+    target?.focus();
+  }
+
   async function handleSave() {
+    setFieldError(null);
     if (!phoneNumberId.trim()) {
-      toast.error(t('phoneNumberIdRequired'));
+      failField('phone', t('phoneNumberIdRequired'));
       return;
     }
     if (!META_ID_RE.test(phoneNumberId.trim())) {
-      toast.error(t('phoneNumberIdNotNumeric'));
+      failField('phone', t('phoneNumberIdNotNumeric'));
       return;
     }
     if (wabaId.trim() && !META_ID_RE.test(wabaId.trim())) {
-      toast.error(t('wabaIdNotNumeric'));
+      failField('waba', t('wabaIdNotNumeric'));
       return;
     }
     if (!config && (!accessToken.trim() || !tokenEdited)) {
-      toast.error(t('accessTokenRequired'));
+      failField('token', t('accessTokenRequired'));
       return;
     }
 
@@ -321,7 +358,7 @@ export function WhatsAppConfig() {
         // server. But our POST handler requires an access_token to verify
         // with Meta. If the user didn't change the token, we need to signal
         // that. Simplest: require token re-entry if they're updating.
-        toast.error(t('reenterAccessToken'));
+        failField('token', t('reenterAccessToken'));
         setSaving(false);
         return;
       }
@@ -338,11 +375,12 @@ export function WhatsAppConfig() {
         // The route names the failing step and which field to check
         // (issue #505). Keep the details on screen — a toast is too
         // short-lived to copy a trace id out of.
+        const failMessage = metaText(data.meta, data.error || t('saveFailed'));
         setSaveFailure({
-          message: data.error || t('saveFailed'),
+          message: failMessage,
           meta: data.meta ?? null,
         });
-        toast.error(data.error || t('saveFailed'), { duration: 10000 });
+        toast.error(failMessage, { duration: 10000 });
         setSaving(false);
         return;
       }
@@ -355,14 +393,14 @@ export function WhatsAppConfig() {
       //                         and a retry path. registration_error
       //                         is human-readable from Meta.
       if (data.registered === false && data.registration_error) {
+        const registrationMessage = t('savedButRegistrationFailed', {
+          error: metaText(data.meta, data.registration_error),
+        });
         setSaveFailure({
-          message: t('savedButRegistrationFailed', { error: data.registration_error }),
+          message: registrationMessage,
           meta: data.meta ?? null,
         });
-        toast.error(
-          t('savedButRegistrationFailed', { error: data.registration_error }),
-          { duration: 12000 },
-        );
+        toast.error(registrationMessage, { duration: 12000 });
       } else if (data.registration_skipped) {
         // Credentials saved + verified, but /register was skipped
         // because no PIN was supplied (e.g. a Meta test number).
@@ -414,10 +452,11 @@ export function WhatsAppConfig() {
       } else {
         setConnectionStatus('disconnected');
         setResetReason(payload.needs_reset ? 'token_corrupted' : payload.reason === 'meta_api_error' ? 'meta_api_error' : null);
-        setStatusMessage(payload.message || '');
+        const failMessage = metaText(payload.meta, payload.message || '');
+        setStatusMessage(failMessage);
         setStatusMeta(payload.meta ?? null);
         setWabaSubscription(null);
-        toast.error(payload.message || t('apiConnectionFailed'), { duration: 10000 });
+        toast.error(failMessage || t('apiConnectionFailed'), { duration: 10000 });
       }
     } catch (err) {
       console.error('Test connection error:', err);
@@ -454,11 +493,13 @@ export function WhatsAppConfig() {
     }
   }
 
-  async function handleReset() {
-    if (!confirm(t('resetConfirm'))) {
-      return;
-    }
+  // Both "Reset" buttons only open the confirmation; the delete itself
+  // runs from the dialog's confirm button (handleReset).
+  function requestReset() {
+    setResetOpen(true);
+  }
 
+  async function handleReset() {
     try {
       setResetting(true);
       const res = await fetch('/api/whatsapp/config', { method: 'DELETE' });
@@ -488,6 +529,7 @@ export function WhatsAppConfig() {
       toast.error(t('resetFailed'));
     } finally {
       setResetting(false);
+      setResetOpen(false);
     }
   }
 
@@ -538,6 +580,16 @@ export function WhatsAppConfig() {
   // A saved number that no longer authenticates with Meta. (No saved
   // config at all is "not set up", not "needs reconnecting".)
   const needsReconnect = !!config && connectionStatus !== 'connected';
+  // The new token is typed in (not the mask, not empty): from here the
+  // next step is Save, not Reconnect. Only drives which button is the
+  // filled one — each button still does the same thing and is enabled
+  // exactly as before.
+  const tokenReady =
+    tokenEdited && accessToken.trim() !== '' && accessToken !== MASKED_TOKEN;
+  const reconnectShown = needsReconnect && !showResetBanner && canEditSettings;
+  // Only admins/owners can change the connection (the route and RLS both
+  // refuse everyone else), so the form is read-only for the rest.
+  const readOnly = !canEditSettings;
 
   // Step + code + trace id in small muted text, so a user can quote
   // them to Meta support (issue #505). The step names are wire values
@@ -563,7 +615,9 @@ export function WhatsAppConfig() {
           </>
         )}
       </p>
-      {meta.message && (
+      {/* The WABA/phone mismatch carries an internal marker, not a Meta
+          answer, so there is nothing worth quoting from it. */}
+      {meta.message && classifyMetaError(meta) !== 'wabaMismatch' && (
         <p>
           {t('metaErrorMessage')}: {meta.message}
         </p>
@@ -595,8 +649,8 @@ export function WhatsAppConfig() {
                 </AlertDescription>
                 <Button
                   variant="destructive"
-                  onClick={handleReset}
-                  disabled={resetting}
+                  onClick={requestReset}
+                  disabled={resetting || readOnly}
                   className="mt-3"
                 >
                   {resetting ? (
@@ -637,6 +691,7 @@ export function WhatsAppConfig() {
             (warning + one primary "Reconnect" that takes you to the
             token field), and never set up (neutral). */}
         <Alert
+          role={needsReconnect ? 'alert' : 'status'}
           className={cn(
             'px-4 py-3',
             connectionStatus === 'connected'
@@ -673,9 +728,12 @@ export function WhatsAppConfig() {
                   {t('reconnectAskAdmin')}
                 </p>
               )}
-              {needsReconnect && !showResetBanner && canEditSettings && (
+              {reconnectShown && (
                 <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
-                  <Button onClick={focusAccessToken}>
+                  <Button
+                    variant={tokenReady ? 'outline' : 'default'}
+                    onClick={focusAccessToken}
+                  >
                     <PlugZap aria-hidden />
                     {t('reconnect')}
                   </Button>
@@ -712,6 +770,7 @@ export function WhatsAppConfig() {
             so users don't trust a misleading green banner. */}
         {config && (
           <Alert
+            role={isRegistered ? 'status' : 'alert'}
             className={cn(
               'px-4 py-3',
               isRegistered
@@ -819,25 +878,49 @@ export function WhatsAppConfig() {
             <div className="space-y-2">
               <Label htmlFor="wa-phone-number-id">{t('phoneNumberId')}</Label>
               <Input
+                ref={phoneNumberIdRef}
                 id="wa-phone-number-id"
                 inputMode="numeric"
                 autoComplete="off"
                 placeholder={t('phoneNumberIdPlaceholder')}
                 value={phoneNumberId}
-                onChange={(e) => setPhoneNumberId(e.target.value)}
+                disabled={readOnly}
+                aria-invalid={fieldError?.field === 'phone' || undefined}
+                aria-describedby={fieldError?.field === 'phone' ? 'wa-phone-number-id-error' : undefined}
+                onChange={(e) => {
+                  setPhoneNumberId(e.target.value);
+                  if (fieldError?.field === 'phone') setFieldError(null);
+                }}
               />
+              {fieldError?.field === 'phone' && (
+                <p id="wa-phone-number-id-error" className="text-xs font-medium text-destructive">
+                  {fieldError.message}
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="wa-waba-id">{t('wabaId')}</Label>
               <Input
+                ref={wabaIdRef}
                 id="wa-waba-id"
                 inputMode="numeric"
                 autoComplete="off"
                 placeholder={t('wabaIdPlaceholder')}
                 value={wabaId}
-                onChange={(e) => setWabaId(e.target.value)}
+                disabled={readOnly}
+                aria-invalid={fieldError?.field === 'waba' || undefined}
+                aria-describedby={fieldError?.field === 'waba' ? 'wa-waba-id-error' : undefined}
+                onChange={(e) => {
+                  setWabaId(e.target.value);
+                  if (fieldError?.field === 'waba') setFieldError(null);
+                }}
               />
+              {fieldError?.field === 'waba' && (
+                <p id="wa-waba-id-error" className="text-xs font-medium text-destructive">
+                  {fieldError.message}
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -850,9 +933,13 @@ export function WhatsAppConfig() {
                   type={showToken ? 'text' : 'password'}
                   placeholder={t('accessTokenPlaceholder')}
                   value={accessToken}
+                  disabled={readOnly}
+                  aria-invalid={fieldError?.field === 'token' || undefined}
+                  aria-describedby={fieldError?.field === 'token' ? 'wa-access-token-error' : undefined}
                   onChange={(e) => {
                     setAccessToken(e.target.value);
                     setTokenEdited(true);
+                    if (fieldError?.field === 'token') setFieldError(null);
                   }}
                   onFocus={() => {
                     if (accessToken === MASKED_TOKEN) {
@@ -872,6 +959,11 @@ export function WhatsAppConfig() {
                   {showToken ? <EyeOff className="size-4" aria-hidden /> : <Eye className="size-4" aria-hidden />}
                 </button>
               </div>
+              {fieldError?.field === 'token' && (
+                <p id="wa-access-token-error" className="text-xs font-medium text-destructive">
+                  {fieldError.message}
+                </p>
+              )}
               {config && !tokenEdited && (
                 <p className="text-xs text-muted-foreground">
                   {t('tokenHidden')}
@@ -886,6 +978,7 @@ export function WhatsAppConfig() {
                 autoComplete="off"
                 placeholder={t('webhookVerifyTokenPlaceholder')}
                 value={verifyToken}
+                disabled={readOnly}
                 onChange={(e) => {
                   setVerifyToken(e.target.value);
                   setVerifyEdited(true);
@@ -917,6 +1010,7 @@ export function WhatsAppConfig() {
                 maxLength={6}
                 placeholder={t('pinPlaceholder')}
                 value={pin}
+                disabled={readOnly}
                 onChange={(e) =>
                   setPin(e.target.value.replace(/\D/g, '').slice(0, 6))
                 }
@@ -999,8 +1093,16 @@ export function WhatsAppConfig() {
         )}
 
         {/* Action Buttons */}
+        {readOnly && <ReadOnlyNote>{tReadOnly('whatsapp')}</ReadOnlyNote>}
         <div className="flex flex-wrap gap-3">
-          <Button onClick={handleSave} disabled={saving}>
+          {/* One filled (green) button per view: while Reconnect is the
+              step to take, Save steps back to outline until a new token
+              has been typed. */}
+          <Button
+            variant={reconnectShown && !tokenReady ? 'outline' : 'default'}
+            onClick={handleSave}
+            disabled={saving || readOnly}
+          >
             {saving ? (
               <>
                 <Loader2 className="size-4 animate-spin" />
@@ -1030,8 +1132,8 @@ export function WhatsAppConfig() {
           {config && (
             <Button
               variant="destructive"
-              onClick={handleReset}
-              disabled={resetting}
+              onClick={requestReset}
+              disabled={resetting || readOnly}
             >
               {resetting ? (
                 <>
@@ -1144,6 +1246,18 @@ export function WhatsAppConfig() {
         </Card>
       </div>
     </div>
+
+    <ConfirmDialog
+      open={resetOpen}
+      onOpenChange={setResetOpen}
+      title={t('resetDialogTitle')}
+      description={t('resetConfirm')}
+      confirmLabel={t('resetConfig')}
+      busyLabel={t('resetting')}
+      cancelLabel={t('cancel')}
+      busy={resetting}
+      onConfirm={handleReset}
+    />
     </section>
   );
 }

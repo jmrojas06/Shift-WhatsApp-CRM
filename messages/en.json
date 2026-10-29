@@ -33,7 +33,6 @@
     "settings": "Settings",
     "beta": "Beta",
     "unreadConversations": "{count} unread {count, plural, =1 {conversation} other {conversations}}",
-    "unreadNotifications": "{count} unread {count, plural, =1 {notification} other {notifications}}",
     "roleOwner": "Owner",
     "roleAdmin": "Admin",
     "roleAgent": "Agent",
@@ -150,7 +149,9 @@
       "avgMinutes": "Average"
     },
     "emptyState": {
-      "title": "Not enough data yet"
+      "title": "Not enough data yet",
+      "loadError": "We couldn't load this.",
+      "loadErrorHint": "Reload the page to try again."
     },
     "attention": {
       "title": "Needs attention",
@@ -214,7 +215,9 @@
       "removeFilter": "Remove the {name} filter",
       "emptyInbox": "No conversations yet. They'll show up here when a customer messages you on WhatsApp.",
       "showAll": "Show all",
-      "unreadMessages": "{count, plural, =1 {1 unread message} other {# unread messages}}"
+      "unreadMessages": "{count, plural, =1 {1 unread message} other {# unread messages}}",
+      "loadFailed": "Couldn't load your conversations. Check your connection and try again.",
+      "retry": "Retry"
     },
     "messageThread": {
       "backToConversations": "Back to conversations",
@@ -240,7 +243,6 @@
       "today": "Today",
       "yesterday": "Yesterday",
       "customer": "Customer",
-      "unknown": "Unknown",
       "sendFailed": "Failed to send: {reason}",
       "sendTemplateFailed": "Failed to send template: {reason}",
       "waitForSending": "Wait for the message to finish sending",
@@ -250,7 +252,9 @@
       "documentFallback": "Document",
       "you": "You",
       "changeStatus": "Status: {status}. Change status",
-      "loadingMessages": "Loading messages"
+      "loadingMessages": "Loading messages",
+      "messagesLabel": "Conversation messages",
+      "openContactInfo": "View {name}'s info"
     },
     "sessionTimer": {
       "expired": "Expired",
@@ -285,7 +289,6 @@
       "draftWithAI": "Draft a reply with AI",
       "addCaption": "Add a caption…",
       "removeAttachment": "Remove attachment",
-      "moreActions": "More",
       "interactiveMessage": "Interactive message",
       "quickReplies": "Quick replies",
       "quickRepliesEmpty": "No quick replies yet. Add some in Settings → Quick replies.",
@@ -304,7 +307,9 @@
       "uploadFailed": "Upload failed.",
       "composerMenu": "Attach, templates and quick replies",
       "replyWith": "Reply with",
-      "messageLabel": "Message"
+      "messageLabel": "Message",
+      "typeMessagePlaceholderTouch": "Type a message…",
+      "quickRepliesLoadFailed": "Couldn't load your quick replies. Close this and try again."
     },
     "bubble": {
       "photo": "Photo",
@@ -324,7 +329,11 @@
       "downloadFailed": "Couldn't download the attachment",
       "viewImage": "View image",
       "expandVideo": "Expand video",
-      "imageAlt": "Shared image"
+      "imageAlt": "Shared image",
+      "statusSending": "Sending",
+      "statusSent": "Sent",
+      "statusDelivered": "Delivered",
+      "statusRead": "Read"
     },
     "mediaViewer": {
       "counter": "{index} of {total}",
@@ -342,7 +351,6 @@
     "actions": {
       "reply": "Reply",
       "copyText": "Copy text",
-      "delete": "Delete",
       "react": "React",
       "reactWith": "React with {emoji}",
       "nothingToCopy": "Nothing to copy",
@@ -355,7 +363,6 @@
       "video": "[Video]",
       "document": "[Document]",
       "audio": "[Audio]",
-      "voiceMessage": "[Voice message]",
       "location": "[Location]",
       "template": "[Template]",
       "message": "[Message]",
@@ -377,7 +384,8 @@
       "send": "Send template",
       "headerVarLabel": "Header {var}",
       "bodyVarLabel": "Body {var}",
-      "urlButtonVarLabel": "URL button \"{text}\" — value for {var}"
+      "urlButtonVarLabel": "URL button \"{text}\" — value for {var}",
+      "loadFailed": "Couldn't load your templates. Close this and try again."
     },
     "sidebar": {
       "contactInfo": "Contact info",
@@ -389,7 +397,8 @@
       "addNotePlaceholder": "Add a note…",
       "newNoteLabel": "New note",
       "addNote": "Save note",
-      "copyHandle": "Copy {handle}"
+      "copyHandle": "Copy {handle}",
+      "noteSaveFailed": "Couldn't save the note. Try again."
     },
     "aiBanner": {
       "pausedTitle": "AI assistant is paused here",
@@ -441,7 +450,6 @@
       "deleteContactTitle": "Delete Contact",
       "deleteContactDesc": "Are you sure you want to delete {name}? This action cannot be undone.",
       "cancel": "Cancel",
-      "deleteBtn": "Delete",
       "deleteBulkTitle": "Delete Contacts",
       "deleteBulkDesc": "{count, plural, =1 {Are you sure you want to delete the selected contact? This action cannot be undone.} other {Are you sure you want to delete the # selected contacts? This action cannot be undone.}}",
       "toastFailedLoad": "Couldn't load contacts. Reload the page.",
@@ -459,7 +467,8 @@
       "previousPage": "Previous page",
       "nextPage": "Next page",
       "deleteContactBtn": "Delete contact",
-      "deleteBulkBtn": "{count, plural, =1 {Delete 1 contact} other {Delete # contacts}}"
+      "deleteBulkBtn": "{count, plural, =1 {Delete 1 contact} other {Delete # contacts}}",
+      "selectAll": "Select all"
     },
     "form": {
       "addTitle": "Add Contact",
@@ -476,11 +485,7 @@
       "companyLabel": "Company",
       "companyPlaceholder": "Company name",
       "tagsLabel": "Tags",
-      "tagsPlaceholder": "Select tags…",
-      "noTagsFound": "No tags found.",
-      "createTagAction": "Create tag \"{value}\"",
       "cancel": "Cancel",
-      "save": "Save Contact",
       "update": "Update",
       "create": "Create",
       "toastSuccessAdd": "Contact created successfully",
@@ -502,36 +507,19 @@
     "detailView": {
       "tabs": {
         "details": "Details",
-        "activity": "Activity",
         "notes": "Notes",
         "custom": "Custom Fields",
         "deals": "Deals",
-        "tags": "Tags",
-        "noTags": "No tags",
-        "noDeals": "No deals",
-        "addNotePlaceholder": "Add a note…"
+        "tags": "Tags"
       },
-      "actions": {
-        "edit": "Edit",
-        "message": "Message",
-        "delete": "Delete"
-      },
-      "contactInfo": "Contact Information",
       "unnamed": "Unknown",
       "contactDetailsDesc": "Contact details",
       "name": "Name",
       "phone": "Phone",
       "email": "Email",
       "company": "Company",
-      "createdAt": "Created At",
-      "customFields": "Custom Fields",
       "noCustomFields": "No custom fields defined. Create them in Settings.",
-      "manageFields": "Manage fields",
       "enterCustomField": "Enter {name}…",
-      "activityTab": {
-        "title": "Activity History",
-        "noActivity": "No activity yet."
-      },
       "notesTab": {
         "title": "Internal Notes",
         "placeholder": "Write a note…",
@@ -566,7 +554,11 @@
       "deleteNoteAria": "Delete note",
       "deleteNoteTitle": "Delete this note?",
       "deleteNoteDesc": "The note will be removed from this contact. This can't be undone.",
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "phonePlaceholder": "+1 555 123 4567",
+      "phoneHint": "Include the country code, e.g. +1 for the US.",
+      "copyPhone": "Copy {phone}",
+      "phoneCopied": "Copied"
     },
     "importModal": {
       "title": "Import Contacts",
@@ -637,7 +629,10 @@
       "toastCreated": "Created \"{name}\".",
       "toastRenameFailed": "Could not rename field.",
       "toastDeleteFailed": "Could not delete field.",
-      "toastDeleted": "Deleted \"{name}\"."
+      "toastDeleted": "Deleted \"{name}\".",
+      "cancel": "Cancel",
+      "deleteBtn": "Delete field",
+      "deleteAria": "Delete the field {name}"
     }
   },
   "Pipelines": {
@@ -669,11 +664,18 @@
         "negotiation": "Negotiation",
         "won": "Won"
       },
-      "title": "Pipeline"
+      "title": "Pipeline",
+      "loading": "Loading the pipeline…"
     },
     "board": {
       "dropDealHere": "Drop a deal here",
-      "addDeal": "Add Deal"
+      "addDeal": "Add Deal",
+      "dragInstructions": "To move a deal to another stage, press Space or Enter, use the arrow keys to take it to the stage and press Space or Enter again to drop it. Press Escape to cancel.",
+      "dragAnnounceStart": "Picked up the deal {title}.",
+      "dragAnnounceOver": "The deal {title} is over the stage {stage}.",
+      "dragAnnounceEnd": "Dropped the deal {title} in the stage {stage}.",
+      "dragAnnounceCancel": "Move cancelled. The deal {title} went back to its place.",
+      "draggableRoleDescription": "movable deal"
     },
     "card": {
       "noContact": "No contact",
@@ -687,7 +689,6 @@
       "title": "Title",
       "titlePlaceholder": "Deal title",
       "contact": "Contact",
-      "selectContact": "Select a contact",
       "linkToConversation": "Link to Conversation",
       "value": "Value",
       "currency": "Currency",
@@ -706,10 +707,8 @@
       "saveChanges": "Save Changes",
       "createDeal": "Create Deal",
       "deletePrompt": "Delete this deal?",
-      "confirm": "Confirm",
       "deleting": "Deleting…",
       "deleteDeal": "Delete Deal",
-      "toastRequired": "Title, contact, and stage are required",
       "toastFailedSave": "Failed to save deal",
       "toastNotSignedIn": "Not signed in",
       "toastNotLinked": "Your profile is not linked to an account.",
@@ -727,9 +726,12 @@
       "contactRequired": "Choose the contact for this deal. You can search by name or phone.",
       "stageRequired": "Choose the pipeline stage.",
       "missingFields": "To save, fill in: {fields}.",
-      "searchContactLabel": "Search contact",
       "searchContactPlaceholder": "Search by name or phone",
-      "noContactMatches": "No contact matches your search"
+      "noContactMatches": "No contact matches your search",
+      "showContacts": "Show contacts",
+      "clearContact": "Clear the chosen contact",
+      "loadingContacts": "Loading contacts…",
+      "noContactsYet": "There are no contacts yet. Create one first in Contacts."
     },
     "settings": {
       "managePipeline": "Manage Pipeline",
@@ -745,8 +747,6 @@
       "createNewPipeline": "Create a new pipeline",
       "saving": "Saving…",
       "saveChanges": "Save Changes",
-      "dragToReorder": "Drag to reorder",
-      "changeColor": "Change color",
       "toastFailedSave": "Failed to save pipeline",
       "toastSaved": "Pipeline saved",
       "toastFailedAddStage": "Failed to add stage",
@@ -822,7 +822,8 @@
       "broadcastInProgress": "Broadcast in progress",
       "retry": "Retry",
       "emptyBody": "A broadcast sends the same message to many contacts at once, such as a promotion or an announcement.",
-      "emptyRequirement": "To create one you need a message template approved by Meta. You can create it in Settings, under Templates."
+      "emptyRequirement": "To create one you need a message template approved by Meta. You can create it in Settings, under Templates.",
+      "loading": "Loading broadcasts…"
     },
     "status": {
       "draft": "Draft",
@@ -885,7 +886,9 @@
       "toastResumeFailed": "Could not resume: {error}",
       "unknownError": "Unknown error",
       "unknownContact": "Unknown",
-      "confirmDelete": "Yes, delete"
+      "confirmDelete": "Yes, delete",
+      "loading": "Loading broadcast…",
+      "errorLoad": "Couldn't load the broadcast. Reload the page to try again."
     },
     "new": {
       "title": "New Broadcast",
@@ -912,7 +915,9 @@
         "subtitle": "Select an approved message template for your broadcast.",
         "noTemplates": "No templates available.",
         "createFirst": "Create a template in Settings first.",
-        "errorLoad": "Failed to load templates"
+        "errorLoad": "Failed to load templates",
+        "loading": "Loading templates…",
+        "goToTemplates": "Go to Templates"
       },
       "selectAudience": {
         "title": "Select Audience",
@@ -923,16 +928,13 @@
           "customField": "Custom Field",
           "csv": "Upload CSV"
         },
-        "allDesc": "Send to all {count} contacts in your database.",
         "allDescLoading": "Send to all contacts in your database.",
         "tagDesc": "Send to contacts matching specific tags.",
         "customFieldDesc": "Send to contacts matching a custom field rule.",
         "csvDesc": "Upload a CSV with phone numbers (and optional names).",
         "selectTags": "Select Tags",
-        "searchTags": "Search tags…",
         "noTagsFound": "No tags found.",
         "excludeTags": "Exclude Tags (Optional)",
-        "searchExcludeTags": "Search tags to exclude…",
         "field": "Field",
         "selectField": "Select a field…",
         "operator": "Operator",
@@ -945,14 +947,15 @@
         "csvFormatDesc": "Must contain a 'phone' column (E.164 format). 'name' column is optional.",
         "csvContactsFound": "{count} valid contact(s) found in CSV.",
         "csvInvalidPhones": "{count} row(s) skipped: phone numbers must start with + and a country code (e.g. +14155550123).",
-        "errorLoadTags": "Failed to load tags",
-        "errorLoadFields": "Failed to load custom fields",
         "errorCsvParse": "Could not parse CSV file.",
         "errorCsvMissingPhone": "CSV must have a 'phone' column.",
         "audienceSummary": "Audience Summary",
         "calculating": "Calculating…",
         "estimatedRecipients": "estimated recipients",
-        "selectTypeForEstimate": "Select an audience type to see the estimate."
+        "selectTypeForEstimate": "Select an audience type to see the estimate.",
+        "noCustomFields": "You don't have any custom fields yet. Create one to filter your audience by it.",
+        "goToFields": "Go to Fields & tags",
+        "incompleteHint": "Complete the audience to continue."
       },
       "personalize": {
         "title": "Personalize Variables",
@@ -961,8 +964,6 @@
         "headerImageDesc": "This template requires a header image.",
         "imageUrl": "Image URL",
         "imageUrlPlaceholder": "https://example.com/image.jpg",
-        "variables": "Variables",
-        "varDesc": "Set values for {{name}}",
         "type": "Type",
         "typeStatic": "Static Value",
         "typeContact": "Contact Field",
@@ -990,7 +991,15 @@
         "sampleName": "Customer name",
         "sampleCompany": "Company",
         "samplePhone": "+57 300 123 4567",
-        "sampleEmail": "customer@example.com"
+        "sampleEmail": "customer@example.com",
+        "headerMedia": "Header file",
+        "mediaUrl": "File URL",
+        "headerMediaDesc": "This template requires a header file (video or document).",
+        "mediaTypes": {
+          "image": "Image",
+          "video": "Video",
+          "document": "Document"
+        }
       },
       "scheduleSend": {
         "title": "Review & Send",
@@ -1004,18 +1013,14 @@
         "audienceTags": "Filtered by tags",
         "audienceField": "Filtered by custom field",
         "audienceCsv": "CSV upload",
-        "variables": "Variables:",
-        "variablesMapped": "{count} mapped",
         "saveDraft": "Save as Draft",
         "sendNow": "Send Broadcast",
         "sending": "Sending…",
-        "preparing": "Preparing…",
-        "progressDesc": "Processing {current} of {total} recipients…",
-        "toastFailedPreview": "Failed to load preview data",
         "estimatedReach": "Estimated Reach",
         "language": "Language",
         "confirmTitle": "Confirm Broadcast",
-        "confirmDesc": "You are about to send this broadcast to <b>{count, number}</b> {count, plural, =1 {contact} other {contacts}} using the <b>{template}</b> template. This action cannot be undone."
+        "confirmDesc": "You are about to send this broadcast to <b>{count, number}</b> {count, plural, =1 {contact} other {contacts}} using the <b>{template}</b> template. This action cannot be undone.",
+        "nameRequiredHint": "Enter a name to save the draft or send the broadcast."
       }
     },
     "sending": {
@@ -1064,7 +1069,8 @@
         "duplicateError": "Failed to duplicate",
         "deleteError": "Failed to delete"
       },
-      "loadFailed": "Failed to load automations"
+      "loadFailed": "Failed to load automations",
+      "loading": "Loading automations…"
     },
     "edit": {
       "loading": "Loading…",
@@ -1077,8 +1083,6 @@
       "emptyTitle": "No executions yet",
       "emptyDesc": "Trigger this automation to see runs here.",
       "unknownContact": "Unknown contact",
-      "step": "{count} step",
-      "stepPlural": "{count} steps",
       "noSteps": "No steps recorded.",
       "status": {
         "success": "success",
@@ -1086,7 +1090,10 @@
         "failed": "failed"
       },
       "back": "Back",
-      "backAria": "Back"
+      "backAria": "Back",
+      "loading": "Loading logs…",
+      "notFound": "We couldn't find this automation. It may have been deleted.",
+      "stepsCount": "{count, plural, =1 {# step} other {# steps}}"
     },
     "relative": {
       "never": "never",
@@ -1213,7 +1220,6 @@
       "kindCondition": "Condition",
       "kindWait": "Wait",
       "kindAction": "Action",
-      "delete": "Delete",
       "config": {
         "messageText": "Message text",
         "placeholderMessageText": "Hi! Thanks for reaching out…",
@@ -1247,10 +1253,7 @@
         "placeholderContact": "name / email / company",
         "placeholderTag": "tag id",
         "urlLabel": "URL",
-        "headersLabel": "Headers",
-        "placeholderHeaders": "{\"Authorization\": \"Bearer …\"}",
         "bodyTemplateLabel": "Body template",
-        "placeholderBody": "{\"id\": \"{{ contact.id }}\"}",
         "matchType": "Match type",
         "matchContains": "Contains",
         "matchWord": "Whole word",
@@ -1316,12 +1319,17 @@
       "triggerKeyword": "Triggers on: {keywords}",
       "triggerFirstInbound": "Triggers on a contact's first-ever inbound message",
       "triggerManual": "Manual trigger",
-      "cloneFailedStatus": "Clone failed: {status}"
+      "cloneFailedStatus": "Clone failed: {status}",
+      "loading": "Loading flows…",
+      "retry": "Retry",
+      "deleteTitle": "Delete flow"
     },
     "edit": {
       "notFound": "Flow not found.",
       "backToFlows": "← Back to flows",
-      "loadError": "Couldn't load flow."
+      "loadError": "Couldn't load flow.",
+      "loading": "Loading flow…",
+      "retry": "Retry"
     },
     "logs": {
       "title": "Runs",
@@ -1331,7 +1339,6 @@
       "unknownContact": "Unknown contact",
       "atNode": "at {node}",
       "started": "Started {time}",
-      "reprompts": "{count} re-prompts",
       "ranFor": "ran for {duration}",
       "capturedVars": "Captured vars ({count})",
       "noEvents": "No events recorded for this run.",
@@ -1341,7 +1348,20 @@
       "statusTimedOut": "Timed out",
       "statusPaused": "Paused by agent",
       "statusFailed": "Failed",
-      "loading": "Loading runs…"
+      "loading": "Loading runs…",
+      "retry": "Retry",
+      "repromptsCount": "{count, plural, =1 {# re-prompt} other {# re-prompts}}",
+      "eventTypes": {
+        "started": "Started",
+        "node_entered": "Entered node",
+        "message_sent": "Message sent",
+        "reply_received": "Reply received",
+        "fallback_fired": "Unrecognized reply",
+        "handoff": "Handed off to a person",
+        "timeout": "Timed out",
+        "error": "Error",
+        "completed": "Completed"
+      }
     },
     "builder": {
       "triggerTitle": "Trigger",
@@ -1367,8 +1387,6 @@
       "deleteNode": "Delete node",
       "canvasView": "Canvas",
       "listView": "List",
-      "noNodeSelected": "No node selected",
-      "noNodeDesc": "Select a node on the canvas to edit its configuration.",
       "editorView": "Editor view",
       "form": {
         "advancesTo": "Advances to",
@@ -1491,7 +1509,10 @@
           "label": "End",
           "blurb": "Ends the flow"
         }
-      }
+      },
+      "removeNodeTitle": "Delete this node?",
+      "removeNodeBody": "“{key}” and the arrows pointing to it will be removed. Nothing is saved until you press Save.",
+      "cancel": "Cancel"
     },
     "validation": {
       "noIssues": "No issues. Ready to activate.",
@@ -1544,7 +1565,9 @@
       "fixIssues": "Fix the issues below before activating",
       "save": "Save",
       "descriptionPlaceholder": "Add a short description (internal — customers don't see this)",
-      "descriptionLabel": "Flow description"
+      "descriptionLabel": "Flow description",
+      "deleteTitle": "Delete flow",
+      "cancel": "Cancel"
     }
   },
   "Settings": {
@@ -1579,7 +1602,6 @@
       "you": "You",
       "unnamed": "Unnamed",
       "joined": "Joined {date}",
-      "remove": "Remove",
       "removedToast": "Removed {name} from the team",
       "updatedToast": "{name} now has the {role} role",
       "pendingInvitations": "Pending invitations",
@@ -1611,7 +1633,8 @@
       "revokeDialogTitle": "Revoke invitation",
       "revokeDialogDesc": "The <bold>{label}</bold> link will stop working. You can create a new invitation if you need one.",
       "revokeBtn": "Revoke invitation",
-      "revoking": "Revoking…"
+      "revoking": "Revoking…",
+      "revokeInviteLabel": "Revoke the invitation \"{name}\""
     },
     "invite": {
       "inviteCreated": "Invite created",
@@ -1624,7 +1647,7 @@
       "done": "Done",
       "dialogTitle": "Invite a teammate",
       "networkError": "Could not reach the server. Try again?",
-      "fallbackAccountName": "our wacrm account",
+      "fallbackAccountName": "our Shift CRM account",
       "dialogDesc": "Generate a one-time invite link. Share it via WhatsApp, Slack, or any channel you like — no email service required.",
       "roleLabel": "Role",
       "validForLabel": "Link valid for",
@@ -1641,7 +1664,7 @@
       "labelTooLong": "Label must be {max} characters or fewer",
       "copied": "Invite link copied",
       "clipboardBlocked": "Clipboard blocked — copy the link manually",
-      "whatsappMessage": "Join {accountName} on wacrm using this link (valid for {expiresInDays} days): {url}",
+      "whatsappMessage": "Join {accountName} on Shift CRM using this link (valid for {expiresInDays} days): {url}",
       "createFailed": "Failed to create invitation"
     },
     "tagsAndFields": {
@@ -1680,7 +1703,8 @@
       },
       "newTagLabel": "New tag name",
       "colorGroupLabel": "Tag color",
-      "loadingTags": "Loading tags…"
+      "loadingTags": "Loading tags…",
+      "noTagsReadOnly": "No tags yet."
     },
     "templates": {
       "title": "Message templates",
@@ -1764,8 +1788,8 @@
       "saveResubmit": "Save & Resubmit",
       "submitApproval": "Submit for Approval",
       "deleteDialogTitle": "Delete template?",
-      "deleteMetaDesc": "\"{name}\" will be deleted from Meta and from wacrm. Active broadcasts using this template will start failing on their next send. This can't be undone.",
-      "deleteLocalDesc": "\"{name}\" will be deleted from wacrm. It was never submitted to Meta, so no remote cleanup is needed.",
+      "deleteMetaDesc": "\"{name}\" will be deleted from Meta and from Shift CRM. Active broadcasts using this template will start failing on their next send. This can't be undone.",
+      "deleteLocalDesc": "\"{name}\" will be deleted from Shift CRM. It was never submitted to Meta, so no remote cleanup is needed.",
       "deleting": "Deleting…",
       "delete": "Delete",
       "toastLoadFailed": "Failed to load templates",
@@ -1844,7 +1868,7 @@
       "twoStepPin": "Two-step verification PIN",
       "optional": "(optional)",
       "pinPlaceholder": "6-digit PIN from Meta WhatsApp Manager",
-      "pinHint": "Needed only to wire inbound messages for a production number. Set it in Meta Business Manager → WhatsApp Accounts → Phone Numbers → Two-step verification, then paste it here so wacrm can subscribe the number — otherwise Meta routes inbound events to whichever app last claimed it (the symptom that hits second numbers under a shared WABA). Meta test numbers have no PIN and are pre-registered — leave this blank for them. Leaving it blank also keeps an existing registration untouched.",
+      "pinHint": "Needed only to wire inbound messages for a production number. Set it in Meta Business Manager → WhatsApp Accounts → Phone Numbers → Two-step verification, then paste it here so Shift CRM can subscribe the number — otherwise Meta routes inbound events to whichever app last claimed it (the symptom that hits second numbers under a shared WABA). Meta test numbers have no PIN and are pre-registered — leave this blank for them. Leaving it blank also keeps an existing registration untouched.",
       "webhookTitle": "Webhook Configuration",
       "webhookDesc": "Use this URL as your webhook callback in the Meta App Dashboard.",
       "webhookUrl": "Webhook Callback URL",
@@ -1921,7 +1945,39 @@
       "reconnectAskAdmin": "Ask an account admin to reconnect WhatsApp.",
       "showToken": "Show token",
       "hideToken": "Hide token",
-      "copyWebhookUrl": "Copy webhook URL"
+      "copyWebhookUrl": "Copy webhook URL",
+      "cancel": "Cancel",
+      "resetDialogTitle": "Reset the WhatsApp configuration?",
+      "metaError": {
+        "tokenExpired": "Your access token has expired. Temporary tokens from the API Setup page last 24 hours. Create a permanent token in Meta Business Settings → System Users → Generate token, with the whatsapp_business_management and whatsapp_business_messaging permissions, and paste it into Permanent Access Token.",
+        "tokenRevoked": "Meta invalidated your access token (password change, signed-out session or token reset). Create a new permanent token in Business Settings → System Users → Generate token and paste it into Permanent Access Token.",
+        "tokenInvalid": "Meta rejected the access token because it is not valid. Check that you copied it in full; if it still fails, create a new permanent token in Business Settings → System Users → Generate token.",
+        "permissions": "The token is not allowed to do this. Its System User needs the whatsapp_business_management and whatsapp_business_messaging permissions and must be assigned to this WhatsApp Business Account (Business Settings → System Users → Add assets → WhatsApp accounts). Then generate a new token.",
+        "businessAccess": "Meta denied access: the business that owns the token cannot manage this number or this WhatsApp Business Account. Assign the System User to the account in Business Settings and make sure the token has the whatsapp_business_management permission.",
+        "notFoundPhone": "Meta cannot find that Phone Number ID, or the business that owns the token does not own the number. Copy it exactly from Meta → WhatsApp → API Setup and check that the token was created in the same business portfolio.",
+        "notFoundWaba": "Meta cannot find that WhatsApp Business Account ID, or the business that owns the token does not own it. Copy it exactly from Meta → WhatsApp → API Setup and check that the token was created in the same business portfolio.",
+        "pinRejected": "Meta rejected the two-step verification PIN. Enter the 6-digit PIN you set in WhatsApp Manager → Phone numbers → Two-step verification.",
+        "badParam": "Meta rejected one of the values sent. Check that the Phone Number ID and the WhatsApp Business Account ID are copied exactly: digits only, no spaces.",
+        "phoneNotRegistered": "This number is not registered with the WhatsApp Cloud API yet. Enter the two-step verification PIN below and save again to register it.",
+        "pinWrong": "The two-step verification PIN is wrong. Use the 6-digit PIN from WhatsApp Manager → Phone numbers → Two-step verification (or reset it there) and save again.",
+        "pinLocked": "Meta has temporarily locked PIN attempts for this number after too many wrong tries. Wait a while before saving again with the correct PIN.",
+        "reverify": "Meta requires this number to be verified again. Open WhatsApp Manager → Phone numbers, complete the verification (SMS or call) and save again.",
+        "recentlyDeleted": "This number was recently deleted from WhatsApp and cannot be registered yet: Meta blocks registration for a while after deletion. Try again later.",
+        "accountRestricted": "Meta has restricted or locked this WhatsApp Business Account, so it cannot be connected. Check the restriction in Meta Business Manager → Account quality (or WhatsApp Manager → Overview) and appeal it.",
+        "policyBlock": "Meta has temporarily blocked this account for a policy violation. Review the notice in Meta Business Manager → Account quality: the block lifts on its own or after an appeal.",
+        "rateLimit": "Meta is rate-limiting this app or WhatsApp Business Account right now. You do not need to change anything: wait a few minutes and try again.",
+        "temporary": "Meta returned a temporary error (code {code}). Wait a minute and try again; if it keeps happening, check metastatus.com and share the Trace ID with Meta support.",
+        "wabaMismatch": "That Phone Number ID does not belong to that WhatsApp Business Account. Check both values in Meta → WhatsApp → API Setup: the account ID must be the one that lists this number.",
+        "generic": "Meta returned an error while trying to {step}. Check the values and try again; if it keeps failing, share the details below with Meta support."
+      },
+      "metaStep": {
+        "verify_number": "read the phone number",
+        "waba_phone_numbers": "list the numbers of the WhatsApp Business Account",
+        "register": "register the number",
+        "subscribe_waba": "subscribe the account to the app",
+        "subscribed_apps": "read the account subscriptions",
+        "unknown": "connect to Meta"
+      }
     },
     "sections": {
       "overview": "Overview",
@@ -2107,7 +2163,19 @@
       "done": "Done",
       "networkError": "Could not reach the server",
       "loadingKeys": "Loading API keys…",
-      "revokeConfirm": "Revoke the key \"{name}\"? Integrations using it will stop working, and this can't be undone."
+      "revokeConfirm": "Revoke the key \"{name}\"? Integrations using it will stop working, and this can't be undone.",
+      "scopeDescriptions": {
+        "messagesSend": "Send WhatsApp messages",
+        "messagesRead": "Read messages and their delivery status",
+        "contactsRead": "List and read contacts",
+        "contactsWrite": "Create and update contacts",
+        "conversationsRead": "List and read conversations",
+        "broadcastsSend": "Launch broadcast campaigns",
+        "webhooksManage": "Register and manage outbound event webhooks"
+      },
+      "revokeDialogTitle": "Revoke API key",
+      "revoking": "Revoking…",
+      "revokeLabel": "Revoke the key \"{name}\""
     },
     "deals": {
       "title": "Deals & currency",
@@ -2124,7 +2192,7 @@
     },
     "aiConfig": {
       "title": "Agent setup",
-      "description": "Bring your own OpenAI, Anthropic, or OpenAI-compatible API key. wacrm calls the provider directly with your key — no per-seat AI fees, and your data stays yours. This powers AI-drafted replies in the inbox, the auto-reply bot, and the Playground.",
+      "description": "Bring your own OpenAI, Anthropic, or OpenAI-compatible API key. Shift CRM calls the provider directly with your key — no per-seat AI fees, and your data stays yours. This powers AI-drafted replies in the inbox, the auto-reply bot, and the Playground.",
       "adminOnlyConfig": "Only admins and owners can change the AI configuration.",
       "loadFailed": "Failed to load AI configuration",
       "providerAndKey": "Provider & key",
@@ -2165,7 +2233,10 @@
       "baseUrl": "Base URL",
       "baseUrlHint": "Base URL for the OpenAI-compatible API, for example https://api.groq.com/openai/v1. /chat/completions is added automatically unless you include that path yourself.",
       "missingBaseUrl": "Enter the Base URL for the OpenAI-compatible API.",
-      "loading": "Loading AI settings…"
+      "loading": "Loading the AI configuration…",
+      "showKey": "Show key",
+      "hideKey": "Hide key",
+      "keyPlaceholderGeneric": "Your API key"
     },
     "aiKnowledge": {
       "loadFailed": "Failed to load knowledge base",
@@ -2194,14 +2265,18 @@
       "reindexTooltip": "Re-embed all documents (e.g. after adding an embeddings key)",
       "editDoc": "Edit",
       "deleteDoc": "Delete",
-      "loading": "Loading…"
+      "loading": "Loading…",
+      "deleting": "Deleting…",
+      "deleteDocTitle": "Delete document",
+      "deleteDocConfirm": "Delete \"{name}\" from the knowledge base? The assistant will stop using it, and this cannot be undone.",
+      "editDocLabel": "Edit \"{name}\"",
+      "deleteDocLabel": "Delete \"{name}\""
     },
     "quickReplies": {
       "nameRequired": "Give the quick reply a name.",
       "saveError": "Couldn't save the quick reply. Try again.",
       "updated": "Quick reply updated.",
       "created": "Quick reply created.",
-      "deleteConfirm": "Delete this quick reply?",
       "deleteError": "Couldn't delete the quick reply. Try again.",
       "title": "Quick replies",
       "description": "Reusable snippets — plain text or a saved interactive message — that agents can insert from the inbox composer.",
@@ -2219,7 +2294,21 @@
       "editLabel": "Edit \"{name}\"",
       "deleteLabel": "Delete \"{name}\"",
       "kindLabel": "Reply type",
-      "messageLabel": "Message"
+      "messageLabel": "Message",
+      "loadFailed": "Could not load quick replies. Check your connection and try again.",
+      "deleteTitle": "Delete quick reply",
+      "deleteDesc": "Delete \"{name}\"? Agents will no longer be able to insert it from the inbox, and this cannot be undone.",
+      "delete": "Delete",
+      "deleting": "Deleting…"
+    },
+    "common": {
+      "retry": "Try again"
+    },
+    "readOnly": {
+      "whatsapp": "Only admins and owners can change the WhatsApp connection. Here you can see its status and test the connection.",
+      "templates": "Only admins and owners can create, edit, sync or delete templates. You can view them.",
+      "tags": "Only admins and owners can create or delete tags.",
+      "quickReplies": "Your role is read-only: you can see quick replies, but not create, edit or delete them."
     }
   },
   "SignupPage": {
@@ -2307,7 +2396,10 @@
     "signingOut": "Signing out…",
     "signOutSwitch": "Sign out & use a different email",
     "createAndJoin": "Create account & join",
-    "haveAccount": "I already have an account"
+    "haveAccount": "I already have an account",
+    "conflictAlreadyMember": "You are already part of this account, so there is no need to accept the invitation.",
+    "conflictSharedAccount": "You already belong to another shared account. To join this one, sign in or sign up with a different email.",
+    "conflictHasData": "Your current account already has data and cannot be replaced. To join this one, sign up with a different email."
   },
   "Notifications": {
     "title": "Notifications",
@@ -2318,7 +2410,8 @@
     "retry": "Retry",
     "emptyTitle": "No notifications yet",
     "emptyDesc": "You'll see an alert here when someone assigns you a conversation.",
-    "unread": "Unread"
+    "unread": "Unread",
+    "loadFailed": "Couldn't load your notifications. Check your connection and try again."
   },
   "Agents": {
     "title": "AI Agents",
@@ -2357,8 +2450,11 @@
       "tokensPerDay": "Tokens per day",
       "byModel": "By model",
       "modelCalls": "{tokens} tok · {count, plural, =1 {# call} other {# calls}}",
-      "partialWindow": "Showing a partial window — usage is high enough that only the most recent records are summarized here."
-    }
+      "partialWindow": "Showing a partial window — usage is high enough that only the most recent records are summarized here.",
+      "loading": "Loading usage…",
+      "retry": "Retry"
+    },
+    "loading": "Loading…"
   },
   "Interactive": {
     "replyButtons": "Reply buttons",
@@ -2946,5 +3042,9 @@
     "sessionExpired": "Your session expired. Request a new link or sign in again.",
     "network": "Couldn't connect. Check your internet connection and try again.",
     "generic": "Something went wrong. Try again in a moment."
+  },
+  "AuthFields": {
+    "showPassword": "Show password",
+    "hidePassword": "Hide password"
   }
 }

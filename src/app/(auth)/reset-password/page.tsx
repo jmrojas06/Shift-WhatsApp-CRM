@@ -21,7 +21,6 @@ import { useTranslations } from "next-intl";
 import { CheckCircle, KeyRound, Loader2, MailX } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -32,6 +31,7 @@ import {
   AuthShell,
 } from "@/components/auth/auth-shell";
 import { authErrorKey } from "@/components/auth/auth-error";
+import { PasswordInput } from "@/components/auth/password-input";
 
 type Status = "checking" | "ready" | "expired" | "done";
 
@@ -169,9 +169,8 @@ export default function ResetPasswordPage() {
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="password">{t("passwordLabel")}</Label>
-              <Input
+              <PasswordInput
                 id="password"
-                type="password"
                 autoComplete="new-password"
                 placeholder={t("passwordPlaceholder")}
                 value={password}
@@ -182,9 +181,8 @@ export default function ResetPasswordPage() {
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="confirmPassword">{t("confirmPasswordLabel")}</Label>
-              <Input
+              <PasswordInput
                 id="confirmPassword"
-                type="password"
                 autoComplete="new-password"
                 placeholder={t("confirmPasswordPlaceholder")}
                 value={confirmPassword}

@@ -1,26 +1,87 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CURRENCIES,
   DEFAULT_CURRENCY,
   formatCurrency,
   formatCurrencyShort,
+  numberLocale,
 } from "./currency";
 
 /**
- * Intl grouping depends on the runtime default locale (en-US on CI,
- * es-CO on a Spanish Windows box — and LANG cannot pin ICU on
- * Windows). Build the expected grouped string with the same Intl call
- * the formatter uses so these assertions hold on every machine.
+ * The formatter follows NEXT_PUBLIC_APP_LOCALE (fixed at build time),
+ * never the machine's default locale. Each test pins the locale with
+ * `vi.stubEnv`, so the assertions hold on any CI box or Windows PC.
+ * Intl separates symbol and number with a non-breaking space; `plain`
+ * turns it into a normal space so the expectations stay readable.
  */
-const grouped = (value: number) =>
-  new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value);
+const plain = (value: string) => value.replace(/[  ]/g, " ");
+const fmt = (value: number, currency?: string) =>
+  plain(formatCurrency(value, currency));
+
+beforeEach(() => {
+  vi.stubEnv("NEXT_PUBLIC_APP_LOCALE", "en");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
+describe("numberLocale", () => {
+  it("maps each app locale to a concrete number-format locale", () => {
+    const cases: Array<[string, string]> = [
+      ["en", "en-US"],
+      ["es", "es-CO"],
+      ["pt", "pt-BR"],
+      ["ko", "ko-KR"],
+    ];
+    for (const [app, expected] of cases) {
+      vi.stubEnv("NEXT_PUBLIC_APP_LOCALE", app);
+      expect(numberLocale()).toBe(expected);
+    }
+  });
+
+  it("falls back to English when the locale is unset or unknown", () => {
+    vi.stubEnv("NEXT_PUBLIC_APP_LOCALE", "");
+    expect(numberLocale()).toBe("en-US");
+    vi.stubEnv("NEXT_PUBLIC_APP_LOCALE", "xx");
+    expect(numberLocale()).toBe("en-US");
+  });
+});
 
 describe("formatCurrency", () => {
   it("formats whole amounts with no minor units", () => {
-    // Use a non-breaking-space-tolerant check: Intl may insert NBSP.
-    const out = formatCurrency(1234, "USD");
-    expect(out).toContain(grouped(1234));
-    expect(out).not.toContain(".00");
+    expect(fmt(1234, "USD")).toBe("$1,234");
+    expect(fmt(1234.56, "USD")).toBe("$1,235");
+  });
+
+  it("uses the app locale for grouping and symbol placement", () => {
+    vi.stubEnv("NEXT_PUBLIC_APP_LOCALE", "es");
+    expect(fmt(150000, "COP")).toBe("$ 150.000");
+    // Plain "es" would print "1234 US$"; es-CO groups from 4 digits.
+    expect(fmt(1234, "USD")).toBe("US$ 1.234");
+
+    vi.stubEnv("NEXT_PUBLIC_APP_LOCALE", "pt");
+    expect(fmt(1234, "BRL")).toBe("R$ 1.234");
+
+    vi.stubEnv("NEXT_PUBLIC_APP_LOCALE", "ko");
+    expect(fmt(1234, "KRW")).toBe("₩1,234");
+  });
+
+  it("does not depend on the machine's default locale", () => {
+    const original = Intl.NumberFormat;
+    // Break any `Intl.NumberFormat(undefined, …)` call: it would pick up
+    // this "machine" locale instead of the app locale.
+    const spy = vi.spyOn(Intl, "NumberFormat").mockImplementation(function (
+      locale?: string | string[],
+      options?: object,
+    ) {
+      return new original(locale ?? "de-DE", options);
+    } as unknown as typeof Intl.NumberFormat);
+    try {
+      expect(fmt(1234, "USD")).toBe("$1,234");
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("defaults to USD when no currency is given", () => {
@@ -32,26 +93,31 @@ describe("formatCurrency", () => {
   });
 
   it("coerces non-finite values to 0", () => {
-    expect(formatCurrency(Number.NaN, "USD")).toContain("0");
+    expect(fmt(Number.NaN, "USD")).toBe("$0");
   });
 
   it("renders a well-formed but unknown ISO code without throwing", () => {
     // Intl is lenient here — it uses the code as the symbol.
-    const out = formatCurrency(1234, "ZZZ");
+    const out = fmt(1234, "ZZZ");
     expect(out).toContain("ZZZ");
-    expect(out).toContain(grouped(1234));
+    expect(out).toContain("1,234");
   });
 
   it("never throws on a structurally invalid code (no DB CHECK on deals.currency)", () => {
     for (const bad of ["United States", "US", "USDD", "12", "u$d"]) {
       expect(() => formatCurrency(1234, bad)).not.toThrow();
-      expect(formatCurrency(1234, bad)).toContain(grouped(1234));
+      expect(fmt(1234, bad)).toContain("1,234");
     }
+    vi.stubEnv("NEXT_PUBLIC_APP_LOCALE", "es");
+    expect(fmt(1234, "United States")).toBe("United States 1.234");
   });
 
   it("formats every offered currency without throwing", () => {
-    for (const c of CURRENCIES) {
-      expect(() => formatCurrency(1000, c.code)).not.toThrow();
+    for (const app of ["en", "es", "pt", "ko"]) {
+      vi.stubEnv("NEXT_PUBLIC_APP_LOCALE", app);
+      for (const c of CURRENCIES) {
+        expect(() => formatCurrency(1000, c.code)).not.toThrow();
+      }
     }
   });
 });

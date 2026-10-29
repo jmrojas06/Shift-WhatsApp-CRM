@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useId, useMemo, useRef } from 'react';
+import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { cn } from '@/lib/utils';
 import { countAudience } from '@/lib/broadcast-audience';
@@ -308,7 +309,10 @@ export function Step2SelectAudience({
         <div className="rounded-xl border border-border bg-card/50 p-4">
           <p className="mb-3 text-sm font-medium text-foreground">{t('selectAudience.selectTags')}</p>
           {loadingTags ? (
-            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+            <span role="status" className="inline-flex">
+              <Loader2 className="h-5 w-5 animate-spin text-primary" aria-hidden />
+              <span className="sr-only">{t('personalize.loadingFields')}</span>
+            </span>
           ) : tags.length === 0 ? (
             <p className="text-xs text-muted-foreground">
               {t('selectAudience.noTagsFound')}
@@ -346,11 +350,22 @@ export function Step2SelectAudience({
         <div className="space-y-3 rounded-xl border border-border bg-card/50 p-4">
           <p className="text-sm font-medium text-foreground">{t('selectAudience.method.customField')}</p>
           {loadingFields ? (
-            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+            <span role="status" className="inline-flex">
+              <Loader2 className="h-5 w-5 animate-spin text-primary" aria-hidden />
+              <span className="sr-only">{t('personalize.loadingFields')}</span>
+            </span>
           ) : customFields.length === 0 ? (
-            <p className="text-xs text-muted-foreground">
-              {t('selectAudience.errorLoadFields')}
-            </p>
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                {t('selectAudience.noCustomFields')}
+              </p>
+              <Link
+                href="/settings?tab=fields"
+                className="inline-flex min-h-8 items-center rounded-lg text-xs font-medium text-primary outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-11"
+              >
+                {t('selectAudience.goToFields')}
+              </Link>
+            </div>
           ) : (
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_140px_minmax(0,1fr)]">
               <div className="flex min-w-0 flex-col gap-1">
@@ -492,11 +507,11 @@ export function Step2SelectAudience({
       </div>
 
       {/* Audience Summary */}
-      <div className="rounded-xl border border-border bg-card/50 p-4">
+      <div className="rounded-xl border border-border bg-card/50 p-4" aria-live="polite">
         <p className="mb-2 text-sm font-medium text-foreground">{t('selectAudience.audienceSummary')}</p>
         {loadingCount ? (
           <div className="flex items-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden />
             <span className="text-xs text-muted-foreground">{t('selectAudience.calculating')}</span>
           </div>
         ) : estimatedCount !== null ? (
@@ -513,6 +528,11 @@ export function Step2SelectAudience({
           </p>
         )}
       </div>
+
+      {/* Say why Siguiente is disabled instead of leaving it grey. */}
+      {!isValid && (
+        <p className="text-xs text-muted-foreground">{t('selectAudience.incompleteHint')}</p>
+      )}
 
       <div className="flex items-center justify-between border-t border-border pt-4">
         <Button

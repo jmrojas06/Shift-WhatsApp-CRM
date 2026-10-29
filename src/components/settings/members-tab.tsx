@@ -73,6 +73,7 @@ import {
   PresenceDot,
 } from '@/components/presence/presence-dot';
 import { InviteMemberDialog } from './invite-member-dialog';
+import { LoadError } from './load-error';
 import { SettingsPanelHead } from './settings-panel-head';
 import { ROLE_META } from './role-meta';
 
@@ -139,6 +140,7 @@ export function MembersTab() {
   const [members, setMembers] = useState<Member[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   const [inviteOpen, setInviteOpen] = useState(false);
   const [removingMember, setRemovingMember] = useState<Member | null>(null);
@@ -147,6 +149,7 @@ export function MembersTab() {
   );
 
   const loadEverything = useCallback(async () => {
+    setLoadFailed(false);
     try {
       const [mres, ires] = await Promise.all([
         fetch('/api/account/members', { cache: 'no-store' }),
@@ -157,6 +160,7 @@ export function MembersTab() {
 
       if (!mres.ok) {
         const payload = await mres.json().catch(() => ({}));
+        setLoadFailed(true);
         toast.error(payload.error || t('loadFailed'));
         return;
       }
@@ -176,6 +180,7 @@ export function MembersTab() {
       }
     } catch (err) {
       console.error('[MembersTab] load error:', err);
+      setLoadFailed(true);
       toast.error(t('networkError'));
     } finally {
       setLoading(false);
@@ -351,7 +356,11 @@ export function MembersTab() {
           );
         })()}
 
-      {/* Roster */}
+      {/* Roster. A failed first load shows the retry instead of an empty
+          card that would read as "nobody on the team". */}
+      {loadFailed && members.length === 0 ? (
+        <LoadError message={t('loadFailed')} onRetry={() => void loadEverything()} />
+      ) : (
       <Card>
         <CardContent className="p-0">
           <ul className="divide-y divide-border">
@@ -504,6 +513,7 @@ export function MembersTab() {
           </ul>
         </CardContent>
       </Card>
+      )}
 
       {/* Pending invitations — admin+ only */}
       <RequireRole min="admin">
@@ -575,6 +585,9 @@ export function MembersTab() {
                         variant="destructive"
                         size="sm"
                         onClick={() => setRevokingInvite(inv)}
+                        aria-label={t('revokeInviteLabel', {
+                          name: inv.label || t('untitledInvite'),
+                        })}
                         className="shrink-0"
                       >
                         <MailX className="size-4" aria-hidden />

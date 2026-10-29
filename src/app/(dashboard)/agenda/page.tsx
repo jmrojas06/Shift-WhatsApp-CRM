@@ -15,7 +15,6 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import {
   BellRing,
   CalendarDays,
@@ -33,7 +32,7 @@ import { hasModule } from '@/lib/verticals/registry'
 import { useAuth } from '@/hooks/use-auth'
 import { formatCurrency } from '@/lib/currency'
 import { GatedButton } from '@/components/ui/gated-button'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import {
   Card,
   CardContent,
@@ -166,13 +165,17 @@ const STATUS_BADGE_VARIANTS: Record<
   cancelled: 'outline',
 }
 
+/** Con quién es la cita: nombre, teléfono o el texto de respaldo. */
+function contactLabel(a: Pick<AgendaAppointment, 'contactName' | 'contactPhone'>): string {
+  return a.contactName?.trim() || a.contactPhone || T.agendaContactFallback
+}
+
 /** Estados desde los que la agenda permite actuar. */
 const EDITABLE_STATUSES: readonly AppointmentStatus[] = ['pending', 'confirmed']
 
 export default function AgendaPage() {
   const { account, accountId, canEditSettings, canSendMessages, defaultCurrency } =
     useAuth()
-  const router = useRouter()
   const supabase = createClient()
 
   const [services, setServices] = useState<BookingServiceRow[]>([])
@@ -672,13 +675,14 @@ export default function AgendaPage() {
           <h1 className="text-2xl font-semibold text-foreground">{T.title}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{T.subtitle}</p>
         </div>
-        <Button
-          variant="outline"
-          onClick={() => router.push('/agenda/configuracion')}
+        {/* Navigation, so a real link (open in a new tab, long-press on phones). */}
+        <Link
+          href="/agenda/configuracion"
+          className={buttonVariants({ variant: 'outline' })}
         >
           <Settings2 className="h-4 w-4" />
           {T.config.openConfig}
-        </Button>
+        </Link>
       </div>
 
       {loadFailed && (
@@ -719,13 +723,13 @@ export default function AgendaPage() {
                     {T.wizard.doneBody}
                   </p>
                 </div>
-                <Button
-                  variant="outline"
-                  onClick={() => router.push('/agenda/configuracion')}
+                <Link
+                  href="/agenda/configuracion"
+                  className={buttonVariants({ variant: 'outline' })}
                 >
                   <Settings2 className="h-4 w-4" />
                   {T.wizard.goToConfig}
-                </Button>
+                </Link>
               </div>
             )}
             <p className="text-sm font-medium">{T.reportTitle}</p>
@@ -817,9 +821,16 @@ export default function AgendaPage() {
             </Alert>
           )}
 
-          {agendaLoading ? (
-            <p className="text-sm text-muted-foreground">{T.loading}</p>
+          {/* Only the very first load replaces the list: after "Asistió" or a
+              cancellation the rows stay put while the day reloads. */}
+          {agendaLoading && appointments.length === 0 ? (
+            <p role="status" className="text-sm text-muted-foreground">
+              {T.loading}
+            </p>
           ) : appointments.length === 0 ? (
+            // A failed load already shows its error above; "no appointments"
+            // would be a false statement.
+            agendaFailed ? null : (
             <div className="flex flex-col items-center justify-center py-10 text-center">
               <span className="mb-3 flex size-12 items-center justify-center rounded-full bg-muted">
                 <CalendarDays
@@ -831,6 +842,7 @@ export default function AgendaPage() {
                 {T.agendaEmpty(labels)}
               </p>
             </div>
+            )
           ) : (
             <ul className="divide-y divide-border">
               {appointments.map((appointment) => {
@@ -883,6 +895,8 @@ export default function AgendaPage() {
                           variant="outline"
                           className="flex-1 sm:flex-none"
                           disabled={busy}
+                          // Every row has the same visible word; the name tells them apart.
+                          aria-label={`${T.agendaActionComplete}: ${contactLabel(appointment)}`}
                           onClick={() =>
                             void changeStatus(appointment, 'completed', false)
                           }
@@ -901,7 +915,7 @@ export default function AgendaPage() {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                aria-label={T.agendaActionMoreLabel}
+                                aria-label={`${T.agendaActionMoreLabel}: ${contactLabel(appointment)}`}
                                 title={T.agendaActionMoreLabel}
                               />
                             }
@@ -1083,9 +1097,12 @@ export default function AgendaPage() {
           {listsLoading ? (
             <p className="text-sm text-muted-foreground">{T.loading}</p>
           ) : services.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              {T.servicesEmpty(labels)}
-            </p>
+            // With a load error "no hay servicios" would be false (the alert above explains).
+            loadFailed ? null : (
+              <p className="text-sm text-muted-foreground">
+                {T.servicesEmpty(labels)}
+              </p>
+            )
           ) : (
             <ul className="divide-y divide-border">
               {services.map((service) => (
@@ -1134,9 +1151,11 @@ export default function AgendaPage() {
           {listsLoading ? (
             <p className="text-sm text-muted-foreground">{T.loading}</p>
           ) : staff.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              {T.staffEmpty(labels)}
-            </p>
+            loadFailed ? null : (
+              <p className="text-sm text-muted-foreground">
+                {T.staffEmpty(labels)}
+              </p>
+            )
           ) : (
             <ul className="divide-y divide-border">
               {staff.map((member) => (

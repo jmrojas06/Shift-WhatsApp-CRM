@@ -5,14 +5,17 @@ import {
   DndContext,
   DragOverlay,
   KeyboardSensor,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   useDroppable,
   useDraggable,
   closestCorners,
+  type Announcements,
   type DragEndEvent,
   type DragStartEvent,
+  type UniqueIdentifier,
 } from "@dnd-kit/core";
 import type { Deal, PipelineStage } from "@/types";
 import { DealCard } from "./deal-card";
@@ -37,6 +40,7 @@ export function PipelineBoard({
   onAddDeal,
   onEditDeal,
 }: PipelineBoardProps) {
+  const t = useTranslations("Pipelines.board");
   const { defaultCurrency } = useAuth();
   const [activeDealId, setActiveDealId] = useState<string | null>(null);
 
@@ -56,8 +60,15 @@ export function PipelineBoard({
   }, [sortedStages, deals]);
 
   const sensors = useSensors(
-    // 5px activation distance avoids clicks being interpreted as drags.
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    // Mouse: 5px activation distance avoids clicks being interpreted as drags.
+    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+    // Touch: press and hold a card (~250 ms) to pick it up. A quick swipe on
+    // a card scrolls the board sideways and the page up/down instead of
+    // dragging it, which a distance-only constraint made impossible
+    // (the cards fill most of each column on a phone).
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 250, tolerance: 8 },
+    }),
     // Keyboard drag support: focus a card, Space to pick up, arrows to move,
     // Space to drop, Escape to cancel.
     useSensor(KeyboardSensor),
@@ -66,6 +77,34 @@ export function PipelineBoard({
   const activeDeal = activeDealId
     ? deals.find((d) => d.id === activeDealId) ?? null
     : null;
+
+  // dnd-kit's default announcements are in English and read the card's UUID;
+  // these read the opportunity's title and the stage's name in the app's
+  // language.
+  const dealTitle = (id: UniqueIdentifier) =>
+    deals.find((d) => d.id === id)?.title ?? "";
+  const stageName = (id: UniqueIdentifier) =>
+    sortedStages.find((s) => s.id === id)?.name ?? "";
+  const announcements: Announcements = {
+    onDragStart: ({ active }) =>
+      t("dragAnnounceStart", { title: dealTitle(active.id) }),
+    onDragOver: ({ active, over }) =>
+      over
+        ? t("dragAnnounceOver", {
+            title: dealTitle(active.id),
+            stage: stageName(over.id),
+          })
+        : undefined,
+    onDragEnd: ({ active, over }) =>
+      over
+        ? t("dragAnnounceEnd", {
+            title: dealTitle(active.id),
+            stage: stageName(over.id),
+          })
+        : t("dragAnnounceCancel", { title: dealTitle(active.id) }),
+    onDragCancel: ({ active }) =>
+      t("dragAnnounceCancel", { title: dealTitle(active.id) }),
+  };
 
   function handleDragStart(event: DragStartEvent) {
     setActiveDealId(String(event.active.id));
@@ -93,6 +132,10 @@ export function PipelineBoard({
     <DndContext
       sensors={sensors}
       collisionDetection={closestCorners}
+      accessibility={{
+        announcements,
+        screenReaderInstructions: { draggable: t("dragInstructions") },
+      }}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
@@ -262,7 +305,7 @@ function StageColumn({
         variant="ghost"
         size="sm"
         onClick={() => onAddDeal(stage.id)}
-        className="mt-2 w-full justify-start text-muted-foreground hover:bg-card hover:text-foreground"
+        className="mt-2 w-full justify-start text-muted-foreground hover:bg-card hover:text-foreground pointer-coarse:h-11"
       >
         <Plus className="size-3.5" />
         {t("addDeal")}
@@ -280,16 +323,21 @@ function DraggableDealCard({
   stage: PipelineStage;
   onEdit: (deal: Deal) => void;
 }) {
+  const t = useTranslations("Pipelines.board");
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: deal.id,
+    attributes: { roleDescription: t("draggableRoleDescription") },
   });
 
   return (
+    // No `touch-action: none` here: the browser must keep handling a quick
+    // swipe as a scroll; the long press (TouchSensor) is what starts a drag.
     <div
       ref={setNodeRef}
       {...listeners}
       {...attributes}
-      style={{ opacity: isDragging ? 0.3 : 1, touchAction: "none" }}
+      className="select-none [-webkit-touch-callout:none]"
+      style={{ opacity: isDragging ? 0.3 : 1 }}
     >
       <DealCard deal={deal} stage={stage} onEdit={onEdit} />
     </div>

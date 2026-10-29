@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/dashboard/skeleton";
 import { cn } from "@/lib/utils";
 
 /**
@@ -89,6 +90,12 @@ export default function FlowsPage() {
   const tGate = useTranslations("GatedButton");
   const [flows, setFlows] = useState<FlowRow[]>([]);
   const [loading, setLoading] = useState(true);
+  // True when the first load failed: show an error with a retry instead of
+  // the "no flows yet" empty state, which would be a lie.
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [pendingDelete, setPendingDelete] = useState<FlowRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -97,6 +104,7 @@ export default function FlowsPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      setLoadFailed(false);
       try {
         const [flowsRes, tmplRes] = await Promise.all([
           fetch("/api/flows"),
@@ -118,7 +126,7 @@ export default function FlowsPage() {
       } catch (err) {
         if (!cancelled) {
           console.error(err);
-          toast.error(t("loadError"));
+          setLoadFailed(true);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -127,7 +135,7 @@ export default function FlowsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadKey]);
 
   async function handleCreate() {
     if (!newName.trim()) return;
@@ -178,30 +186,44 @@ export default function FlowsPage() {
     }
   }
 
-  async function handleDelete(flow: FlowRow) {
-    const yes = window.confirm(t("deleteConfirm", { name: flow.name }));
-    if (!yes) return;
+  async function confirmDelete() {
+    const flow = pendingDelete;
+    if (!flow) return;
+    setDeleting(true);
     try {
       const res = await fetch(`/api/flows/${flow.id}`, { method: "DELETE" });
       if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
       setFlows((prev) => prev.filter((f) => f.id !== flow.id));
+      setPendingDelete(null);
       toast.success(t("deleteSuccess"));
     } catch (err) {
       console.error(err);
       toast.error(t("deleteError"));
+    } finally {
+      setDeleting(false);
     }
   }
 
   if (loading) {
+    // Skeleton cards shaped like the final grid instead of a bare spinner.
     return (
-      <div className="flex h-full items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      <div className="space-y-6" role="status" aria-busy="true">
+        <span className="sr-only">{t("loading")}</span>
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-40" />
+          <Skeleton className="h-4 w-full max-w-lg" />
+        </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3" aria-hidden>
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-36 rounded-lg" />
+          ))}
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -224,7 +246,22 @@ export default function FlowsPage() {
         </GatedButton>
       </header>
 
-      {flows.length === 0 ? (
+      {loadFailed ? (
+        <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border bg-card/50 px-6 py-12 text-center">
+          <p role="alert" className="text-sm text-destructive">
+            {t("loadError")}
+          </p>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setLoading(true);
+              setReloadKey((k) => k + 1);
+            }}
+          >
+            {t("retry")}
+          </Button>
+        </div>
+      ) : flows.length === 0 ? (
         <EmptyState
           onCreate={() => setCreateOpen(true)}
           canCreate={canCreate}
@@ -237,7 +274,7 @@ export default function FlowsPage() {
               key={flow.id}
               flow={flow}
               onEdit={() => router.push(`/flows/${flow.id}`)}
-              onDelete={() => handleDelete(flow)}
+              onDelete={() => setPendingDelete(flow)}
               t={t}
             />
           ))}
@@ -271,9 +308,9 @@ export default function FlowsPage() {
                       type="button"
                       onClick={() => handleUseTemplate(template.slug)}
                       disabled={creating}
-                      className="flex flex-col gap-2.5 rounded-lg border border-border bg-background p-4 text-left transition-colors hover:border-primary/40 hover:bg-muted disabled:opacity-50"
+                      className="flex flex-col gap-2.5 rounded-lg border border-border bg-background p-4 text-left transition-colors outline-none hover:border-primary/40 hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
                     >
-                      <Icon className="h-5 w-5 text-primary" />
+                      <Icon className="h-5 w-5 text-primary" aria-hidden />
                       <span className="text-sm font-semibold text-popover-foreground">
                         {template.name}
                       </span>
@@ -297,6 +334,7 @@ export default function FlowsPage() {
             <Input
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
+              aria-label={t("startBlank")}
               placeholder={t("placeholderName")}
               className="bg-muted"
               onKeyDown={(e) => {
@@ -314,8 +352,45 @@ export default function FlowsPage() {
               {t("cancel")}
             </Button>
             <Button onClick={handleCreate} disabled={!newName.trim() || creating}>
-              {creating && <Loader2 className="h-4 w-4 animate-spin" />}
+              {creating && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
               {t("createBlank")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!pendingDelete}
+        onOpenChange={(open) => {
+          if (!open && !deleting) setPendingDelete(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("deleteTitle")}</DialogTitle>
+            <DialogDescription>
+              {t("deleteConfirm", { name: pendingDelete?.name ?? "" })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setPendingDelete(null)}
+              disabled={deleting}
+            >
+              {t("cancel")}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmDelete}
+              disabled={deleting}
+            >
+              {deleting ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              ) : (
+                <Trash2 className="h-4 w-4" aria-hidden />
+              )}
+              {t("delete")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -388,7 +463,7 @@ function FlowCard({
         <Badge
           variant="outline"
           className={cn(
-            "shrink-0 gap-1 text-[10px]",
+            "shrink-0 gap-1 text-[11px]",
             STATUS_COLORS[flow.status],
           )}
         >

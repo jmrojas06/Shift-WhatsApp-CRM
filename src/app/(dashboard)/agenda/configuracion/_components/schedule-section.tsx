@@ -239,6 +239,7 @@ export function ScheduleSection({
                       <Button
                         variant="ghost"
                         size="sm"
+                        className="pointer-coarse:h-11"
                         onClick={() => addBlock(weekday)}
                         disabled={!canEdit || saving}
                       >
@@ -268,7 +269,8 @@ export function ScheduleSection({
                               }
                               disabled={!canEdit || saving}
                               aria-label={`${label} — inicio`}
-                              className="w-28"
+                              // On phones the two times share the row with the trash button.
+                              className="min-w-0 flex-1 sm:max-w-28"
                             />
                             <span className="text-sm text-muted-foreground">
                               –
@@ -283,11 +285,12 @@ export function ScheduleSection({
                               }
                               disabled={!canEdit || saving}
                               aria-label={`${label} — fin`}
-                              className="w-28"
+                              className="min-w-0 flex-1 sm:max-w-28"
                             />
                             <Button
                               variant="ghost"
-                              size="sm"
+                              size="icon-sm"
+                              className="pointer-coarse:size-11"
                               onClick={() => removeBlock(weekday, block.key)}
                               disabled={!canEdit || saving}
                               aria-label={T.config.schedule.removeBlock}
@@ -310,7 +313,7 @@ export function ScheduleSection({
               </Alert>
             )}
             {saved && !error && (
-              <Alert>
+              <Alert role="status">
                 <AlertDescription>{T.config.saved}</AlertDescription>
               </Alert>
             )}
