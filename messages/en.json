@@ -2929,7 +2929,8 @@
         "saveDocFailed": "Failed to save document",
         "savedIndexFailed": "Saved, but semantic indexing failed ({message}). Lexical search still works; use Reindex to retry.",
         "savedKeywordOnly": "Saved with keyword search only — your embeddings key could not be decrypted (check ENCRYPTION_KEY, then re-enter the key)."
-      }
+      },
+      "offTopicReply": "Here I can help you with anything about the business: prices, hours, appointments and orders. For anything else, type \"agent\" and a person will help you."
     },
     "automations": {
       "copyName": "{name} (Copy)",
