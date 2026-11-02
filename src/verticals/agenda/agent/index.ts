@@ -178,7 +178,11 @@ export const agendaInboundHandler: VerticalInboundHandler = async (ctx) => {
           }),
           loadHumanOwned(ctx.db, ctx.accountId, ctx.conversationId).catch(() => false),
         ])
-        return run(session, (ctx.humanOwned ?? false) || humanNow)
+        const result = await run(session, (ctx.humanOwned ?? false) || humanNow)
+        // El dispatcher trajo una sesión que ya no existe (otro mensaje la cerró mientras
+        // este esperaba). Si el mensaje no se consumió, hay que decir que se soltó: si no,
+        // el dispatcher lo reclamaría por la sesión vieja y nadie lo contestaría.
+        return !result.consumed && ctx.session && !session ? { ...result, released: true } : result
       },
       { runWithoutLockWhen: () => isUrgentInbound(ctx) },
     )

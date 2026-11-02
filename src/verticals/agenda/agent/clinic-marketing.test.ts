@@ -167,8 +167,10 @@ describe('permiso para avisos de control', () => {
         expect(marketingRows(db)).toHaveLength(0)
         expect(activeSteps(db)).toEqual([])
         expect(rec.calls).toHaveLength(callsBefore)
-        // No lo contesta el bot: el mensaje sigue su camino (a la IA).
-        expect(result).toEqual({ consumed: false })
+        // No lo contesta el bot: el mensaje sigue su camino (a la IA), y se avisa que la
+        // sesión se soltó. Sin `released` el despachador lo reclamaría por la sesión
+        // que leyó antes y nadie lo contestaría.
+        expect(result).toEqual({ consumed: false, released: true })
       },
     )
 
@@ -188,7 +190,7 @@ describe('permiso para avisos de control', () => {
 
       const result = await send(db, rec, { text: '¿a qué hora debo llegar?' })
 
-      expect(result.consumed).toBe(false)
+      expect(result).toEqual({ consumed: false, released: true })
       expect(rec.calls).toHaveLength(callsBefore)
       expect(activeSteps(db)).toEqual([])
     })

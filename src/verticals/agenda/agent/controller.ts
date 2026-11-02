@@ -688,7 +688,10 @@ async function handleClinicInbound(
         status: 'completed',
         updatedAtIso: dialog.nowIso,
       })
-      return handleClinicInbound(dialog, null, null, input)
+      const result = await handleClinicInbound(dialog, null, null, input)
+      // El despachador leyó esa sesión antes de llamarnos y, si el mensaje no se
+      // consumió, la reclamaría por ella: nadie lo contestaría. Se avisa que se soltó.
+      return result.consumed ? result : { ...result, released: true }
     }
     await advanceSession(dialog, session, input)
     return { consumed: true }
