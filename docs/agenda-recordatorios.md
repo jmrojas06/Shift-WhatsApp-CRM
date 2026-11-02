@@ -33,10 +33,12 @@ mensajes, «cita» y «barbero» siguen el vocabulario del negocio.
   citas que ya empezaron.
 - Zona horaria del negocio: America/Bogota (fija para todas las cuentas).
 
-Los botones llevan ids **estáticos** (`rem:confirm`, `rem:reschedule`,
-`rem:cancel`) porque los quick replies de plantilla de Meta no admiten
-payloads dinámicos. Por eso el bot resuelve la cita al tocarlos: es la
-**próxima cita activa** del contacto.
+En el mensaje libre los botones llevan ids **estáticos** (`rem:confirm`,
+`rem:reschedule`, `rem:cancel`). La plantilla se envía sin payload en los
+botones, así que Meta devuelve el **texto del botón** y el bot lee las
+tres etiquetas exactas (`Confirmar`, `Reprogramar`, `Cancelar`). En
+ninguno de los dos casos viaja el id de la cita: el bot la resuelve al
+tocarlos, y es la **próxima cita activa** del contacto.
 
 ## Plantilla de Meta (`recordatorio_cita`)
 
@@ -85,13 +87,19 @@ Crear en WhatsApp Manager → *Plantillas de mensaje* → **Crear plantilla**:
 | `{{4}}` | Fecha («martes 20 de octubre de 2026») |
 | `{{5}}` | Hora («7:00 a. m.») |
 
-**Quick replies** (exactamente estos tres):
+**Quick replies** (exactamente estos tres textos, con esas mayúsculas):
 
-| Texto del botón | Payload |
+| Texto del botón | Qué hace el bot |
 | --- | --- |
-| `Confirmar` | `rem:confirm` |
-| `Reprogramar` | `rem:reschedule` |
-| `Cancelar` | `rem:cancel` |
+| `Confirmar` | Confirma la cita |
+| `Reprogramar` | Abre el flujo para elegir otro día y hora |
+| `Cancelar` | Pide confirmar la cancelación |
+
+Al crear la plantilla solo se define el **texto** del botón: no hay un
+payload que configurar. Meta devuelve ese texto al tocarlo y el bot lo
+compara exacto contra `REMINDER_LABELS` en
+`src/verticals/agenda/agent/state.ts`. Si una plantilla usa otro texto,
+el toque se ignora.
 
 El cuerpo de la plantilla dice «cita» para todos los negocios: Meta no
 admite palabras que cambien por cuenta, así que un negocio de clases

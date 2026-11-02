@@ -206,9 +206,9 @@ export async function handleAgendaInbound(
   }
 
   // 0) Tap de un recordatorio (Confirmar / Reprogramar / Cancelar).
-  //    Los ids `rem:*` son estáticos — también viajan como quick
-  //    replies de la plantilla de Meta—, así que la cita se resuelve
-  //    como la próxima cita activa del contacto. Se atienden aunque
+  //    Ni los ids `rem:*` ni las etiquetas de la plantilla de Meta
+  //    llevan la cita, así que se resuelve como la próxima cita
+  //    activa del contacto. Se atienden aunque
   //    haya una sesión a medias (y sin abrir una nueva para confirmar),
   //    y también cuando un humano es dueño del hilo (D1).
   if (reminderAction) {
@@ -311,8 +311,7 @@ async function openSession(dialog: Dialog, state: BookingState): Promise<string>
  * Acciones Confirmar / Reprogramar / Cancelar del recordatorio.
  *
  * La cita sobre la que se actúa es la PRÓXIMA cita activa del
- * contacto: los botones de la plantilla de Meta no admiten ids
- * dinámicos, así que no viaja el id de la cita en el tap.
+ * contacto: no viaja el id de la cita en el tap.
  *
  *   - Confirmar: marca la cita y responde; no toca la sesión.
  *   - Reprogramar: retoma el flujo existente (`pick_day` en modo

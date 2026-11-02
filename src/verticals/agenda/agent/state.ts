@@ -107,11 +107,12 @@ export function parseAnswerId(
 // ------------------------------------------------------------
 // Ids del recordatorio (Fase 3)
 //
-// Los tres botones del recordatorio viajan con id estático
-// `rem:<acción>`: en el mensaje libre son los ids de botón y en la
-// plantilla de Meta son el payload de los quick replies, que NO
-// admite valores dinámicos. La cita sobre la que se actúa se
-// resuelve en el controlador (próxima cita activa del contacto).
+// En el mensaje libre los tres botones del recordatorio viajan con
+// id estático `rem:<acción>`. La plantilla de Meta se envía sin
+// payload, así que su tap devuelve la ETIQUETA del botón
+// ("Confirmar"): por eso también se leen las etiquetas. La cita sobre
+// la que se actúa se resuelve en el controlador (próxima cita activa
+// del contacto).
 // ------------------------------------------------------------
 
 export const REMINDER_ACTIONS = ['confirm', 'reschedule', 'cancel'] as const
@@ -120,8 +121,15 @@ export type ReminderAction = (typeof REMINDER_ACTIONS)[number]
 
 export const remId = (action: ReminderAction): string => `rem:${action}`
 
-/** 'rem:confirm' → 'confirm'; todo lo demás → null. */
+const REMINDER_LABELS: Readonly<Record<string, ReminderAction>> = {
+  Confirmar: 'confirm',
+  Reprogramar: 'reschedule',
+  Cancelar: 'cancel',
+}
+
+/** 'rem:confirm' o la etiqueta 'Confirmar' → 'confirm'; todo lo demás → null. */
 export function parseReminderId(id: string): ReminderAction | null {
+  if (Object.hasOwn(REMINDER_LABELS, id)) return REMINDER_LABELS[id]
   const prefix = 'rem:'
   if (!id.startsWith(prefix)) return null
   const action = id.slice(prefix.length)

@@ -1560,6 +1560,90 @@ describe('botones del recordatorio (rem:*)', () => {
   })
 })
 
+// Fuera de la ventana de 24 h el recordatorio sale como plantilla y se
+// envía sin payload: Meta devuelve la etiqueta del botón en
+// `button.payload` y el webhook la guarda como `interactive_reply_id`.
+describe('botones del recordatorio enviado como plantilla (etiquetas)', () => {
+  it('"Confirmar" confirma la cita, sin abrir sesión', async () => {
+    const seed = baseSeed()
+    seed.booking_appointments = [
+      appointmentRow({ status: 'pending', confirmed_at: null }),
+    ]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, { text: 'Confirmar', replyId: 'Confirmar' })
+
+    expect(res.consumed).toBe(true)
+    expect(db._tables.booking_appointments[0].status).toBe('confirmed')
+    expect(last(rec).bodyText).toContain('Queda confirmado')
+    expect(sessionRow(db)).toBeUndefined()
+  })
+
+  it('"Reprogramar" abre el flujo con la cita del recordatorio', async () => {
+    const seed = baseSeed()
+    seed.booking_appointments = [appointmentRow()]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, { text: 'Reprogramar', replyId: 'Reprogramar' })
+
+    expect(res.consumed).toBe(true)
+    const state = sessionRow(db)?.state as Record<string, unknown>
+    expect(state.step).toBe('pick_day')
+    expect(state.mode).toBe('reschedule')
+    expect(state.appointmentId).toBe('appt-old')
+  })
+
+  it('"Cancelar" pide confirmación y no cancela todavía', async () => {
+    const seed = baseSeed()
+    seed.booking_appointments = [appointmentRow()]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, { text: 'Cancelar', replyId: 'Cancelar' })
+
+    expect(res.consumed).toBe(true)
+    expect((sessionRow(db)?.state as Record<string, unknown>).step).toBe(
+      'manage_cancel_confirm',
+    )
+    expect(optionTitles(last(rec))).toContain('Sí, cancelar')
+    expect(db._tables.booking_appointments[0].status).not.toBe('cancelled')
+  })
+
+  it('con un humano a cargo, "Confirmar" también confirma', async () => {
+    const seed = baseSeed()
+    seed.booking_appointments = [
+      appointmentRow({ status: 'pending', confirmed_at: null }),
+    ]
+    seed.conversations[0].assigned_agent_id = HANDOFF_AGENT
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    const res = await sendHuman(db, rec, {
+      text: 'Confirmar',
+      replyId: 'Confirmar',
+    })
+
+    expect(res.consumed).toBe(true)
+    expect(db._tables.booking_appointments[0].status).toBe('confirmed')
+    expect(last(rec).bodyText).toContain('Queda confirmado')
+  })
+
+  it('una etiqueta que no es del recordatorio sigue sin consumirse', async () => {
+    const seed = baseSeed()
+    seed.booking_appointments = [appointmentRow()]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, { text: 'Más info', replyId: 'Más info' })
+
+    expect(res.consumed).toBe(false)
+    expect(rec.calls).toHaveLength(0)
+    expect(sessionRow(db)).toBeUndefined()
+  })
+})
+
 describe('recordatorio con un humano a cargo del chat (D1)', () => {
   function humanSeed(assignedAgentId: string | null = HANDOFF_AGENT) {
     const seed = baseSeed()

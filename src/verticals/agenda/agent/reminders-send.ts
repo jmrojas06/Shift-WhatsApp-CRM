@@ -84,8 +84,8 @@ function logDeliveredButNotLogged(
  * Fuera de la ventana de 24 h: plantilla `recordatorio_cita` con las
  * cinco variables documentadas (negocio, servicio, barbero, fecha,
  * hora) y los quick replies Confirmar / Reprogramar / Cancelar que
- * aprobó Meta. El payload de esos quick replies es estático
- * (`rem:*`), por eso la cita se resuelve en el controlador.
+ * aprobó Meta. Se envía sin payload en los botones: el tap devuelve
+ * su etiqueta y la cita se resuelve en el controlador.
  */
 async function sendReminderTemplate(delivery: ReminderDelivery): Promise<void> {
   const db = supabaseAdmin()

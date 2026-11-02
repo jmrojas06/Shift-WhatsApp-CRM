@@ -234,6 +234,25 @@ describe('ids del recordatorio', () => {
     expect(parseReminderId('rem:confirm:extra')).toBeNull()
     expect(parseReminderId('')).toBeNull()
   })
+
+  it('lee la etiqueta del botón de la plantilla', () => {
+    expect(parseReminderId('Confirmar')).toBe('confirm')
+    expect(parseReminderId('Reprogramar')).toBe('reschedule')
+    expect(parseReminderId('Cancelar')).toBe('cancel')
+  })
+
+  it('solo acepta las etiquetas exactas', () => {
+    expect(parseReminderId('confirmar')).toBeNull()
+    expect(parseReminderId('CANCELAR')).toBeNull()
+    expect(parseReminderId(' Confirmar')).toBeNull()
+    expect(parseReminderId('Confirmar cita')).toBeNull()
+  })
+
+  it('no confunde propiedades heredadas con etiquetas', () => {
+    expect(parseReminderId('constructor')).toBeNull()
+    expect(parseReminderId('toString')).toBeNull()
+    expect(parseReminderId('__proto__')).toBeNull()
+  })
 })
 
 describe('matchAnswerOption', () => {
