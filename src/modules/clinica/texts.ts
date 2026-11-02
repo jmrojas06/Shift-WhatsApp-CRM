@@ -89,17 +89,6 @@ export const CLINIC_HUMAN_WORDS: readonly string[] = [
   'documentos',
 ]
 
-/**
- * Saludos que abren el menú en una clínica ("buenas tardes" es lo primero que
- * escribe mucha gente). Solo en clínicas: en las demás agendas no cuentan.
- */
-export const CLINIC_GREETING_WORDS: readonly string[] = [
-  'buenas',
-  'buenos dias',
-  'buenas tardes',
-  'buenas noches',
-]
-
 /** Nota: una lista admite títulos de hasta 24 caracteres y un botón, 20. */
 export function buildClinicTexts(l: AgendaLabels) {
   return {

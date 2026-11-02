@@ -30,8 +30,6 @@ import { latestConsent } from '@/modules/clinica/consent'
 import { loadClinicContext, type ClinicContext } from '@/modules/clinica/settings'
 import {
   buildClinicTexts,
-  CLINIC_GREETING_WORDS,
-  CLINIC_HUMAN_WORDS,
   DEFAULT_URGENCY_WORDS,
   type ClinicTexts,
 } from '@/modules/clinica/texts'
@@ -82,7 +80,6 @@ import {
   actId,
   ansId,
   ansSkipId,
-  containsAnyWord,
   containsHandoffWord,
   containsIntentWord,
   containsUrgencyWord,
@@ -108,8 +105,8 @@ import {
   handleClinicChoice,
   handlePatientName,
   isClinicStep,
-  looksLikeQuestion,
   renderClinicStep,
+  routeClinicText,
   type ClinicHandoff,
   type ClinicOutcome,
   type ClinicStepCtx,
@@ -288,42 +285,9 @@ export async function handleAgendaInbound(
     return { consumed: true }
   }
 
-  // Clínica: quejas, pagos y documentos los atiende una persona (spec §5,
-  // etapa 2). Va al nivel del pase a una persona, así que no espera la
-  // autorización, pero no se aplica mientras la persona escribe un nombre o la
-  // respuesta a una pregunta (`writingAnswer`: "Paz Documento" es un nombre), ni
-  // a una duda ("¿cuánto cuesta el certificado?" va a la IA).
-  if (
-    dialog.clinic &&
-    replyId === null &&
-    !writingAnswer &&
-    containsAnyWord(text, CLINIC_HUMAN_WORDS) &&
-    !looksLikeQuestion(text, [dialog.settings.labels.cita, dialog.settings.labels.citas])
-  ) {
-    await performHandoff(dialog, args.session?.id ?? null, {
-      note: dialog.clinicTexts.humanTopicNote,
-    })
-    return { consumed: true }
-  }
-
-  // Clínica: una duda escrita con el menú abierto, o lo que se escribe después de
-  // "Precios y dudas", es para la IA. Se cierra la sesión y se suelta el mensaje
-  // con `released`: con `consumed: false` a secas el despachador lo reclamaría
-  // por haber una sesión abierta cuando llegó.
-  if (args.session && dialog.clinic && replyId === null && asking) {
-    const { labels } = dialog.settings
-    const toAi =
-      asking.step === 'faq_open' ||
-      (asking.step === 'clinic_menu' && looksLikeQuestion(text, [labels.cita, labels.citas]))
-    if (toAi) {
-      await closeSession(args.db, {
-        id: args.session.id,
-        accountId: args.accountId,
-        status: 'completed',
-        updatedAtIso: dialog.nowIso,
-      })
-      return { consumed: false, released: true }
-    }
+  // Clínica: el texto libre y los toques del menú los enruta una sola regla.
+  if (dialog.clinic) {
+    return handleClinicInbound(dialog, args.session ?? null, asking, { text, replyId })
   }
 
   // 2) Con sesión activa, el flujo es dueño del mensaje.
@@ -340,42 +304,14 @@ export async function handleAgendaInbound(
     dialog.nowIso,
   )
 
-  // Clínica: sin autorización no se sigue, y la IA no ve la conversación.
-  // Si la autorización no se pudo leer, se vuelve a pedir.
-  if (dialog.clinic) {
-    const consent = await latestConsent(args.db, {
-      accountId: args.accountId,
-      contactId: args.contactId,
-      kind: 'datos_sensibles',
-    })
-    if (!consent?.granted) {
-      const state = newBookingState('consent')
-      const sessionId = await openSession(dialog, state)
-      await conclude(dialog, sessionId, state)
-      return { consumed: true }
-    }
-  }
-
   // Un tap de un menú viejo no arranca nada (y no se consume).
   if (replyId !== null) return { consumed: false }
 
   // 4) ¿Quiere agendar? Se abre el diálogo (o la gestión si ya
   //    tiene una cita próxima).
   const { labels } = dialog.settings
-  const intentWords = [labels.cita, labels.citas, labels.servicio, labels.servicios]
-  // En una clínica los saludos también abren el menú.
-  if (dialog.clinic) intentWords.push(...CLINIC_GREETING_WORDS)
-  if (!containsIntentWord(text, intentWords)) {
+  if (!containsIntentWord(text, [labels.cita, labels.citas, labels.servicio, labels.servicios])) {
     return { consumed: false }
-  }
-
-  // Clínica: una duda va a la IA; lo demás abre el menú principal.
-  if (dialog.clinic) {
-    if (looksLikeQuestion(text, [labels.cita, labels.citas])) return { consumed: false }
-    const state = newBookingState('clinic_menu')
-    const sessionId = await openSession(dialog, state)
-    await conclude(dialog, sessionId, state)
-    return { consumed: true }
   }
 
   const existing = await findNextAppointment(
@@ -391,6 +327,110 @@ export async function handleAgendaInbound(
   const sessionId = await openSession(dialog, state)
   await conclude(dialog, sessionId, state)
   return { consumed: true }
+}
+
+/**
+ * Mensaje de una cuenta con clínica lista para usarse (la no disponible y el
+ * pase por palabra ya se atendieron arriba).
+ *
+ * El texto libre sigue UNA regla (`routeClinicText`), y solo en tres
+ * momentos: sin sesión, con el menú abierto y esperando una duda. En cualquier
+ * otro paso (la autorización, el nombre, los servicios, las preguntas...) el
+ * texto es la respuesta a ese paso y lo lee el paso.
+ *
+ *   sin sesión   book, greeting → menú · human → una persona · ai → la IA
+ *   clinic_menu  book → "Agendar" · human → una persona · greeting → el menú
+ *                otra vez, sin contar fallo · ai → la IA
+ *   faq_open     book → "Agendar" · lo demás → la IA (aunque traiga una palabra
+ *                de queja, pago o documento: es la duda que se le pidió)
+ *
+ * Soltar a la IA cierra la sesión y lo avisa con `released`: el despachador
+ * reclama todo lo que llega con una sesión abierta.
+ */
+async function handleClinicInbound(
+  dialog: Dialog,
+  session: VerticalSession | null,
+  state: BookingState | null,
+  input: { text: string; replyId: string | null },
+): Promise<VerticalDispatchResult> {
+  const { text, replyId } = input
+  const { labels } = dialog.settings
+  const step = state?.step ?? null
+  // Solo se enruta el texto: una foto, un audio, un sticker o un toque no.
+  const route =
+    replyId === null && !isNonTextInbound(text)
+      ? routeClinicText(text, [labels.cita, labels.citas])
+      : null
+
+  if (session && state) {
+    if (step === 'clinic_menu' || step === 'faq_open') {
+      if (route === 'book') {
+        await handleChoice(dialog, session.id, newBookingState('clinic_menu'), actId('book'))
+        return { consumed: true }
+      }
+      if (step === 'clinic_menu' && route === 'human') {
+        await performHandoff(dialog, session.id, { note: dialog.clinicTexts.humanTopicNote })
+        return { consumed: true }
+      }
+      if (step === 'clinic_menu' && route === 'greeting') {
+        await conclude(dialog, session.id, state)
+        return { consumed: true }
+      }
+      if (route !== null) return releaseToAi(dialog, session.id)
+      // Una foto o un audio mientras espera la duda: no es la duda ni la cierra.
+      if (step === 'faq_open' && replyId === null) {
+        await conclude(dialog, session.id, state)
+        return { consumed: true }
+      }
+    }
+    await advanceSession(dialog, session, input)
+    return { consumed: true }
+  }
+
+  await expireStaleSessions(dialog.db, dialog.accountId, dialog.contactId, dialog.nowIso)
+
+  // Quejas, pagos y documentos van a una persona sin esperar la autorización:
+  // nadie con una queja se queda atascado en un aviso legal.
+  if (route === 'human') {
+    await performHandoff(dialog, null, { note: dialog.clinicTexts.humanTopicNote })
+    return { consumed: true }
+  }
+
+  // Sin autorización no se sigue, y la IA no ve la conversación. Si la
+  // autorización no se pudo leer, se vuelve a pedir.
+  const consent = await latestConsent(dialog.db, {
+    accountId: dialog.accountId,
+    contactId: dialog.contactId,
+    kind: 'datos_sensibles',
+  })
+  if (!consent?.granted) {
+    const consentState = newBookingState('consent')
+    const sessionId = await openSession(dialog, consentState)
+    await conclude(dialog, sessionId, consentState)
+    return { consumed: true }
+  }
+
+  // Un tap de un menú viejo no arranca nada (y no se consume).
+  if (replyId !== null) return { consumed: false }
+
+  if (route === 'book' || route === 'greeting') {
+    const menu = newBookingState('clinic_menu')
+    const sessionId = await openSession(dialog, menu)
+    await conclude(dialog, sessionId, menu)
+    return { consumed: true }
+  }
+  return { consumed: false }
+}
+
+/** Cierra la sesión y le suelta el mensaje a la IA (ver `released`). */
+async function releaseToAi(dialog: Dialog, sessionId: string): Promise<VerticalDispatchResult> {
+  await closeSession(dialog.db, {
+    id: sessionId,
+    accountId: dialog.accountId,
+    status: 'completed',
+    updatedAtIso: dialog.nowIso,
+  })
+  return { consumed: false, released: true }
 }
 
 /**

@@ -246,10 +246,18 @@ const escapeRegex = (word: string) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
  * letra no latina o una ñ pegada contaría como borde.
  */
 function containsWord(text: string, words: readonly string[]): boolean {
+  return indexOfWord(text, words) >= 0
+}
+
+/** Posición, en el texto normalizado, de la primera de estas palabras; -1 si no hay ninguna. */
+function indexOfWord(text: string, words: readonly string[]): number {
   const normalized = normalizeText(text)
-  return words.some((w) =>
-    new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegex(w)}(?![\\p{L}\\p{N}])`, 'u').test(normalized),
-  )
+  let first = -1
+  for (const w of words) {
+    const found = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegex(w)}(?![\\p{L}\\p{N}])`, 'u').exec(normalized)
+    if (found && (first === -1 || found.index < first)) first = found.index
+  }
+  return first
 }
 
 /** Palabras del dueño demasiado comunes para abrir el flujo por sí solas. */
@@ -313,6 +321,14 @@ export function containsHandoffWord(text: string): boolean {
  */
 export function containsAnyWord(text: string, words: readonly string[]): boolean {
   return containsWord(text, words.map(normalizeText))
+}
+
+/**
+ * Posición de la primera de estas palabras en `normalizeText(text)`, o -1. Sirve
+ * para mirar lo que viene antes de ella.
+ */
+export function indexOfAnyWord(text: string, words: readonly string[]): number {
+  return indexOfWord(text, words.map(normalizeText))
 }
 
 /** ¿El mensaje trae una palabra de urgencia de la clínica? */

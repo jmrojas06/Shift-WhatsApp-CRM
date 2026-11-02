@@ -11,13 +11,14 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { recordConsent } from '@/modules/clinica/consent'
 import { validatePatientName } from '@/modules/clinica/patients'
 import type { ClinicContext } from '@/modules/clinica/settings'
-import type { ClinicTexts } from '@/modules/clinica/texts'
+import { CLINIC_HUMAN_WORDS, type ClinicTexts } from '@/modules/clinica/texts'
 
 import type { ClinicBackend } from '../backend'
 import type { AgendaSender } from '../controller'
 import {
   actId,
   containsAnyWord,
+  indexOfAnyWord,
   newBookingState,
   normalizeText,
   patId,
@@ -102,35 +103,85 @@ const QUESTION_STARTS = [
   'reciben',
 ]
 
-/**
- * Quien pide algo no pregunta, aunque lo escriba con signos de pregunta o
- * empiece con "qué" ("Qué pena, necesito una cita"). Sin tildes, como se
- * comparan.
- */
-const REQUEST_PHRASES = ['quiero', 'quisiera', 'necesito', 'me das', 'me da', 'puedo agendar']
+/** Adónde va un texto libre en una clínica. */
+export type ClinicRoute = 'book' | 'greeting' | 'human' | 'ai'
+
+/** Palabras de cita. Las de la clínica ("turno", "sesión") se suman al llamar. */
+const BOOK_WORDS = ['cita', 'citas', 'agendar', 'agenda', 'agendo', 'reservar', 'turno']
+
+/** Quien las usa pide algo. */
+const ASKING_WORDS = [
+  'quiero',
+  'quisiera',
+  'necesito',
+  'me das',
+  'me da',
+  'me dan',
+  'me pueden',
+  'me agendan',
+  'puedo',
+  'tienen',
+  'hay',
+  'sacar',
+  'pedir',
+]
+
+const GREETINGS = ['hola', 'buenas', 'buenos dias', 'buen dia', 'buenas tardes', 'buenas noches']
+
+/** Una de estas antes de la palabra la anula: "no tengo ninguna queja", "gracias por la receta". */
+const NEGATIONS_AND_THANKS = [
+  'no',
+  'ni',
+  'nunca',
+  'jamas',
+  'tampoco',
+  'sin',
+  'ningun',
+  'ninguna',
+  'ninguno',
+  'nada',
+  'gracias',
+  'agradezco',
+  'agradecido',
+  'agradecida',
+]
 
 /**
- * Lo que parece una duda va a la IA aunque nombre una "cita".
+ * Una sola regla para el texto libre de una clínica, en este orden. Lo que no
+ * encaja en nada es para la IA: es el valor por defecto, y equivocarse hacia
+ * ahí cuesta menos que mandar a alguien al menú o a una persona sin motivo.
  *
- *   1. Un verbo de pedir gana: "¿me das una cita?" abre el menú.
- *   2. Un signo de pregunta es una duda.
- *   3. Sin signo de pregunta, nombrar la cita la pide ("Tienen citas
- *      disponibles"): abre el menú, que tiene "Precios y dudas".
- *   4. Si no, empezar con "cuánto", "dónde", "cómo"... es una duda.
+ *   1. book: nombra una cita Y la pide (un verbo de pedir), o es un mensaje de
+ *      tres palabras o menos ("cita", "una cita hoy").
+ *   2. human: trae una palabra de queja, pago o documento sin una negación ni un
+ *      agradecimiento antes, y no es una pregunta.
+ *   3. greeting: arranca con un saludo y no pasa de cuatro palabras.
+ *   4. ai: todo lo demás.
  *
+ * La urgencia y la palabra de pase a una persona se miran antes, fuera de aquí.
  * `appointmentWords` son las palabras que usa la clínica para sus citas.
  */
-export function looksLikeQuestion(
-  text: string,
-  appointmentWords: readonly string[] = ['cita', 'citas'],
-): boolean {
-  if (containsAnyWord(text, REQUEST_PHRASES)) return false
-  if (text.includes('?') || text.includes('¿')) return true
-  if (containsAnyWord(text, appointmentWords)) return false
-  const plain = normalizeText(text)
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .trim()
-  return QUESTION_STARTS.includes(plain.split(/\s+/)[0] ?? '')
+export function routeClinicText(text: string, appointmentWords: readonly string[] = []): ClinicRoute {
+  const normalized = normalizeText(text)
+  const words = normalized.match(/[\p{L}\p{N}]+/gu) ?? []
+
+  const namesAppointment = containsAnyWord(normalized, [...BOOK_WORDS, ...appointmentWords])
+  if (namesAppointment && (words.length <= 3 || containsAnyWord(normalized, ASKING_WORDS))) return 'book'
+
+  const topicAt = indexOfAnyWord(normalized, CLINIC_HUMAN_WORDS)
+  const isQuestion = /[?¿]/.test(normalized) || QUESTION_STARTS.includes(words[0] ?? '')
+  if (
+    topicAt >= 0 &&
+    !containsAnyWord(normalized.slice(0, topicAt), NEGATIONS_AND_THANKS) &&
+    !isQuestion
+  ) {
+    return 'human'
+  }
+
+  const plain = words.join(' ')
+  if (words.length <= 4 && GREETINGS.some((g) => plain === g || plain.startsWith(`${g} `))) return 'greeting'
+
+  return 'ai'
 }
 
 /** Con paciente elegido sigue la reserva; una urgencia salta al menú de horas. */
