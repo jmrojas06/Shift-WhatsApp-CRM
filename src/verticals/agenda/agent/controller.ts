@@ -120,8 +120,10 @@ import {
   recordConsentRevoked,
   renderClinicStep,
   routeClinicText,
+  urgencyBookingHandoff,
   urgencyConsentUnansweredHandoff,
   urgencyGoErHandoff,
+  urgencyOffHoursHandoff,
   urgencyUnconfirmedHandoff,
   type ClinicHandoff,
   type ClinicOutcome,
@@ -348,7 +350,7 @@ export async function handleAgendaInbound(
     await performHandoff(
       dialog,
       args.session?.id ?? null,
-      asking?.step === 'urgency' ? pendingUrgencyHandoff(dialog) : {},
+      personRequestHandoff(dialog, asking),
     )
     return { consumed: true }
   }
@@ -593,6 +595,12 @@ async function handleClinicInbound(
   }
 
   if (session && state) {
+    // En una urgencia (los signos, la autorización o la reserva de hoy), pedir una
+    // persona con el botón avisa con prioridad, como escribirlo.
+    if (replyId === actId('human') && personRequestHandoff(dialog, state).notification) {
+      await performHandoff(dialog, session.id, personRequestHandoff(dialog, state))
+      return { consumed: true }
+    }
     // Los botones del menú principal valen en cualquier paso: un menú viejo sigue
     // en el chat, y tocarlo no puede dar "No entendí". Quedan aparte la
     // autorización, que se contesta primero ("Tengo una urgencia" sí va antes: lo
@@ -608,11 +616,6 @@ async function handleClinicInbound(
       step !== 'urgency'
     ) {
       await handleChoice(dialog, session.id, newBookingState('clinic_menu'), replyId)
-      return { consumed: true }
-    }
-    // En los signos de alarma, pedir una persona avisa con prioridad, como escribirlo.
-    if (step === 'urgency' && replyId === actId('human')) {
-      await performHandoff(dialog, session.id, pendingUrgencyHandoff(dialog))
       return { consumed: true }
     }
     if (step === 'clinic_menu' || step === 'faq_open') {
@@ -1008,28 +1011,37 @@ async function registerFail(
 ): Promise<void> {
   const fails = state.fails + 1
   if (fails >= 2) {
-    // Ya dijo que le duele y no contestó los signos con claridad: no es un pase
-    // cualquiera, el equipo recibe el aviso prioritario.
-    if (state.step === 'urgency') {
-      await performHandoff(dialog, sessionId, pendingUrgencyHandoff(dialog))
-      return
-    }
-    // Una autorización sin responder no es un pedido de hablar con una persona.
-    // Si se pidió para agendar una urgencia, el aviso es el prioritario.
-    await performHandoff(
-      dialog,
-      sessionId,
-      state.step !== 'consent'
-        ? {}
-        : state.afterConsent === 'urgency_book'
-          ? urgencyConsentUnansweredHandoff(dialog.clinicTexts)
-          : { note: dialog.clinicTexts.consentUnansweredNote },
-    )
+    await performHandoff(dialog, sessionId, failureHandoff(dialog, state))
     return
   }
   const next = { ...state, fails }
   await dialog.sender.sendText({ text: message })
   await conclude(dialog, sessionId, next)
+}
+
+/**
+ * El pase de quien pide una persona o falla dos veces en este paso. Una urgencia
+ * (los signos de alarma, la autorización que se pidió para agendarla, o su
+ * reserva de hoy) lleva el aviso prioritario: la persona ya dijo que le duele.
+ */
+function personRequestHandoff(
+  dialog: Dialog,
+  state: BookingState | null,
+): Omit<ClinicHandoff, 'kind'> {
+  if (state?.step === 'urgency') return pendingUrgencyHandoff(dialog)
+  if (state && (state.urgent || state.afterConsent === 'urgency_book')) {
+    return urgencyBookingHandoff(dialog.clinicTexts)
+  }
+  return {}
+}
+
+/** Dos respuestas que no se entienden: lo mismo, salvo la autorización sin responder. */
+function failureHandoff(dialog: Dialog, state: BookingState): Omit<ClinicHandoff, 'kind'> {
+  if (state.step !== 'consent') return personRequestHandoff(dialog, state)
+  // Una autorización sin responder no es un pedido de hablar con una persona.
+  return state.afterConsent === 'urgency_book'
+    ? urgencyConsentUnansweredHandoff(dialog.clinicTexts)
+    : { note: dialog.clinicTexts.consentUnansweredNote }
 }
 
 // ------------------------------------------------------------
@@ -1388,9 +1400,10 @@ async function handleChoice(
           ...state,
           slotStartsAt: undefined,
           questionId: undefined,
-          // Cambiar la hora es empezar a elegir otra vez: desde el primer día.
+          // Cambiar la hora es empezar a elegir otra vez: desde el primer día. Una
+          // urgencia vuelve a las horas de hoy, no al menú de días.
           dayPage: undefined,
-          step: 'pick_day',
+          step: state.urgent ? 'pick_slot' : 'pick_day',
         })
         return
       }
@@ -1822,6 +1835,8 @@ async function resolveCandidates(
 interface Rendered {
   state: BookingState
   closed: boolean
+  /** El paso no tiene a quién ofrecer y pasa a una persona (una urgencia sin horas). */
+  handoff?: ClinicHandoff
 }
 
 /**
@@ -1923,10 +1938,22 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
     }
 
     case 'pick_slot': {
-      const dateKey = state.dateKey
+      // Una urgencia es para hoy: sin día, hoy.
+      const dateKey = state.dateKey ?? (state.urgent ? zonedDateKey(dialog.now) : undefined)
       if (!dateKey) return renderStep(dialog, { ...state, step: 'pick_day' })
       const slots = await mergedSlotsForDay(dialog, state, dateKey)
       if (!slots.length) {
+        // Una urgencia sin horas nunca cae al menú de días: pasa a una persona.
+        if (state.urgent && dialog.clinic) {
+          return {
+            state,
+            closed: true,
+            handoff: urgencyOffHoursHandoff(
+              dialog.clinicTexts,
+              dialog.clinic.location?.onCallPhone ?? null,
+            ),
+          }
+        }
         await dialog.sender.sendText({ text: dialog.texts.dayTaken })
         return renderStep(dialog, {
           ...state,
@@ -2087,7 +2114,11 @@ async function conclude(
   sessionId: string,
   state: BookingState,
 ): Promise<void> {
-  const { state: effective, closed } = await renderStep(dialog, state)
+  const { state: effective, closed, handoff } = await renderStep(dialog, state)
+  if (handoff) {
+    await performHandoff(dialog, sessionId, handoff)
+    return
+  }
   if (closed) {
     await closeSession(dialog.db, {
       id: sessionId,

@@ -198,6 +198,9 @@ export function buildClinicTexts(l: AgendaLabels) {
       `${alarmText}\n\nYa avisé a la clínica para que se comuniquen contigo. Si tienes alguno de esos signos, ve a urgencias ahora, sin esperar respuesta.`,
     urgencyNote: 'Paciente: reportó signos de alarma (bot en pausa).',
     urgencyOffHoursNote: 'Paciente: urgencia sin cupo en la agenda de hoy (bot en pausa).',
+    /** Una urgencia sin signos de alarma que pidió una persona o no logró agendar. */
+    urgencyBookingNote:
+      'Paciente: escribió una posible urgencia, sin signos de alarma, y pidió una persona o no logró agendar (bot en pausa). Comunícate con esa persona ya.',
     urgencyPendingNote:
       'Paciente: escribió una posible urgencia y no confirmó si tiene signos de alarma (bot en pausa). Comunícate con esa persona ya.',
     /** Rechazó o dejó sin responder la autorización que se le pidió para agendar la urgencia. */

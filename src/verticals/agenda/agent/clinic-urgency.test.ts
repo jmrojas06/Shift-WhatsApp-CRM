@@ -366,14 +366,154 @@ describe('urgencias', () => {
       expectHandedToAPerson(db, rec)
     })
 
-    it('si la autorización se acaba de dar y no hay cupo, también pasa a una persona', async () => {
+    it('sin autorización, mira el cupo ANTES de pedirla: sin cupo no hay texto legal', async () => {
       const db = clinicDb()
       const rec = makeRecorder()
       await send(db, rec, { text: 'urgencia' }, { now: SATURDAY })
       await send(db, rec, { replyId: 'act:alarm_no' }, { now: SATURDAY })
-      await send(db, rec, { replyId: 'act:consent_yes' }, { now: SATURDAY })
+      expect(last(rec).bodyText).toBe(texts.urgencyOffHours('3001234567'))
+      expect(rec.calls.some((c) => c.ids.includes('act:consent_yes'))).toBe(false)
+      expect(rec.calls.some((c) => c.bodyText === 'Texto de autorización')).toBe(false)
+      expect(db._tables.clinic_consents).toHaveLength(0)
+      expectHandedToAPerson(db, rec)
+    })
+
+    it('sin autorización y con cupo, la pide después', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'urgencia' })
+      await send(db, rec, { replyId: 'act:alarm_no' })
+      expect(last(rec).bodyText).toBe('Texto de autorización')
+    })
+
+    it('si el cupo se acaba mientras decide la autorización, pasa a una persona', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'urgencia' })
+      await send(db, rec, { replyId: 'act:alarm_no' })
+      db._tables.booking_appointments.push({
+        id: 'appt-full',
+        account_id: ACCOUNT,
+        staff_id: STAFF_ANA,
+        status: 'confirmed',
+        starts_at: '2026-10-19T14:00:00.000Z',
+        ends_at: '2026-10-19T17:00:00.000Z',
+      })
+      await send(db, rec, { replyId: 'act:consent_yes' })
       expect(last(rec).bodyText).toBe(texts.urgencyOffHours('3001234567'))
       expectHandedToAPerson(db, rec)
+    })
+  })
+
+  describe('una reserva de urgencia en curso', () => {
+    const PATIENT = { id: 'pat-1', account_id: ACCOUNT, contact_id: CONTACT, full_name: 'Marta Ruiz' }
+    const FULL_DAY = {
+      id: 'appt-full',
+      account_id: ACCOUNT,
+      staff_id: STAFF_ANA,
+      status: 'confirmed',
+      starts_at: '2026-10-19T14:00:00.000Z',
+      ends_at: '2026-10-19T17:00:00.000Z',
+    }
+
+    /** Sin signos, con paciente elegido: está viendo las horas de hoy. */
+    async function atTodaysHours() {
+      const db = clinicDb({ clinic_consents: [grantedConsent()], clinic_patients: [PATIENT] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'urgencia' })
+      await send(db, rec, { replyId: 'act:alarm_no' })
+      await send(db, rec, { replyId: 'pat:pat-1' })
+      expect(last(rec).ids.every((id) => id.startsWith('slot:'))).toBe(true)
+      return { db, rec }
+    }
+
+    const offeredDays = (rec: ReturnType<typeof makeRecorder>) =>
+      rec.calls.some((c) => c.ids.some((id) => id.startsWith('day:')))
+
+    it('si la hora elegida se ocupó y no queda ninguna hoy, pasa a una persona, no al menú de días', async () => {
+      const { db, rec } = await atTodaysHours()
+      const first = last(rec).ids[0]
+      db._tables.booking_appointments.push(FULL_DAY)
+      await send(db, rec, { replyId: first })
+      expect(last(rec).bodyText).toBe(texts.urgencyOffHours('3001234567'))
+      expect(offeredDays(rec)).toBe(false)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.urgencyOffHoursNote)
+      expect(priorityNotifications(db)).toMatchObject([{ user_id: OWNER }])
+      expect(activeSteps(db)).toEqual([])
+    })
+
+    it('si la hora se ocupó pero quedan otras hoy, las vuelve a ofrecer', async () => {
+      const { db, rec } = await atTodaysHours()
+      const first = last(rec).ids[0]
+      db._tables.booking_appointments.push({ ...FULL_DAY, ends_at: '2026-10-19T14:30:00.000Z' })
+      await send(db, rec, { replyId: first })
+      expect(last(rec).ids.every((id) => id.startsWith('slot:2026-10-19T'))).toBe(true)
+      expect(last(rec).ids).not.toContain(first)
+      expect(activeStates(db)).toMatchObject([{ step: 'pick_slot', urgent: true }])
+    })
+
+    it('"Cambiar hora" desde el resumen vuelve a las horas de hoy, no a los días', async () => {
+      const { db, rec } = await atTodaysHours()
+      await send(db, rec, { replyId: last(rec).ids[0] })
+      expect(last(rec).ids).toContain('act:reschedule')
+      await send(db, rec, { replyId: 'act:reschedule' })
+      expect(last(rec).ids.every((id) => id.startsWith('slot:2026-10-19T'))).toBe(true)
+      expect(offeredDays(rec)).toBe(false)
+      expect(activeStates(db)).toMatchObject([{ step: 'pick_slot', urgent: true }])
+    })
+
+    it('"Cambiar hora" sin horas hoy pasa a una persona', async () => {
+      const { db, rec } = await atTodaysHours()
+      await send(db, rec, { replyId: last(rec).ids[0] })
+      db._tables.booking_appointments.push(FULL_DAY)
+      await send(db, rec, { replyId: 'act:reschedule' })
+      expect(last(rec).bodyText).toBe(texts.urgencyOffHours('3001234567'))
+      expect(offeredDays(rec)).toBe(false)
+      expect(priorityNotifications(db)).toHaveLength(1)
+    })
+
+    it.each([
+      ['escribe "asesor"', { text: 'asesor' }],
+      ['toca "Hablar con una persona"', { replyId: 'act:human' }],
+    ])('si %s, el aviso es el prioritario', async (_what, input) => {
+      const { db, rec } = await atTodaysHours()
+      await send(db, rec, input)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.urgencyBookingNote)
+      expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
+      expect(priorityNotifications(db)).toMatchObject([{ user_id: OWNER }])
+    })
+
+    it('si falla dos veces, el aviso es el prioritario', async () => {
+      const { db, rec } = await atTodaysHours()
+      await send(db, rec, { text: 'mañana por la tarde' })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+      await send(db, rec, { text: 'otra cosa' })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.urgencyBookingNote)
+      expect(priorityNotifications(db)).toHaveLength(1)
+    })
+
+    it('esperando la autorización, pedir una persona también es prioritario', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'urgencia' })
+      await send(db, rec, { replyId: 'act:alarm_no' })
+      await send(db, rec, { text: 'asesor' })
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.urgencyBookingNote)
+      expect(priorityNotifications(db)).toHaveLength(1)
+    })
+
+    it('una reserva normal no cambia: pedir una persona sigue con el aviso de siempre', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()], clinic_patients: [PATIENT] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:book' })
+      await send(db, rec, { replyId: 'pat:pat-1' })
+      await send(db, rec, { text: 'asesor' })
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(AGENDA_AGENT_TEXTS.handoffNote)
+      expect(priorityNotifications(db)).toHaveLength(0)
     })
   })
 

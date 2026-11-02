@@ -271,13 +271,26 @@ export async function handlePatientName(
  * Sin cupo hoy (o sin atención de urgencia configurada): el teléfono de turno si
  * lo hay, aviso prioritario a la clínica y el hilo a una persona.
  */
-function urgencyHandoff(ctx: ClinicStepCtx): ClinicHandoff {
+export function urgencyOffHoursHandoff(texts: ClinicTexts, onCallPhone: string | null): ClinicHandoff {
   return {
     kind: 'handoff',
-    message: ctx.texts.urgencyOffHours(ctx.clinic.location?.onCallPhone ?? null),
-    note: ctx.texts.urgencyOffHoursNote,
-    notification: urgencyNotice(ctx.texts),
+    message: texts.urgencyOffHours(onCallPhone),
+    note: texts.urgencyOffHoursNote,
+    notification: urgencyNotice(texts),
   }
+}
+
+function urgencyHandoff(ctx: ClinicStepCtx): ClinicHandoff {
+  return urgencyOffHoursHandoff(ctx.texts, ctx.clinic.location?.onCallPhone ?? null)
+}
+
+/**
+ * Una urgencia sin signos de alarma, ya en la reserva de hoy, que pidió una
+ * persona o no logró agendar (dos respuestas que no se entienden). El mensaje es
+ * el pase de siempre; lo que cambia es la nota y que el aviso es el prioritario.
+ */
+export function urgencyBookingHandoff(texts: ClinicTexts): Omit<ClinicHandoff, 'kind'> {
+  return { note: texts.urgencyBookingNote, notification: urgencyNotice(texts) }
 }
 
 /** El aviso prioritario al equipo: el mismo en todos los pases de una urgencia. */
@@ -538,6 +551,11 @@ export async function handleClinicChoice(
         return urgencyUnconfirmedHandoff(texts, ctx.clinic.urgencyAlarmText)
       }
       if (parsed.value !== 'alarm_no') return { kind: 'fail' }
+      // Primero el cupo: sin cupo hoy (o sin atención de urgencia) no tiene sentido
+      // pedir una autorización para agendar. Va el teléfono de turno y el aviso
+      // prioritario, sin texto legal.
+      const opening = await urgencyBooking(ctx)
+      if (opening.kind !== 'next') return opening
       // La urgencia no espera la autorización para mostrar los signos de alarma,
       // pero agendar sí la necesita: se pide ahora y luego sigue la hora de hoy.
       const consent = await latestConsent(ctx.db, {
@@ -548,7 +566,7 @@ export async function handleClinicChoice(
       if (!consent?.granted) {
         return { kind: 'next', state: newBookingState('consent', { afterConsent: 'urgency_book' }) }
       }
-      return urgencyBooking(ctx)
+      return opening
     }
 
     default:
