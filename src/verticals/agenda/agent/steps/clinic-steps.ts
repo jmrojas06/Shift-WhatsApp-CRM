@@ -8,13 +8,14 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-import { recordConsent } from '@/modules/clinica/consent'
+import { latestConsent, recordConsent } from '@/modules/clinica/consent'
 import { validatePatientName } from '@/modules/clinica/patients'
 import type { ClinicContext } from '@/modules/clinica/settings'
 import { CLINIC_HUMAN_WORDS, type ClinicTexts } from '@/modules/clinica/texts'
 
 import type { ClinicBackend } from '../backend'
 import type { AgendaSender } from '../controller'
+import type { ServiceInfo } from '../db'
 import {
   actId,
   containsAnyWord,
@@ -28,6 +29,7 @@ import {
   type OptionKind,
   type ReminderAction,
 } from '../state'
+import { zonedDateKey } from '../time'
 
 export interface ClinicStepCtx {
   db: SupabaseClient
@@ -43,6 +45,8 @@ export interface ClinicStepCtx {
   inboundMessageId: string | null
   /** ¿La IA va a contestar las dudas? Se lee una vez por mensaje. */
   aiAutoReplyOn(): Promise<boolean>
+  /** Servicio activo por id, con los candidatos que lo atienden; null si ya no hay a quién ofrecer. */
+  serviceScope(serviceId: string): Promise<{ service: ServiceInfo; staffIds: string[] } | null>
   sendOptions(args: {
     bodyText: string
     buttonLabel: string
@@ -253,6 +257,75 @@ export async function handlePatientName(
   }
 }
 
+/**
+ * Sin cupo hoy (o sin atención de urgencia configurada): el teléfono de turno si
+ * lo hay, aviso prioritario a la clínica y el hilo a una persona.
+ */
+function urgencyHandoff(ctx: ClinicStepCtx): ClinicHandoff {
+  return {
+    kind: 'handoff',
+    message: ctx.texts.urgencyOffHours(ctx.clinic.location?.onCallPhone ?? null),
+    note: ctx.texts.urgencyOffHoursNote,
+    notification: {
+      title: ctx.texts.urgencyNotificationTitle,
+      body: ctx.texts.urgencyNotificationBody,
+    },
+  }
+}
+
+/**
+ * La persona dijo que le duele y no se supo si es grave: dos respuestas que no
+ * se entendieron en los signos de alarma, o pidió una persona en ese paso. No se
+ * sigue agendando. El mensaje repite los signos de alarma de la clínica, y el
+ * aviso al equipo es el prioritario. Nada más: ni medicamentos ni diagnóstico.
+ */
+export function urgencyUnconfirmedHandoff(texts: ClinicTexts, alarmText: string): ClinicHandoff {
+  return {
+    kind: 'handoff',
+    message: texts.urgencyPending(alarmText),
+    note: texts.urgencyPendingNote,
+    notification: {
+      title: texts.urgencyNotificationTitle,
+      body: texts.urgencyNotificationBody,
+    },
+  }
+}
+
+/**
+ * Sin signos de alarma: la primera hora de hoy de la atención de urgencia.
+ * Sin cupo hoy (fuera de horario o agenda llena) pasa a una persona. Si no se
+ * pueden leer las horas, también: quien llegó aquí tiene dolor, y callarse no
+ * es una opción.
+ */
+async function urgencyBooking(ctx: ClinicStepCtx): Promise<ClinicOutcome> {
+  const serviceId = ctx.clinic.urgencyServiceId
+  if (!serviceId) return urgencyHandoff(ctx)
+  try {
+    const scope = await ctx.serviceScope(serviceId)
+    if (!scope) return urgencyHandoff(ctx)
+
+    const dateKey = zonedDateKey(ctx.now)
+    const slots = await ctx.backend.getDaySlots({ ...scope, dateKey, now: ctx.now })
+    if (!slots.length) return urgencyHandoff(ctx)
+
+    return {
+      kind: 'next',
+      state: newBookingState('pick_patient', {
+        serviceId: scope.service.id,
+        staffId: 'any',
+        dateKey,
+        urgent: true,
+      }),
+    }
+  } catch (err) {
+    console.error(
+      '[clinica] no se pudieron leer las horas de la urgencia:',
+      err instanceof Error ? err.message : 'error desconocido',
+    )
+    return urgencyHandoff(ctx)
+  }
+}
+
 export async function renderClinicStep(
   ctx: ClinicStepCtx,
   state: BookingState,
@@ -329,6 +402,19 @@ export async function renderClinicStep(
       return { state: { ...state, options: [] }, closed: false }
     }
 
+    case 'urgency': {
+      const options: OfferedOption[] = [
+        { id: actId('alarm_yes'), title: texts.urgencyYes },
+        { id: actId('alarm_no'), title: texts.urgencyNo },
+      ]
+      await ctx.sendOptions({
+        bodyText: texts.urgencyBody(ctx.clinic.urgencyAlarmText),
+        buttonLabel: texts.menuButton,
+        options,
+      })
+      return { state: { ...state, options }, closed: false }
+    }
+
     default:
       return { state, closed: true }
   }
@@ -370,6 +456,8 @@ export async function handleClinicChoice(
           note: texts.consentDeclinedNote,
         }
       }
+      // Quien llegó a la autorización desde una urgencia sigue con su hora de hoy.
+      if (state.afterConsent === 'urgency_book') return urgencyBooking(ctx)
       return { kind: 'next', state: newBookingState('clinic_menu') }
     }
 
@@ -378,6 +466,8 @@ export async function handleClinicChoice(
       switch (parsed.value) {
         case 'book':
           return { kind: 'next', state: newBookingState('pick_patient') }
+        case 'urgent':
+          return { kind: 'next', state: newBookingState('urgency') }
         case 'faq':
           // Invitar a escribir una duda que nadie va a contestar es peor que pasarla.
           if (!(await ctx.aiAutoReplyOn())) return { kind: 'handoff', note: texts.aiOffNote }
@@ -399,6 +489,33 @@ export async function handleClinicChoice(
       const patients = await ctx.backend.findPatients({ contactId: ctx.contactId })
       if (!patients.some((p) => p.id === parsed.value)) return { kind: 'fail' }
       return { kind: 'next', state: afterPatient(state, parsed.value) }
+    }
+
+    case 'urgency': {
+      if (parsed?.kind !== 'act') return { kind: 'fail' }
+      if (parsed.value === 'alarm_yes') {
+        return {
+          kind: 'handoff',
+          message: texts.urgencyGoEr,
+          note: texts.urgencyNote,
+          notification: {
+            title: texts.urgencyNotificationTitle,
+            body: texts.urgencyNotificationBody,
+          },
+        }
+      }
+      if (parsed.value !== 'alarm_no') return { kind: 'fail' }
+      // La urgencia no espera la autorización para mostrar los signos de alarma,
+      // pero agendar sí la necesita: se pide ahora y luego sigue la hora de hoy.
+      const consent = await latestConsent(ctx.db, {
+        accountId: ctx.accountId,
+        contactId: ctx.contactId,
+        kind: 'datos_sensibles',
+      })
+      if (!consent?.granted) {
+        return { kind: 'next', state: newBookingState('consent', { afterConsent: 'urgency_book' }) }
+      }
+      return urgencyBooking(ctx)
     }
 
     default:

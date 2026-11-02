@@ -142,8 +142,17 @@ export function buildClinicTexts(l: AgendaLabels) {
       onCallPhone
         ? `Hoy no tengo cupo en la agenda. Llama al ${onCallPhone}, que es el teléfono de turno. Si aparece alguno de los signos de alarma, ve a urgencias.`
         : 'Hoy no tengo cupo en la agenda. Ya avisé a la clínica para que te escriban a primera hora. Si aparece alguno de los signos de alarma, ve a urgencias.',
+    /**
+     * Dos respuestas que no se entendieron (o pidió una persona) mientras se
+     * preguntaban los signos: ya dijo que le duele y no se sabe si es grave.
+     * Repite los signos, que son los de la clínica, y no dice nada más.
+     */
+    urgencyPending: (alarmText: string) =>
+      `${alarmText}\n\nYa avisé a la clínica para que se comuniquen contigo. Si tienes alguno de esos signos, ve a urgencias ahora.`,
     urgencyNote: 'Paciente: reportó signos de alarma (bot en pausa).',
     urgencyOffHoursNote: 'Paciente: urgencia sin cupo en la agenda de hoy (bot en pausa).',
+    urgencyPendingNote:
+      'Paciente: escribió una posible urgencia y no confirmó si tiene signos de alarma (bot en pausa). Comunícate con esa persona ya.',
     urgencyNotificationTitle: '🚨 Posible urgencia',
     urgencyNotificationBody: (who: string) =>
       `${who} reportó una posible urgencia por WhatsApp. Comunícate con esa persona ya.`,

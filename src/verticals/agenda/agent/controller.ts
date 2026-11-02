@@ -20,6 +20,9 @@
 //   - 'asesor' / 'humano' / 'persona' o dos respuestas inválidas
 //     seguidas → handoff: IA en pausa, tag quiere-humano, aviso al
 //     equipo y mensaje claro al cliente.
+//   - Clínica: una palabra de urgencia (o el toque "Tengo una urgencia") gana
+//     sobre todo, también sobre la autorización: abre los signos de alarma y,
+//     si no responde con claridad, el aviso al equipo es el prioritario.
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -28,9 +31,14 @@ import type { ModuleKey, VerticalDispatchResult, VerticalSession } from '@/lib/v
 import { notifyAlert } from '@/lib/ops/alert'
 import { autoReplyEnabled } from '@/modules/clinica/ai-gate'
 import { latestConsent } from '@/modules/clinica/consent'
-import { loadClinicContext, type ClinicContext } from '@/modules/clinica/settings'
+import {
+  loadClinicContext,
+  type ClinicContext,
+  type ClinicContextResult,
+} from '@/modules/clinica/settings'
 import {
   buildClinicTexts,
+  DEFAULT_URGENCY_ALARM_TEXT,
   DEFAULT_URGENCY_WORDS,
   type ClinicTexts,
 } from '@/modules/clinica/texts'
@@ -38,7 +46,7 @@ import {
 import type { AgendaAppointmentSummary } from '../texts'
 import { mergeBotTexts, type AgendaAgentTextsMerged } from '../bot-texts'
 import { listQuestions } from '../config-repo'
-import { capitalize } from '../labels'
+import { capitalize, DEFAULT_LABELS } from '../labels'
 import { readAnswerMap, validateAnswer, type AgendaQuestion, type AnswerMap } from '../questions'
 import type { MergedSlot } from './availability'
 import type { ClinicBackend } from './backend'
@@ -110,6 +118,7 @@ import {
   isClinicStep,
   renderClinicStep,
   routeClinicText,
+  urgencyUnconfirmedHandoff,
   type ClinicHandoff,
   type ClinicOutcome,
   type ClinicStepCtx,
@@ -208,18 +217,20 @@ export async function handleAgendaInbound(
       ? parsedTap
       : null
   const humanOwned = args.humanOwned === true
+  const clinicActive = args.modules?.includes('clinica') === true
 
   // Hilo de un humano: antes de cargar nada más, soltar todo lo que no
-  // sea respuesta a un mensaje del sistema.
+  // sea respuesta a un mensaje del sistema. El bot no contesta para no pisar a
+  // la persona, pero una urgencia en un hilo suyo no puede pasar desapercibida.
   if (
     humanOwned &&
     !reminderTap &&
     !isCancelConfirmTap(args.session ?? null, replyId)
   ) {
+    if (clinicActive) await warnHumanOfUrgency(args, { text, replyId })
     return { consumed: false }
   }
 
-  const clinicActive = args.modules?.includes('clinica') === true
   const [settings, account, clinicResult] = await Promise.all([
     loadBotSettings(args.db, args.accountId),
     loadAccount(args.db, args.accountId),
@@ -274,7 +285,19 @@ export async function handleAgendaInbound(
   // recordatorio ya se atendieron arriba, y un hilo que ya es de una persona
   // no llega hasta aquí.
   if (dialog.clinicUnavailable) {
-    await handoffClinicUnavailable(dialog, args.session?.id ?? null, text)
+    await handoffClinicUnavailable(dialog, args.session?.id ?? null, { text, replyId })
+    return { consumed: true }
+  }
+
+  const asking = args.session ? coerceState(args.session.state) : null
+
+  // Clínica: la urgencia gana sobre todo lo demás, también sobre la autorización,
+  // sobre una reserva abierta (la reemplaza) y sobre pedir una persona. Se mira
+  // antes de que ningún otro paso lea el mensaje.
+  if (dialog.clinic && opensUrgency(dialog.clinic, { text, replyId }, asking)) {
+    const state = newBookingState('urgency')
+    const sessionId = args.session?.id ?? (await openSession(dialog, state))
+    await conclude(dialog, sessionId, state)
     return { consumed: true }
   }
 
@@ -282,7 +305,6 @@ export async function handleAgendaInbound(
   //    el cliente escribe la respuesta a una pregunta extra de texto, o el nombre
   //    de quien va a asistir, solo cuenta el mensaje que ES la palabra ("es para
   //    una persona mayor" es la respuesta; "Ana Persona" es un nombre).
-  const asking = args.session ? coerceState(args.session.state) : null
   const writingAnswer =
     (asking?.step === 'ask_question' && asking.options.length === 0) ||
     asking?.step === 'new_patient_name'
@@ -290,7 +312,15 @@ export async function handleAgendaInbound(
     replyId === null &&
     (writingAnswer ? isHandoffOnly(text) : containsHandoffWord(text))
   ) {
-    await performHandoff(dialog, args.session?.id ?? null)
+    // Quien ya dijo que le duele y está contestando los signos de alarma no se
+    // queda con un pase cualquiera: el equipo recibe el aviso prioritario.
+    await performHandoff(
+      dialog,
+      args.session?.id ?? null,
+      asking?.step === 'urgency'
+        ? urgencyUnconfirmedHandoff(dialog.clinicTexts, urgencyAlarmText(dialog))
+        : {},
+    )
     return { consumed: true }
   }
 
@@ -336,6 +366,80 @@ export async function handleAgendaInbound(
   const sessionId = await openSession(dialog, state)
   await conclude(dialog, sessionId, state)
   return { consumed: true }
+}
+
+/**
+ * ¿Este mensaje abre los signos de alarma? Un toque en "Tengo una urgencia"
+ * siempre: es una decisión de la persona, valga lo que valga el paso. Un texto
+ * con una palabra de la clínica también, en cualquier paso menos donde lo que
+ * escribe es otra cosa: la respuesta a los signos (ahí la lee `matchChoice`), el
+ * nombre de quien va a asistir o la respuesta de texto a una pregunta extra.
+ * Una foto, un audio o un sticker no cuentan.
+ */
+function opensUrgency(
+  clinic: ClinicContext,
+  input: { text: string; replyId: string | null },
+  current: BookingState | null,
+): boolean {
+  if (input.replyId !== null) return input.replyId === actId('urgent')
+  if (isNonTextInbound(input.text)) return false
+  const writing =
+    current?.step === 'urgency' ||
+    current?.step === 'new_patient_name' ||
+    (current?.step === 'ask_question' && current.options.length === 0)
+  return !writing && containsUrgencyWord(input.text, clinic.urgencyWords)
+}
+
+/** Los signos de alarma de la clínica; sin su configuración, los de siempre. */
+function urgencyAlarmText(dialog: Dialog): string {
+  return dialog.clinic?.urgencyAlarmText ?? DEFAULT_URGENCY_ALARM_TEXT
+}
+
+/**
+ * Urgencia en un hilo de una persona: el bot no responde para no pisarla, pero
+ * le avisa a quien lo lleva (o al dueño). Corre antes de cargar nada más, así
+ * que lee lo suyo. Si la configuración de la clínica falta o no se pudo leer,
+ * valen las palabras de siempre: un fallo de lectura nunca silencia el aviso.
+ */
+async function warnHumanOfUrgency(
+  args: HandleAgendaInboundArgs,
+  input: { text: string; replyId: string | null },
+): Promise<void> {
+  const { text, replyId } = input
+  // Un toque que no es el de urgencias, o un mensaje sin texto, no abre nada.
+  if (replyId !== null ? replyId !== actId('urgent') : isNonTextInbound(text)) return
+
+  await bestEffort('aviso de urgencia a la persona del hilo', async () => {
+    if (replyId === null) {
+      const result: ClinicContextResult = await loadClinicContext(args.db, args.accountId).catch(
+        (err: unknown): ClinicContextResult => {
+          console.error('[clinica] no se pudo leer la configuración para vigilar la urgencia:', err)
+          return { status: 'error' }
+        },
+      )
+      const words = result.status === 'ok' ? result.clinic.urgencyWords : DEFAULT_URGENCY_WORDS
+      if (!containsUrgencyWord(text, words)) return
+    }
+
+    const [settings, account, assignee, contact] = await Promise.all([
+      loadBotSettings(args.db, args.accountId).catch(() => null),
+      loadAccount(args.db, args.accountId).catch(() => null),
+      loadConversationAssignee(args.db, args.accountId, args.conversationId).catch(() => null),
+      loadContact(args.db, args.accountId, args.contactId).catch(() => null),
+    ])
+    const userId = assignee ?? account?.ownerUserId ?? null
+    if (!userId) return
+    const texts = buildClinicTexts(settings?.labels ?? DEFAULT_LABELS)
+    const who = contact?.name?.trim() || contact?.phone || 'Un paciente'
+    await insertNotification(args.db, {
+      accountId: args.accountId,
+      userId,
+      conversationId: args.conversationId,
+      contactId: args.contactId,
+      title: texts.urgencyNotificationTitle,
+      body: texts.urgencyNotificationBody(who),
+    })
+  })
 }
 
 /**
@@ -781,6 +885,16 @@ async function registerFail(
 ): Promise<void> {
   const fails = state.fails + 1
   if (fails >= 2) {
+    // Ya dijo que le duele y no contestó los signos con claridad: no es un pase
+    // cualquiera, el equipo recibe el aviso prioritario.
+    if (state.step === 'urgency') {
+      await performHandoff(
+        dialog,
+        sessionId,
+        urgencyUnconfirmedHandoff(dialog.clinicTexts, urgencyAlarmText(dialog)),
+      )
+      return
+    }
     // Una autorización sin responder no es un pedido de hablar con una persona.
     await performHandoff(
       dialog,
@@ -2191,15 +2305,17 @@ async function performHandoff(
 /**
  * Clínica sin configuración usable: el hilo queda con una persona. Si el
  * mensaje parece una urgencia (con las palabras de siempre, porque las de la
- * clínica no se pudieron leer), el aviso al equipo es el prioritario.
+ * clínica no se pudieron leer) o es el toque de "Tengo una urgencia", el aviso
+ * al equipo es el prioritario.
  */
 async function handoffClinicUnavailable(
   dialog: Dialog,
   sessionId: string | null,
-  text: string,
+  input: { text: string; replyId: string | null },
 ): Promise<void> {
   const { clinicTexts: texts } = dialog
-  const urgent = containsUrgencyWord(text, DEFAULT_URGENCY_WORDS)
+  const urgent =
+    input.replyId === actId('urgent') || containsUrgencyWord(input.text, DEFAULT_URGENCY_WORDS)
   await performHandoff(
     dialog,
     sessionId,
@@ -2476,6 +2592,8 @@ function clinicCtx(dialog: Dialog): ClinicStepCtx {
     nowIso: dialog.nowIso,
     inboundMessageId: dialog.inboundMessageId,
     aiAutoReplyOn: () => aiAnswers(dialog),
+    serviceScope: (serviceId) =>
+      slotScope(dialog, newBookingState('pick_day', { serviceId, staffId: 'any' })),
     sendOptions: (args) => sendOptions(dialog, args),
   }
 }
