@@ -502,6 +502,8 @@ export const AGENDA_TEXTS = {
 /** Datos de una cita usados en resumen y confirmaciones. */
 export interface AgendaAppointmentSummary {
   service: string
+  /** Para quién es la cita (clínicas): el nombre del paciente. */
+  patient?: string
   /** Vacío cuando el negocio no pregunta "¿con quién?" y aún no hay asignado. */
   staff: string
   /** 'martes 20 de octubre de 2026' (formatLongDate). */
@@ -526,6 +528,7 @@ const btn = (text: string) => truncate(text, BUTTON_MAX)
 
 function summaryLines(a: AgendaAppointmentSummary, opts: { price?: boolean } = {}): string {
   const lines = [`📌 ${a.service}`]
+  if (a.patient) lines.push(`🙋 Paciente: ${a.patient}`)
   if (a.staff) lines.push(`👤 ${a.staff}`)
   lines.push(`📅 ${a.date}`, `🕐 ${a.time}`)
   if (opts.price !== false && a.price) lines.push(`💵 ${a.price}`)

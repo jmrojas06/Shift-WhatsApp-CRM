@@ -609,6 +609,89 @@ describe('la cita conserva al paciente', () => {
   })
 })
 
+describe('el resumen y la confirmación dicen para quién es la cita', () => {
+  /** Del menú a "Agendar", eligiendo a Tomás Gil, hasta ver el resumen. */
+  async function atSummary(db: FakeDb) {
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { replyId: 'act:book' })
+    await send(db, rec, { replyId: patId('pat-2') })
+    await send(db, rec, { replyId: svcId(SERVICE_LIMPIEZA) })
+    await send(db, rec, { replyId: last(rec).ids[0] }) // día
+    await send(db, rec, { replyId: last(rec).ids[0] }) // hora
+    return rec
+  }
+
+  const open = () => clinicDb({ clinic_consents: [grantedConsent()], clinic_patients: family() })
+
+  it('el resumen trae al paciente', async () => {
+    const rec = await atSummary(open())
+    expect(last(rec).ids).toContain('act:confirm')
+    expect(last(rec).bodyText).toContain('🙋 Paciente: Tomás Gil')
+  })
+
+  it('la confirmación también', async () => {
+    const db = open()
+    const rec = await atSummary(db)
+    await send(db, rec, { replyId: 'act:confirm' })
+    expect(last(rec).bodyText).toContain('Quedó agendado')
+    expect(last(rec).bodyText).toContain('🙋 Paciente: Tomás Gil')
+  })
+
+  it('al reprogramar, la confirmación dice de quién es la cita', async () => {
+    const db = clinicDb({
+      clinic_consents: [grantedConsent()],
+      clinic_patients: family(),
+      booking_appointments: [
+        {
+          id: 'ap-old',
+          account_id: ACCOUNT,
+          contact_id: CONTACT,
+          service_id: SERVICE_LIMPIEZA,
+          staff_id: STAFF_ANA,
+          starts_at: '2026-10-20T15:00:00.000Z',
+          ends_at: '2026-10-20T15:30:00.000Z',
+          status: 'confirmed',
+          answers: {},
+          patient_id: 'pat-1',
+        },
+      ],
+    })
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: 'rem:reschedule' })
+    await send(db, rec, { replyId: last(rec).ids[0] })
+    await send(db, rec, { replyId: last(rec).ids[0] })
+    expect(last(rec).bodyText).toContain('🙋 Paciente: Marta Ruiz')
+    await send(db, rec, { replyId: 'act:confirm' })
+    expect(last(rec).bodyText).toContain('Quedó reprogramado')
+    expect(last(rec).bodyText).toContain('🙋 Paciente: Marta Ruiz')
+  })
+
+  it('si no se puede leer el nombre, la cita sigue: solo falta la línea', async () => {
+    const db = open()
+    const rec = await atSummary(db)
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    db._failNext('select', 'clinic_patients', { message: 'timeout' })
+    await send(db, rec, { replyId: 'act:confirm' })
+    expect(last(rec).bodyText).toContain('Quedó agendado')
+    expect(last(rec).bodyText).not.toContain('Paciente')
+    expect(db._tables.booking_appointments).toMatchObject([{ patient_id: 'pat-2' }])
+  })
+
+  it('una cuenta sin clínica no cambia: ni resumen ni confirmación llevan paciente', async () => {
+    const db = clinicDb({ clinic_patients: family() })
+    const rec = makeRecorder()
+    const agenda = { modules: ['agenda' as const] }
+    await send(db, rec, { text: 'Hola' }, agenda)
+    await send(db, rec, { replyId: svcId(SERVICE_LIMPIEZA) }, agenda)
+    await send(db, rec, { replyId: last(rec).ids[0] }, agenda)
+    await send(db, rec, { replyId: last(rec).ids[0] }, agenda)
+    expect(last(rec).bodyText).not.toContain('Paciente')
+    await send(db, rec, { replyId: 'act:confirm' }, agenda)
+    expect(last(rec).bodyText).not.toContain('Paciente')
+  })
+})
+
 describe('una cuenta sin clínica no cambia', () => {
   it('la cita no lleva paciente ni sede, y no se toca la tabla de pacientes', async () => {
     const db = clinicDb({ clinic_patients: family() })

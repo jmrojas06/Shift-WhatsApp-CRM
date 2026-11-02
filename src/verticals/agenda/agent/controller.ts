@@ -1862,7 +1862,10 @@ async function confirmAppointment(
 
   // La sesión ya quedó 'completed' al reclamarla (claimSession).
   const staffName = await loadStaffName(dialog.db, dialog.accountId, assigned!)
-  const summary = buildSummary(dialog, service, staffName ?? '', start)
+  const summary = withPatient(
+    buildSummary(dialog, service, staffName ?? '', start),
+    await patientName(dialog, patientId),
+  )
   await dialog.sender.sendText({
     text: oldAppt
       ? dialog.texts.rescheduleDone(summary)
@@ -2311,6 +2314,25 @@ function buildSummary(
   }
 }
 
+/**
+ * El nombre de quien va a asistir, para el resumen y la confirmación (clínicas). Es
+ * un dato personal: se le muestra a quien lo escribió y no va a logs. Si no se puede
+ * leer, la cita sigue y solo falta la línea.
+ */
+async function patientName(dialog: Dialog, patientId: string | null): Promise<string | null> {
+  if (!dialog.clinic || !patientId) return null
+  try {
+    const patients = await dialog.backend.findPatients({ contactId: dialog.contactId })
+    return patients.find((p) => p.id === patientId)?.fullName ?? null
+  } catch {
+    return null
+  }
+}
+
+function withPatient(summary: AgendaAppointmentSummary, name: string | null): AgendaAppointmentSummary {
+  return name ? { ...summary, patient: name } : summary
+}
+
 async function buildSummaryForState(
   dialog: Dialog,
   state: BookingState,
@@ -2328,7 +2350,10 @@ async function buildSummaryForState(
           dialog.texts.staffAnyTitle)
         : dialog.texts.staffAnyTitle
   }
-  const summary = buildSummary(dialog, service, staffName, new Date(state.slotStartsAt))
+  const summary = withPatient(
+    buildSummary(dialog, service, staffName, new Date(state.slotStartsAt)),
+    await patientName(dialog, state.patientId ?? null),
+  )
   // Las respuestas a las preguntas extra, en el orden actual (solo cita nueva).
   if (state.mode === 'reschedule' || !state.answers) return summary
   const questions = await loadQuestions(dialog)
