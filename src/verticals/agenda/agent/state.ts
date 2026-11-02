@@ -334,38 +334,35 @@ const ACTION_SYNONYMS: Record<string, string[]> = {
 //
 // Aquí un malentendido cuesta caro: leer un "no" como "sí" registra una
 // autorización que nadie dio, y leer "no puedo respirar" como "ninguno"
-// manda a agendar a quien necesita urgencias. Una lista de negaciones
-// nunca alcanza ("noo autorizo", "para nada autorizo"), así que lo que
-// ACEPTA (consent_yes, mkt_yes) o descarta los signos (alarm_no) es una
-// lista cerrada de MENSAJES COMPLETOS (comparados sin tildes ni
-// puntuación), y todo lo demás cae del lado seguro:
-//   - autorización y marketing: una negación en cualquier parte del mensaje
-//     es un rechazo ("acepto, no hay problema" también); lo que no es ni
-//     una cosa ni la otra, null y el bot repite la pregunta.
-//   - signos de alarma: una negación dentro de una frase va a una persona
-//     (alarm_yes: ante la duda, no se agenda); lo demás, null.
-// Con "?" o "¿" en el mensaje nunca se acepta ni se descartan los signos: es
-// una pregunta, no una respuesta. Por número tampoco: estos botones no
-// muestran números. Un toque de botón (replyId) no pasa por aquí y siempre
-// vale.
+// manda a agendar a quien necesita urgencias.
+//   - Autorización (consent_*) y aviso de marketing (mkt_*): el SÍ solo llega
+//     por TOQUE de botón. Ningún texto acepta, ni "acepto" ni "sí": un texto
+//     se lee mal (emojis, tildes, "autorizó", dudas) y una autorización tiene
+//     que ser explícita. Un texto con una negación en cualquier parte es un
+//     rechazo ("acepto, no hay problema" también); cualquier otro, null: el
+//     bot vuelve a mostrar los botones y a la segunda pasa a una persona.
+//   - Signos de alarma (alarm_*): descartarlos (alarm_no) exige un mensaje
+//     completo de una lista cerrada; una negación dentro de una frase va a
+//     una persona (alarm_yes: ante la duda, no se agenda); lo demás, null.
+// Estos botones no muestran números, así que un número tampoco acepta ni
+// descarta nada. Un toque de botón (replyId) no pasa por aquí y siempre vale.
 // ------------------------------------------------------------
 
-/** Mensajes completos que aceptan o descartan, ya en forma `squash`. */
-const WHOLE_MESSAGE: Readonly<Record<string, readonly string[]>> = {
-  'act:consent_yes': ['si acepto', 'acepto', 'si autorizo', 'autorizo'],
-  'act:mkt_yes': ['si', 'si avisame', 'avisame'],
-  'act:alarm_no': [
-    'no',
-    'no ninguno',
-    'ninguno',
-    'ninguna',
-    'no tengo',
-    'no tengo ninguno',
-    'no tengo ninguna',
-    'no tengo nada',
-    'nada',
-  ],
-}
+/** Opciones que aceptan o descartan: no se eligen por número ni por texto suelto. */
+const ACCEPTING_IDS: ReadonlySet<string> = new Set(['act:consent_yes', 'act:mkt_yes', 'act:alarm_no'])
+
+/** Mensajes completos que descartan los signos de alarma, ya en forma `squash`. */
+const ALARM_NO_WHOLE: readonly string[] = [
+  'no',
+  'no ninguno',
+  'ninguno',
+  'ninguna',
+  'no tengo',
+  'no tengo ninguno',
+  'no tengo ninguna',
+  'no tengo nada',
+  'nada',
+]
 
 /** Mensajes completos que dicen que sí hay signos de alarma. */
 const ALARM_YES_WHOLE: readonly string[] = ['si', 'si tengo', 'si tengo alguno', 'tengo alguno']
@@ -384,20 +381,16 @@ function matchDecision(
   squashed: string,
   offered: ReadonlySet<string>,
 ): string | null | undefined {
-  const isQuestion = IS_QUESTION.test(text)
-
   for (const [yes, no] of [
     ['act:consent_yes', 'act:consent_no'],
     ['act:mkt_yes', 'act:mkt_no'],
   ] as const) {
     if (!offered.has(yes) && !offered.has(no)) continue
-    if (NEGATION.test(squashed)) return offered.has(no) ? no : null
-    if (offered.has(yes) && !isQuestion && WHOLE_MESSAGE[yes].includes(squashed)) return yes
-    return null
+    return offered.has(no) && NEGATION.test(squashed) ? no : null
   }
 
   if (offered.has('act:alarm_yes') || offered.has('act:alarm_no')) {
-    if (offered.has('act:alarm_no') && !isQuestion && WHOLE_MESSAGE['act:alarm_no'].includes(squashed)) {
+    if (offered.has('act:alarm_no') && !IS_QUESTION.test(text) && ALARM_NO_WHOLE.includes(squashed)) {
       return 'act:alarm_no'
     }
     if (offered.has('act:alarm_yes') && (ALARM_YES_WHOLE.includes(squashed) || NEGATION.test(squashed))) {
@@ -436,8 +429,9 @@ export function matchChoice({
   if (num) {
     const idx = Number(num[1]) - 1
     const id = idx >= 0 && idx < options.length ? options[idx].id : null
-    // Los botones de decisión no muestran números: un número no puede aceptar.
-    return id && !Object.hasOwn(WHOLE_MESSAGE, id) ? id : null
+    // Los botones de decisión no muestran números: un número no puede aceptar
+    // (ni descartar los signos de alarma).
+    return id && !ACCEPTING_IDS.has(id) ? id : null
   }
 
   const squashed = squash(text)
