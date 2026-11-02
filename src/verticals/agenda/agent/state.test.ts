@@ -331,11 +331,30 @@ describe('palabras de urgencia', () => {
   })
 })
 
+// ------------------------------------------------------------
+// Menús de decisión (autorización, marketing, signos de alarma).
+//
+// Aceptar exige decir el mensaje ENTERO. Una negación, una duda o una
+// pregunta nunca cuentan como aceptación: una lista de negaciones no
+// alcanza ("noo autorizo", "para nada autorizo"), así que lo que acepta
+// es una lista cerrada de mensajes completos.
+// ------------------------------------------------------------
+
+const consentOptions: OfferedOption[] = [
+  { id: 'act:consent_yes', title: 'Sí, acepto' },
+  { id: 'act:consent_no', title: 'No acepto' },
+]
+const marketingOptions: OfferedOption[] = [
+  { id: 'act:mkt_yes', title: 'Sí, avísame' },
+  { id: 'act:mkt_no', title: 'No, gracias' },
+]
+const alarmOptions: OfferedOption[] = [
+  { id: 'act:alarm_yes', title: 'Sí, tengo alguno' },
+  { id: 'act:alarm_no', title: 'No, ninguno' },
+]
+
 describe('autorización escrita', () => {
-  const options = [
-    { id: 'act:consent_yes', title: 'Sí, acepto' },
-    { id: 'act:consent_no', title: 'No acepto' },
-  ]
+  const options = consentOptions
   const choice = (text: string) => matchChoice({ text, options })
 
   it('un no nunca se lee como aceptación', () => {
@@ -351,30 +370,182 @@ describe('autorización escrita', () => {
     expect(choice('ok')).toBeNull()
   })
 
-  it('una duda o una negación con otra palabra tampoco acepta', () => {
-    expect(choice('no sé si acepto')).toBe('act:consent_no')
-    expect(choice('nunca autorizo')).toBe('act:consent_no')
-    expect(choice('tampoco autorizo')).toBe('act:consent_no')
-    expect(choice('ni autorizo ni nada')).toBe('act:consent_no')
+  it.each(['Sí acepto', 'sí, acepto.', ' ACEPTO ', 'sí autorizo', 'Autorizo', 'Acepto 👍'])(
+    'acepta el mensaje completo %j',
+    (text) => {
+      expect(choice(text)).toBe('act:consent_yes')
+    },
+  )
+
+  it.each([
+    'noo autorizo',
+    'nop autorizo',
+    'para nada autorizo',
+    'nunca autorizo',
+    'tampoco autorizo',
+    'ni autorizo ni nada',
+    'no sé si acepto',
+    'acepto, no hay problema',
+    '¿qué pasa si no acepto?',
+  ])('lo que trae una negación es rechazo: %j', (text) => {
+    expect(choice(text)).toBe('act:consent_no')
+  })
+
+  it.each([
+    '¿qué autorizo?',
+    '¿qué pasa si acepto?',
+    '¿si acepto me cobran?',
+    'mi mamá autorizó',
+    '¿acepto?',
+    'acepto?',
+    'si a',
+    'acep',
+    'sí',
+    'dale',
+    'claro que sí',
+    'ok',
+    '1',
+    '01',
+    '3',
+    '',
+  ])('una duda, una pregunta o un mensaje a medias no acepta: %j', (text) => {
+    expect(choice(text)).toBeNull()
+  })
+
+  it('por número, el rechazo sigue valiendo y la aceptación no', () => {
+    expect(choice('2')).toBe('act:consent_no')
+    expect(choice('2.')).toBe('act:consent_no')
+    expect(choice('1')).toBeNull()
+  })
+
+  it('un toque de botón siempre vale', () => {
+    expect(matchChoice({ text: '', replyId: 'act:consent_yes', options })).toBe('act:consent_yes')
+    expect(matchChoice({ text: '', replyId: 'act:consent_no', options })).toBe('act:consent_no')
   })
 })
 
 describe('aviso de marketing escrito', () => {
-  const options = [
-    { id: 'act:mkt_yes', title: 'Sí, avísame' },
-    { id: 'act:mkt_no', title: 'No, gracias' },
-  ]
+  const options = marketingOptions
   const choice = (text: string) => matchChoice({ text, options })
 
-  it('un no nunca se lee como aceptación', () => {
-    expect(choice('no, gracias')).toBe('act:mkt_no')
-    expect(choice('no')).toBe('act:mkt_no')
-    expect(choice('no avísame')).toBe('act:mkt_no')
+  it.each(['sí', 'Sí.', 'sí, avísame', 'avísame', 'avisame!'])('acepta el mensaje completo %j', (text) => {
+    expect(choice(text)).toBe('act:mkt_yes')
   })
 
-  it('aceptar exige decirlo', () => {
-    expect(choice('sí')).toBe('act:mkt_yes')
-    expect(choice('avísame')).toBe('act:mkt_yes')
+  it.each(['no', 'no, gracias', 'no avísame', 'noo', 'nunca', 'tampoco', '2'])(
+    'un no nunca se lee como aceptación: %j',
+    (text) => {
+      expect(choice(text)).toBe('act:mkt_no')
+    },
+  )
+
+  it.each(['¿avísame?', '¿qué es eso?', 'ok', 'dale', 'quizás', 'sí, gracias', '1', '3', ''])(
+    'una duda, una pregunta o un mensaje a medias no acepta: %j',
+    (text) => {
+      expect(choice(text)).toBeNull()
+    },
+  )
+
+  it('un toque de botón siempre vale', () => {
+    expect(matchChoice({ text: '', replyId: 'act:mkt_yes', options })).toBe('act:mkt_yes')
+  })
+})
+
+describe('signos de alarma escritos', () => {
+  const options = alarmOptions
+  const choice = (text: string) => matchChoice({ text, options })
+
+  it.each([
+    'no',
+    'No.',
+    'no, ninguno',
+    'ninguno',
+    'ninguna',
+    'no tengo',
+    'no tengo ninguno',
+    'no tengo ninguna',
+    'no tengo nada',
+    'nada',
+    'Nada.',
+  ])('solo el mensaje completo de la lista dice que no hay signos: %j', (text) => {
+    expect(choice(text)).toBe('act:alarm_no')
+  })
+
+  it.each(['sí', 'Sí.', 'si tengo', 'sí, tengo alguno', 'tengo alguno'])(
+    'el mensaje completo de la lista dice que sí hay signos: %j',
+    (text) => {
+      expect(choice(text)).toBe('act:alarm_yes')
+    },
+  )
+
+  it.each([
+    'no puedo respirar',
+    'no puedo tragar',
+    'no para de sangrar',
+    'la fiebre no baja',
+    'no sé',
+    'no se',
+    'no estoy seguro',
+    'no tengo ni idea',
+    'no siento nada',
+    '¿no?',
+    '¿no tengo ninguno?',
+  ])('una negación dentro de una frase va a una persona: %j', (text) => {
+    expect(choice(text)).toBe('act:alarm_yes')
+  })
+
+  it.each(['hola', '¿cuáles son los signos?', 'ninguno de esos', 'quiero agendar', '¿ninguno?', '3', ''])(
+    'lo demás no decide: %j',
+    (text) => {
+      expect(choice(text)).toBeNull()
+    },
+  )
+
+  it('por número, "no hay signos" no vale y "sí hay" sí (lleva a una persona)', () => {
+    expect(choice('2')).toBeNull()
+    expect(choice('02')).toBeNull()
+    expect(choice('1')).toBe('act:alarm_yes')
+  })
+
+  it('con una pregunta nunca dice que no hay signos', () => {
+    expect(choice('¿ninguno?')).not.toBe('act:alarm_no')
+    expect(choice('¿no tengo ninguno?')).not.toBe('act:alarm_no')
+    expect(choice('ninguno?')).not.toBe('act:alarm_no')
+  })
+
+  it('un toque de botón siempre vale', () => {
+    expect(matchChoice({ text: '', replyId: 'act:alarm_no', options })).toBe('act:alarm_no')
+    expect(matchChoice({ text: '', replyId: 'act:alarm_yes', options })).toBe('act:alarm_yes')
+  })
+})
+
+describe('menús de decisión: nunca se acepta por accidente', () => {
+  // Frases que no están en la lista de ningún menú: no pueden acertar la opción
+  // que acepta (consent_yes, mkt_yes, alarm_no).
+  const stray = [
+    'tal vez',
+    'no sé qué hacer',
+    'lo que sea',
+    'sí, pero antes explícame',
+    'acepto, ¿y si no?',
+    'dame un momento',
+    '1 y 2',
+    '😀',
+  ]
+  it.each([
+    ['autorización', consentOptions, 'act:consent_yes'],
+    ['marketing', marketingOptions, 'act:mkt_yes'],
+    ['signos de alarma', alarmOptions, 'act:alarm_no'],
+  ] as const)('%s', (_name, options, acceptingId) => {
+    for (const text of stray) {
+      expect(matchChoice({ text, options: [...options] }), text).not.toBe(acceptingId)
+    }
+  })
+
+  it('el resto de los menús sigue emparejando como antes', () => {
+    expect(matchChoice({ text: 'sí', options: [{ id: 'act:confirm', title: 'Confirmar' }] })).toBe(
+      'act:confirm',
+    )
   })
 })
 

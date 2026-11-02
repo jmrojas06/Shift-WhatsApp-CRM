@@ -318,25 +318,89 @@ const ACTION_SYNONYMS: Record<string, string[]> = {
   'act:cancel': ['cancelar', 'cancela', 'anular'],
   'act:cancel_yes': ['si cancelar', 'confirmo cancelar'],
   'act:back': ['volver', 'atras', 'no', 'mejor no'],
-  // Las de autorización no incluyen un "sí" suelto, a propósito: aceptar
-  // el tratamiento de datos exige decirlo.
-  'act:consent_yes': ['si acepto', 'si autorizo', 'autorizo'],
-  'act:consent_no': ['no', 'no autorizo'],
-  'act:alarm_yes': ['si', 'tengo'],
-  'act:alarm_no': ['no', 'ninguno', 'ninguna'],
-  'act:mkt_yes': ['si', 'avisame'],
-  'act:mkt_no': ['no'],
   'staff:any': ['cualquiera', 'el que sea', 'alguno', 'me da igual', 'el primero', 'sin preferencia'],
 }
 
-/** Palabras de negación en texto ya normalizado (sin tildes ni puntuación). */
-const NEGATION = /\b(no|ni|nunca|jamas|tampoco)\b/
+// ------------------------------------------------------------
+// Menús de decisión: autorización de datos, aviso de marketing y signos
+// de alarma.
+//
+// Aquí un malentendido cuesta caro: leer un "no" como "sí" registra una
+// autorización que nadie dio, y leer "no puedo respirar" como "ninguno"
+// manda a agendar a quien necesita urgencias. Una lista de negaciones
+// nunca alcanza ("noo autorizo", "para nada autorizo"), así que lo que
+// ACEPTA (consent_yes, mkt_yes) o descarta los signos (alarm_no) es una
+// lista cerrada de MENSAJES COMPLETOS (comparados sin tildes ni
+// puntuación), y todo lo demás cae del lado seguro:
+//   - autorización y marketing: una negación en cualquier parte del mensaje
+//     es un rechazo ("acepto, no hay problema" también); lo que no es ni
+//     una cosa ni la otra, null y el bot repite la pregunta.
+//   - signos de alarma: una negación dentro de una frase va a una persona
+//     (alarm_yes: ante la duda, no se agenda); lo demás, null.
+// Con "?" o "¿" en el mensaje nunca se acepta ni se descartan los signos: es
+// una pregunta, no una respuesta. Por número tampoco: estos botones no
+// muestran números. Un toque de botón (replyId) no pasa por aquí y siempre
+// vale.
+// ------------------------------------------------------------
+
+/** Mensajes completos que aceptan o descartan, ya en forma `squash`. */
+const WHOLE_MESSAGE: Readonly<Record<string, readonly string[]>> = {
+  'act:consent_yes': ['si acepto', 'acepto', 'si autorizo', 'autorizo'],
+  'act:mkt_yes': ['si', 'si avisame', 'avisame'],
+  'act:alarm_no': [
+    'no',
+    'no ninguno',
+    'ninguno',
+    'ninguna',
+    'no tengo',
+    'no tengo ninguno',
+    'no tengo ninguna',
+    'no tengo nada',
+    'nada',
+  ],
+}
+
+/** Mensajes completos que dicen que sí hay signos de alarma. */
+const ALARM_YES_WHOLE: readonly string[] = ['si', 'si tengo', 'si tengo alguno', 'tengo alguno']
+
+/** Negaciones en texto ya normalizado: "noo", "nop", "para nada", "nunca"… */
+const NEGATION = /\b(no+|nop|nope|ni|nunca|jamas|tampoco|nada)\b/
+
+const IS_QUESTION = /[?¿]/
 
 /**
- * Opciones de "sí / no" donde un rechazo gana siempre sobre cualquier
- * lectura de aceptación (ver `matchChoice`).
+ * Lee la respuesta escrita a un menú de decisión. `undefined` = el menú no
+ * es de decisión y sigue el emparejamiento normal; `null` = no se entendió.
  */
-const NEGATIVE_FIRST_IDS: readonly string[] = ['act:consent_no', 'act:mkt_no']
+function matchDecision(
+  text: string,
+  squashed: string,
+  offered: ReadonlySet<string>,
+): string | null | undefined {
+  const isQuestion = IS_QUESTION.test(text)
+
+  for (const [yes, no] of [
+    ['act:consent_yes', 'act:consent_no'],
+    ['act:mkt_yes', 'act:mkt_no'],
+  ] as const) {
+    if (!offered.has(yes) && !offered.has(no)) continue
+    if (NEGATION.test(squashed)) return offered.has(no) ? no : null
+    if (offered.has(yes) && !isQuestion && WHOLE_MESSAGE[yes].includes(squashed)) return yes
+    return null
+  }
+
+  if (offered.has('act:alarm_yes') || offered.has('act:alarm_no')) {
+    if (offered.has('act:alarm_no') && !isQuestion && WHOLE_MESSAGE['act:alarm_no'].includes(squashed)) {
+      return 'act:alarm_no'
+    }
+    if (offered.has('act:alarm_yes') && (ALARM_YES_WHOLE.includes(squashed) || NEGATION.test(squashed))) {
+      return 'act:alarm_yes'
+    }
+    return null
+  }
+
+  return undefined
+}
 
 export interface MatchChoiceArgs {
   text: string
@@ -364,7 +428,9 @@ export function matchChoice({
   const num = t.match(/^(\d+)[.)]?$/)
   if (num) {
     const idx = Number(num[1]) - 1
-    return idx >= 0 && idx < options.length ? options[idx].id : null
+    const id = idx >= 0 && idx < options.length ? options[idx].id : null
+    // Los botones de decisión no muestran números: un número no puede aceptar.
+    return id && !Object.hasOwn(WHOLE_MESSAGE, id) ? id : null
   }
 
   const squashed = squash(text)
@@ -372,18 +438,11 @@ export function matchChoice({
 
   const offered = new Set(options.map((o) => o.id))
 
-  // Un no explícito nunca se lee como aceptación. Va ANTES de comparar
-  // títulos y sinónimos: "no sé si acepto" contiene el título "sí acepto"
-  // y "nunca autorizo" contiene el sinónimo "autorizo". Ante la duda se
-  // toma como rechazo, que es el lado seguro (el bot se pausa y una
-  // persona atiende). Solo para la autorización de datos y el aviso de
-  // marketing; en los signos de alarma un "no" suelto NO decide
-  // ("no puedo respirar").
-  if (NEGATION.test(squashed)) {
-    for (const declineId of NEGATIVE_FIRST_IDS) {
-      if (offered.has(declineId)) return declineId
-    }
-  }
+  // Autorización, marketing y signos de alarma: ver `matchDecision`. Su
+  // respuesta es final, así que NO caen a la coincidencia suelta por título
+  // ("acep" estaría dentro de "sí acepto").
+  const decision = matchDecision(text, squashed, offered)
+  if (decision !== undefined) return decision
 
   // Título exacto…
   for (const opt of options) {
