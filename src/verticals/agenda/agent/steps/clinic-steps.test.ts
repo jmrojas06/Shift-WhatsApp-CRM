@@ -99,6 +99,8 @@ describe('routeClinicText', () => {
       'necesito cambiar mi cita',
       'quiero reprogramar la cita',
       'no voy a poder asistir a mi cita de mañana',
+      'mi hijo no puede ir a la cita',
+      'mis papás no pueden asistir a la cita',
       'Hola, quiero cancelar mi cita',
       'hola buenas tardes, quisiera reagendar',
       'necesito anular mi cita del martes',

@@ -206,8 +206,12 @@ const CHANGE_WITH_APPOINTMENT_WORDS = ['cancelacion', 'cambiar', 'mover']
 /** Quejas: no piden una cita ni la cambian, y las atiende una persona. */
 const COMPLAINT_WORDS = ['queja', 'quejas', 'reclamo', 'reclamos', 'pqr', 'pqrs']
 
-/** "No puedo ir a la cita": avisar que no va, no pedir una. */
-const CANNOT_ATTEND = /\bno (puedo|podre|podemos|podria|voy a poder) (ir|asistir|llegar|venir|acudir)\b/
+/**
+ * "No puedo ir a la cita", "mi hijo no puede ir": avisar que no va, no pedir una.
+ * `puede` y `pueden` cubren al paciente que escribe un familiar.
+ */
+const CANNOT_ATTEND =
+  /\bno (puedo|puede|pueden|podre|podemos|podria|voy a poder) (ir|asistir|llegar|venir|acudir)\b/
 
 /**
  * Quien arranca así pide algo aunque lo escriba como pregunta: "¿puedo cancelar mi
