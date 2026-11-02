@@ -190,6 +190,19 @@ describe('autorización de datos', () => {
     expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
   })
 
+  it.each(['1', '2', '2.'])(
+    'escribir el número "%s" no registra nada: ni acepta ni rechaza',
+    async (typed) => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { text: typed })
+      expect(db._tables.clinic_consents).toHaveLength(0)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+      expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
+    },
+  )
+
   it('escribir que no acepta sí queda como negativa', async () => {
     const db = clinicDb()
     const rec = makeRecorder()

@@ -358,8 +358,19 @@ const ACTION_SYNONYMS: Record<string, string[]> = {
 // descarta nada. Un toque de botón (replyId) no pasa por aquí y siempre vale.
 // ------------------------------------------------------------
 
-/** Opciones que aceptan o descartan: no se eligen por número ni por texto suelto. */
-const ACCEPTING_IDS: ReadonlySet<string> = new Set(['act:consent_yes', 'act:mkt_yes', 'act:alarm_no'])
+/**
+ * Opciones que deciden algo por la persona: no se eligen por número ni por
+ * texto suelto. Aceptar o descartar los signos de alarma es evidente; el
+ * rechazo también, porque queda en un registro de solo agregar y pausa el bot,
+ * y un "2" suelto no es una decisión.
+ */
+const ACCEPTING_IDS: ReadonlySet<string> = new Set([
+  'act:consent_yes',
+  'act:consent_no',
+  'act:mkt_yes',
+  'act:mkt_no',
+  'act:alarm_no',
+])
 
 /** Mensajes completos que descartan los signos de alarma, ya en forma `squash`. */
 const ALARM_NO_WHOLE: readonly string[] = [
@@ -469,8 +480,8 @@ export function matchChoice({
   if (num) {
     const idx = Number(num[1]) - 1
     const id = idx >= 0 && idx < options.length ? options[idx].id : null
-    // Los botones de decisión no muestran números: un número no puede aceptar
-    // (ni descartar los signos de alarma).
+    // Los botones de decisión no muestran números: un número no puede aceptar,
+    // rechazar ni descartar los signos de alarma.
     return id && !ACCEPTING_IDS.has(id) ? id : null
   }
 

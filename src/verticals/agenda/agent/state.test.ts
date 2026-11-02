@@ -439,10 +439,10 @@ describe('autorización escrita', () => {
     expect(choice(text)).toBeNull()
   })
 
-  it('por número, el rechazo sigue valiendo y la aceptación no', () => {
-    expect(choice('2')).toBe('act:consent_no')
-    expect(choice('2.')).toBe('act:consent_no')
-    expect(choice('1')).toBeNull()
+  it('ningún número elige nada: ni acepta ni deja un rechazo en un registro de solo agregar', () => {
+    for (const text of ['1', '1.', '1)', '2', '2.', '2)', '02', '3']) {
+      expect(choice(text)).toBeNull()
+    }
   })
 })
 
@@ -457,14 +457,14 @@ describe('aviso de marketing escrito', () => {
     },
   )
 
-  it.each(['no', 'no, gracias', 'no avísame', 'noo', 'nunca', 'tampoco', '2', '❌ no'])(
+  it.each(['no', 'no, gracias', 'no avísame', 'noo', 'nunca', 'tampoco', '❌ no'])(
     'un no nunca se lee como aceptación: %j',
     (text) => {
       expect(choice(text)).toBe('act:mkt_no')
     },
   )
 
-  it.each(['¿avísame?', '¿qué es eso?', 'ok', 'dale', 'quizás', 'sí, gracias', '1', '3', ''])(
+  it.each(['¿avísame?', '¿qué es eso?', 'ok', 'dale', 'quizás', 'sí, gracias', '1', '2', '2.', '3', ''])(
     'una duda, una pregunta o un mensaje a medias no acepta: %j',
     (text) => {
       expect(choice(text)).toBeNull()
