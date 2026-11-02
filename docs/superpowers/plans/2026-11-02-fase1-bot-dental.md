@@ -3066,13 +3066,13 @@ git commit -m "feat(agenda): read reminder taps by label and by appointment id"
 ### Task 7: Autorización y menú principal
 
 **Files:**
-- Create: `src/modules/clinica/consent.ts`, `src/modules/clinica/consent.test.ts`, `src/modules/clinica/ai-gate.ts`, `src/modules/clinica/ai-gate.test.ts`, `src/verticals/agenda/agent/steps/clinic-steps.ts`, `src/verticals/agenda/agent/steps/clinic-steps.test.ts`, `src/verticals/agenda/agent/testing/clinic-harness.ts`, `src/verticals/agenda/agent/clinic-consent.test.ts`, `src/verticals/agenda/agent/clinic-topics.test.ts`, `src/verticals/agenda/agent/index.test.ts`, `src/app/api/ai/draft/route.test.ts`
+- Create: `src/modules/clinica/consent.ts`, `src/modules/clinica/consent.test.ts`, `src/modules/clinica/ai-gate.ts`, `src/modules/clinica/ai-gate.test.ts`, `src/verticals/agenda/agent/steps/clinic-steps.ts`, `src/verticals/agenda/agent/steps/clinic-steps.test.ts`, `src/verticals/agenda/agent/testing/clinic-harness.ts`, `src/verticals/agenda/agent/clinic-consent.test.ts`, `src/verticals/agenda/agent/clinic-routing.test.ts`, `src/verticals/agenda/agent/index.test.ts`, `src/app/api/ai/draft/route.test.ts`
 - Modify: `src/verticals/agenda/agent/controller.ts`, `src/verticals/agenda/agent/index.ts`, `src/verticals/agenda/agent/state.ts`, `src/modules/clinica/texts.ts`, `src/lib/verticals/types.ts`, `src/lib/verticals/dispatch.ts`, `src/lib/ai/auto-reply.ts`, `src/app/api/ai/draft/route.ts`, `messages/{en,es,pt,ko}.json`, y las pruebas `state.test.ts`, `texts.test.ts`, `dispatch.test.ts` y `auto-reply.test.ts`
 
 Reglas que fija esta tarea, todas con prueba. Salen del diseño y de la revisión de la tarea:
 
 **La IA no ve lo que no se autorizó**
-1. **El primer mensaje, sea el que sea, recibe la autorización.** En una cuenta con `clinica`, hasta que la persona acepta, el bot consume todo lo que escribe. La excepción son las quejas, pagos y documentos (regla 9), que pasan a una persona sin pedirla.
+1. **El primer mensaje, sea el que sea, recibe la autorización.** En una cuenta con `clinica`, hasta que la persona acepta, el bot consume todo lo que escribe. La excepción son las quejas, pagos y documentos (regla 11), que pasan a una persona sin pedirla.
 2. **La IA lo comprueba por su cuenta.** `canUseAi` (`src/modules/clinica/ai-gate.ts`) se pregunta en los dos lugares donde la IA lee un chat: la respuesta automática (`auto-reply.ts`, justo después de `loadAiConfig`) y "Sugerir con IA" (`/api/ai/draft`, que responde 403 con un mensaje claro). No basta con el bot: el despachador deja pasar el mensaje a la IA cuando falla la lectura de módulos (`postgrest-js` devuelve `{ error }` sin lanzar), y una cuenta que solo tiene `clinica` no llega a ningún bot. `canUseAi` falla cerrado: una cuenta o una autorización que no se pueden leer son un no. Una cuenta sin `clinica` solo paga la lectura de la cuenta.
 3. **Falla cerrado ante una configuración que falta.** `loadClinicContext` devuelve `ok`, `missing` o `error`. Con el módulo activo y `missing` o `error`, el bot consume el mensaje, deja el hilo con una persona (`performHandoff`, con una nota clara) y no sigue como una agenda normal. Si el texto trae una palabra de `DEFAULT_URGENCY_WORDS` (las de la clínica no se pudieron leer), el aviso al equipo es el de urgencia. Los toques de recordatorio se siguen atendiendo, y un hilo que ya es de una persona no se toca.
 4. **Un error inesperado tampoco abre la puerta.** El dispatcher devuelve `consumed: false` si un handler lanza, y entonces la IA vería el mensaje. En `agendaInboundHandler`, solo en cuentas con `clinica`, el error se registra, se avisa con `notifyAlert` (sin números largos: un error de la base puede repetir el teléfono del paciente) y el mensaje se da por consumido. Las demás cuentas siguen lanzando como hoy. El `catch` vive en `failClosed` para que la tarea 13 lo conserve.
@@ -3081,15 +3081,23 @@ Reglas que fija esta tarea, todas con prueba. Salen del diseño y de la revisió
 5. **Solo se acepta por toque, y ningún número decide nada.** Ningún texto acepta (`matchChoice`). Un texto con una negación queda como rechazo; cualquier otro vuelve a mostrar los botones y, a la segunda vez, pasa a una persona, con una nota que dice que la autorización quedó sin responder. Escribir `2` no registra un rechazo en un registro de solo agregar: `act:consent_no` y `act:mkt_no` tampoco se eligen por número.
 6. **El registro dice lo que la persona vio.** El texto y la versión que se le mostraron viajan en el estado de la sesión (`consentText`, `consentVersion`) y son los que se guardan al responder, aunque la clínica edite su texto entre tanto. `contact_ref` sale del contacto (teléfono, o `wa_user_id`); si no tiene ninguno, `recordConsent` lanza y no se guarda nada.
 7. **Los pasos clínicos no olvidan sus fallos al acertar.** Si la base rechaza el registro, el segundo toque en un mismo paso pasa a una persona en vez de repetir "intenta de nuevo" para siempre. Lo que avanza a otro paso nace con 0.
-8. **Un doble toque no es un error.** Un `act:consent_*` con el menú ya abierto se ignora en silencio.
+8. **Un doble toque en "Sí, acepto" no es un error.** Con el menú abierto o esperando una duda, se ignora en silencio.
+9. **"No acepto" revoca.** Un toque en `act:consent_no` con una autorización vigente, con o sin sesión y en cualquier paso menos el de la autorización, registra `granted: false` y pasa a una persona (`handleConsentRevoked`). Si no se pudo registrar, el hilo pasa igual y la nota lo dice. Cómo debe revocarse queda para revisarlo con el abogado.
 
-**El menú y lo que no es del bot**
-9. **Quejas, pagos y documentos van a una persona** (spec §5, etapa 2), solo en clínicas: `CLINIC_HUMAN_WORDS`. Si el texto trae una y no parece una duda, pase con nota clara. Va al nivel del pase a una persona: no espera la autorización y no se aplica mientras se escribe un nombre o una respuesta.
-10. **Una duda no es un fallo.** Una duda escrita con el menú abierto cierra la sesión y se suelta a la IA. "Precios y dudas" deja la sesión en `faq_open`, y el siguiente texto, diga lo que diga, cierra la sesión y va a la IA. El dispatcher reclama todo lo que llega con una sesión abierta, así que el resultado lleva `released: true` y el dispatcher lo respeta. Un toque sigue el camino normal.
-11. **`looksLikeQuestion` distingue pedir de preguntar.** Quita la puntuación antes de leer la primera palabra; un verbo de pedir (`quiero`, `quisiera`, `necesito`, `me das`, `me da`, `puedo agendar`) gana sobre la forma de pregunta; sin signo de pregunta, nombrar la cita la pide. Los saludos (`buenas`, `buenos días`...) abren el menú solo en clínicas.
-12. **El aviso de urgencia no se pierde.** Un pase con aviso propio le llega siempre al dueño, aunque también sea el agente de pase (el trigger solo le dice que le asignaron un chat), y al agente si es otra persona.
-13. **Más formas de decir urgencia:** `fracturo`, `doliendo`, `dolio`, `golpee`, `calentura`.
-14. **Una cuenta sin `clinica` se comporta exactamente igual que hoy.** No lee la configuración de la clínica, no pide autorización y no cambia ningún paso.
+**El texto libre y el menú**
+10. **Una sola regla para el texto libre.** `routeClinicText(text, palabrasDeCita)` es una función pura con un orden: `book` (nombra una cita y la pide con un verbo de pedir, o son tres palabras o menos), `human` (una palabra de `CLINIC_HUMAN_WORDS` sin negación ni agradecimiento antes, y que no es una pregunta), `greeting` (arranca con un saludo y no pasa de cuatro palabras) y `ai`, el valor por defecto. La urgencia y la palabra de pase a una persona se miran antes, fuera de la función. No se agregan más heurísticas: lo que no encaja es para la IA.
+11. **Dónde se aplica.** Solo sin sesión, con el menú abierto (`clinic_menu`) y esperando una duda (`faq_open`). En cualquier otro paso (la autorización, el nombre, los servicios, las preguntas...) el texto es la respuesta a ese paso y `CLINIC_HUMAN_WORDS` nunca se aplica: "no acepto dar mis documentos" sigue siendo un rechazo registrado.
+    - Sin sesión: `book` y `greeting` abren el menú, `human` pasa a una persona (sin esperar la autorización), `ai` queda `consumed: false`.
+    - Con el menú abierto: `book` elige "Agendar", `human` pasa a una persona, `greeting` muestra el menú otra vez sin contar fallo, `ai` cierra la sesión y suelta el mensaje.
+    - Esperando la duda (`faq_open`, adonde lleva "Precios y dudas"): `book` elige "Agendar"; lo demás se suelta a la IA, aunque traiga una palabra de queja, pago o documento. Una foto, un audio o un tipo no soportado (`isNonTextInbound`) ni se enruta ni cierra la sesión: se vuelve a invitar a escribir.
+    - Soltar es cerrar la sesión y devolver `released: true`: el dispatcher reclama todo lo que llega con una sesión abierta, y `released` le dice que lo respete.
+12. **Si la IA no va a contestar, pasa a una persona.** Al soltar una duda con el menú abierto o en `faq_open`, si la cuenta no tiene la respuesta automática activa (`autoReplyEnabled`: `loadAiConfig` con `autoReplyEnabled`), el hilo pasa a una persona; una configuración que no se puede leer cuenta como apagada. "Precios y dudas" tampoco invita a escribir una duda que nadie va a contestar.
+13. **El menú sigue vivo.** Con autorización, un toque en cualquier opción del menú (`act:book`, `act:mine`, `act:faq`, `act:urgent`, `act:human`) funciona haya o no sesión, y desde `faq_open` se lee como una elección del menú. Sin autorización se muestra la autorización. Los demás toques de un menú viejo no arrancan nada.
+
+**Otras**
+14. **El aviso de urgencia no se pierde.** Un pase con aviso propio le llega siempre al dueño, aunque también sea el agente de pase (el trigger solo le dice que le asignaron un chat), y al agente si es otra persona.
+15. **Más formas de decir urgencia:** `fracturo`, `doliendo`, `dolio`, `golpee`, `calentura`.
+16. **Una cuenta sin `clinica` se comporta exactamente igual que hoy.** No lee la configuración de la clínica, no pide autorización y no cambia ningún paso: toda la rama de clínica es una función, `handleClinicInbound`, y el camino de siempre queda intacto.
 
 - [ ] **Step 1: Crea las utilidades de prueba**
 
@@ -3300,7 +3308,13 @@ export async function send(
   db: FakeDb,
   rec: Recorder,
   input: { text?: string; replyId?: string },
-  opts: { now?: Date; modules?: ModuleKey[]; humanOwned?: boolean } = {},
+  opts: {
+    now?: Date
+    modules?: ModuleKey[]
+    humanOwned?: boolean
+    /** La respuesta automática con IA está activa. Por defecto, sí. */
+    aiOn?: boolean | (() => Promise<boolean>)
+  } = {},
 ) {
   counter += 1
   const messageId = `wamid-${counter}`
@@ -3312,6 +3326,7 @@ export async function send(
     interactive_reply_id: input.replyId ?? null,
   })
   const now = opts.now ?? NOW
+  const aiOn = opts.aiOn ?? true
   return handleAgendaInbound({
     db: asClient(db),
     sender: rec.sender,
@@ -3324,6 +3339,7 @@ export async function send(
     session: activeSession(db, now),
     humanOwned: opts.humanOwned,
     modules: opts.modules ?? ['agenda', 'clinica'],
+    aiAutoReplyOn: typeof aiOn === 'function' ? aiOn : async () => aiOn,
   })
 }
 ```
@@ -3335,6 +3351,7 @@ Crea `src/verticals/agenda/agent/clinic-consent.test.ts`. Los textos salen de `b
 ```ts
 import { describe, expect, it } from 'vitest'
 
+import { latestConsent } from '@/modules/clinica/consent'
 import { buildClinicTexts } from '@/modules/clinica/texts'
 import { AGENDA_AGENT_TEXTS } from '../texts'
 import { DEFAULT_LABELS } from '../labels'
@@ -3352,23 +3369,12 @@ import {
   makeRecorder,
   send,
 } from './testing/clinic-harness'
+import { asClient } from './testing/fake-db'
 
 const texts = buildClinicTexts(DEFAULT_LABELS)
 
 const CONSENT_BUTTONS = ['act:consent_yes', 'act:consent_no']
 const MENU_IDS = ['act:book', 'act:mine', 'act:faq', 'act:urgent', 'act:human']
-
-/** Una clínica que llama "atención" a su servicio, como el preset de odontología. */
-const clinicLabels = {
-  account_id: ACCOUNT,
-  bot_texts: {},
-  labels: { servicio: 'atención', servicios: 'atenciones' },
-  choose_staff: true,
-  show_price: false,
-  show_duration: false,
-  reminders_enabled: true,
-  allow_reschedule: true,
-}
 
 describe('autorización de datos', () => {
   it('el primer mensaje pide autorización antes que nada', async () => {
@@ -3583,25 +3589,141 @@ describe('autorización de datos', () => {
     expect(last(rec).ids).toEqual(MENU_IDS)
   })
 
-  it.each(['act:consent_yes', 'act:consent_no'])(
-    'un segundo toque (%s) con el menú ya abierto se ignora en silencio',
-    async (replyId) => {
+  it('un segundo toque en "Sí, acepto" con el menú ya abierto se ignora en silencio', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { replyId: 'act:consent_yes' })
+    const sent = rec.calls.length
+    const result = await send(db, rec, { replyId: 'act:consent_yes' })
+    expect(result).toEqual({ consumed: true })
+    // Ni mensaje, ni fallo, ni otro registro, ni pase a una persona.
+    expect(rec.calls).toHaveLength(sent)
+    expect(db._tables.clinic_consents).toHaveLength(1)
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    const open = db._tables.booking_sessions.filter((s) => s.status === 'active')
+    expect(open.map((s) => (s.state as { step: string; fails: number }).step)).toEqual(['clinic_menu'])
+    expect((open[0].state as { fails: number }).fails).toBe(0)
+  })
+
+  it('también esperando la duda', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { replyId: 'act:consent_yes' })
+    await send(db, rec, { replyId: 'act:faq' })
+    const sent = rec.calls.length
+    const result = await send(db, rec, { replyId: 'act:consent_yes' })
+    expect(result).toEqual({ consumed: true })
+    expect(rec.calls).toHaveLength(sent)
+  })
+
+  describe('revocar con un toque en "No acepto" cuando ya había autorizado', () => {
+    const latest = (db: ReturnType<typeof clinicDb>) =>
+      latestConsent(asClient(db), { accountId: ACCOUNT, contactId: CONTACT, kind: 'datos_sensibles' })
+
+    // Un minuto después de aceptar: la decisión vigente es la más reciente.
+    const LATER = { now: new Date('2026-10-19T13:01:00Z') }
+
+    async function accepted() {
       const db = clinicDb()
       const rec = makeRecorder()
       await send(db, rec, { text: 'Hola' })
       await send(db, rec, { replyId: 'act:consent_yes' })
-      const sent = rec.calls.length
-      const result = await send(db, rec, { replyId })
+      return { db, rec }
+    }
+
+    it('con el menú abierto registra el rechazo y pasa a una persona', async () => {
+      const { db, rec } = await accepted()
+      const result = await send(db, rec, { replyId: 'act:consent_no' }, LATER)
       expect(result).toEqual({ consumed: true })
-      // Ni mensaje, ni fallo, ni otro registro, ni pase a una persona.
-      expect(rec.calls).toHaveLength(sent)
+      expect(db._tables.clinic_consents).toHaveLength(2)
+      expect(db._tables.clinic_consents[1]).toMatchObject({
+        granted: false,
+        kind: 'datos_sensibles',
+        contact_ref: '573001112233',
+        text_version: 2,
+        text_snapshot: 'Texto de autorización',
+        source: 'whatsapp',
+      })
+      expect(await latest(db)).toEqual({ granted: false })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.consentRevokedNote)
+      expect(last(rec).bodyText).toBe(texts.consentDeclined)
+      expect(db._tables.booking_sessions.every((s) => s.status !== 'active')).toBe(true)
+    })
+
+    it('sin sesión (el menú ya venció) también', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:consent_no' })
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.clinic_consents).toHaveLength(2)
+      expect(await latest(db)).toEqual({ granted: false })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.consentRevokedNote)
+    })
+
+    it('esperando la duda también', async () => {
+      const { db, rec } = await accepted()
+      await send(db, rec, { replyId: 'act:faq' })
+      await send(db, rec, { replyId: 'act:consent_no' }, LATER)
+      expect(await latest(db)).toEqual({ granted: false })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    })
+
+    it('a mitad de una reserva también', async () => {
+      const { db, rec } = await accepted()
+      await send(db, rec, { replyId: 'act:book' })
+      await send(db, rec, { replyId: 'act:consent_no' }, LATER)
+      expect(await latest(db)).toEqual({ granted: false })
+      expect(db._tables.booking_sessions.every((s) => s.status !== 'active')).toBe(true)
+    })
+
+    it('si no se pudo registrar, igual pasa a una persona y la nota lo dice', async () => {
+      const { db, rec } = await accepted()
+      db._failNext('insert', 'clinic_consents', { message: 'boom' })
+      const result = await send(db, rec, { replyId: 'act:consent_no' })
+      expect(result).toEqual({ consumed: true })
       expect(db._tables.clinic_consents).toHaveLength(1)
-      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
-      const open = db._tables.booking_sessions.filter((s) => s.status === 'active')
-      expect(open.map((s) => (s.state as { step: string; fails: number }).step)).toEqual(['clinic_menu'])
-      expect((open[0].state as { fails: number }).fails).toBe(0)
-    },
-  )
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.consentRevokedUnsavedNote)
+    })
+
+    it('sin una autorización vigente no revoca nada: vuelve a pedirla', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:consent_no' })
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.clinic_consents).toHaveLength(0)
+      expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
+    })
+
+    it('en el paso de la autorización sigue siendo el rechazo de siempre', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:consent_no' })
+      expect(db._tables.clinic_consents).toHaveLength(1)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.consentDeclinedNote)
+    })
+
+    it('un hilo que ya es de una persona no se toca', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:consent_no' }, { humanOwned: true })
+      expect(result).toEqual({ consumed: false })
+      expect(db._tables.clinic_consents).toHaveLength(1)
+    })
+
+    it('en una cuenta sin clínica no hace nada', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:consent_no' }, { modules: ['agenda'] })
+      expect(result).toEqual({ consumed: false })
+      expect(db._tables.clinic_consents).toHaveLength(1)
+    })
+  })
 
   it('el toque del menú sigue valiendo después de un doble toque', async () => {
     const db = clinicDb()
@@ -3658,189 +3780,6 @@ describe('autorización de datos', () => {
     const rec = makeRecorder()
     await send(db, rec, { text: 'Hola' })
     expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
-  })
-
-  describe('con autorización, qué abre el menú y qué va a la IA', () => {
-    it.each([
-      'quiero una cita',
-      'necesito cita para mi hijo',
-      'cita',
-      'hola',
-      'buenas',
-      'Buenos días',
-      'buenas tardes',
-      'Buenas noches',
-      '¿me das una cita?',
-      '¿puedo agendar una cita para mañana?',
-      'Qué pena, necesito una cita',
-      'Tienen citas disponibles',
-    ])('abre el menú: %j', async (text) => {
-      const db = clinicDb({ clinic_consents: [grantedConsent()] })
-      const rec = makeRecorder()
-      const result = await send(db, rec, { text })
-      expect(result).toEqual({ consumed: true })
-      expect(last(rec).ids).toEqual(MENU_IDS)
-    })
-
-    it.each([
-      '¿Cuánto vale una cita de valoración?',
-      'Buenos días, ¿cuánto vale la limpieza?',
-      '¿Tienen citas disponibles?',
-    ])('va a la IA: %j', async (text) => {
-      const db = clinicDb({ clinic_consents: [grantedConsent()] })
-      const rec = makeRecorder()
-      const result = await send(db, rec, { text })
-      expect(result).toEqual({ consumed: false })
-      expect(rec.calls).toHaveLength(0)
-    })
-
-    it('usa la palabra que la clínica le da a la cita', async () => {
-      const db = clinicDb({
-        clinic_consents: [grantedConsent()],
-        booking_settings: [{ ...clinicLabels, labels: { cita: 'turno', citas: 'turnos' } }],
-      })
-      const rec = makeRecorder()
-      const result = await send(db, rec, { text: 'Tienen turnos disponibles' })
-      expect(result).toEqual({ consumed: true })
-      expect(last(rec).ids).toEqual(MENU_IDS)
-    })
-
-    it('los saludos abren el menú solo en una clínica', async () => {
-      const db = clinicDb()
-      const rec = makeRecorder()
-      const result = await send(db, rec, { text: 'buenas tardes' }, { modules: ['agenda'] })
-      expect(result).toEqual({ consumed: false })
-      expect(rec.calls).toHaveLength(0)
-    })
-  })
-
-  it('con autorización, una pregunta pasa a la IA', async () => {
-    const db = clinicDb({ clinic_consents: [grantedConsent()] })
-    const rec = makeRecorder()
-    const result = await send(db, rec, { text: '¿Cuánto vale una cita de valoración?' })
-    expect(result).toEqual({ consumed: false })
-    expect(rec.calls).toHaveLength(0)
-  })
-
-  it('con autorización, "gracias por la atención" no abre el menú', async () => {
-    const db = clinicDb({
-      clinic_consents: [grantedConsent()],
-      booking_settings: [clinicLabels],
-    })
-    const rec = makeRecorder()
-    const result = await send(db, rec, { text: 'Muchas gracias por la atención' })
-    expect(result).toEqual({ consumed: false })
-    expect(rec.calls).toHaveLength(0)
-  })
-
-  it('con autorización, "gracias por las atenciones" tampoco abre el menú', async () => {
-    const db = clinicDb({
-      clinic_consents: [grantedConsent()],
-      booking_settings: [clinicLabels],
-    })
-    const rec = makeRecorder()
-    const result = await send(db, rec, { text: 'gracias por las atenciones' })
-    expect(result).toEqual({ consumed: false })
-    expect(rec.calls).toHaveLength(0)
-  })
-
-  describe('dudas con el menú abierto', () => {
-    const activeSteps = (db: ReturnType<typeof clinicDb>) =>
-      db._tables.booking_sessions
-        .filter((s) => s.status === 'active')
-        .map((s) => (s.state as { step: string }).step)
-
-    it('una duda escrita con el menú abierto suelta la sesión y se la deja a la IA', async () => {
-      const db = clinicDb({ clinic_consents: [grantedConsent()] })
-      const rec = makeRecorder()
-      await send(db, rec, { text: 'Hola' })
-      const before = rec.calls.length
-      const result = await send(db, rec, { text: '¿Cuánto vale una limpieza?' })
-      // `released` le dice al despachador que no la reclame por tener sesión.
-      expect(result).toEqual({ consumed: false, released: true })
-      expect(rec.calls).toHaveLength(before)
-      expect(activeSteps(db)).toEqual([])
-      expect(db._tables.booking_sessions[0].status).toBe('completed')
-      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
-    })
-
-    it('"qué precio tiene" sin signos también es una duda', async () => {
-      const db = clinicDb({ clinic_consents: [grantedConsent()] })
-      const rec = makeRecorder()
-      await send(db, rec, { text: 'Hola' })
-      const result = await send(db, rec, { text: 'qué precio tiene la limpieza' })
-      expect(result).toEqual({ consumed: false, released: true })
-    })
-
-    it('lo que no parece una duda sigue el camino de siempre: se vuelve a preguntar', async () => {
-      const db = clinicDb({ clinic_consents: [grantedConsent()] })
-      const rec = makeRecorder()
-      await send(db, rec, { text: 'Hola' })
-      const result = await send(db, rec, { text: 'mmm' })
-      expect(result).toEqual({ consumed: true })
-      expect(activeSteps(db)).toEqual(['clinic_menu'])
-    })
-
-    it('un toque del menú sigue su camino', async () => {
-      const db = clinicDb({ clinic_consents: [grantedConsent()] })
-      const rec = makeRecorder()
-      await send(db, rec, { text: 'Hola' })
-      const result = await send(db, rec, { replyId: 'act:book' })
-      expect(result).toEqual({ consumed: true })
-      expect(last(rec).ids[0]).toMatch(/^svc:/)
-    })
-
-    it('"Precios y dudas" invita a preguntar y deja la sesión esperando la duda', async () => {
-      const db = clinicDb({ clinic_consents: [grantedConsent()] })
-      const rec = makeRecorder()
-      await send(db, rec, { text: 'Hola' })
-      await send(db, rec, { replyId: 'act:faq' })
-      expect(last(rec).bodyText).toBe(texts.faqPrompt)
-      expect(activeSteps(db)).toEqual(['faq_open'])
-    })
-
-    it('el siguiente texto, aunque diga "cita", va a la IA y cierra la sesión', async () => {
-      const db = clinicDb({ clinic_consents: [grantedConsent()] })
-      const rec = makeRecorder()
-      await send(db, rec, { text: 'Hola' })
-      await send(db, rec, { replyId: 'act:faq' })
-      const before = rec.calls.length
-      const result = await send(db, rec, { text: 'quiero saber cuánto vale la cita de valoración' })
-      expect(result).toEqual({ consumed: false, released: true })
-      expect(rec.calls).toHaveLength(before)
-      expect(activeSteps(db)).toEqual([])
-    })
-
-    it('después de la duda, "cita" vuelve a abrir el menú', async () => {
-      const db = clinicDb({ clinic_consents: [grantedConsent()] })
-      const rec = makeRecorder()
-      await send(db, rec, { text: 'Hola' })
-      await send(db, rec, { replyId: 'act:faq' })
-      await send(db, rec, { text: 'cuánto vale' })
-      const result = await send(db, rec, { text: 'quiero una cita' })
-      expect(result).toEqual({ consumed: true })
-      expect(last(rec).ids).toEqual(MENU_IDS)
-    })
-
-    it('un toque viejo mientras espera la duda sigue el camino normal, no la suelta', async () => {
-      const db = clinicDb({ clinic_consents: [grantedConsent()] })
-      const rec = makeRecorder()
-      await send(db, rec, { text: 'Hola' })
-      await send(db, rec, { replyId: 'act:faq' })
-      const result = await send(db, rec, { replyId: 'act:book' })
-      expect(result).toEqual({ consumed: true })
-      expect(activeSteps(db)).toEqual(['faq_open'])
-    })
-
-    it('pedir una persona mientras espera la duda sigue ganando', async () => {
-      const db = clinicDb({ clinic_consents: [grantedConsent()] })
-      const rec = makeRecorder()
-      await send(db, rec, { text: 'Hola' })
-      await send(db, rec, { replyId: 'act:faq' })
-      const result = await send(db, rec, { text: 'mejor quiero hablar con una persona' })
-      expect(result).toEqual({ consumed: true })
-      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
-    })
   })
 
   it('"Hablar con una persona" pasa el hilo a un asesor', async () => {
@@ -4073,7 +4012,7 @@ describe('la clínica no está disponible', () => {
 })
 ```
 
-Crea `src/verticals/agenda/agent/clinic-topics.test.ts`:
+Crea `src/verticals/agenda/agent/clinic-routing.test.ts`:
 
 ```ts
 import { describe, expect, it } from 'vitest'
@@ -4087,12 +4026,15 @@ import {
   CONTACT,
   clinicDb,
   grantedConsent,
+  last,
   makeRecorder,
   send,
-  last,
 } from './testing/clinic-harness'
 
 const texts = buildClinicTexts(DEFAULT_LABELS)
+
+const MENU_IDS = ['act:book', 'act:mine', 'act:faq', 'act:urgent', 'act:human']
+const CONSENT_BUTTONS = ['act:consent_yes', 'act:consent_no']
 
 const session = (state: Record<string, unknown>) => ({
   id: 'ses-1',
@@ -4103,151 +4045,600 @@ const session = (state: Record<string, unknown>) => ({
   state: { mode: 'book', options: [], fails: 0, ...state },
 })
 
-describe('quejas, pagos y documentos van a una persona', () => {
-  it('la lista tiene lo que pide la spec, sin tildes', () => {
-    expect([...CLINIC_HUMAN_WORDS]).toEqual([
-      'queja',
-      'reclamo',
-      'pqr',
-      'pqrs',
-      'factura',
-      'pago',
-      'pagar',
-      'abono',
-      'saldo',
-      'certificado',
-      'incapacidad',
-      'historia clinica',
-      'radiografia',
-      'receta',
-      'documento',
-      'documentos',
-    ])
+const authorized = () => clinicDb({ clinic_consents: [grantedConsent()] })
+
+/** Abre el menú como lo haría un paciente: con un saludo. */
+async function withMenuOpen() {
+  const db = authorized()
+  const rec = makeRecorder()
+  await send(db, rec, { text: 'Hola' })
+  return { db, rec, sent: rec.calls.length }
+}
+
+/** Abre el menú y entra a "Precios y dudas". */
+async function withFaqOpen() {
+  const { db, rec } = await withMenuOpen()
+  await send(db, rec, { replyId: 'act:faq' })
+  return { db, rec, sent: rec.calls.length }
+}
+
+const activeSteps = (db: ReturnType<typeof clinicDb>) =>
+  db._tables.booking_sessions
+    .filter((s) => s.status === 'active')
+    .map((s) => (s.state as { step: string }).step)
+
+/**
+ * "Agendar" salió del menú principal y siguió la reserva, sin "No entendí". Qué
+ * pregunta primero (el servicio, o antes el paciente) lo deciden otras tareas.
+ */
+function expectBookingStarted(db: ReturnType<typeof clinicDb>, rec: ReturnType<typeof makeRecorder>) {
+  expect(last(rec).ids).not.toEqual(MENU_IDS)
+  expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(false)
+  expect(activeSteps(db)).toHaveLength(1)
+  expect(activeSteps(db)).not.toContain('clinic_menu')
+}
+
+describe('sin sesión', () => {
+  describe('con autorización', () => {
+    it.each([
+      'quiero una cita',
+      'necesito cita para mi hijo',
+      'cita',
+      'agendar',
+      '¿me das una cita?',
+      '¿puedo agendar una cita para mañana?',
+      'Qué pena, necesito una cita',
+      'Tienen citas disponibles',
+      'quiero una cita para una radiografía',
+      'quiero agendar, ya hice el pago',
+      'hola',
+      'buenas',
+      'Buenos días',
+      'buen día',
+      'buenas tardes',
+    ])('abre el menú: %j', async (text) => {
+      const db = authorized()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).ids).toEqual(MENU_IDS)
+    })
+
+    it.each([
+      'cuánto vale una cita',
+      'dónde es la cita',
+      '¿Cuánto vale una cita de valoración?',
+      'cuánto vale una limpieza',
+      '¿aceptan tarjeta?',
+      '¿puedo pagar con tarjeta?',
+      '¿dónde quedan?',
+      'gracias, buenas noches',
+      'excelente, no tengo ninguna queja',
+      'muchas gracias por la receta',
+      'Buenos días, ¿cuánto vale la limpieza?',
+    ])('va a la IA: %j', async (text) => {
+      const db = authorized()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text })
+      expect(result).toEqual({ consumed: false })
+      expect(rec.calls).toHaveLength(0)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    })
+
+    it.each([
+      'quiero pagar',
+      'tengo una queja',
+      'el saldo',
+      'documento de identidad',
+      'necesito mi historia clínica',
+    ])('pasa a una persona: %j', async (text) => {
+      const db = authorized()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text })
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.humanTopicNote)
+      expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
+    })
+
+    it('usa la palabra que la clínica le da a la cita', async () => {
+      const db = clinicDb({
+        clinic_consents: [grantedConsent()],
+        booking_settings: [
+          {
+            account_id: ACCOUNT,
+            bot_texts: {},
+            labels: { cita: 'turno', citas: 'turnos' },
+            choose_staff: true,
+            show_price: false,
+            show_duration: false,
+            reminders_enabled: true,
+            allow_reschedule: true,
+          },
+        ],
+      })
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: 'cuándo tienen turnos para el viernes' })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).ids).toEqual(MENU_IDS)
+    })
+
+    it('una foto, un audio o un tipo no soportado no se enruta: va a la IA', async () => {
+      for (const text of ['', '[Unsupported message type: audio]']) {
+        const db = authorized()
+        const rec = makeRecorder()
+        const result = await send(db, rec, { text })
+        expect(result).toEqual({ consumed: false })
+        expect(rec.calls).toHaveLength(0)
+      }
+    })
+
+    it('"gracias por la atención" no abre el menú aunque la clínica llame "atención" a su servicio', async () => {
+      const db = clinicDb({
+        clinic_consents: [grantedConsent()],
+        booking_settings: [
+          {
+            account_id: ACCOUNT,
+            bot_texts: {},
+            labels: { servicio: 'atención', servicios: 'atenciones' },
+            choose_staff: true,
+            show_price: false,
+            show_duration: false,
+            reminders_enabled: true,
+            allow_reschedule: true,
+          },
+        ],
+      })
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: 'Muchas gracias por la atención' })
+      expect(result).toEqual({ consumed: false })
+      expect(rec.calls).toHaveLength(0)
+    })
   })
 
-  it.each([
-    'Tengo una queja del servicio',
-    'Quiero poner un reclamo',
-    'Necesito radicar una PQR',
-    'Una pqrs por favor',
-    'Necesito mi factura',
-    'Quiero hacer el pago',
-    'Voy a pagar hoy',
-    'Hice un abono ayer',
-    'Quiero saber mi saldo',
-    'Necesito un certificado',
-    'Necesito la incapacidad',
-    'Mi historia clínica, por favor',
-    'Necesito la radiografía de mi hijo',
-    'Necesito una receta',
-    'Envíenme el documento',
-    'Documentos para el seguro',
-    'Hola, quiero pagar mi factura',
-  ])('un mensaje que no es una duda pasa a una persona: %j', async (text) => {
-    const db = clinicDb({ clinic_consents: [grantedConsent()] })
-    const rec = makeRecorder()
-    const result = await send(db, rec, { text })
+  describe('sin autorización', () => {
+    it.each(['quiero una cita', 'hola', '¿cuánto vale una limpieza?', 'gracias'])(
+      'lo demás pide la autorización antes de nada: %j',
+      async (text) => {
+        const db = clinicDb()
+        const rec = makeRecorder()
+        const result = await send(db, rec, { text })
+        expect(result).toEqual({ consumed: true })
+        expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
+      },
+    )
+
+    it('una queja, un pago o un documento no la esperan: nadie se queda atascado en un aviso legal', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: 'Tengo una queja de mi última cita' })
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.clinic_consents).toHaveLength(0)
+      expect(db._tables.booking_sessions).toHaveLength(0)
+      expect(rec.calls.every((c) => !c.ids.includes('act:consent_yes'))).toBe(true)
+    })
+  })
+
+  describe('quejas, pagos y documentos', () => {
+    it('la lista tiene lo que pide la spec, sin tildes', () => {
+      expect([...CLINIC_HUMAN_WORDS]).toEqual([
+        'queja',
+        'reclamo',
+        'pqr',
+        'pqrs',
+        'factura',
+        'pago',
+        'pagar',
+        'abono',
+        'saldo',
+        'certificado',
+        'incapacidad',
+        'historia clinica',
+        'radiografia',
+        'receta',
+        'documento',
+        'documentos',
+      ])
+    })
+
+    it.each([
+      'Tengo una queja del servicio',
+      'Quiero poner un reclamo',
+      'Necesito radicar una PQR',
+      'Una pqrs por favor',
+      'Necesito mi factura',
+      'Quiero hacer el pago',
+      'Voy a pagar hoy',
+      'Hice un abono ayer',
+      'Quiero saber mi saldo',
+      'Necesito un certificado',
+      'Necesito la incapacidad',
+      'Mi historia clínica, por favor',
+      'Necesito la radiografía de mi hijo',
+      'Necesito una receta',
+      'Envíenme el documento',
+      'Documentos para el seguro',
+      'Hola, quiero pagar mi factura',
+    ])('un pedido pasa a una persona: %j', async (text) => {
+      const db = authorized()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text })
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.humanTopicNote)
+    })
+
+    it.each([
+      '¿Cuánto cuesta el certificado?',
+      '¿Puedo pagar con tarjeta?',
+      'cómo pago',
+      'qué documentos piden para el primer día',
+      'dónde recojo mi factura',
+      '¿Me das el certificado?',
+      'no tengo ninguna queja',
+      'gracias por la factura',
+    ])('una duda, una negación o un agradecimiento va a la IA: %j', async (text) => {
+      const db = authorized()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text })
+      expect(result).toEqual({ consumed: false })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+      expect(rec.calls).toHaveLength(0)
+    })
+
+    it('no confunde una palabra más larga: "pagado" no es "pago"', async () => {
+      const db = authorized()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: 'ya está pagado, quiero una cita' })
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    })
+
+    it('un toque de un botón no es texto y no dispara nada', async () => {
+      const db = authorized()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: 'act:book' })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    })
+
+    it('en una cuenta sin clínica no cambia nada', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: 'Necesito mi factura' }, { modules: ['agenda'] })
+      expect(result).toEqual({ consumed: false })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    })
+
+    it('un hilo que ya es de una persona no se toca', async () => {
+      const db = authorized()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: 'Necesito mi factura' }, { humanOwned: true })
+      expect(result).toEqual({ consumed: false })
+      expect(rec.calls).toHaveLength(0)
+    })
+  })
+})
+
+describe('con el menú abierto', () => {
+  it('pedir una cita elige "Agendar" sin pasar por "No entendí"', async () => {
+    const { db, rec } = await withMenuOpen()
+    const result = await send(db, rec, { text: 'necesito una cita para mañana' })
+    expect(result).toEqual({ consumed: true })
+    // Sin pacientes registrados, "Agendar" pide el nombre de quien va a asistir.
+    expectBookingStarted(db, rec)
+  })
+
+  it('un saludo vuelve a mostrar el menú sin contarlo como fallo', async () => {
+    const { db, rec, sent } = await withMenuOpen()
+    for (let i = 0; i < 3; i += 1) {
+      const result = await send(db, rec, { text: 'hola' })
+      expect(result).toEqual({ consumed: true })
+    }
+    expect(rec.calls).toHaveLength(sent + 3)
+    expect(last(rec).ids).toEqual(MENU_IDS)
+    expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(false)
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    const open = db._tables.booking_sessions.filter((s) => s.status === 'active')
+    expect((open[0].state as { fails: number }).fails).toBe(0)
+  })
+
+  it('una queja, un pago o un documento pasa a una persona y cierra la sesión', async () => {
+    const { db, rec } = await withMenuOpen()
+    const result = await send(db, rec, { text: 'quiero pagar' })
     expect(result).toEqual({ consumed: true })
     expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
     expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.humanTopicNote)
-    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
-  })
-
-  it('no necesita autorización: nadie con una queja se queda atascado en un aviso legal', async () => {
-    const db = clinicDb()
-    const rec = makeRecorder()
-    const result = await send(db, rec, { text: 'Tengo una queja de mi última cita' })
-    expect(result).toEqual({ consumed: true })
-    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
-    expect(db._tables.clinic_consents).toHaveLength(0)
-    expect(db._tables.booking_sessions).toHaveLength(0)
-    expect(rec.calls.every((c) => !c.ids.includes('act:consent_yes'))).toBe(true)
-  })
-
-  it('con una sesión abierta también pasa a una persona y la cierra', async () => {
-    const db = clinicDb({
-      clinic_consents: [grantedConsent()],
-      booking_sessions: [session({ step: 'clinic_menu' })],
-    })
-    const rec = makeRecorder()
-    const result = await send(db, rec, { text: 'Necesito mi factura' })
-    expect(result).toEqual({ consumed: true })
     expect(db._tables.booking_sessions[0].status).toBe('cancelled')
-    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
   })
 
   it.each([
-    '¿Cuánto cuesta el certificado?',
-    '¿Puedo pagar con tarjeta?',
-    'cómo pago',
-    'qué documentos piden para el primer día',
-    'dónde recojo mi factura',
-  ])('una duda va a la IA: %j', async (text) => {
-    const db = clinicDb({ clinic_consents: [grantedConsent()] })
-    const rec = makeRecorder()
+    '¿Cuánto vale una limpieza?',
+    'qué precio tiene la limpieza',
+    'cuánto vale una cita',
+    'me duele una muela y no sé qué hacer',
+  ])('lo demás se suelta a la IA y cierra la sesión: %j', async (text) => {
+    const { db, rec, sent } = await withMenuOpen()
     const result = await send(db, rec, { text })
-    expect(result).toEqual({ consumed: false })
+    // `released` le dice al despachador que no la reclame por tener sesión.
+    expect(result).toEqual({ consumed: false, released: true })
+    expect(rec.calls).toHaveLength(sent)
+    expect(activeSteps(db)).toEqual([])
+    expect(db._tables.booking_sessions[0].status).toBe('completed')
     expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
-    expect(rec.calls).toHaveLength(0)
   })
 
-  it('un verbo de pedir gana sobre la forma de pregunta', async () => {
-    const db = clinicDb({ clinic_consents: [grantedConsent()] })
-    const rec = makeRecorder()
-    const result = await send(db, rec, { text: '¿Me das el certificado?' })
+  it('una foto o un audio sigue el camino de siempre: se vuelve a preguntar', async () => {
+    const { db, rec } = await withMenuOpen()
+    const result = await send(db, rec, { text: '[Unsupported message type: audio]' })
+    expect(result).toEqual({ consumed: true })
+    expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(true)
+    expect(activeSteps(db)).toEqual(['clinic_menu'])
+  })
+
+  it('un toque del menú sigue su camino', async () => {
+    const { db, rec } = await withMenuOpen()
+    const result = await send(db, rec, { replyId: 'act:book' })
+    expect(result).toEqual({ consumed: true })
+    expectBookingStarted(db, rec)
+  })
+})
+
+describe('esperando la duda ("Precios y dudas")', () => {
+  it('deja la sesión esperando y invita a preguntar', async () => {
+    const { db, rec } = await withFaqOpen()
+    expect(last(rec).bodyText).toBe(texts.faqPrompt)
+    expect(activeSteps(db)).toEqual(['faq_open'])
+  })
+
+  it('el siguiente texto se suelta a la IA, aunque diga "cita" o "pago"', async () => {
+    for (const text of [
+      'cuánto vale la cita de valoración',
+      'quiero saber cuánto vale',
+      'quiero pagar',
+      'tengo una queja',
+      'hola',
+    ]) {
+      const { db, rec, sent } = await withFaqOpen()
+      const result = await send(db, rec, { text })
+      expect(result).toEqual({ consumed: false, released: true })
+      expect(rec.calls).toHaveLength(sent)
+      expect(activeSteps(db)).toEqual([])
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    }
+  })
+
+  it('pedir una cita elige "Agendar"', async () => {
+    const { db, rec } = await withFaqOpen()
+    const result = await send(db, rec, { text: 'quiero una cita para mañana' })
+    expect(result).toEqual({ consumed: true })
+    expectBookingStarted(db, rec)
+  })
+
+  it.each(['', '[Unsupported message type: audio]', '   '])(
+    'una foto, un audio o un tipo no soportado (%j) no cierra la sesión',
+    async (text) => {
+      const { db, rec, sent } = await withFaqOpen()
+      const result = await send(db, rec, { text })
+      expect(result).toEqual({ consumed: true })
+      expect(activeSteps(db)).toEqual(['faq_open'])
+      // Se vuelve a invitar a escribir la duda, sin contarlo como fallo.
+      expect(rec.calls).toHaveLength(sent + 1)
+      expect(last(rec).bodyText).toBe(texts.faqPrompt)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    },
+  )
+
+  it('pedir una persona sigue ganando', async () => {
+    const { db, rec } = await withFaqOpen()
+    const result = await send(db, rec, { text: 'mejor quiero hablar con una persona' })
     expect(result).toEqual({ consumed: true })
     expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
   })
+})
 
-  it('no se aplica mientras escribe el nombre de quien va a asistir', async () => {
-    const db = clinicDb({
-      clinic_consents: [grantedConsent()],
-      booking_sessions: [session({ step: 'new_patient_name' })],
-    })
+describe('el menú sigue vivo', () => {
+  it('sin sesión y con autorización, "Agendar" funciona', async () => {
+    const db = authorized()
     const rec = makeRecorder()
-    await send(db, rec, { text: 'Camila Pago Receta' })
-    expect(db._tables.conversations[0].ai_handoff_summary).not.toBe(texts.humanTopicNote)
-  })
-
-  it('no se aplica mientras escribe la respuesta a una pregunta de la clínica', async () => {
-    const db = clinicDb({
-      clinic_consents: [grantedConsent()],
-      booking_sessions: [session({ step: 'ask_question', questionId: 'q-1' })],
-    })
-    const rec = makeRecorder()
-    await send(db, rec, { text: 'Voy a pagar con tarjeta' })
-    expect(db._tables.conversations[0].ai_handoff_summary).not.toBe(texts.humanTopicNote)
-  })
-
-  it('no confunde una palabra más larga: "pagos" y "pagado" no son "pago"', async () => {
-    const db = clinicDb({ clinic_consents: [grantedConsent()] })
-    const rec = makeRecorder()
-    const result = await send(db, rec, { text: 'ya está pagado, quiero una cita' })
+    const result = await send(db, rec, { replyId: 'act:book' })
     expect(result).toEqual({ consumed: true })
-    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    expectBookingStarted(db, rec)
   })
 
-  it('un toque de un botón no es texto y no dispara nada', async () => {
-    const db = clinicDb({ clinic_consents: [grantedConsent()] })
+  it('sin sesión, "Precios y dudas" invita a preguntar', async () => {
+    const db = authorized()
     const rec = makeRecorder()
-    await send(db, rec, { replyId: 'act:book' })
-    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    const result = await send(db, rec, { replyId: 'act:faq' })
+    expect(result).toEqual({ consumed: true })
+    expect(last(rec).bodyText).toBe(texts.faqPrompt)
+    expect(activeSteps(db)).toEqual(['faq_open'])
   })
 
-  it('en una cuenta sin clínica no cambia nada', async () => {
-    const db = clinicDb()
+  it('sin sesión, "Hablar con una persona" pasa el hilo', async () => {
+    const db = authorized()
     const rec = makeRecorder()
-    const result = await send(db, rec, { text: 'Necesito mi factura' }, { modules: ['agenda'] })
-    expect(result).toEqual({ consumed: false })
-    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    const result = await send(db, rec, { replyId: 'act:human' })
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
   })
 
-  it('un hilo que ya es de una persona no se toca', async () => {
-    const db = clinicDb({ clinic_consents: [grantedConsent()] })
+  it.each(['act:mine', 'act:urgent'])('sin sesión, %s también lo atiende el bot', async (replyId) => {
+    const db = authorized()
     const rec = makeRecorder()
-    const result = await send(db, rec, { text: 'Necesito mi factura' }, { humanOwned: true })
+    const result = await send(db, rec, { replyId })
+    expect(result).toEqual({ consumed: true })
+    expect(rec.calls.length).toBeGreaterThan(0)
+  })
+
+  it('sin sesión y sin IA, "Precios y dudas" pasa a una persona', async () => {
+    const db = authorized()
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: 'act:faq' }, { aiOn: false })
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+  })
+
+  it('sin autorización, el toque muestra la autorización', async () => {
+    for (const replyId of ['act:book', 'act:faq', 'act:human']) {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    }
+  })
+
+  it('un toque que no es del menú sigue sin arrancar nada', async () => {
+    for (const replyId of ['svc:svc-limpieza', 'day:2026-10-20', 'act:confirm', 'pat:abc']) {
+      const db = authorized()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId })
+      expect(result).toEqual({ consumed: false })
+      expect(rec.calls).toHaveLength(0)
+    }
+  })
+
+  it('desde "Precios y dudas", "Agendar" funciona', async () => {
+    const { db, rec } = await withFaqOpen()
+    const result = await send(db, rec, { replyId: 'act:book' })
+    expect(result).toEqual({ consumed: true })
+    expectBookingStarted(db, rec)
+    expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(false)
+  })
+
+  it('desde "Precios y dudas", "Hablar con una persona" pasa el hilo', async () => {
+    const { db, rec } = await withFaqOpen()
+    await send(db, rec, { replyId: 'act:human' })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(db._tables.booking_sessions[0].status).toBe('cancelled')
+  })
+
+  it('desde "Precios y dudas", tocar "Precios y dudas" otra vez vuelve a invitar', async () => {
+    const { db, rec, sent } = await withFaqOpen()
+    await send(db, rec, { replyId: 'act:faq' })
+    expect(rec.calls).toHaveLength(sent + 1)
+    expect(last(rec).bodyText).toBe(texts.faqPrompt)
+    expect(activeSteps(db)).toEqual(['faq_open'])
+  })
+
+  it('una cuenta sin clínica no cambia: un toque sin sesión no arranca nada', async () => {
+    const db = authorized()
+    const rec = makeRecorder()
+    const result = await send(db, rec, { replyId: 'act:book' }, { modules: ['agenda'] })
     expect(result).toEqual({ consumed: false })
     expect(rec.calls).toHaveLength(0)
+  })
+})
+
+describe('si la IA está apagada', () => {
+  it('una duda con el menú abierto pasa a una persona, no queda en silencio', async () => {
+    const { db, rec } = await withMenuOpen()
+    const result = await send(db, rec, { text: '¿Cuánto vale una limpieza?' }, { aiOn: false })
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+    expect(db._tables.booking_sessions[0].status).toBe('cancelled')
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
+  })
+
+  it('lo que se escribe esperando la duda también', async () => {
+    const { db, rec } = await withFaqOpen()
+    const result = await send(db, rec, { text: 'cuánto vale la limpieza' }, { aiOn: false })
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+    expect(db._tables.booking_sessions[0].status).toBe('cancelled')
+  })
+
+  it('"Precios y dudas" no promete una respuesta que nadie va a dar', async () => {
+    const { db, rec } = await withMenuOpen()
+    const result = await send(db, rec, { replyId: 'act:faq' }, { aiOn: false })
+    expect(result).toEqual({ consumed: true })
+    expect(rec.calls.some((c) => c.bodyText === texts.faqPrompt)).toBe(false)
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+    expect(activeSteps(db)).toEqual([])
+  })
+
+  it('si no se pudo leer la configuración de la IA, cuenta como apagada', async () => {
+    const { db, rec } = await withMenuOpen()
+    const result = await send(
+      db,
+      rec,
+      { text: '¿Cuánto vale una limpieza?' },
+      { aiOn: () => Promise.reject(new Error('no se pudo descifrar la llave')) },
+    )
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+  })
+
+  it('con la IA prendida nada cambia', async () => {
+    const { db, rec } = await withMenuOpen()
+    const result = await send(db, rec, { text: '¿Cuánto vale una limpieza?' }, { aiOn: true })
+    expect(result).toEqual({ consumed: false, released: true })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+  })
+
+  it('lo que no es para la IA no la consulta: pedir una cita, un saludo, una queja', async () => {
+    for (const text of ['necesito una cita', 'hola', 'quiero pagar']) {
+      let asked = 0
+      const { db, rec } = await withMenuOpen()
+      await send(db, rec, { text }, { aiOn: async () => (asked += 1) > 0 })
+      expect(asked).toBe(0)
+    }
+  })
+
+  it('se consulta una sola vez por mensaje', async () => {
+    let asked = 0
+    const { db, rec } = await withMenuOpen()
+    await send(db, rec, { text: '¿Cuánto vale?' }, { aiOn: async () => (asked += 1) > 0 })
+    expect(asked).toBe(1)
+  })
+
+  it('sin sesión no cambia: el mensaje queda en la bandeja para quien lo atienda', async () => {
+    const db = authorized()
+    const rec = makeRecorder()
+    const result = await send(db, rec, { text: '¿Cuánto vale una limpieza?' }, { aiOn: false })
+    expect(result).toEqual({ consumed: false })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+  })
+})
+
+describe('las palabras de quejas, pagos y documentos solo valen sin sesión y con el menú abierto', () => {
+  it('no en la autorización: "no acepto dar mis documentos" es un rechazo registrado', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { text: 'no acepto dar mis documentos' })
+    expect(db._tables.clinic_consents).toMatchObject([{ granted: false }])
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.consentDeclinedNote)
+  })
+
+  it('no en la autorización, aunque sea un pedido: "quiero pagar" no la salta', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { text: 'quiero pagar' })
+    expect(db._tables.conversations[0].ai_handoff_summary).not.toBe(texts.humanTopicNote)
+    expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
+  })
+
+  it.each([
+    ['pick_service', { step: 'pick_service' }],
+    ['pick_day', { step: 'pick_day', serviceId: 'svc-limpieza', staffId: 'any' }],
+    ['summary', { step: 'summary' }],
+    ['ask_question', { step: 'ask_question', questionId: 'q-1' }],
+    ['new_patient_name', { step: 'new_patient_name' }],
+    ['manage_menu', { step: 'manage_menu' }],
+  ])('no en %s', async (_name, state) => {
+    const db = clinicDb({
+      clinic_consents: [grantedConsent()],
+      booking_sessions: [session(state)],
+    })
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Voy a pagar con tarjeta, documento listo' })
+    expect(db._tables.conversations[0].ai_handoff_summary).not.toBe(texts.humanTopicNote)
   })
 })
 ```
@@ -4257,62 +4648,162 @@ Crea `src/verticals/agenda/agent/steps/clinic-steps.test.ts`:
 ```ts
 import { describe, expect, it } from 'vitest'
 
-import { looksLikeQuestion } from './clinic-steps'
+import { routeClinicText } from './clinic-steps'
 
-describe('looksLikeQuestion', () => {
+describe('routeClinicText', () => {
   it.each([
     'quiero una cita',
     'necesito cita para mi hijo',
     'cita',
-    'hola',
-    'buenas',
-    'buenos días',
-    'buenas tardes',
+    'agendar',
     '¿me das una cita?',
     '¿puedo agendar una cita para mañana?',
     'Qué pena, necesito una cita',
     'Tienen citas disponibles',
-  ])('abre el menú: %j', (text) => {
-    expect(looksLikeQuestion(text)).toBe(false)
+    'me pueden dar una cita?',
+    '¿me agendan una cita?',
+    '¿puedo cancelar mi cita?',
+    '¿tienen cita hoy?',
+    'quiero una cita para una radiografía',
+    'necesito cita, traigo la radiografía',
+    'quiero agendar, ya hice el pago',
+  ])('book: %j', (text) => {
+    expect(routeClinicText(text)).toBe('book')
+  })
+
+  it.each(['hola', 'buenas', 'buenos días', 'buen día', 'buenas tardes'])('greeting: %j', (text) => {
+    expect(routeClinicText(text)).toBe('greeting')
   })
 
   it.each([
-    'qué precio tiene',
-    'cómo agendo',
-    '¿Cuánto vale una cita de valoración?',
+    'quiero pagar',
+    'tengo una queja',
+    'el saldo',
+    'documento de identidad',
+    'necesito mi historia clínica',
+  ])('human: %j', (text) => {
+    expect(routeClinicText(text)).toBe('human')
+  })
+
+  it.each([
+    'cuánto vale una cita',
+    'dónde es la cita',
+    'qué precio tiene la cita',
+    'cuánto vale una limpieza',
     '¿aceptan tarjeta?',
+    '¿puedo pagar con tarjeta?',
     '¿dónde quedan?',
-  ])('va a la IA: %j', (text) => {
-    expect(looksLikeQuestion(text)).toBe(true)
+    'gracias, buenas noches',
+    'excelente, no tengo ninguna queja',
+    'muchas gracias por la receta',
+  ])('ai: %j', (text) => {
+    expect(routeClinicText(text)).toBe('ai')
   })
 
-  it.each([
-    ['¡Hola!', false],
-    ['Hola, buenas tardes.', false],
-    ['¿Qué horario tienen', true],
-    ['¿cuánto vale la limpieza', true],
-    ['  ¿Cómo  llego?  ', true],
-    ['Cuánto cuesta la limpieza', true],
-    ['dónde están ubicados', true],
-    ['Quisiera una cita', false],
-    ['me da una cita para el lunes', false],
-    ['¿puedo agendar?', false],
-  ])('quita la puntuación y los espacios antes de leer la primera palabra: %j', (text, expected) => {
-    expect(looksLikeQuestion(text)).toBe(expected)
+  describe('book', () => {
+    it('una palabra de cita sola, o en tres palabras o menos, basta', () => {
+      expect(routeClinicText('una cita hoy')).toBe('book')
+      expect(routeClinicText('reservar')).toBe('book')
+      expect(routeClinicText('turno')).toBe('book')
+      expect(routeClinicText('agenda')).toBe('book')
+    })
+
+    it('con más de tres palabras necesita además un verbo de pedir', () => {
+      expect(routeClinicText('cuánto vale una cita')).toBe('ai')
+      expect(routeClinicText('sacar una cita hoy mismo')).toBe('book')
+      expect(routeClinicText('quisiera reservar para el lunes')).toBe('book')
+      expect(routeClinicText('hay turno para mañana')).toBe('book')
+    })
+
+    it('usa las palabras que la clínica le da a la cita', () => {
+      expect(routeClinicText('cuándo tienen sesiones para el viernes')).toBe('ai')
+      expect(routeClinicText('cuándo tienen sesiones para el viernes', ['sesión', 'sesiones'])).toBe('book')
+    })
+
+    it('gana sobre las palabras de quejas, pagos y documentos', () => {
+      expect(routeClinicText('quiero una cita para una radiografía')).toBe('book')
+      expect(routeClinicText('necesito cita, traigo la receta')).toBe('book')
+    })
+
+    it('sin tildes, mayúsculas ni puntuación', () => {
+      expect(routeClinicText('¡NECESITO UNA CITA!')).toBe('book')
+      expect(routeClinicText('Quiero    una cita...')).toBe('book')
+    })
   })
 
-  it('un verbo de pedir gana sobre el signo de pregunta', () => {
-    expect(looksLikeQuestion('¿quiero una cita, se puede?')).toBe(false)
-    expect(looksLikeQuestion('¿me das una cita para hoy?')).toBe(false)
+  describe('human', () => {
+    it('quejas, pagos y documentos', () => {
+      for (const text of [
+        'Necesito mi factura',
+        'Hice un abono ayer',
+        'Voy a pagar hoy',
+        'Una pqrs por favor',
+        'Necesito la incapacidad',
+        'Necesito la radiografía de mi hijo',
+        'Hola, quiero pagar mi factura',
+      ]) {
+        expect(routeClinicText(text)).toBe('human')
+      }
+    })
+
+    it('una negación antes de la palabra la anula', () => {
+      expect(routeClinicText('no tengo ninguna queja')).toBe('ai')
+      expect(routeClinicText('sin ninguna queja, todo bien')).toBe('ai')
+      expect(routeClinicText('nunca he recibido una factura')).toBe('ai')
+    })
+
+    it('un agradecimiento antes de la palabra la anula', () => {
+      expect(routeClinicText('gracias por la factura')).toBe('ai')
+      expect(routeClinicText('agradezco el certificado')).toBe('ai')
+    })
+
+    it('una negación después de la palabra no la anula', () => {
+      expect(routeClinicText('tengo una queja, no me atendieron')).toBe('human')
+    })
+
+    it('una pregunta no es un pedido: ni con signo ni con palabra interrogativa', () => {
+      expect(routeClinicText('¿Cuánto cuesta el certificado?')).toBe('ai')
+      expect(routeClinicText('¿puedo pagar con tarjeta')).toBe('ai')
+      expect(routeClinicText('cómo pago')).toBe('ai')
+      expect(routeClinicText('dónde recojo mi factura')).toBe('ai')
+      expect(routeClinicText('qué documentos piden para el primer día')).toBe('ai')
+      expect(routeClinicText('cuánto cuesta la radiografía')).toBe('ai')
+    })
+
+    it('una palabra más larga no cuenta: "pagado" no es "pago"', () => {
+      expect(routeClinicText('ya está pagado, gracias')).toBe('ai')
+    })
   })
 
-  it('una palabra de cita sin signo de pregunta abre el menú, con la palabra que usa la clínica', () => {
-    expect(looksLikeQuestion('Tienen turnos disponibles')).toBe(true)
-    expect(looksLikeQuestion('Tienen turnos disponibles', ['turno', 'turnos'])).toBe(false)
+  describe('greeting', () => {
+    it('solo si el mensaje arranca con el saludo y no pasa de cuatro palabras', () => {
+      expect(routeClinicText('Hola, buenas tardes')).toBe('greeting')
+      expect(routeClinicText('buenas noches doctor')).toBe('greeting')
+      expect(routeClinicText('¡Hola!')).toBe('greeting')
+      expect(routeClinicText('hola buenos días doctora')).toBe('greeting')
+      expect(routeClinicText('hola buenos días a todos')).toBe('ai')
+    })
+
+    it('un saludo en medio del mensaje no cuenta', () => {
+      expect(routeClinicText('gracias, buenas noches')).toBe('ai')
+      expect(routeClinicText('ok hola')).toBe('ai')
+    })
+
+    it('una palabra que solo empieza como el saludo no cuenta', () => {
+      expect(routeClinicText('holanda')).toBe('ai')
+      expect(routeClinicText('buenazo')).toBe('ai')
+    })
+
+    it('el saludo con una duda larga es una duda', () => {
+      expect(routeClinicText('hola, cuánto vale la limpieza dental')).toBe('ai')
+    })
   })
 
-  it('una palabra de cita con signo de pregunta sigue siendo una duda', () => {
-    expect(looksLikeQuestion('¿Tienen citas disponibles?')).toBe(true)
+  it('lo demás, y un mensaje vacío, es para la IA', () => {
+    expect(routeClinicText('')).toBe('ai')
+    expect(routeClinicText('   ')).toBe('ai')
+    expect(routeClinicText('ok')).toBe('ai')
+    expect(routeClinicText('me duele una muela y no sé qué hacer')).toBe('ai')
   })
 })
 ```
@@ -4608,7 +5099,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { asClient, makeFakeDb, type FakeDb, type Row } from '@/verticals/agenda/agent/testing/fake-db'
 
-import { canUseAi } from './ai-gate'
+import { autoReplyEnabled, canUseAi } from './ai-gate'
+
+const loadAiConfig = vi.hoisted(() => vi.fn())
+vi.mock('@/lib/ai/config', () => ({ loadAiConfig }))
 
 const ACCOUNT = 'acc-1'
 const CONTACT = 'ct-1'
@@ -4700,6 +5194,36 @@ describe('canUseAi', () => {
     const db = dbWith({ modules: ['clinica'] }, [consent()])
     db._failNext('select', 'clinic_consents', { message: 'timeout' })
     expect(await can(db)).toBe(false)
+  })
+})
+
+describe('autoReplyEnabled', () => {
+  const db = () => asClient(makeFakeDb({}))
+
+  beforeEach(() => {
+    loadAiConfig.mockReset()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  it('sí cuando la IA está prendida y responde sola', async () => {
+    loadAiConfig.mockResolvedValue({ autoReplyEnabled: true })
+    expect(await autoReplyEnabled(db(), ACCOUNT)).toBe(true)
+    expect(loadAiConfig).toHaveBeenCalledWith(expect.anything(), ACCOUNT)
+  })
+
+  it('no cuando no está configurada o el interruptor general está apagado', async () => {
+    loadAiConfig.mockResolvedValue(null)
+    expect(await autoReplyEnabled(db(), ACCOUNT)).toBe(false)
+  })
+
+  it('no cuando la respuesta automática está apagada', async () => {
+    loadAiConfig.mockResolvedValue({ autoReplyEnabled: false })
+    expect(await autoReplyEnabled(db(), ACCOUNT)).toBe(false)
+  })
+
+  it('no cuando no se pudo leer (llave que no descifra, base caída)', async () => {
+    loadAiConfig.mockRejectedValue(new Error('boom'))
+    expect(await autoReplyEnabled(db(), ACCOUNT)).toBe(false)
   })
 })
 ```
@@ -5062,7 +5586,7 @@ Cuatro archivos de pruebas ya existen y cambian. Ninguna prueba de `controller.t
 Run: `npx vitest run src/verticals/agenda src/modules/clinica src/lib/ai src/lib/verticals src/app/api/ai`
 Expected: FAIL. El bot abre el menú de servicios en vez de pedir autorización, la IA se llama sin autorización y el handler deja subir el error.
 
-- [ ] **Step 5: Crea el acceso a autorizaciones y la compuerta de la IA**
+- [ ] **Step 5: Crea el acceso a autorizaciones y las compuertas de la IA**
 
 Crea `src/modules/clinica/consent.ts`:
 
@@ -5157,7 +5681,7 @@ export async function recordConsent(
 }
 ```
 
-Crea `src/modules/clinica/ai-gate.ts`:
+Crea `src/modules/clinica/ai-gate.ts`. `canUseAi` decide si el chat puede salir hacia la IA; `autoReplyEnabled` dice si la IA va a contestar (regla 12):
 
 ```ts
 // ============================================================
@@ -5175,6 +5699,7 @@ Crea `src/modules/clinica/ai-gate.ts`:
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { loadAiConfig } from '@/lib/ai/config'
 import { readAccountModules } from '@/lib/modules/read-account-modules'
 import { hasModule } from '@/lib/verticals/registry'
 
@@ -5199,6 +5724,23 @@ export async function canUseAi(
     kind: 'datos_sensibles',
   })
   return consent?.granted === true
+}
+
+/**
+ * ¿La cuenta tiene la respuesta automática con IA prendida? Es la misma
+ * condición con la que `auto-reply.ts` decide si contesta. El bot la mira antes
+ * de decirle a un paciente que escriba su duda: si nadie la va a contestar,
+ * mejor que lo atienda una persona. Una configuración que no se puede leer
+ * (llave que no descifra, base caída) cuenta como apagada.
+ */
+export async function autoReplyEnabled(db: SupabaseClient, accountId: string): Promise<boolean> {
+  try {
+    const config = await loadAiConfig(db, accountId)
+    return config?.autoReplyEnabled === true
+  } catch (err) {
+    console.error('[clinica] no se pudo leer la configuración de la IA:', err)
+    return false
+  }
 }
 ```
 
@@ -5282,7 +5824,7 @@ Y la clave `Api.ai.consentRequired` en los cuatro catálogos de `messages/`, des
 
 - [ ] **Step 7: Textos, estado y resultado del despachador**
 
-`src/modules/clinica/texts.ts`: `CLINIC_HUMAN_WORDS`, `CLINIC_GREETING_WORDS`, las palabras de urgencia nuevas y cuatro notas internas (`humanTopicNote`, `consentUnansweredNote`, `clinicUnavailableNote`, `clinicUnavailableUrgentNote`).
+`src/modules/clinica/texts.ts`: `CLINIC_HUMAN_WORDS`, las palabras de urgencia nuevas y las notas internas (`aiOffNote`, `humanTopicNote`, `consentUnansweredNote`, `consentRevokedNote`, `consentRevokedUnsavedNote`, `clinicUnavailableNote`, `clinicUnavailableUrgentNote`).
 
 ```diff
 --- a/src/modules/clinica/texts.ts
@@ -5305,7 +5847,7 @@ Y la clave `Api.ai.consentRequired` en los cuatro catálogos de `messages/`, des
 +  'fracturo',
    'se partio',
    'se me partio',
-@@ -60,4 +65,40 @@ export const DEFAULT_URGENCY_WORDS: readonly string[] = [
+@@ -60,4 +65,29 @@ export const DEFAULT_URGENCY_WORDS: readonly string[] = [
  ]
  
 +/**
@@ -5333,27 +5875,22 @@ Y la clave `Api.ai.consentRequired` en los cuatro catálogos de `messages/`, des
 +  'documentos',
 +]
 +
-+/**
-+ * Saludos que abren el menú en una clínica ("buenas tardes" es lo primero que
-+ * escribe mucha gente). Solo en clínicas: en las demás agendas no cuentan.
-+ */
-+export const CLINIC_GREETING_WORDS: readonly string[] = [
-+  'buenas',
-+  'buenos dias',
-+  'buenas tardes',
-+  'buenas noches',
-+]
-+
  /** Nota: una lista admite títulos de hasta 24 caracteres y un botón, 20. */
  export function buildClinicTexts(l: AgendaLabels) {
-@@ -68,4 +109,15 @@ export function buildClinicTexts(l: AgendaLabels) {
+@@ -67,5 +97,21 @@ export function buildClinicTexts(l: AgendaLabels) {
+     consentDeclined: 'Entendido. Una persona de la clínica te atiende por este chat. 🙌',
      consentDeclinedNote: 'Paciente: no aceptó la autorización de datos (bot en pausa).',
++    consentRevokedNote: 'Paciente: revocó la autorización de datos (bot en pausa).',
++    consentRevokedUnsavedNote:
++      'Paciente: tocó "No acepto" para revocar la autorización de datos, pero no se pudo registrar. Regístralo a mano (bot en pausa).',
      consentError: 'No pude guardar tu respuesta en este momento 😅. Intenta de nuevo, por favor.',
 +    /** Pase a una persona porque la autorización no se respondió con los botones, o no se pudo guardar. */
 +    consentUnansweredNote:
 +      'Paciente: la autorización de datos quedó sin responder (bot en pausa).',
 +
 +    /** La configuración de la clínica falta o no se pudo leer: el bot no atiende y pasa a una persona. */
++    aiOffNote:
++      'Paciente: escribió una duda y la IA no está activa para responderla (bot en pausa).',
 +    humanTopicNote:
 +      'Paciente: escribió sobre una queja, un pago o un documento, que atiende una persona (bot en pausa).',
 +    clinicUnavailableNote:
@@ -5364,7 +5901,7 @@ Y la clave `Api.ai.consentRequired` en los cuatro catálogos de `messages/`, des
      menuBody: '¡Hola! 👋 Soy el asistente de la clínica. ¿En qué te ayudo?',
 ```
 
-`src/verticals/agenda/agent/state.ts`: el paso `faq_open`, `consentText` y `consentVersion`, `containsAnyWord`, y el conjunto de opciones que ningún número elige.
+`src/verticals/agenda/agent/state.ts`: el paso `faq_open`, `consentText` y `consentVersion`, `containsAnyWord` e `indexOfAnyWord`, y el conjunto de opciones que ningún número elige.
 
 ```diff
 --- a/src/verticals/agenda/agent/state.ts
@@ -5388,7 +5925,27 @@ Y la clave `Api.ai.consentRequired` en los cuatro catálogos de `messages/`, des
 +  consentVersion?: number
    /** Qué sigue al aceptar la autorización; por defecto, el menú. */
    afterConsent?: 'urgency_book'
-@@ -298,7 +307,16 @@ export function containsHandoffWord(text: string): boolean {
+@@ -238,8 +247,16 @@ const escapeRegex = (word: string) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
+  */
+ function containsWord(text: string, words: readonly string[]): boolean {
++  return indexOfWord(text, words) >= 0
++}
++
++/** Posición, en el texto normalizado, de la primera de estas palabras; -1 si no hay ninguna. */
++function indexOfWord(text: string, words: readonly string[]): number {
+   const normalized = normalizeText(text)
+-  return words.some((w) =>
+-    new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegex(w)}(?![\\p{L}\\p{N}])`, 'u').test(normalized),
+-  )
++  let first = -1
++  for (const w of words) {
++    const found = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegex(w)}(?![\\p{L}\\p{N}])`, 'u').exec(normalized)
++    if (found && (first === -1 || found.index < first)) first = found.index
++  }
++  return first
+ }
+ 
+@@ -298,7 +315,24 @@ export function containsHandoffWord(text: string): boolean {
  }
  
 +/**
@@ -5400,13 +5957,21 @@ Y la clave `Api.ai.consentRequired` en los cuatro catálogos de `messages/`, des
 +  return containsWord(text, words.map(normalizeText))
 +}
 +
++/**
++ * Posición de la primera de estas palabras en `normalizeText(text)`, o -1. Sirve
++ * para mirar lo que viene antes de ella.
++ */
++export function indexOfAnyWord(text: string, words: readonly string[]): number {
++  return indexOfWord(text, words.map(normalizeText))
++}
++
  /** ¿El mensaje trae una palabra de urgencia de la clínica? */
  export function containsUrgencyWord(text: string, words: readonly string[]): boolean {
 -  return containsWord(text, words.map(normalizeText))
 +  return containsAnyWord(text, words)
  }
  
-@@ -352,6 +370,17 @@ const ACTION_SYNONYMS: Record<string, string[]> = {
+@@ -352,6 +386,17 @@ const ACTION_SYNONYMS: Record<string, string[]> = {
  // ------------------------------------------------------------
  
 -/** Opciones que aceptan o descartan: no se eligen por número ni por texto suelto. */
@@ -5426,7 +5991,7 @@ Y la clave `Api.ai.consentRequired` en los cuatro catálogos de `messages/`, des
 +])
  
  /** Mensajes completos que descartan los signos de alarma, ya en forma `squash`. */
-@@ -463,6 +492,6 @@ export function matchChoice({
+@@ -463,6 +508,6 @@ export function matchChoice({
      const idx = Number(num[1]) - 1
      const id = idx >= 0 && idx < options.length ? options[idx].id : null
 -    // Los botones de decisión no muestran números: un número no puede aceptar
@@ -5485,13 +6050,14 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { recordConsent } from '@/modules/clinica/consent'
 import type { ClinicContext } from '@/modules/clinica/settings'
-import type { ClinicTexts } from '@/modules/clinica/texts'
+import { CLINIC_HUMAN_WORDS, type ClinicTexts } from '@/modules/clinica/texts'
 
 import type { ClinicBackend } from '../backend'
 import type { AgendaSender } from '../controller'
 import {
   actId,
   containsAnyWord,
+  indexOfAnyWord,
   newBookingState,
   normalizeText,
   type BookingState,
@@ -5513,6 +6079,8 @@ export interface ClinicStepCtx {
   now: Date
   nowIso: string
   inboundMessageId: string | null
+  /** ¿La IA va a contestar las dudas? Se lee una vez por mensaje. */
+  aiAutoReplyOn(): Promise<boolean>
   sendOptions(args: {
     bodyText: string
     buttonLabel: string
@@ -5559,6 +6127,13 @@ const CLINIC_STEPS: readonly BookingStep[] = [
 
 export const isClinicStep = (step: BookingStep): boolean => CLINIC_STEPS.includes(step)
 
+/** Los toques del menú principal (los mismos ids que `renderClinicStep` ofrece). */
+const MENU_TAPS: readonly string[] = ['book', 'mine', 'faq', 'urgent', 'human'].map(actId)
+
+/** ¿Es el toque de una opción del menú principal? Vale aunque el menú ya haya vencido. */
+export const isClinicMenuTap = (replyId: string | null): replyId is string =>
+  replyId !== null && MENU_TAPS.includes(replyId)
+
 const QUESTION_STARTS = [
   'cuanto',
   'cuantos',
@@ -5575,35 +6150,114 @@ const QUESTION_STARTS = [
   'reciben',
 ]
 
-/**
- * Quien pide algo no pregunta, aunque lo escriba con signos de pregunta o
- * empiece con "qué" ("Qué pena, necesito una cita"). Sin tildes, como se
- * comparan.
- */
-const REQUEST_PHRASES = ['quiero', 'quisiera', 'necesito', 'me das', 'me da', 'puedo agendar']
+/** Adónde va un texto libre en una clínica. */
+export type ClinicRoute = 'book' | 'greeting' | 'human' | 'ai'
+
+/** Palabras de cita. Las de la clínica ("turno", "sesión") se suman al llamar. */
+const BOOK_WORDS = ['cita', 'citas', 'agendar', 'agenda', 'agendo', 'reservar', 'turno']
+
+/** Quien las usa pide algo. */
+const ASKING_WORDS = [
+  'quiero',
+  'quisiera',
+  'necesito',
+  'me das',
+  'me da',
+  'me dan',
+  'me pueden',
+  'me agendan',
+  'puedo',
+  'tienen',
+  'hay',
+  'sacar',
+  'pedir',
+]
+
+const GREETINGS = ['hola', 'buenas', 'buenos dias', 'buen dia', 'buenas tardes', 'buenas noches']
+
+/** Una de estas antes de la palabra la anula: "no tengo ninguna queja", "gracias por la receta". */
+const NEGATIONS_AND_THANKS = [
+  'no',
+  'ni',
+  'nunca',
+  'jamas',
+  'tampoco',
+  'sin',
+  'ningun',
+  'ninguna',
+  'ninguno',
+  'nada',
+  'gracias',
+  'agradezco',
+  'agradecido',
+  'agradecida',
+]
 
 /**
- * Lo que parece una duda va a la IA aunque nombre una "cita".
+ * Una sola regla para el texto libre de una clínica, en este orden. Lo que no
+ * encaja en nada es para la IA: es el valor por defecto, y equivocarse hacia
+ * ahí cuesta menos que mandar a alguien al menú o a una persona sin motivo.
  *
- *   1. Un verbo de pedir gana: "¿me das una cita?" abre el menú.
- *   2. Un signo de pregunta es una duda.
- *   3. Sin signo de pregunta, nombrar la cita la pide ("Tienen citas
- *      disponibles"): abre el menú, que tiene "Precios y dudas".
- *   4. Si no, empezar con "cuánto", "dónde", "cómo"... es una duda.
+ *   1. book: nombra una cita Y la pide (un verbo de pedir), o es un mensaje de
+ *      tres palabras o menos ("cita", "una cita hoy").
+ *   2. human: trae una palabra de queja, pago o documento sin una negación ni un
+ *      agradecimiento antes, y no es una pregunta.
+ *   3. greeting: arranca con un saludo y no pasa de cuatro palabras.
+ *   4. ai: todo lo demás.
  *
+ * La urgencia y la palabra de pase a una persona se miran antes, fuera de aquí.
  * `appointmentWords` son las palabras que usa la clínica para sus citas.
  */
-export function looksLikeQuestion(
-  text: string,
-  appointmentWords: readonly string[] = ['cita', 'citas'],
-): boolean {
-  if (containsAnyWord(text, REQUEST_PHRASES)) return false
-  if (text.includes('?') || text.includes('¿')) return true
-  if (containsAnyWord(text, appointmentWords)) return false
-  const plain = normalizeText(text)
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .trim()
-  return QUESTION_STARTS.includes(plain.split(/\s+/)[0] ?? '')
+export function routeClinicText(text: string, appointmentWords: readonly string[] = []): ClinicRoute {
+  const normalized = normalizeText(text)
+  const words = normalized.match(/[\p{L}\p{N}]+/gu) ?? []
+
+  const namesAppointment = containsAnyWord(normalized, [...BOOK_WORDS, ...appointmentWords])
+  if (namesAppointment && (words.length <= 3 || containsAnyWord(normalized, ASKING_WORDS))) return 'book'
+
+  const topicAt = indexOfAnyWord(normalized, CLINIC_HUMAN_WORDS)
+  const isQuestion = /[?¿]/.test(normalized) || QUESTION_STARTS.includes(words[0] ?? '')
+  if (
+    topicAt >= 0 &&
+    !containsAnyWord(normalized.slice(0, topicAt), NEGATIONS_AND_THANKS) &&
+    !isQuestion
+  ) {
+    return 'human'
+  }
+
+  const plain = words.join(' ')
+  if (words.length <= 4 && GREETINGS.some((g) => plain === g || plain.startsWith(`${g} `))) return 'greeting'
+
+  return 'ai'
+}
+
+/**
+ * Un toque en "No acepto" cuando ya había autorizado: queda registrado como
+ * rechazo y el hilo pasa a una persona. Qué texto vio la persona al revocar y
+ * cómo debe revocarse queda para revisarlo con el abogado: aquí se guarda el
+ * texto vigente.
+ */
+export async function handleConsentRevoked(ctx: ClinicStepCtx): Promise<ClinicHandoff> {
+  const { texts } = ctx
+  try {
+    await recordConsent(ctx.db, {
+      accountId: ctx.accountId,
+      contactId: ctx.contactId,
+      kind: 'datos_sensibles',
+      granted: false,
+      textVersion: ctx.clinic.consentVersion,
+      textSnapshot: ctx.clinic.consentText,
+      source: 'whatsapp',
+      messageId: ctx.inboundMessageId,
+      createdAtIso: ctx.nowIso,
+    })
+  } catch (err) {
+    // El paciente pidió parar: el hilo pasa a una persona de todos modos, y la
+    // nota le dice que el registro hay que hacerlo a mano.
+    console.error('[clinica] no se pudo registrar la revocación:', err)
+    return { kind: 'handoff', message: texts.consentDeclined, note: texts.consentRevokedUnsavedNote }
+  }
+  return { kind: 'handoff', message: texts.consentDeclined, note: texts.consentRevokedNote }
 }
 
 export async function renderClinicStep(
@@ -5706,6 +6360,8 @@ export async function handleClinicChoice(
         case 'book':
           return { kind: 'next', state: newBookingState('pick_service') }
         case 'faq':
+          // Invitar a escribir una duda que nadie va a contestar es peor que pasarla.
+          if (!(await ctx.aiAutoReplyOn())) return { kind: 'handoff', note: texts.aiOffNote }
           return { kind: 'next', state: newBookingState('faq_open') }
         case 'human':
           return { kind: 'handoff' }
@@ -5726,54 +6382,62 @@ La tarea 8 cambia `book` para que pase por `pick_patient`. Las tareas 9 y 11 agr
 
 Aplica este cambio a `src/verticals/agenda/agent/controller.ts`. Lo que hace cada parte:
 
-- `Dialog` lleva `clinic`, `clinicUnavailable`, `clinicTexts`, `inboundMessageId` y `humanOwned`. **No** reduzcas el resultado de `loadClinicContext` con `status === 'ok' ? clinic : null` a secas: eso trata una clínica sin configuración como una agenda normal, se salta la autorización y deja el chat a la IA. `clinicUnavailable` es lo que lo impide.
+- `Dialog` lleva `clinic`, `clinicUnavailable`, `clinicTexts`, `inboundMessageId`, `humanOwned` y `aiProbe`. **No** reduzcas el resultado de `loadClinicContext` con `status === 'ok' ? clinic : null` a secas: eso trata una clínica sin configuración como una agenda normal, se salta la autorización y deja el chat a la IA. `clinicUnavailable` es lo que lo impide.
 - El cierre de la clínica no disponible va después de los toques de recordatorio y de la rama del hilo de una persona, y antes del pase por palabra.
-- Después del pase por palabra: las quejas, pagos y documentos, y la duda que se suelta a la IA.
-- Tras `expireStaleSessions`: la autorización antes que cualquier otra cosa, los saludos como palabras de intención y el menú.
+- Después del pase por palabra, `if (dialog.clinic) return handleClinicInbound(...)`: toda la clínica en una función (regla 10 a 13). El camino de las demás cuentas queda como estaba.
+- `handleClinicInbound` cubre la revocación, el texto libre con el menú abierto o esperando una duda, el pase de quejas y pagos sin sesión, la autorización antes que cualquier otra cosa, y los toques del menú.
 - `advanceSession` ignora el doble toque y no reinicia los fallos en pasos clínicos. `registerFail` pone la nota de la autorización sin responder.
 - `performHandoff` acepta las opciones, y avisa siempre cuando trae un aviso propio.
 
 ```diff
 --- a/src/verticals/agenda/agent/controller.ts
 +++ b/src/verticals/agenda/agent/controller.ts
-@@ -27,4 +27,13 @@ import type { SupabaseClient } from '@supabase/supabase-js'
+@@ -27,4 +27,12 @@
  import type { ModuleKey, VerticalDispatchResult, VerticalSession } from '@/lib/verticals/types'
  import { notifyAlert } from '@/lib/ops/alert'
++import { autoReplyEnabled } from '@/modules/clinica/ai-gate'
 +import { latestConsent } from '@/modules/clinica/consent'
 +import { loadClinicContext, type ClinicContext } from '@/modules/clinica/settings'
 +import {
 +  buildClinicTexts,
-+  CLINIC_GREETING_WORDS,
-+  CLINIC_HUMAN_WORDS,
 +  DEFAULT_URGENCY_WORDS,
 +  type ClinicTexts,
 +} from '@/modules/clinica/texts'
  
  import type { AgendaAppointmentSummary } from '../texts'
-@@ -73,6 +82,8 @@ import {
-   ansId,
-   ansSkipId,
-+  containsAnyWord,
+@@ -75,4 +83,5 @@
    containsHandoffWord,
    containsIntentWord,
 +  containsUrgencyWord,
    dayId,
    isHandoffOnly,
-@@ -93,4 +104,13 @@ import {
+@@ -93,4 +102,15 @@
    type ReminderTap,
  } from './state'
 +import {
 +  handleClinicChoice,
++  handleConsentRevoked,
++  isClinicMenuTap,
 +  isClinicStep,
-+  looksLikeQuestion,
 +  renderClinicStep,
++  routeClinicText,
 +  type ClinicHandoff,
 +  type ClinicOutcome,
 +  type ClinicStepCtx,
 +} from './steps/clinic-steps'
  import { addDaysToKey, zonedDateKey, zonedParts } from './time'
  
-@@ -193,7 +213,9 @@ export async function handleAgendaInbound(
+@@ -151,4 +171,9 @@
+   /** Dónde viven las citas. Por defecto, la Agenda de Shift. */
+   backend?: ClinicBackend
++  /**
++   * ¿La respuesta automática con IA está prendida? Solo la lee la clínica, al
++   * soltar una duda o invitar a escribirla. Por defecto, la configuración real.
++   */
++  aiAutoReplyOn?: () => Promise<boolean>
+ }
+ 
+@@ -193,7 +218,9 @@
    }
  
 -  const [settings, account] = await Promise.all([
@@ -5784,7 +6448,7 @@ Aplica este cambio a `src/verticals/agenda/agent/controller.ts`. Lo que hace cad
 +    clinicActive ? loadClinicContext(args.db, args.accountId) : Promise.resolve(null),
    ])
    const dialog: Dialog = {
-@@ -210,4 +232,11 @@ export async function handleAgendaInbound(
+@@ -210,4 +237,12 @@
      texts: mergeBotTexts(settings.botTexts, settings.labels),
      backend: args.backend ?? createInternalBackend({ db: args.db, accountId: args.accountId }),
 +    clinic: clinicResult?.status === 'ok' ? clinicResult.clinic : null,
@@ -5794,11 +6458,15 @@ Aplica este cambio a `src/verticals/agenda/agent/controller.ts`. Lo que hace cad
 +    clinicTexts: buildClinicTexts(settings.labels),
 +    inboundMessageId: args.inboundMessageId ?? null,
 +    humanOwned,
++    aiProbe: args.aiAutoReplyOn ?? (() => autoReplyEnabled(args.db, args.accountId)),
    }
  
-@@ -231,4 +260,15 @@ export async function handleAgendaInbound(
-   }
- 
+@@ -228,4 +263,15 @@
+   if (humanOwned && args.session) {
+     await advanceSession(dialog, args.session, { text, replyId })
++    return { consumed: true }
++  }
++
 +  // Clínica sin configuración usable (falta o no se pudo leer): no se sabe qué
 +  // autorización pedir ni qué urgencias vigilar, y seguir como una agenda
 +  // normal dejaría la conversación de un paciente a la IA sin su permiso. El
@@ -5807,99 +6475,170 @@ Aplica este cambio a `src/verticals/agenda/agent/controller.ts`. Lo que hace cad
 +  // no llega hasta aquí.
 +  if (dialog.clinicUnavailable) {
 +    await handoffClinicUnavailable(dialog, args.session?.id ?? null, text)
-+    return { consumed: true }
-+  }
-+
-   // 1) Pedir un humano gana sobre cualquier paso del flujo. Excepción: mientras
-   //    el cliente escribe la respuesta a una pregunta extra de texto, solo cuenta
-@@ -244,4 +284,43 @@ export async function handleAgendaInbound(
+     return { consumed: true }
+   }
+@@ -244,4 +290,9 @@
    }
  
-+  // Clínica: quejas, pagos y documentos los atiende una persona (spec §5,
-+  // etapa 2). Va al nivel del pase a una persona, así que no espera la
-+  // autorización, pero no se aplica mientras la persona escribe un nombre o la
-+  // respuesta a una pregunta, ni a una duda ("¿cuánto cuesta el certificado?"
-+  // va a la IA).
-+  if (
-+    dialog.clinic &&
-+    replyId === null &&
-+    !writingAnswer &&
-+    asking?.step !== 'new_patient_name' &&
-+    containsAnyWord(text, CLINIC_HUMAN_WORDS) &&
-+    !looksLikeQuestion(text, [dialog.settings.labels.cita, dialog.settings.labels.citas])
-+  ) {
-+    await performHandoff(dialog, args.session?.id ?? null, {
-+      note: dialog.clinicTexts.humanTopicNote,
-+    })
-+    return { consumed: true }
-+  }
-+
-+  // Clínica: una duda escrita con el menú abierto, o lo que se escribe después de
-+  // "Precios y dudas", es para la IA. Se cierra la sesión y se suelta el mensaje
-+  // con `released`: con `consumed: false` a secas el despachador lo reclamaría
-+  // por haber una sesión abierta cuando llegó.
-+  if (args.session && dialog.clinic && replyId === null && asking) {
-+    const { labels } = dialog.settings
-+    const toAi =
-+      asking.step === 'faq_open' ||
-+      (asking.step === 'clinic_menu' && looksLikeQuestion(text, [labels.cita, labels.citas]))
-+    if (toAi) {
-+      await closeSession(args.db, {
-+        id: args.session.id,
-+        accountId: args.accountId,
-+        status: 'completed',
-+        updatedAtIso: dialog.nowIso,
-+      })
-+      return { consumed: false, released: true }
-+    }
++  // Clínica: el texto libre y los toques del menú los enruta una sola regla.
++  if (dialog.clinic) {
++    return handleClinicInbound(dialog, args.session ?? null, asking, { text, replyId })
 +  }
 +
    // 2) Con sesión activa, el flujo es dueño del mensaje.
    if (args.session) {
-@@ -258,4 +337,20 @@ export async function handleAgendaInbound(
-   )
- 
-+  // Clínica: sin autorización no se sigue, y la IA no ve la conversación.
-+  // Si la autorización no se pudo leer, se vuelve a pedir.
-+  if (dialog.clinic) {
-+    const consent = await latestConsent(args.db, {
-+      accountId: args.accountId,
-+      contactId: args.contactId,
+@@ -281,4 +332,150 @@
+   await conclude(dialog, sessionId, state)
+   return { consumed: true }
++}
++
++/**
++ * Mensaje de una cuenta con clínica lista para usarse (la no disponible y el
++ * pase por palabra ya se atendieron arriba).
++ *
++ * El texto libre sigue UNA regla (`routeClinicText`), y solo en tres
++ * momentos: sin sesión, con el menú abierto y esperando una duda. En cualquier
++ * otro paso (la autorización, el nombre, los servicios, las preguntas...) el
++ * texto es la respuesta a ese paso y lo lee el paso.
++ *
++ *   sin sesión   book, greeting → menú · human → una persona · ai → la IA
++ *   clinic_menu  book → "Agendar" · human → una persona · greeting → el menú
++ *                otra vez, sin contar fallo · ai → la IA
++ *   faq_open     book → "Agendar" · lo demás → la IA (aunque traiga una palabra
++ *                de queja, pago o documento: es la duda que se le pidió)
++ *
++ * Soltar a la IA cierra la sesión y lo avisa con `released`: el despachador
++ * reclama todo lo que llega con una sesión abierta.
++ */
++async function handleClinicInbound(
++  dialog: Dialog,
++  session: VerticalSession | null,
++  state: BookingState | null,
++  input: { text: string; replyId: string | null },
++): Promise<VerticalDispatchResult> {
++  const { text, replyId } = input
++  const { labels } = dialog.settings
++  const step = state?.step ?? null
++  // Solo se enruta el texto: una foto, un audio, un sticker o un toque no.
++  const route =
++    replyId === null && !isNonTextInbound(text)
++      ? routeClinicText(text, [labels.cita, labels.citas])
++      : null
++
++  // "No acepto" con una autorización vigente (un botón viejo, o el menú ya abierto)
++  // la revoca. En el paso de la autorización es el rechazo de siempre.
++  if (replyId === actId('consent_no') && step !== 'consent') {
++    const consent = await latestConsent(dialog.db, {
++      accountId: dialog.accountId,
++      contactId: dialog.contactId,
 +      kind: 'datos_sensibles',
 +    })
-+    if (!consent?.granted) {
-+      const state = newBookingState('consent')
-+      const sessionId = await openSession(dialog, state)
-+      await conclude(dialog, sessionId, state)
++    if (consent?.granted) {
++      await performHandoff(dialog, session?.id ?? null, await handleConsentRevoked(clinicCtx(dialog)))
 +      return { consumed: true }
 +    }
 +  }
 +
-   // Un tap de un menú viejo no arranca nada (y no se consume).
-   if (replyId !== null) return { consumed: false }
-@@ -264,8 +359,20 @@ export async function handleAgendaInbound(
-   //    tiene una cita próxima).
-   const { labels } = dialog.settings
--  if (!containsIntentWord(text, [labels.cita, labels.citas, labels.servicio, labels.servicios])) {
-+  const intentWords = [labels.cita, labels.citas, labels.servicio, labels.servicios]
-+  // En una clínica los saludos también abren el menú.
-+  if (dialog.clinic) intentWords.push(...CLINIC_GREETING_WORDS)
-+  if (!containsIntentWord(text, intentWords)) {
-     return { consumed: false }
-   }
- 
-+  // Clínica: una duda va a la IA; lo demás abre el menú principal.
-+  if (dialog.clinic) {
-+    if (looksLikeQuestion(text, [labels.cita, labels.citas])) return { consumed: false }
-+    const state = newBookingState('clinic_menu')
-+    const sessionId = await openSession(dialog, state)
-+    await conclude(dialog, sessionId, state)
++  if (session && state) {
++    if (step === 'clinic_menu' || step === 'faq_open') {
++      // El menú sigue vivo mientras se espera la duda: sus botones valen igual.
++      if (step === 'faq_open' && isClinicMenuTap(replyId)) {
++        await handleChoice(dialog, session.id, newBookingState('clinic_menu'), replyId)
++        return { consumed: true }
++      }
++      if (route === 'book') {
++        await handleChoice(dialog, session.id, newBookingState('clinic_menu'), actId('book'))
++        return { consumed: true }
++      }
++      if (step === 'clinic_menu' && route === 'human') {
++        await performHandoff(dialog, session.id, { note: dialog.clinicTexts.humanTopicNote })
++        return { consumed: true }
++      }
++      if (step === 'clinic_menu' && route === 'greeting') {
++        await conclude(dialog, session.id, state)
++        return { consumed: true }
++      }
++      if (route !== null) return releaseToAi(dialog, session.id)
++      // Una foto o un audio mientras espera la duda: no es la duda ni la cierra.
++      if (step === 'faq_open' && replyId === null) {
++        await conclude(dialog, session.id, state)
++        return { consumed: true }
++      }
++    }
++    await advanceSession(dialog, session, input)
 +    return { consumed: true }
 +  }
 +
-   const existing = await findNextAppointment(
-     args.db,
-@@ -443,4 +550,16 @@ interface Dialog {
++  await expireStaleSessions(dialog.db, dialog.accountId, dialog.contactId, dialog.nowIso)
++
++  // Quejas, pagos y documentos van a una persona sin esperar la autorización:
++  // nadie con una queja se queda atascado en un aviso legal.
++  if (route === 'human') {
++    await performHandoff(dialog, null, { note: dialog.clinicTexts.humanTopicNote })
++    return { consumed: true }
++  }
++
++  // Sin autorización no se sigue, y la IA no ve la conversación. Si la
++  // autorización no se pudo leer, se vuelve a pedir.
++  const consent = await latestConsent(dialog.db, {
++    accountId: dialog.accountId,
++    contactId: dialog.contactId,
++    kind: 'datos_sensibles',
++  })
++  if (!consent?.granted) {
++    const consentState = newBookingState('consent')
++    const sessionId = await openSession(dialog, consentState)
++    await conclude(dialog, sessionId, consentState)
++    return { consumed: true }
++  }
++
++  // Con autorización, los botones del menú valen aunque el menú ya haya vencido.
++  // Cualquier otro tap de un menú viejo no arranca nada (y no se consume).
++  if (replyId !== null) {
++    if (!isClinicMenuTap(replyId)) return { consumed: false }
++    const menu = newBookingState('clinic_menu')
++    const sessionId = await openSession(dialog, menu)
++    await handleChoice(dialog, sessionId, menu, replyId)
++    return { consumed: true }
++  }
++
++  if (route === 'book' || route === 'greeting') {
++    const menu = newBookingState('clinic_menu')
++    const sessionId = await openSession(dialog, menu)
++    await conclude(dialog, sessionId, menu)
++    return { consumed: true }
++  }
++  return { consumed: false }
++}
++
++/** ¿La IA va a contestar? Se lee una vez por mensaje; si no se puede leer, no. */
++function aiAnswers(dialog: Dialog): Promise<boolean> {
++  dialog.aiOn ??= dialog.aiProbe().catch((err: unknown) => {
++    console.error('[clinica] no se pudo saber si la IA responde:', err)
++    return false
++  })
++  return dialog.aiOn
++}
++
++/**
++ * Le suelta el mensaje a la IA (ver `released`) y cierra la sesión. Si la IA no
++ * va a contestar, soltarlo sería silencio: pasa a una persona.
++ */
++async function releaseToAi(dialog: Dialog, sessionId: string): Promise<VerticalDispatchResult> {
++  if (!(await aiAnswers(dialog))) {
++    await performHandoff(dialog, sessionId, { note: dialog.clinicTexts.aiOffNote })
++    return { consumed: true }
++  }
++  await closeSession(dialog.db, {
++    id: sessionId,
++    accountId: dialog.accountId,
++    status: 'completed',
++    updatedAtIso: dialog.nowIso,
++  })
++  return { consumed: false, released: true }
+ }
+ 
+@@ -443,4 +640,19 @@
     */
    texts: AgendaAgentTextsMerged
 +  /** Configuración de la clínica; null en cuentas sin el módulo o si no está disponible. */
@@ -5914,29 +6653,33 @@ Aplica este cambio a `src/verticals/agenda/agent/controller.ts`. Lo que hace cad
 +  /** Id de Meta del mensaje que se está atendiendo; queda en la autorización. */
 +  inboundMessageId: string | null
 +  humanOwned: boolean
++  /** Cómo saber si la IA responde sola; el resultado se guarda en `aiOn`. */
++  aiProbe: () => Promise<boolean>
++  aiOn?: Promise<boolean>
    /**
     * Preguntas extra, leídas una sola vez por mensaje del cliente y compartidas
-@@ -490,4 +609,6 @@ function coerceState(raw: Record<string, unknown>): BookingState {
+@@ -490,4 +702,6 @@
      ...(typeof raw.patientId === 'string' ? { patientId: raw.patientId } : {}),
      ...(typeof raw.dayPage === 'number' ? { dayPage: raw.dayPage } : {}),
 +    ...(typeof raw.consentText === 'string' ? { consentText: raw.consentText } : {}),
 +    ...(typeof raw.consentVersion === 'number' ? { consentVersion: raw.consentVersion } : {}),
      ...(raw.afterConsent === 'urgency_book' ? { afterConsent: 'urgency_book' as const } : {}),
      ...(raw.urgent === true ? { urgent: true } : {}),
-@@ -508,4 +629,12 @@ async function advanceSession(
+@@ -508,4 +722,13 @@
  ): Promise<void> {
    const state = coerceState(session.state)
-+  // Doble toque: la autorización ya se respondió y el menú está abierto. El
-+  // segundo toque no es un error del paciente: se ignora, sin mensaje ni fallo.
++  // Doble toque: la autorización ya se aceptó y el menú sigue abierto. El segundo
++  // toque no es un error del paciente: se ignora, sin mensaje ni fallo. (Un
++  // "No acepto" con una autorización vigente no es un doble toque: revoca.)
 +  if (
-+    state.step === 'clinic_menu' &&
-+    (input.replyId === actId('consent_yes') || input.replyId === actId('consent_no'))
++    (state.step === 'clinic_menu' || state.step === 'faq_open') &&
++    input.replyId === actId('consent_yes')
 +  ) {
 +    return
 +  }
    // Las preguntas extra se responden escribiendo (o con la opción tocada): no
    // pasan por el emparejamiento general del menú.
-@@ -523,5 +652,14 @@ async function advanceSession(
+@@ -523,5 +746,14 @@
      return
    }
 -  await handleChoice(dialog, session.id, { ...state, fails: 0 }, choice)
@@ -5952,7 +6695,7 @@ Aplica este cambio a `src/verticals/agenda/agent/controller.ts`. Lo que hace cad
 +  )
  }
  
-@@ -539,5 +677,10 @@ async function registerFail(
+@@ -539,5 +771,10 @@
    const fails = state.fails + 1
    if (fails >= 2) {
 -    await performHandoff(dialog, sessionId)
@@ -5964,9 +6707,10 @@ Aplica este cambio a `src/verticals/agenda/agent/controller.ts`. Lo que hace cad
 +    )
      return
    }
-@@ -731,4 +874,19 @@ async function handleChoice(
+@@ -730,4 +967,19 @@
+ ): Promise<void> {
    const parsed = parseOptionId(choice)
- 
++
 +  if (isClinicStep(state.step)) {
 +    if (!dialog.clinic) {
 +      await closeSession(dialog.db, {
@@ -5981,10 +6725,9 @@ Aplica este cambio a `src/verticals/agenda/agent/controller.ts`. Lo que hace cad
 +    await applyClinicOutcome(dialog, sessionId, state, outcome)
 +    return
 +  }
-+
+ 
    // Pieza "reprogramar/cancelar" apagada: un menú, una confirmación o
-   // una reprogramación abiertos antes de apagarla no son un atajo.
-@@ -1540,5 +1698,7 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
+@@ -1540,5 +1792,7 @@
      case 'pick_appointment':
      case 'marketing_consent':
 -      return { state, closed: true }
@@ -5993,7 +6736,7 @@ Aplica este cambio a `src/verticals/agenda/agent/controller.ts`. Lo que hace cad
 +      return renderClinicStep(clinicCtx(dialog), state)
    }
  }
-@@ -1846,9 +2006,10 @@ async function performHandoff(
+@@ -1846,9 +2100,10 @@
    dialog: Dialog,
    sessionId: string | null,
 +  opts: Omit<ClinicHandoff, 'kind'> = {},
@@ -6005,7 +6748,7 @@ Aplica este cambio a `src/verticals/agenda/agent/controller.ts`. Lo que hace cad
 +    note: opts.note ?? dialog.texts.handoffNote,
      agentId: await loadHandoffAgentId(dialog.db, dialog.accountId),
    })
-@@ -1864,8 +2025,14 @@ async function performHandoff(
+@@ -1864,8 +2119,14 @@
  
    // El trigger de asignación avisa al agente; el dueño recibe su
 -  // aviso aquí para que el equipo lo vea aunque no haya agente.
@@ -6022,7 +6765,7 @@ Aplica este cambio a `src/verticals/agenda/agent/controller.ts`. Lo que hace cad
 +  if (recipients.size) {
      const contact = await loadContact(
        dialog.db,
-@@ -1874,14 +2041,16 @@ async function performHandoff(
+@@ -1874,14 +2135,16 @@
      )
      const who = contact?.name?.trim() || contact?.phone || 'Un cliente'
 -    await bestEffort('aviso de handoff al equipo', () =>
@@ -6049,7 +6792,7 @@ Aplica este cambio a `src/verticals/agenda/agent/controller.ts`. Lo que hace cad
 +    }
    }
  
-@@ -1895,5 +2064,32 @@ async function performHandoff(
+@@ -1895,5 +2158,32 @@
    }
  
 -  await dialog.sender.sendText({ text: dialog.texts.handoff })
@@ -6083,7 +6826,7 @@ Aplica este cambio a `src/verticals/agenda/agent/controller.ts`. Lo que hace cad
 +  )
  }
  
-@@ -2140,2 +2336,53 @@ async function bestEffort(label: string, fn: () => Promise<unknown>) {
+@@ -2140,2 +2430,54 @@
    }
  }
 +
@@ -6104,6 +6847,7 @@ Aplica este cambio a `src/verticals/agenda/agent/controller.ts`. Lo que hace cad
 +    now: dialog.now,
 +    nowIso: dialog.nowIso,
 +    inboundMessageId: dialog.inboundMessageId,
++    aiAutoReplyOn: () => aiAnswers(dialog),
 +    sendOptions: (args) => sendOptions(dialog, args),
 +  }
 +}
@@ -6243,7 +6987,7 @@ git commit -m "feat(clinica): ask for data consent and open the clinic menu"
 - Un paciente solo se elige si es de **ese contacto y de esa cuenta**. El menú guardado en la sesión puede ser viejo, así que al elegir manda la base: `findPatients` lee con la cuenta del backend y el contacto, y un id que no aparece falla.
 - **El nombre del paciente es un dato personal.** No va a logs, avisos ni notas. Los errores solo llevan el mensaje de la base, y `handlePatientName` registra solo ese mensaje.
 - `advanceSession` no reinicia `fails` en los pasos clínicos. Por eso `applyClinicOutcome` lo pone en 0 cuando el paso cambia (un error en `pick_patient` seguido de "Otra persona" no puede pasar a una persona al primer nombre malo).
-- Mientras la persona escribe su nombre no valen ni el pase por `CLINIC_HUMAN_WORDS` ni las palabras de urgencia: "Paz Documento" es un nombre. `writingAnswer` cubre `new_patient_name`, y el chequeo aparte que había en el pase por `CLINIC_HUMAN_WORDS` sobra y se quita. (Las palabras de urgencia entran en la tarea 9, que debe respetar el mismo paso.)
+- Mientras la persona escribe su nombre no valen ni `CLINIC_HUMAN_WORDS` ni las palabras de urgencia: "Paz Documento" es un nombre. El texto libre solo se enruta sin sesión, con el menú abierto y esperando una duda (tarea 7), y `new_patient_name` no es ninguno de los tres; `writingAnswer` cubre `new_patient_name` para el pase por palabra ("asesor"). (Las palabras de urgencia entran en la tarea 9, que debe respetar el mismo paso.)
 - `validatePatientName` solo deja letras, tildes, espacios, apóstrofo, guion y punto. Un sticker o una foto llegan como texto `[Unsupported message type: …]` y con la regla del plan original (sin números ni caracteres invisibles) se habrían registrado como paciente.
 - Una cuenta sin `clinica` no cambia: la cita no lleva `patient_id` ni `location_id`, porque `insertAppointment` solo los envía si vienen.
 - "Agendar" del menú ahora pasa por `pick_patient`: dos pruebas de `clinic-consent.test.ts` que esperaban el menú de servicios ahora esperan la pregunta del nombre.
@@ -7252,7 +7996,7 @@ En `src/verticals/agenda/agent/steps/clinic-steps.ts`:
 import { validatePatientName } from '@/modules/clinica/patients'
 ```
 
-Agrega `patId` al import de `../state`, y después de `looksLikeQuestion`:
+Agrega `patId` al import de `../state`, y después de `routeClinicText`:
 
 ```ts
 /** Con paciente elegido sigue la reserva; una urgencia salta al menú de horas. */
@@ -7365,7 +8109,6 @@ En `src/verticals/agenda/agent/controller.ts`:
     asking?.step === 'new_patient_name'
 ```
 
-   Y en el pase por `CLINIC_HUMAN_WORDS` quita la línea `asking?.step !== 'new_patient_name' &&`: `!writingAnswer` ya la cubre.
 
 4. En `confirmAppointment`, después de `const answers = await answersForNewAppointment(...)` y **antes de reclamar la sesión** (`claimSession`), resuelve el paciente. Al reprogramar se conserva el de la cita anterior. Si la lectura falla, la sesión sigue viva y el paciente puede reintentar, en vez de quedar con una cita sin paciente:
 
