@@ -50,6 +50,17 @@ const activeSteps = (db: ReturnType<typeof clinicDb>) =>
     .filter((s) => s.status === 'active')
     .map((s) => (s.state as { step: string }).step)
 
+/**
+ * "Agendar" salió del menú principal y siguió la reserva, sin "No entendí". Qué
+ * pregunta primero (el servicio, o antes el paciente) lo deciden otras tareas.
+ */
+function expectBookingStarted(db: ReturnType<typeof clinicDb>, rec: ReturnType<typeof makeRecorder>) {
+  expect(last(rec).ids).not.toEqual(MENU_IDS)
+  expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(false)
+  expect(activeSteps(db)).toHaveLength(1)
+  expect(activeSteps(db)).not.toContain('clinic_menu')
+}
+
 describe('sin sesión', () => {
   describe('con autorización', () => {
     it.each([
@@ -298,9 +309,7 @@ describe('con el menú abierto', () => {
     const result = await send(db, rec, { text: 'necesito una cita para mañana' })
     expect(result).toEqual({ consumed: true })
     // Sin pacientes registrados, "Agendar" pide el nombre de quien va a asistir.
-    expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
-    expect(activeSteps(db)).toEqual(['new_patient_name'])
-    expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(false)
+    expectBookingStarted(db, rec)
   })
 
   it('un saludo vuelve a mostrar el menú sin contarlo como fallo', async () => {
@@ -354,7 +363,7 @@ describe('con el menú abierto', () => {
     const { db, rec } = await withMenuOpen()
     const result = await send(db, rec, { replyId: 'act:book' })
     expect(result).toEqual({ consumed: true })
-    expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
+    expectBookingStarted(db, rec)
   })
 })
 
@@ -386,8 +395,7 @@ describe('esperando la duda ("Precios y dudas")', () => {
     const { db, rec } = await withFaqOpen()
     const result = await send(db, rec, { text: 'quiero una cita para mañana' })
     expect(result).toEqual({ consumed: true })
-    expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
-    expect(activeSteps(db)).toEqual(['new_patient_name'])
+    expectBookingStarted(db, rec)
   })
 
   it.each(['', '[Unsupported message type: audio]', '   '])(
@@ -418,8 +426,7 @@ describe('el menú sigue vivo', () => {
     const rec = makeRecorder()
     const result = await send(db, rec, { replyId: 'act:book' })
     expect(result).toEqual({ consumed: true })
-    expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
-    expect(activeSteps(db)).toEqual(['new_patient_name'])
+    expectBookingStarted(db, rec)
   })
 
   it('sin sesión, "Precios y dudas" invita a preguntar', async () => {
@@ -480,8 +487,7 @@ describe('el menú sigue vivo', () => {
     const { db, rec } = await withFaqOpen()
     const result = await send(db, rec, { replyId: 'act:book' })
     expect(result).toEqual({ consumed: true })
-    expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
-    expect(activeSteps(db)).toEqual(['new_patient_name'])
+    expectBookingStarted(db, rec)
     expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(false)
   })
 
