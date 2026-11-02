@@ -456,6 +456,8 @@
       "toastFailedDelete": "Não foi possível excluir o contato. Tente novamente.",
       "toastDeleted": "Contato excluído",
       "toastBulkFailedDelete": "Não foi possível excluir os contatos. Tente novamente.",
+      "toastPatientContact": "Este contato é paciente da clínica e não pode ser excluído.",
+      "toastBulkPatientContact": "Pelo menos um dos contatos selecionados é paciente da clínica. Nenhum foi excluído.",
       "toastBulkDeleted": "{count, plural, =1 {1 contato excluído} other {# contatos excluídos}}",
       "filterByTag": "Filtrar por {name}",
       "removeTagFilter": "Remover o filtro {name}",

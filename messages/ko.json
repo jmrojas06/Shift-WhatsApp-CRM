@@ -456,6 +456,8 @@
       "toastFailedDelete": "연락처를 삭제하지 못했습니다. 다시 시도하세요.",
       "toastDeleted": "연락처가 삭제되었습니다",
       "toastBulkFailedDelete": "연락처를 삭제하지 못했습니다. 다시 시도하세요.",
+      "toastPatientContact": "이 연락처는 클리닉 환자여서 삭제할 수 없습니다.",
+      "toastBulkPatientContact": "선택한 연락처 중 하나 이상이 클리닉 환자입니다. 삭제된 연락처는 없습니다.",
       "toastBulkDeleted": "{count, plural, other {연락처 #개가 삭제되었습니다}}",
       "filterByTag": "{name}(으)로 필터링",
       "removeTagFilter": "{name} 필터 제거",

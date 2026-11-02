@@ -456,6 +456,8 @@
       "toastFailedDelete": "Couldn't delete the contact. Try again.",
       "toastDeleted": "Contact deleted",
       "toastBulkFailedDelete": "Couldn't delete the contacts. Try again.",
+      "toastPatientContact": "This contact is a clinic patient and can't be deleted.",
+      "toastBulkPatientContact": "At least one of the selected contacts is a clinic patient. None were deleted.",
       "toastBulkDeleted": "{count, plural, =1 {1 contact deleted} other {# contacts deleted}}",
       "filterByTag": "Filter by {name}",
       "removeTagFilter": "Remove {name} filter",

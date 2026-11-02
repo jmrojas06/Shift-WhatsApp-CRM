@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useOpenOnNewParam } from '@/hooks/use-open-on-new-param';
+import { contactDeleteToastKey } from '@/lib/contacts/delete-error';
 import { toast } from 'sonner';
 import type { Contact, Tag, ContactTag } from '@/types';
 import { Button } from '@/components/ui/button';
@@ -288,7 +289,7 @@ export default function ContactsPage() {
       .eq('id', deleteTarget.id);
 
     if (error) {
-      toast.error(t('toastFailedDelete'));
+      toast.error(t(contactDeleteToastKey(error, false)));
     } else {
       toast.success(t('toastDeleted'));
       fetchContacts();
@@ -332,7 +333,7 @@ export default function ContactsPage() {
     const { error } = await supabase.from('contacts').delete().in('id', ids);
 
     if (error) {
-      toast.error(t('toastBulkFailedDelete'));
+      toast.error(t(contactDeleteToastKey(error, true)));
     } else {
       toast.success(t('toastBulkDeleted', { count: ids.length }));
       setSelected(new Set());
