@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { latestConsent } from '@/modules/clinica/consent'
 import { buildClinicTexts } from '@/modules/clinica/texts'
 import { AGENDA_AGENT_TEXTS } from '../texts'
 import { DEFAULT_LABELS } from '../labels'
@@ -17,6 +18,7 @@ import {
   makeRecorder,
   send,
 } from './testing/clinic-harness'
+import { asClient } from './testing/fake-db'
 
 const texts = buildClinicTexts(DEFAULT_LABELS)
 
@@ -236,25 +238,141 @@ describe('autorización de datos', () => {
     expect(last(rec).ids).toEqual(MENU_IDS)
   })
 
-  it.each(['act:consent_yes', 'act:consent_no'])(
-    'un segundo toque (%s) con el menú ya abierto se ignora en silencio',
-    async (replyId) => {
+  it('un segundo toque en "Sí, acepto" con el menú ya abierto se ignora en silencio', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { replyId: 'act:consent_yes' })
+    const sent = rec.calls.length
+    const result = await send(db, rec, { replyId: 'act:consent_yes' })
+    expect(result).toEqual({ consumed: true })
+    // Ni mensaje, ni fallo, ni otro registro, ni pase a una persona.
+    expect(rec.calls).toHaveLength(sent)
+    expect(db._tables.clinic_consents).toHaveLength(1)
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    const open = db._tables.booking_sessions.filter((s) => s.status === 'active')
+    expect(open.map((s) => (s.state as { step: string; fails: number }).step)).toEqual(['clinic_menu'])
+    expect((open[0].state as { fails: number }).fails).toBe(0)
+  })
+
+  it('también esperando la duda', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { replyId: 'act:consent_yes' })
+    await send(db, rec, { replyId: 'act:faq' })
+    const sent = rec.calls.length
+    const result = await send(db, rec, { replyId: 'act:consent_yes' })
+    expect(result).toEqual({ consumed: true })
+    expect(rec.calls).toHaveLength(sent)
+  })
+
+  describe('revocar con un toque en "No acepto" cuando ya había autorizado', () => {
+    const latest = (db: ReturnType<typeof clinicDb>) =>
+      latestConsent(asClient(db), { accountId: ACCOUNT, contactId: CONTACT, kind: 'datos_sensibles' })
+
+    // Un minuto después de aceptar: la decisión vigente es la más reciente.
+    const LATER = { now: new Date('2026-10-19T13:01:00Z') }
+
+    async function accepted() {
       const db = clinicDb()
       const rec = makeRecorder()
       await send(db, rec, { text: 'Hola' })
       await send(db, rec, { replyId: 'act:consent_yes' })
-      const sent = rec.calls.length
-      const result = await send(db, rec, { replyId })
+      return { db, rec }
+    }
+
+    it('con el menú abierto registra el rechazo y pasa a una persona', async () => {
+      const { db, rec } = await accepted()
+      const result = await send(db, rec, { replyId: 'act:consent_no' }, LATER)
       expect(result).toEqual({ consumed: true })
-      // Ni mensaje, ni fallo, ni otro registro, ni pase a una persona.
-      expect(rec.calls).toHaveLength(sent)
+      expect(db._tables.clinic_consents).toHaveLength(2)
+      expect(db._tables.clinic_consents[1]).toMatchObject({
+        granted: false,
+        kind: 'datos_sensibles',
+        contact_ref: '573001112233',
+        text_version: 2,
+        text_snapshot: 'Texto de autorización',
+        source: 'whatsapp',
+      })
+      expect(await latest(db)).toEqual({ granted: false })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.consentRevokedNote)
+      expect(last(rec).bodyText).toBe(texts.consentDeclined)
+      expect(db._tables.booking_sessions.every((s) => s.status !== 'active')).toBe(true)
+    })
+
+    it('sin sesión (el menú ya venció) también', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:consent_no' })
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.clinic_consents).toHaveLength(2)
+      expect(await latest(db)).toEqual({ granted: false })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.consentRevokedNote)
+    })
+
+    it('esperando la duda también', async () => {
+      const { db, rec } = await accepted()
+      await send(db, rec, { replyId: 'act:faq' })
+      await send(db, rec, { replyId: 'act:consent_no' }, LATER)
+      expect(await latest(db)).toEqual({ granted: false })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    })
+
+    it('a mitad de una reserva también', async () => {
+      const { db, rec } = await accepted()
+      await send(db, rec, { replyId: 'act:book' })
+      await send(db, rec, { replyId: 'act:consent_no' }, LATER)
+      expect(await latest(db)).toEqual({ granted: false })
+      expect(db._tables.booking_sessions.every((s) => s.status !== 'active')).toBe(true)
+    })
+
+    it('si no se pudo registrar, igual pasa a una persona y la nota lo dice', async () => {
+      const { db, rec } = await accepted()
+      db._failNext('insert', 'clinic_consents', { message: 'boom' })
+      const result = await send(db, rec, { replyId: 'act:consent_no' })
+      expect(result).toEqual({ consumed: true })
       expect(db._tables.clinic_consents).toHaveLength(1)
-      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
-      const open = db._tables.booking_sessions.filter((s) => s.status === 'active')
-      expect(open.map((s) => (s.state as { step: string; fails: number }).step)).toEqual(['clinic_menu'])
-      expect((open[0].state as { fails: number }).fails).toBe(0)
-    },
-  )
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.consentRevokedUnsavedNote)
+    })
+
+    it('sin una autorización vigente no revoca nada: vuelve a pedirla', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:consent_no' })
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.clinic_consents).toHaveLength(0)
+      expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
+    })
+
+    it('en el paso de la autorización sigue siendo el rechazo de siempre', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:consent_no' })
+      expect(db._tables.clinic_consents).toHaveLength(1)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.consentDeclinedNote)
+    })
+
+    it('un hilo que ya es de una persona no se toca', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:consent_no' }, { humanOwned: true })
+      expect(result).toEqual({ consumed: false })
+      expect(db._tables.clinic_consents).toHaveLength(1)
+    })
+
+    it('en una cuenta sin clínica no hace nada', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:consent_no' }, { modules: ['agenda'] })
+      expect(result).toEqual({ consumed: false })
+      expect(db._tables.clinic_consents).toHaveLength(1)
+    })
+  })
 
   it('el toque del menú sigue valiendo después de un doble toque', async () => {
     const db = clinicDb()

@@ -96,6 +96,9 @@ export function buildClinicTexts(l: AgendaLabels) {
     consentDecline: 'No acepto',
     consentDeclined: 'Entendido. Una persona de la clínica te atiende por este chat. 🙌',
     consentDeclinedNote: 'Paciente: no aceptó la autorización de datos (bot en pausa).',
+    consentRevokedNote: 'Paciente: revocó la autorización de datos (bot en pausa).',
+    consentRevokedUnsavedNote:
+      'Paciente: tocó "No acepto" para revocar la autorización de datos, pero no se pudo registrar. Regístralo a mano (bot en pausa).',
     consentError: 'No pude guardar tu respuesta en este momento 😅. Intenta de nuevo, por favor.',
     /** Pase a una persona porque la autorización no se respondió con los botones, o no se pudo guardar. */
     consentUnansweredNote:

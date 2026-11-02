@@ -186,6 +186,35 @@ export function routeClinicText(text: string, appointmentWords: readonly string[
   return 'ai'
 }
 
+/**
+ * Un toque en "No acepto" cuando ya había autorizado: queda registrado como
+ * rechazo y el hilo pasa a una persona. Qué texto vio la persona al revocar y
+ * cómo debe revocarse queda para revisarlo con el abogado: aquí se guarda el
+ * texto vigente.
+ */
+export async function handleConsentRevoked(ctx: ClinicStepCtx): Promise<ClinicHandoff> {
+  const { texts } = ctx
+  try {
+    await recordConsent(ctx.db, {
+      accountId: ctx.accountId,
+      contactId: ctx.contactId,
+      kind: 'datos_sensibles',
+      granted: false,
+      textVersion: ctx.clinic.consentVersion,
+      textSnapshot: ctx.clinic.consentText,
+      source: 'whatsapp',
+      messageId: ctx.inboundMessageId,
+      createdAtIso: ctx.nowIso,
+    })
+  } catch (err) {
+    // El paciente pidió parar: el hilo pasa a una persona de todos modos, y la
+    // nota le dice que el registro hay que hacerlo a mano.
+    console.error('[clinica] no se pudo registrar la revocación:', err)
+    return { kind: 'handoff', message: texts.consentDeclined, note: texts.consentRevokedUnsavedNote }
+  }
+  return { kind: 'handoff', message: texts.consentDeclined, note: texts.consentRevokedNote }
+}
+
 /** Con paciente elegido sigue la reserva; una urgencia salta al menú de horas. */
 function afterPatient(state: BookingState, patientId: string): BookingState {
   return { ...state, patientId, step: state.urgent ? 'pick_slot' : 'pick_service' }

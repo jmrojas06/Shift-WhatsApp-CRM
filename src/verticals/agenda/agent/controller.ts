@@ -104,6 +104,7 @@ import {
 } from './state'
 import {
   handleClinicChoice,
+  handleConsentRevoked,
   handlePatientName,
   isClinicStep,
   renderClinicStep,
@@ -368,6 +369,20 @@ async function handleClinicInbound(
     replyId === null && !isNonTextInbound(text)
       ? routeClinicText(text, [labels.cita, labels.citas])
       : null
+
+  // "No acepto" con una autorización vigente (un botón viejo, o el menú ya abierto)
+  // la revoca. En el paso de la autorización es el rechazo de siempre.
+  if (replyId === actId('consent_no') && step !== 'consent') {
+    const consent = await latestConsent(dialog.db, {
+      accountId: dialog.accountId,
+      contactId: dialog.contactId,
+      kind: 'datos_sensibles',
+    })
+    if (consent?.granted) {
+      await performHandoff(dialog, session?.id ?? null, await handleConsentRevoked(clinicCtx(dialog)))
+      return { consumed: true }
+    }
+  }
 
   if (session && state) {
     if (step === 'clinic_menu' || step === 'faq_open') {
@@ -698,11 +713,12 @@ async function advanceSession(
   input: { text: string; replyId: string | null },
 ): Promise<void> {
   const state = coerceState(session.state)
-  // Doble toque: la autorización ya se respondió y el menú está abierto. El
-  // segundo toque no es un error del paciente: se ignora, sin mensaje ni fallo.
+  // Doble toque: la autorización ya se aceptó y el menú sigue abierto. El segundo
+  // toque no es un error del paciente: se ignora, sin mensaje ni fallo. (Un
+  // "No acepto" con una autorización vigente no es un doble toque: revoca.)
   if (
-    state.step === 'clinic_menu' &&
-    (input.replyId === actId('consent_yes') || input.replyId === actId('consent_no'))
+    (state.step === 'clinic_menu' || state.step === 'faq_open') &&
+    input.replyId === actId('consent_yes')
   ) {
     return
   }
