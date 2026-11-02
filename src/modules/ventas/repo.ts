@@ -30,6 +30,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import type { AccountContext } from '@/lib/auth/account'
 import { moduleNotActiveMessage } from '@/lib/modules/errors'
+import { ensurePipeline } from '@/lib/pipelines/ensure-pipeline'
 
 import {
   SALES_STAGES,
@@ -175,84 +176,22 @@ export interface SalesPipeline {
 }
 
 /**
- * Deja listo el pipeline "Ventas" de la cuenta (nombre sin importar
- * mayúsculas ni espacios) con sus cinco etapas. Idempotente y respetuoso:
- * crea lo que falta, nunca renombra, mueve ni borra lo que el dueño ya
- * tiene (las etapas propias se quedan, incluida una "Nuevo" de una
- * versión anterior, que ya no se crea ni se usa; las que faltan se
- * agregan al final).
- *
- * Determinista: con varios pipelines "Ventas" gana el más antiguo
- * (created_at, id) y con etapas repetidas la de menor posición
- * (position, created_at, id).
- *
- * Límite conocido: sin una restricción única en la base, dos primeros
- * pedidos simultáneos podrían crear dos pipelines "Ventas". Es raro, no
- * pierde datos, el orden de arriba hace que ambos usen el mismo, y se
- * ve y se arregla desde el CRM.
+ * Deja listo el pipeline "Ventas" de la cuenta con sus cinco etapas (ver
+ * `ensurePipeline`). Las etapas propias del dueño se quedan, incluida una
+ * "Nuevo" de una versión anterior, que ya no se crea ni se usa.
  */
 export async function ensureSalesPipeline(
   db: SupabaseClient,
   accountId: string,
   userId: string,
 ): Promise<SalesPipeline> {
-  const pipelines = unwrap(
-    await db
-      .from('pipelines')
-      .select('id, name')
-      .eq('account_id', accountId)
-      .order('created_at', { ascending: true })
-      .order('id', { ascending: true }),
-  ) as { id: string; name: string }[] | null
-  const found = (pipelines ?? []).find((row) => norm(row.name) === norm(PIPELINE_NAME))
-
-  let pipelineId = found?.id
-  if (!pipelineId) {
-    pipelineId = crypto.randomUUID()
-    unwrap(
-      await db
-        .from('pipelines')
-        .insert({ id: pipelineId, account_id: accountId, user_id: userId, name: PIPELINE_NAME }),
-    )
-  }
-
-  const stages = unwrap(
-    await db
-      .from('pipeline_stages')
-      .select('id, name, position')
-      .eq('pipeline_id', pipelineId)
-      .order('position', { ascending: true })
-      .order('created_at', { ascending: true })
-      .order('id', { ascending: true }),
-  ) as { id: string; name: string; position: number | null }[] | null
-
-  const idByNormName = new Map<string, string>()
-  let nextPosition = 0
-  for (const stage of stages ?? []) {
-    if (!idByNormName.has(norm(stage.name))) idByNormName.set(norm(stage.name), stage.id)
-    nextPosition = Math.max(nextPosition, (stage.position ?? -1) + 1)
-  }
-
-  const missing = SALES_STAGES.filter((name) => !idByNormName.has(norm(name)))
-  if (missing.length > 0) {
-    const rows = missing.map((name, index) => {
-      const id = crypto.randomUUID()
-      idByNormName.set(norm(name), id)
-      return {
-        id,
-        pipeline_id: pipelineId,
-        name,
-        position: nextPosition + index,
-        color: STAGE_COLORS[name],
-      }
-    })
-    unwrap(await db.from('pipeline_stages').insert(rows))
-  }
-
-  const stageIdByName = Object.fromEntries(
-    SALES_STAGES.map((name) => [name, idByNormName.get(norm(name)) as string]),
-  ) as Record<SalesStage, string>
-  return { pipelineId, stageIdByName }
+  const { pipelineId, stageIdByName } = await ensurePipeline(db, {
+    accountId,
+    userId,
+    name: PIPELINE_NAME,
+    stages: SALES_STAGES.map((name) => ({ name, color: STAGE_COLORS[name] })),
+  })
+  return { pipelineId, stageIdByName: stageIdByName as Record<SalesStage, string> }
 }
 
 // ------------------------------------------------------------
