@@ -8,7 +8,9 @@ import {
   parseAnswerId,
   containsHandoffWord,
   containsIntentWord,
+  containsUrgencyFloor,
   containsUrgencyWord,
+  detectsUrgency,
   isHandoffOnly,
   isSkipAnswer,
   dayId,
@@ -334,6 +336,53 @@ describe('palabras de urgencia', () => {
     expect(containsUrgencyWord('Tengo mucho DOLOR', words)).toBe(true)
     expect(containsUrgencyWord('se me cayó una corona', words)).toBe(true)
     expect(containsUrgencyWord('Soy Dolores Pérez', words)).toBe(false)
+  })
+})
+
+describe('el piso fijo de urgencias', () => {
+  it.each([
+    'me ahogo',
+    'no respiro bien',
+    'tengo una hemorragia',
+    'se me está hinchando la cara',
+    'tengo el cachete inchado',
+    'tengo un flemón',
+    'tengo una infección en la encía',
+    'mi hijo se golpeó la boca',
+    'a mi hijo se le partió un diente',
+    'tengo una muela rota',
+    'tengo dos muelas rotas',
+    'se le quebraron los dientes',
+    'se le cayó un diente',
+    'tengo los dientes rotos',
+    'sangro por la encía',
+    'MI NIÑA SE GOLPEÓ',
+    'me están saliendo flemones',
+    'tiene una hinchazón enorme',
+    'se le está hinchando',
+  ])('abre los signos aunque la clínica no tenga lista: %j', (text) => {
+    expect(containsUrgencyFloor(text)).toBe(true)
+    expect(detectsUrgency(text, [])).toBe(true)
+  })
+
+  it.each([
+    'quiero agendar una limpieza',
+    'Soy Dolores Pérez',
+    'cuánto cuesta una consulta',
+    'hola buenas tardes',
+    'necesito una radiografía',
+    'tengo una cita el martes',
+    'la roturación del terreno',
+    'xhinchado',
+  ])('no confunde un mensaje normal: %j', (text) => {
+    expect(containsUrgencyFloor(text)).toBe(false)
+    expect(detectsUrgency(text, [])).toBe(false)
+  })
+
+  it('se suma a la lista de la clínica, no la reemplaza', () => {
+    expect(detectsUrgency('necesito ayuda ya', ['ayuda'])).toBe(true)
+    expect(detectsUrgency('se me ahoga', ['ayuda'])).toBe(true)
+    expect(detectsUrgency('necesito una limpieza', ['ayuda'])).toBe(false)
   })
 })
 

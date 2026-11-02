@@ -65,6 +65,45 @@ export const DEFAULT_URGENCY_WORDS: readonly string[] = [
 ]
 
 /**
+ * Piso fijo de la detección de urgencias, en código y no en `clinic_settings`:
+ * lo que SIEMPRE abre los signos de alarma, aunque la clínica deje su lista
+ * vacía o se le olvide una forma de decirlo. Se suma a la lista de la clínica,
+ * no la reemplaza. Sin tildes: se comparan contra el texto normalizado.
+ *
+ * Las raíces valen al inicio de una palabra ("hinch" es "hinchada", "hinchando"
+ * y "hinchazón"; "inch" es "inchado", sin la h). Las palabras valen enteras:
+ * "rota" no es "rotación", y "dolor" ni está aquí, porque "Dolores" es un nombre.
+ */
+export const URGENCY_FLOOR_STEMS: readonly string[] = [
+  'inch',
+  'hinch',
+  'hemorrag',
+  'flemon',
+  'infeccion',
+  'ahog',
+  'golpe',
+  'sangr',
+  'respir',
+]
+
+export const URGENCY_FLOOR_WORDS: readonly string[] = [
+  'rota',
+  'rotas',
+  'roto',
+  'rotos',
+  'partio',
+  'partieron',
+  'quebro',
+  'quebraron',
+  'rompio',
+  'rompieron',
+  // Dicho de otra persona ("a mi hijo se le partió un diente").
+  'se le cayo',
+  'se le cayeron',
+  'se le inflamo',
+]
+
+/**
  * Temas que en esta versión atiende una persona (spec §5, etapa 2): quejas,
  * pagos y documentos. Sin tildes: se comparan contra el texto normalizado. Un
  * mensaje que trae una y no es una duda pasa a una persona, sin pedir antes la

@@ -91,8 +91,8 @@ import {
   ansSkipId,
   containsHandoffWord,
   containsIntentWord,
-  containsUrgencyWord,
   dayId,
+  detectsUrgency,
   isHandoffOnly,
   isSkipAnswer,
   matchAnswerOption,
@@ -387,9 +387,11 @@ export async function handleAgendaInbound(
 /**
  * ¿Este mensaje abre los signos de alarma? Un toque en "Tengo una urgencia"
  * siempre: es una decisión de la persona, valga lo que valga el paso. Un texto
- * con una palabra de la clínica también, en cualquier paso menos donde lo que
- * escribe es otra cosa: la respuesta a los signos (ahí la lee `matchChoice`), el
- * nombre de quien va a asistir o la respuesta de texto a una pregunta extra.
+ * con una palabra de la clínica o del piso fijo (`detectsUrgency`) también, en
+ * TODOS los pasos menos uno: la respuesta a los signos, que lee `matchChoice`.
+ * Ni el nombre ni la respuesta a una pregunta extra son una excepción: "no puedo
+ * respirar" escrito como nombre no puede quedar registrado como paciente. Una
+ * palabra de urgencia se compara entera, así que "Dolores Ruiz" no dispara.
  * Una foto, un audio o un sticker no cuentan.
  */
 function opensUrgency(
@@ -399,11 +401,7 @@ function opensUrgency(
 ): boolean {
   if (input.replyId !== null) return input.replyId === actId('urgent')
   if (isNonTextInbound(input.text)) return false
-  const writing =
-    current?.step === 'urgency' ||
-    current?.step === 'new_patient_name' ||
-    (current?.step === 'ask_question' && current.options.length === 0)
-  return !writing && containsUrgencyWord(input.text, clinic.urgencyWords)
+  return current?.step !== 'urgency' && detectsUrgency(input.text, clinic.urgencyWords)
 }
 
 /** Los signos de alarma de la clínica; sin su configuración, los de siempre. */
@@ -434,7 +432,7 @@ async function warnHumanOfUrgency(
         },
       )
       const words = result.status === 'ok' ? result.clinic.urgencyWords : DEFAULT_URGENCY_WORDS
-      if (!containsUrgencyWord(text, words)) return
+      if (!detectsUrgency(text, words)) return
     }
 
     await notifyThreadHuman(args, (texts, who) => ({
@@ -2416,7 +2414,7 @@ async function handoffClinicUnavailable(
 ): Promise<void> {
   const { clinicTexts: texts } = dialog
   const urgent =
-    input.replyId === actId('urgent') || containsUrgencyWord(input.text, DEFAULT_URGENCY_WORDS)
+    input.replyId === actId('urgent') || detectsUrgency(input.text, DEFAULT_URGENCY_WORDS)
   await performHandoff(
     dialog,
     sessionId,

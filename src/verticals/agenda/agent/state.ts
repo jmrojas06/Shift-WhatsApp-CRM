@@ -14,6 +14,8 @@
 //   4. Sinónimos de acción ('sí', 'cancelar', 'cualquiera'…).
 // ============================================================
 
+import { URGENCY_FLOOR_STEMS, URGENCY_FLOOR_WORDS } from '@/modules/clinica/texts'
+
 import type { AnswerMap } from '../questions'
 
 export type BookingStep =
@@ -334,6 +336,26 @@ export function indexOfAnyWord(text: string, words: readonly string[]): number {
 /** ¿El mensaje trae una palabra de urgencia de la clínica? */
 export function containsUrgencyWord(text: string, words: readonly string[]): boolean {
   return containsAnyWord(text, words)
+}
+
+/**
+ * ¿Trae algo del piso fijo (`URGENCY_FLOOR_STEMS` y `URGENCY_FLOOR_WORDS`)? Las
+ * raíces valen al inicio de una palabra; las palabras, enteras.
+ */
+export function containsUrgencyFloor(text: string): boolean {
+  const normalized = normalizeText(text)
+  // Al inicio de una palabra: lo que va antes no es una letra ni un número.
+  const stem = (s: string) =>
+    new RegExp(String.raw`(?<![\p{L}\p{N}])` + escapeRegex(s), 'u').test(normalized)
+  return URGENCY_FLOOR_STEMS.some(stem) || containsWord(text, URGENCY_FLOOR_WORDS)
+}
+
+/**
+ * Lo que abre los signos de alarma: la lista de la clínica MÁS el piso fijo. Un
+ * fallo de la configuración o una lista vacía no dejan a nadie sin detectar.
+ */
+export function detectsUrgency(text: string, clinicWords: readonly string[]): boolean {
+  return containsUrgencyWord(text, clinicWords) || containsUrgencyFloor(text)
 }
 
 /**

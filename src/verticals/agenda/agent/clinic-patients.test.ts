@@ -290,8 +290,8 @@ describe('pacientes por número', () => {
   })
 
   describe('mientras escribe el nombre no cuentan las palabras de otros temas', () => {
-    it.each(['Paz Documento', 'Camila Pago Receta', 'Dolor Pérez', 'Ana Queja Gil', 'Rosa Factura'])(
-      '"%s" es un nombre: no pasa a una persona, ni por documentos ni por urgencia',
+    it.each(['Paz Documento', 'Camila Pago Receta', 'Ana Queja Gil', 'Rosa Factura'])(
+      '"%s" es un nombre: no pasa a una persona por documentos ni por pagos',
       async (name) => {
         const db = clinicDb({ clinic_consents: [grantedConsent()] })
         const rec = makeRecorder()

@@ -642,17 +642,21 @@ describe('urgencias', () => {
       expect(priorityNotifications(db)).toHaveLength(0)
     })
 
-    it('ni uno que SÍ trae la palabra: "Dolor Pérez" es un nombre', async () => {
-      const db = clinicDb({ clinic_consents: [grantedConsent()] })
-      const rec = makeRecorder()
-      await send(db, rec, { text: 'Hola' })
-      await send(db, rec, { replyId: 'act:book' })
-      await send(db, rec, { text: 'Dolor Pérez' })
-      expect(db._tables.clinic_patients[0].full_name).toBe('Dolor Pérez')
-      expect(activeSteps(db)).not.toContain('urgency')
+    it('pero una palabra entera de urgencia sí, también escrita como nombre', async () => {
+      for (const text of ['Dolor Pérez', 'no puedo respirar', 'me ahogo']) {
+        const db = clinicDb({ clinic_consents: [grantedConsent()] })
+        const rec = makeRecorder()
+        await send(db, rec, { text: 'Hola' })
+        await send(db, rec, { replyId: 'act:book' })
+        await send(db, rec, { text })
+        // Nadie queda registrado como paciente con una emergencia por nombre.
+        expect(db._tables.clinic_patients).toHaveLength(0)
+        expect(last(rec).bodyText).toBe(texts.urgencyBody(ALARM_TEXT))
+        expect(activeSteps(db)).toEqual(['urgency'])
+      }
     })
 
-    it('ni la respuesta de texto a una pregunta extra', async () => {
+    it('también la respuesta de texto a una pregunta extra', async () => {
       const db = clinicDb({
         clinic_consents: [grantedConsent()],
         booking_questions: [
@@ -680,9 +684,8 @@ describe('urgencias', () => {
       })
       const rec = makeRecorder()
       await send(db, rec, { text: 'Tengo dolor de muela' })
-      expect(activeStates(db)).toMatchObject([{ step: 'summary' }])
-      expect(last(rec).bodyText).not.toBe(texts.urgencyBody(ALARM_TEXT))
-      expect(priorityNotifications(db)).toHaveLength(0)
+      expect(last(rec).bodyText).toBe(texts.urgencyBody(ALARM_TEXT))
+      expect(activeSteps(db)).toEqual(['urgency'])
     })
 
     it('una pregunta extra de opciones sí: ahí un texto libre no es la respuesta', async () => {
@@ -729,6 +732,36 @@ describe('urgencias', () => {
       const rec = makeRecorder()
       await send(db, rec, { text: 'Hola' })
       expect(last(rec).ids).toEqual(['act:book', 'act:mine', 'act:faq', 'act:urgent', 'act:human'])
+    })
+  })
+
+  describe('el piso fijo', () => {
+    it.each([
+      'me ahogo',
+      'no respiro bien',
+      'tengo una hemorragia',
+      'se me está hinchando la cara',
+      'tengo el cachete inchado',
+      'tengo un flemón',
+      'tengo una infección en la encía',
+      'mi hijo se golpeó la boca',
+      'a mi hijo se le partió un diente',
+      'tengo una muela rota',
+    ])('abre los signos aunque la clínica deje su lista vacía: %j', async (text) => {
+      const db = clinicDb()
+      db._tables.clinic_settings[0].urgency_words = []
+      const rec = makeRecorder()
+      await send(db, rec, { text })
+      expect(last(rec).bodyText).toBe(texts.urgencyBody(ALARM_TEXT))
+      expect(activeSteps(db)).toEqual(['urgency'])
+    })
+
+    it('en un hilo de una persona también avisa', async () => {
+      const db = clinicDb()
+      db._tables.clinic_settings[0].urgency_words = []
+      db._tables.conversations[0].assigned_agent_id = AGENT
+      await send(db, makeRecorder(), { text: 'tengo un flemón' }, { humanOwned: true })
+      expect(priorityNotifications(db)).toMatchObject([{ user_id: AGENT }])
     })
   })
 
