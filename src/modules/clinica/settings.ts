@@ -151,15 +151,20 @@ export async function ensureClinicSetup(db: SupabaseClient, accountId: string): 
     const urgency = ((services ?? []) as { id: string; name: string }[]).find(
       (s) => s.name.trim().toLowerCase() === 'urgencia',
     )
-    const { error } = await db.from('clinic_settings').insert({
-      account_id: accountId,
-      consent_text: DEFAULT_CONSENT_TEXT,
-      consent_version: 1,
-      urgency_words: [...DEFAULT_URGENCY_WORDS],
-      urgency_alarm_text: DEFAULT_URGENCY_ALARM_TEXT,
-      urgency_service_id: urgency?.id ?? null,
-      offer_days: 30,
-    })
+    // upsert + ignoreDuplicates (ON CONFLICT DO NOTHING): si otro montaje
+    // creó la fila entre la lectura y la escritura, esa gana y no se pisa.
+    const { error } = await db.from('clinic_settings').upsert(
+      {
+        account_id: accountId,
+        consent_text: DEFAULT_CONSENT_TEXT,
+        consent_version: 1,
+        urgency_words: [...DEFAULT_URGENCY_WORDS],
+        urgency_alarm_text: DEFAULT_URGENCY_ALARM_TEXT,
+        urgency_service_id: urgency?.id ?? null,
+        offer_days: 30,
+      },
+      { onConflict: 'account_id', ignoreDuplicates: true },
+    )
     if (error) throw error
   }
 

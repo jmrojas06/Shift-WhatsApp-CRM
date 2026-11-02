@@ -1,3 +1,4 @@
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { asClient, makeFakeDb } from '@/verticals/agenda/agent/testing/fake-db'
@@ -97,5 +98,31 @@ describe('configuración de la clínica', () => {
     expect(db._tables.clinic_settings[0].consent_version).toBe(1)
     expect(db._tables.clinic_locations).toHaveLength(1)
     expect(db._tables.clinic_locations[0].name).toBe('Sede principal')
+  })
+
+  it('si otro montaje creó la configuración justo antes, no falla ni la pisa', async () => {
+    const db = makeFakeDb({
+      clinic_settings: [{ ...SETTINGS_ROW, consent_text: 'Texto ajustado por Shift' }],
+      clinic_locations: [{ id: 'loc-1', account_id: ACCOUNT, name: 'Centro', is_active: true }],
+    })
+    // El montaje lee ANTES de que la otra fila aparezca: la primera lectura no ve nada.
+    let firstRead = true
+    const racing = {
+      ...db,
+      from(table: string) {
+        if (table === 'clinic_settings' && firstRead) {
+          firstRead = false
+          return {
+            select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }),
+          }
+        }
+        return db.from(table)
+      },
+    }
+
+    await expect(ensureClinicSetup(racing as unknown as SupabaseClient, ACCOUNT)).resolves.toBeUndefined()
+
+    expect(db._tables.clinic_settings).toHaveLength(1)
+    expect(db._tables.clinic_settings[0].consent_text).toBe('Texto ajustado por Shift')
   })
 })

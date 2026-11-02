@@ -124,6 +124,7 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
     let op: Op = 'select'
     let payload: Row | Row[] | null = null
     let conflictKey: string | null = null
+    let ignoreDuplicates = false
     let limitN: number | null = null
     let wantRows = false
 
@@ -194,17 +195,19 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
       }
       if (op === 'upsert') {
         const rows = Array.isArray(payload) ? payload : [payload ?? {}]
-        const out = rows.map((row) => {
+        const out = rows.flatMap((row) => {
           const incoming = row as Row
           const key = conflictKey
           const existing = key
             ? ensure(table).find((r) => r[key] === incoming[key])
             : undefined
           if (existing) {
+            // ON CONFLICT DO NOTHING: la fila que ya estaba no se toca ni se devuelve.
+            if (ignoreDuplicates) return []
             Object.assign(existing, incoming)
-            return { ...existing }
+            return [{ ...existing }]
           }
-          return insertRow(incoming)
+          return [insertRow(incoming)]
         })
         return { data: wantRows ? out : null, error: null }
       }
@@ -235,10 +238,11 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
         payload = p
         return api
       },
-      upsert: (p: Row | Row[], options?: { onConflict?: string }) => {
+      upsert: (p: Row | Row[], options?: { onConflict?: string; ignoreDuplicates?: boolean }) => {
         op = 'upsert'
         payload = p
         conflictKey = options?.onConflict ?? null
+        ignoreDuplicates = options?.ignoreDuplicates === true
         return api
       },
       update: (p: Row) => {
