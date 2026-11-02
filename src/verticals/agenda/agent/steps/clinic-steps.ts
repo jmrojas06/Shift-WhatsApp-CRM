@@ -16,6 +16,7 @@ import type { ClinicBackend } from '../backend'
 import type { AgendaSender } from '../controller'
 import {
   actId,
+  containsAnyWord,
   newBookingState,
   normalizeText,
   type BookingState,
@@ -98,11 +99,35 @@ const QUESTION_STARTS = [
   'reciben',
 ]
 
-/** Lo que parece una duda va a la IA aunque nombre una "cita". */
-export function looksLikeQuestion(text: string): boolean {
-  if (text.includes('?')) return true
-  const first = normalizeText(text).split(' ')[0] ?? ''
-  return QUESTION_STARTS.includes(first)
+/**
+ * Quien pide algo no pregunta, aunque lo escriba con signos de pregunta o
+ * empiece con "qué" ("Qué pena, necesito una cita"). Sin tildes, como se
+ * comparan.
+ */
+const REQUEST_PHRASES = ['quiero', 'quisiera', 'necesito', 'me das', 'me da', 'puedo agendar']
+
+/**
+ * Lo que parece una duda va a la IA aunque nombre una "cita".
+ *
+ *   1. Un verbo de pedir gana: "¿me das una cita?" abre el menú.
+ *   2. Un signo de pregunta es una duda.
+ *   3. Sin signo de pregunta, nombrar la cita la pide ("Tienen citas
+ *      disponibles"): abre el menú, que tiene "Precios y dudas".
+ *   4. Si no, empezar con "cuánto", "dónde", "cómo"... es una duda.
+ *
+ * `appointmentWords` son las palabras que usa la clínica para sus citas.
+ */
+export function looksLikeQuestion(
+  text: string,
+  appointmentWords: readonly string[] = ['cita', 'citas'],
+): boolean {
+  if (containsAnyWord(text, REQUEST_PHRASES)) return false
+  if (text.includes('?') || text.includes('¿')) return true
+  if (containsAnyWord(text, appointmentWords)) return false
+  const plain = normalizeText(text)
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .trim()
+  return QUESTION_STARTS.includes(plain.split(/\s+/)[0] ?? '')
 }
 
 export async function renderClinicStep(

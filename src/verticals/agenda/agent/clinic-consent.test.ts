@@ -237,6 +237,60 @@ describe('autorización de datos', () => {
     expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
   })
 
+  describe('con autorización, qué abre el menú y qué va a la IA', () => {
+    it.each([
+      'quiero una cita',
+      'necesito cita para mi hijo',
+      'cita',
+      'hola',
+      'buenas',
+      'Buenos días',
+      'buenas tardes',
+      'Buenas noches',
+      '¿me das una cita?',
+      '¿puedo agendar una cita para mañana?',
+      'Qué pena, necesito una cita',
+      'Tienen citas disponibles',
+    ])('abre el menú: %j', async (text) => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).ids).toEqual(MENU_IDS)
+    })
+
+    it.each([
+      '¿Cuánto vale una cita de valoración?',
+      'Buenos días, ¿cuánto vale la limpieza?',
+      '¿Tienen citas disponibles?',
+    ])('va a la IA: %j', async (text) => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text })
+      expect(result).toEqual({ consumed: false })
+      expect(rec.calls).toHaveLength(0)
+    })
+
+    it('usa la palabra que la clínica le da a la cita', async () => {
+      const db = clinicDb({
+        clinic_consents: [grantedConsent()],
+        booking_settings: [{ ...clinicLabels, labels: { cita: 'turno', citas: 'turnos' } }],
+      })
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: 'Tienen turnos disponibles' })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).ids).toEqual(MENU_IDS)
+    })
+
+    it('los saludos abren el menú solo en una clínica', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: 'buenas tardes' }, { modules: ['agenda'] })
+      expect(result).toEqual({ consumed: false })
+      expect(rec.calls).toHaveLength(0)
+    })
+  })
+
   it('con autorización, una pregunta pasa a la IA', async () => {
     const db = clinicDb({ clinic_consents: [grantedConsent()] })
     const rec = makeRecorder()

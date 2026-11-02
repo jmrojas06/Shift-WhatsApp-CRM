@@ -304,9 +304,18 @@ export function containsHandoffWord(text: string): boolean {
   return containsWord(text, HANDOFF_WORDS)
 }
 
+/**
+ * ¿El mensaje trae alguna de estas palabras o frases, enteras y sin importar
+ * mayúsculas ni tildes? Las palabras que se pasan no necesitan venir
+ * normalizadas.
+ */
+export function containsAnyWord(text: string, words: readonly string[]): boolean {
+  return containsWord(text, words.map(normalizeText))
+}
+
 /** ¿El mensaje trae una palabra de urgencia de la clínica? */
 export function containsUrgencyWord(text: string, words: readonly string[]): boolean {
-  return containsWord(text, words.map(normalizeText))
+  return containsAnyWord(text, words)
 }
 
 /**

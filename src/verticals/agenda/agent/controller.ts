@@ -30,6 +30,7 @@ import { latestConsent } from '@/modules/clinica/consent'
 import { loadClinicContext, type ClinicContext } from '@/modules/clinica/settings'
 import {
   buildClinicTexts,
+  CLINIC_GREETING_WORDS,
   DEFAULT_URGENCY_WORDS,
   type ClinicTexts,
 } from '@/modules/clinica/texts'
@@ -316,13 +317,16 @@ export async function handleAgendaInbound(
   // 4) ¿Quiere agendar? Se abre el diálogo (o la gestión si ya
   //    tiene una cita próxima).
   const { labels } = dialog.settings
-  if (!containsIntentWord(text, [labels.cita, labels.citas, labels.servicio, labels.servicios])) {
+  const intentWords = [labels.cita, labels.citas, labels.servicio, labels.servicios]
+  // En una clínica los saludos también abren el menú.
+  if (dialog.clinic) intentWords.push(...CLINIC_GREETING_WORDS)
+  if (!containsIntentWord(text, intentWords)) {
     return { consumed: false }
   }
 
   // Clínica: una duda va a la IA; lo demás abre el menú principal.
   if (dialog.clinic) {
-    if (looksLikeQuestion(text)) return { consumed: false }
+    if (looksLikeQuestion(text, [labels.cita, labels.citas])) return { consumed: false }
     const state = newBookingState('clinic_menu')
     const sessionId = await openSession(dialog, state)
     await conclude(dialog, sessionId, state)
