@@ -345,15 +345,27 @@ OK del usuario. Nunca `supabase db push`.
 
 - `clinic_settings`: `account_id` PK, `consent_text`, `consent_version`, `reception_consent_declared_at`,
   `urgency_words` text[], `urgency_alarm_text`, `urgency_service_id`, `offer_days` (por defecto 30).
-- `clinic_locations`: `id`, `account_id`, `external_id`, `name`, `address`, `latitude`, `longitude`,
-  `notice_phone`, `on_call_phone`, `google_review_url`, `chair_count`, `is_active`. Con Agenda de Shift
-  hay una sola fila.
+- `clinic_locations`: `id`, `account_id`, `external_source`, `external_id`, `name`, `address`,
+  `latitude`, `longitude`, `notice_phone`, `on_call_phone`, `google_review_url`, `chair_count`,
+  `is_active`. Con Agenda de Shift hay una sola fila. Único por (`account_id`, `external_source`,
+  `external_id`) cuando hay id externo, que va siempre junto a su fuente.
 - `clinic_patients`: `id`, `account_id`, `contact_id` NOT NULL, `external_source`, `external_id`,
   `full_name`, `intake_completed_at`, `created_at`. Único por (`account_id`, `external_source`,
-  `external_id`) cuando hay id externo.
-- `clinic_consents`: `id`, `account_id`, `contact_id`, `kind`, `granted`, `text_version`, `source`,
-  `message_id`, `created_at`. Sin UPDATE ni DELETE para clientes.
-- `booking_appointments.patient_id` y `location_id`, null para los demás negocios.
+  `external_id`) cuando hay id externo. **Un contacto con paciente no se puede borrar**:
+  `contact_id` no tiene cascada, la base rechaza el borrado (error `23503`) y la pantalla de
+  Contactos avisa que es paciente de la clínica. Borrar la cuenta sí borra todo.
+- `clinic_consents`: `id`, `account_id`, `contact_id` (anulable), `contact_ref`, `kind`, `granted`,
+  `text_version`, `text_snapshot`, `source`, `message_id`, `created_at`. **Las autorizaciones
+  sobreviven al contacto**: si se borra, `contact_id` queda en NULL y la fila conserva `contact_ref`
+  (teléfono del titular, o su identificador de WhatsApp si no tiene teléfono) y `text_snapshot` (el
+  texto exacto que aceptó; cambiar el texto de la clínica no altera lo que firmó cada persona). Sin
+  política de escritura para clientes y, además, un trigger rechaza todo UPDATE y DELETE directo
+  (las acciones de FK pasan) y se revoca TRUNCATE: solo se agrega.
+- `booking_appointments.patient_id` y `location_id`, null para los demás negocios. Son FK compuestas
+  con `account_id`: la cita no puede apuntar a un paciente ni a una sede de otra cuenta. Piden
+  Postgres 15 o más (`ON DELETE SET NULL (columna)`).
+- Lo que la FK sola no cierra lo cierra la política de escritura: el contacto de un paciente y el
+  servicio de urgencias de la configuración deben ser de la misma cuenta.
 - `conversations.bot_lock_until`: candado por conversación. Va en la conversación porque esa fila
   siempre existe, también en el primer mensaje.
 - `booking_services.prep_instructions` y `aftercare_instructions`, máximo 900 caracteres.

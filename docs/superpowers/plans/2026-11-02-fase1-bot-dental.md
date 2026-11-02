@@ -150,8 +150,30 @@ Crea `supabase/migrations/055_clinica_base.sql`:
 -- configuración, un agent o más escribe pacientes y nadie escribe
 -- autorizaciones desde el navegador (las escribe el bot con service role).
 --
+-- Reglas de datos:
+--   - Nada cruza cuentas: pacientes y sedes llevan UNIQUE (account_id, id)
+--     y las citas las enlazan con FK compuestas. Las demás referencias
+--     entre cuentas (contacto del paciente, servicio de urgencias) las
+--     cierra la política de escritura, como 054 con orders.deal_id.
+--   - Un contacto con paciente NO se puede borrar (clinic_patients.contact_id
+--     no tiene cascada: error 23503). Borrar una cuenta sí funciona: sus
+--     contactos y sus pacientes se borran en la misma sentencia, y la
+--     comprobación NO ACTION corre al final, cuando ya no queda ninguno.
+--   - Las autorizaciones sobreviven al contacto: contact_id pasa a NULL y
+--     la fila conserva contact_ref (quién autorizó) y text_snapshot (qué
+--     texto aceptó). contacts.phone es NOT NULL pero vale '' si el contacto
+--     solo tiene identificador de WhatsApp (040): contact_ref guarda el
+--     teléfono, o wa_user_id si no hay teléfono.
+--   - clinic_consents es de solo agregar: un trigger rechaza UPDATE y
+--     DELETE directos (las acciones de FK pasan) y se revoca TRUNCATE.
+--
+-- REQUIERE Postgres 15 o más: las FK compuestas usan
+-- ON DELETE SET NULL (columna). Con una versión menor, ese ALTER falla y,
+-- como el script corre en una sola transacción, no queda nada a medias.
+--
 -- Aplicar ANTES de desplegar el código. Es ADITIVA y NO destructiva: solo
--- crea tablas, columnas y políticas. Idempotente: se puede correr de nuevo.
+-- crea tablas, columnas, restricciones y políticas. Idempotente: se puede
+-- correr de nuevo.
 -- ============================================================
 
 -- Solo tiene efecto si el script corre dentro de una transacción (así
@@ -171,6 +193,7 @@ CREATE TABLE IF NOT EXISTS clinic_settings (
   reception_consent_declared_at timestamptz,
   urgency_words text[] NOT NULL DEFAULT '{}',
   urgency_alarm_text text NOT NULL CHECK (char_length(urgency_alarm_text) BETWEEN 1 AND 900),
+  -- La política de escritura exige además que sea de la misma cuenta.
   urgency_service_id uuid REFERENCES booking_services(id) ON DELETE SET NULL,
   offer_days integer NOT NULL DEFAULT 30 CHECK (offer_days BETWEEN 1 AND 180),
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -183,22 +206,31 @@ CREATE TABLE IF NOT EXISTS clinic_settings (
 CREATE TABLE IF NOT EXISTS clinic_locations (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  external_source text,
   external_id text,
-  name text NOT NULL CHECK (char_length(name) BETWEEN 1 AND 80),
+  name text NOT NULL CHECK (char_length(name) BETWEEN 1 AND 80 AND btrim(name) <> ''),
   address text CHECK (address IS NULL OR char_length(address) <= 200),
-  latitude numeric(9,6),
-  longitude numeric(9,6),
+  latitude numeric(9,6) CHECK (latitude BETWEEN -90 AND 90),
+  longitude numeric(9,6) CHECK (longitude BETWEEN -180 AND 180),
   notice_phone text CHECK (notice_phone IS NULL OR char_length(notice_phone) <= 30),
   on_call_phone text CHECK (on_call_phone IS NULL OR char_length(on_call_phone) <= 30),
   google_review_url text CHECK (google_review_url IS NULL OR char_length(google_review_url) <= 500),
   chair_count integer CHECK (chair_count IS NULL OR chair_count > 0),
   is_active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  -- La fuente y el id externos van juntos o ninguno.
+  CHECK ((external_source IS NULL) = (external_id IS NULL)),
+  -- Lo necesita la FK compuesta de booking_appointments.
+  UNIQUE (account_id, id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_clinic_locations_account
   ON clinic_locations (account_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clinic_locations_external
+  ON clinic_locations (account_id, external_source, external_id)
+  WHERE external_id IS NOT NULL;
 
 -- ------------------------------------------------------------
 -- 3) clinic_patients
@@ -206,17 +238,24 @@ CREATE INDEX IF NOT EXISTS idx_clinic_locations_account
 CREATE TABLE IF NOT EXISTS clinic_patients (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  -- Sin ON DELETE a propósito (NO ACTION, el valor por defecto): un contacto
+  -- con paciente no se borra (error 23503).
+  contact_id uuid NOT NULL REFERENCES contacts(id),
   external_source text,
   external_id text,
-  full_name text NOT NULL CHECK (char_length(full_name) BETWEEN 1 AND 120),
+  full_name text NOT NULL CHECK (char_length(full_name) BETWEEN 1 AND 120 AND btrim(full_name) <> ''),
   intake_completed_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  -- La fuente y el id externos van juntos o ninguno.
+  CHECK ((external_source IS NULL) = (external_id IS NULL)),
+  -- Lo necesita la FK compuesta de booking_appointments.
+  UNIQUE (account_id, id)
 );
 
+-- La FK busca por contact_id al borrar un contacto (no por account_id).
 CREATE INDEX IF NOT EXISTS idx_clinic_patients_contact
-  ON clinic_patients (account_id, contact_id);
+  ON clinic_patients (contact_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_clinic_patients_external
   ON clinic_patients (account_id, external_source, external_id)
@@ -228,10 +267,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_clinic_patients_external
 CREATE TABLE IF NOT EXISTS clinic_consents (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  -- La autorización sobrevive al contacto: al borrarlo queda en NULL y
+  -- contact_ref sigue diciendo quién autorizó.
+  contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  -- Teléfono (o wa_user_id si no hay teléfono) del titular al autorizar.
+  contact_ref text NOT NULL CHECK (char_length(contact_ref) BETWEEN 1 AND 64),
   kind text NOT NULL CHECK (kind IN ('datos_sensibles', 'mercadeo')),
   granted boolean NOT NULL,
   text_version integer NOT NULL CHECK (text_version >= 1),
+  -- El texto exacto que vio la persona: cambiar clinic_settings.consent_text
+  -- no puede borrar qué aceptó cada una.
+  text_snapshot text NOT NULL CHECK (char_length(text_snapshot) BETWEEN 1 AND 1000),
   source text NOT NULL CHECK (source IN ('whatsapp', 'recepcion')),
   message_id text,
   created_at timestamptz NOT NULL DEFAULT now()
@@ -240,12 +286,47 @@ CREATE TABLE IF NOT EXISTS clinic_consents (
 CREATE INDEX IF NOT EXISTS idx_clinic_consents_lookup
   ON clinic_consents (account_id, contact_id, kind, created_at DESC);
 
+-- La FK busca por contact_id al borrar un contacto. Parcial: contact_id es
+-- anulable y las filas huérfanas no se buscan por contacto.
+CREATE INDEX IF NOT EXISTS idx_clinic_consents_contact
+  ON clinic_consents (contact_id)
+  WHERE contact_id IS NOT NULL;
+
 -- ------------------------------------------------------------
 -- 5) y 6) Columnas de citas y servicios
 -- ------------------------------------------------------------
+-- Sin FK simple: la FK compuesta de abajo obliga a que el paciente y la
+-- sede sean de la misma cuenta que la cita.
 ALTER TABLE booking_appointments
-  ADD COLUMN IF NOT EXISTS patient_id uuid REFERENCES clinic_patients(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS location_id uuid REFERENCES clinic_locations(id) ON DELETE SET NULL;
+  ADD COLUMN IF NOT EXISTS patient_id uuid,
+  ADD COLUMN IF NOT EXISTS location_id uuid;
+
+-- MATCH SIMPLE (por defecto): con patient_id NULL no se comprueba nada.
+-- ON DELETE SET NULL (columna) solo pone en NULL esa columna y deja intacto
+-- account_id, que es NOT NULL. Pide Postgres 15 o más.
+ALTER TABLE booking_appointments
+  DROP CONSTRAINT IF EXISTS booking_appointments_patient_fk;
+ALTER TABLE booking_appointments
+  ADD CONSTRAINT booking_appointments_patient_fk
+  FOREIGN KEY (account_id, patient_id)
+  REFERENCES clinic_patients (account_id, id)
+  ON DELETE SET NULL (patient_id);
+
+ALTER TABLE booking_appointments
+  DROP CONSTRAINT IF EXISTS booking_appointments_location_fk;
+ALTER TABLE booking_appointments
+  ADD CONSTRAINT booking_appointments_location_fk
+  FOREIGN KEY (account_id, location_id)
+  REFERENCES clinic_locations (account_id, id)
+  ON DELETE SET NULL (location_id);
+
+CREATE INDEX IF NOT EXISTS idx_booking_appointments_patient
+  ON booking_appointments (patient_id)
+  WHERE patient_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_booking_appointments_location
+  ON booking_appointments (location_id)
+  WHERE location_id IS NOT NULL;
 
 ALTER TABLE booking_services
   ADD COLUMN IF NOT EXISTS prep_instructions text,
@@ -285,6 +366,48 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON clinic_patients
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- ------------------------------------------------------------
+-- clinic_consents: solo para agregar de verdad
+-- ------------------------------------------------------------
+-- Sin política UPDATE/DELETE el navegador ya no puede tocarla, pero el
+-- bot (service role, que se salta la RLS) sí podría. Este trigger rechaza
+-- cualquier UPDATE o DELETE directo, venga de quien venga.
+--
+-- Las acciones de FK pasan: borrar un contacto pone contact_id en NULL y
+-- borrar una cuenta borra sus filas. Postgres las ejecuta dentro de un
+-- trigger propio, así que aquí corren a profundidad 2 o más; una edición
+-- directa corre a profundidad 1.
+--
+-- SECURITY DEFINER + EXECUTE solo para service_role: mismo endurecimiento
+-- que log_booking_appointment_event (047, patrón de 044). Al disparar el
+-- trigger, Postgres no mira el permiso EXECUTE de quien escribe.
+CREATE OR REPLACE FUNCTION clinic_consents_append_only()
+RETURNS trigger AS $$
+BEGIN
+  IF pg_trigger_depth() > 1 THEN
+    IF TG_OP = 'DELETE' THEN
+      RETURN OLD;
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  RAISE EXCEPTION 'clinic_consents es de solo agregar: % no permitido', TG_OP
+    USING ERRCODE = 'insufficient_privilege';
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+ALTER FUNCTION public.clinic_consents_append_only() OWNER TO postgres;
+REVOKE ALL ON FUNCTION public.clinic_consents_append_only() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.clinic_consents_append_only() TO service_role;
+
+DROP TRIGGER IF EXISTS clinic_consents_append_only ON clinic_consents;
+CREATE TRIGGER clinic_consents_append_only
+  BEFORE UPDATE OR DELETE ON clinic_consents
+  FOR EACH ROW EXECUTE FUNCTION clinic_consents_append_only();
+
+-- TRUNCATE no dispara triggers de fila: se le quita a los roles de la API.
+REVOKE TRUNCATE ON clinic_consents FROM anon, authenticated, service_role;
+
+-- ------------------------------------------------------------
 -- RLS
 -- ------------------------------------------------------------
 ALTER TABLE clinic_settings ENABLE ROW LEVEL SECURITY;
@@ -292,16 +415,38 @@ ALTER TABLE clinic_locations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE clinic_patients ENABLE ROW LEVEL SECURITY;
 ALTER TABLE clinic_consents ENABLE ROW LEVEL SECURITY;
 
+-- El servicio de urgencias debe ser de la misma cuenta: la FK sola no lo
+-- comprueba (mismo criterio que 054 con orders.deal_id).
 DROP POLICY IF EXISTS clinic_settings_select ON clinic_settings;
 CREATE POLICY clinic_settings_select ON clinic_settings
   FOR SELECT USING (is_account_member(account_id));
 DROP POLICY IF EXISTS clinic_settings_insert ON clinic_settings;
 CREATE POLICY clinic_settings_insert ON clinic_settings
-  FOR INSERT WITH CHECK (is_account_member(account_id, 'admin'));
+  FOR INSERT WITH CHECK (
+    is_account_member(account_id, 'admin')
+    AND (
+      urgency_service_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM booking_services s
+        WHERE s.id = clinic_settings.urgency_service_id
+          AND s.account_id = clinic_settings.account_id
+      )
+    )
+  );
 DROP POLICY IF EXISTS clinic_settings_update ON clinic_settings;
 CREATE POLICY clinic_settings_update ON clinic_settings
   FOR UPDATE USING (is_account_member(account_id, 'admin'))
-  WITH CHECK (is_account_member(account_id, 'admin'));
+  WITH CHECK (
+    is_account_member(account_id, 'admin')
+    AND (
+      urgency_service_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM booking_services s
+        WHERE s.id = clinic_settings.urgency_service_id
+          AND s.account_id = clinic_settings.account_id
+      )
+    )
+  );
 DROP POLICY IF EXISTS clinic_settings_delete ON clinic_settings;
 CREATE POLICY clinic_settings_delete ON clinic_settings
   FOR DELETE USING (is_account_member(account_id, 'admin'));
@@ -320,16 +465,32 @@ DROP POLICY IF EXISTS clinic_locations_delete ON clinic_locations;
 CREATE POLICY clinic_locations_delete ON clinic_locations
   FOR DELETE USING (is_account_member(account_id, 'admin'));
 
+-- El contacto del paciente debe ser de la misma cuenta: la FK sola no lo
+-- comprueba.
 DROP POLICY IF EXISTS clinic_patients_select ON clinic_patients;
 CREATE POLICY clinic_patients_select ON clinic_patients
   FOR SELECT USING (is_account_member(account_id));
 DROP POLICY IF EXISTS clinic_patients_insert ON clinic_patients;
 CREATE POLICY clinic_patients_insert ON clinic_patients
-  FOR INSERT WITH CHECK (is_account_member(account_id, 'agent'));
+  FOR INSERT WITH CHECK (
+    is_account_member(account_id, 'agent')
+    AND EXISTS (
+      SELECT 1 FROM contacts c
+      WHERE c.id = clinic_patients.contact_id
+        AND c.account_id = clinic_patients.account_id
+    )
+  );
 DROP POLICY IF EXISTS clinic_patients_update ON clinic_patients;
 CREATE POLICY clinic_patients_update ON clinic_patients
   FOR UPDATE USING (is_account_member(account_id, 'agent'))
-  WITH CHECK (is_account_member(account_id, 'agent'));
+  WITH CHECK (
+    is_account_member(account_id, 'agent')
+    AND EXISTS (
+      SELECT 1 FROM contacts c
+      WHERE c.id = clinic_patients.contact_id
+        AND c.account_id = clinic_patients.account_id
+    )
+  );
 -- Sin política DELETE: un paciente con citas es un registro del negocio.
 
 DROP POLICY IF EXISTS clinic_consents_select ON clinic_consents;
@@ -391,6 +552,14 @@ Expected: PASS.
 git add supabase/migrations/055_clinica_base.sql supabase/ci/verify-schema.sql src/verticals/agenda/rls-policies.test.ts
 git commit -m "feat(clinica): add the base schema for clinics"
 ```
+
+**Ajustes de la revisión de calidad (antes de aplicar la 055).** El SQL de arriba ya es el definitivo. Frente al primer borrador:
+
+- Las autorizaciones sobreviven al contacto: `clinic_consents.contact_id` es anulable (`ON DELETE SET NULL`) y la fila guarda `contact_ref` (teléfono del titular, o `wa_user_id` si el contacto no tiene teléfono) y `text_snapshot` (el texto que aceptó). Las tareas 7 y 14 escriben ambos campos.
+- Un contacto con paciente no se puede borrar: `clinic_patients.contact_id` no tiene cascada (`NO ACTION`, error `23503`). La pantalla de Contactos lo avisa.
+- Nada cruza cuentas: `UNIQUE (account_id, id)` en pacientes y sedes, FK compuestas en las citas (piden **Postgres 15 o más**) y políticas de escritura que comprueban el contacto del paciente y el servicio de urgencias.
+- `clinic_consents` es de solo agregar de verdad: trigger `BEFORE UPDATE OR DELETE` (deja pasar las acciones de FK) y `TRUNCATE` revocado.
+- La prueba de políticas y `verify-schema.sql` quedaron más estrictos que los pasos 1 y 4: los archivos del repositorio son la versión vigente.
 
 ---
 
@@ -1956,9 +2125,11 @@ export const grantedConsent = (): Row => ({
   id: 'cons-1',
   account_id: ACCOUNT,
   contact_id: CONTACT,
+  contact_ref: '573001112233',
   kind: 'datos_sensibles',
   granted: true,
   text_version: 2,
+  text_snapshot: 'Texto de autorización',
   source: 'whatsapp',
   created_at: '2026-10-01T00:00:00.000Z',
 })
@@ -2080,9 +2251,11 @@ describe('autorización de datos', () => {
       {
         account_id: ACCOUNT,
         contact_id: CONTACT,
+        contact_ref: '573001112233',
         kind: 'datos_sensibles',
         granted: true,
         text_version: 2,
+        text_snapshot: 'Texto de autorización',
         source: 'whatsapp',
       },
     ])
@@ -2093,6 +2266,24 @@ describe('autorización de datos', () => {
       'act:urgent',
       'act:human',
     ])
+  })
+
+  it('sin teléfono, la autorización guarda el identificador de WhatsApp del titular', async () => {
+    const db = clinicDb({
+      contacts: [
+        {
+          id: CONTACT,
+          account_id: ACCOUNT,
+          name: 'Marta Ruiz',
+          phone: '',
+          wa_user_id: 'US.13491208655302741918',
+        },
+      ],
+    })
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { replyId: 'act:consent_yes' })
+    expect(db._tables.clinic_consents[0].contact_ref).toBe('US.13491208655302741918')
   })
 
   it('no aceptar registra la negativa y deja el hilo con una persona', async () => {
@@ -2151,7 +2342,10 @@ Crea `src/modules/clinica/consent.ts`:
 ```ts
 // ============================================================
 // Autorizaciones de datos. Registro de solo agregar: la decisión vigente
-// es la más reciente de cada tipo, y nada se edita ni se borra.
+// es la más reciente de cada tipo, y nada se edita ni se borra (la base lo
+// hace cumplir con un trigger). Cada fila guarda quién autorizó (contact_ref)
+// y el texto exacto que vio (text_snapshot), porque el contacto puede
+// borrarse y el texto de la clínica puede cambiar.
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -2179,6 +2373,29 @@ export async function latestConsent(
   return row ? { granted: row.granted } : null
 }
 
+/**
+ * Teléfono del contacto, o su identificador de WhatsApp si no tiene teléfono
+ * (un contacto que solo escribe con nombre de usuario guarda `phone` vacío).
+ * Es lo que queda en la autorización si el contacto se borra después.
+ */
+async function contactRef(
+  db: SupabaseClient,
+  accountId: string,
+  contactId: string,
+): Promise<string> {
+  const { data, error } = await db
+    .from('contacts')
+    .select('phone, wa_user_id')
+    .eq('id', contactId)
+    .eq('account_id', accountId)
+    .maybeSingle()
+  if (error) throw new Error(`No se pudo leer el contacto: ${error.message}`)
+  const row = data as { phone: string | null; wa_user_id: string | null } | null
+  const ref = row?.phone?.trim() || row?.wa_user_id?.trim() || ''
+  if (!ref) throw new Error('El contacto no tiene teléfono ni identificador de WhatsApp')
+  return ref
+}
+
 /** Lanza si no se pudo guardar: sin registro no hay autorización. */
 export async function recordConsent(
   db: SupabaseClient,
@@ -2188,6 +2405,8 @@ export async function recordConsent(
     kind: ConsentKind
     granted: boolean
     textVersion: number
+    /** El texto exacto que vio la persona al responder. */
+    textSnapshot: string
     source: 'whatsapp' | 'recepcion'
     messageId?: string | null
     createdAtIso: string
@@ -2197,9 +2416,11 @@ export async function recordConsent(
     id: crypto.randomUUID(),
     account_id: args.accountId,
     contact_id: args.contactId,
+    contact_ref: await contactRef(db, args.accountId, args.contactId),
     kind: args.kind,
     granted: args.granted,
     text_version: args.textVersion,
+    text_snapshot: args.textSnapshot,
     source: args.source,
     message_id: args.messageId ?? null,
     created_at: args.createdAtIso,
@@ -2378,6 +2599,7 @@ export async function handleClinicChoice(
           kind: 'datos_sensibles',
           granted,
           textVersion: ctx.clinic.consentVersion,
+          textSnapshot: ctx.clinic.consentText,
           source: 'whatsapp',
           messageId: ctx.inboundMessageId,
           createdAtIso: ctx.nowIso,
@@ -4746,7 +4968,12 @@ describe('permiso para avisos de control', () => {
     expect(last(rec).ids).toEqual(['act:mkt_yes', 'act:mkt_no'])
 
     await send(db, rec, { replyId: 'act:mkt_yes' })
-    expect(db._tables.clinic_consents.at(-1)).toMatchObject({ kind: 'mercadeo', granted: true })
+    expect(db._tables.clinic_consents.at(-1)).toMatchObject({
+      kind: 'mercadeo',
+      granted: true,
+      contact_ref: '573001112233',
+      text_snapshot: '¿Quieres que te avisemos cuando te toque tu próximo control o limpieza?',
+    })
     expect(last(rec).bodyText).toContain('te avisaremos')
   })
 
@@ -4818,6 +5045,7 @@ En `handleClinicChoice`, antes de `default`:
           kind: 'mercadeo',
           granted,
           textVersion: ctx.clinic.consentVersion,
+          textSnapshot: texts.marketingBody,
           source: 'whatsapp',
           messageId: ctx.inboundMessageId,
           createdAtIso: ctx.nowIso,
