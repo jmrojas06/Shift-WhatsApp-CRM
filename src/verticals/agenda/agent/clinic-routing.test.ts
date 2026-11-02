@@ -45,10 +45,12 @@ async function withFaqOpen() {
   return { db, rec, sent: rec.calls.length }
 }
 
-const activeSteps = (db: ReturnType<typeof clinicDb>) =>
+const activeStates = (db: ReturnType<typeof clinicDb>) =>
   db._tables.booking_sessions
     .filter((s) => s.status === 'active')
-    .map((s) => (s.state as { step: string }).step)
+    .map((s) => s.state as { step: string; fails: number })
+
+const activeSteps = (db: ReturnType<typeof clinicDb>) => activeStates(db).map((s) => s.step)
 
 /**
  * "Agendar" salió del menú principal y siguió la reserva, sin "No entendí". Qué
@@ -374,21 +376,54 @@ describe('esperando la duda ("Precios y dudas")', () => {
     expect(activeSteps(db)).toEqual(['faq_open'])
   })
 
-  it('el siguiente texto se suelta a la IA, aunque diga "cita" o "pago"', async () => {
-    for (const text of [
-      'cuánto vale la cita de valoración',
-      'quiero saber cuánto vale',
-      'quiero pagar',
-      'tengo una queja',
-      'hola',
-    ]) {
-      const { db, rec, sent } = await withFaqOpen()
+  it.each([
+    'cuánto vale la cita de valoración',
+    'quiero saber cuánto vale',
+    '¿Cuánto cuesta el certificado?',
+    '¿Puedo pagar con tarjeta?',
+    'no tengo ninguna queja',
+    'gracias por la factura',
+    'me duele una muela y no sé qué hacer',
+  ])('el siguiente texto, si es la duda, se suelta a la IA: %j', async (text) => {
+    const { db, rec, sent } = await withFaqOpen()
+    const result = await send(db, rec, { text })
+    expect(result).toEqual({ consumed: false, released: true })
+    expect(rec.calls).toHaveLength(sent)
+    expect(activeSteps(db)).toEqual([])
+    expect(db._tables.booking_sessions[0].status).toBe('completed')
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+  })
+
+  it.each(['quiero pagar', 'tengo una queja', 'Necesito mi factura', 'Hola, quiero pagar mi factura'])(
+    'una queja, un pago o un documento pasa a una persona, como con el menú abierto: %j',
+    async (text) => {
+      const { db, rec } = await withFaqOpen()
       const result = await send(db, rec, { text })
-      expect(result).toEqual({ consumed: false, released: true })
-      expect(rec.calls).toHaveLength(sent)
-      expect(activeSteps(db)).toEqual([])
-      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
-    }
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.humanTopicNote)
+      expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
+      expect(db._tables.booking_sessions[0].status).toBe('cancelled')
+    },
+  )
+
+  it('un saludo vuelve al menú, sin contarlo como fallo ni soltarlo a la IA', async () => {
+    const { db, rec, sent } = await withFaqOpen()
+    const result = await send(db, rec, { text: 'hola' })
+    expect(result).toEqual({ consumed: true })
+    expect(rec.calls).toHaveLength(sent + 1)
+    expect(last(rec).bodyText).toBe(texts.menuBody)
+    expect(last(rec).ids).toEqual(MENU_IDS)
+    expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(false)
+    expect(activeStates(db)).toMatchObject([{ step: 'clinic_menu', fails: 0 }])
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+  })
+
+  it('un pase a una persona no consulta a la IA', async () => {
+    let asked = 0
+    const { db, rec } = await withFaqOpen()
+    await send(db, rec, { text: 'quiero pagar' }, { aiOn: async () => (asked += 1) > 0 })
+    expect(asked).toBe(0)
   })
 
   it('pedir una cita elige "Agendar"', async () => {

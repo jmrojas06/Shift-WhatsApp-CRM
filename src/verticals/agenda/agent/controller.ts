@@ -452,10 +452,11 @@ async function warnHumanOfUrgency(
  * texto es la respuesta a ese paso y lo lee el paso.
  *
  *   sin sesión   book, greeting → menú · human → una persona · ai → la IA
- *   clinic_menu  book → "Agendar" · human → una persona · greeting → el menú
- *                otra vez, sin contar fallo · ai → la IA
- *   faq_open     book → "Agendar" · lo demás → la IA (aunque traiga una palabra
- *                de queja, pago o documento: es la duda que se le pidió)
+ *   clinic_menu  el mismo orden en los dos: book → "Agendar" · human → una
+ *   faq_open     persona · greeting → el menú, sin contar fallo · ai → la IA.
+ *                Una duda con palabra de pago ("¿cuánto cuesta el certificado?")
+ *                es una pregunta y va a la IA; un pedido ("quiero pagar") a una
+ *                persona, también con la duda abierta
  *
  * Soltar a la IA cierra la sesión y lo avisa con `released`: el despachador
  * reclama todo lo que llega con una sesión abierta.
@@ -521,12 +522,14 @@ async function handleClinicInbound(
         await handleChoice(dialog, session.id, newBookingState('clinic_menu'), actId('book'))
         return { consumed: true }
       }
-      if (step === 'clinic_menu' && route === 'human') {
+      if (route === 'human') {
         await performHandoff(dialog, session.id, { note: dialog.clinicTexts.humanTopicNote })
         return { consumed: true }
       }
-      if (step === 'clinic_menu' && route === 'greeting') {
-        await conclude(dialog, session.id, state)
+      if (route === 'greeting') {
+        // Un saludo vuelve al menú, sin contar fallo: desde la duda abierta, al
+        // menú de verdad, no a invitar a preguntar otra vez.
+        await conclude(dialog, session.id, step === 'faq_open' ? newBookingState('clinic_menu') : state)
         return { consumed: true }
       }
       if (route !== null) return releaseToAi(dialog, session.id)
