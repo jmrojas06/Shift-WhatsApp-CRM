@@ -74,6 +74,13 @@ export interface BookingState {
   patientId?: string
   /** Página del menú de días, cuando hay más de los que caben en una lista. */
   dayPage?: number
+  /**
+   * Texto y versión de la autorización tal como se le mostraron a la persona.
+   * Se guardan al responder: la clínica puede editar su texto mientras tanto, y
+   * el registro tiene que decir lo que la persona vio, no lo que hay ahora.
+   */
+  consentText?: string
+  consentVersion?: number
   /** Qué sigue al aceptar la autorización; por defecto, el menú. */
   afterConsent?: 'urgency_book'
   /** Reserva abierta desde el flujo de urgencia: salta al menú de horas. */

@@ -26,6 +26,13 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import type { ModuleKey, VerticalDispatchResult, VerticalSession } from '@/lib/verticals/types'
 import { notifyAlert } from '@/lib/ops/alert'
+import { latestConsent } from '@/modules/clinica/consent'
+import { loadClinicContext, type ClinicContext } from '@/modules/clinica/settings'
+import {
+  buildClinicTexts,
+  DEFAULT_URGENCY_WORDS,
+  type ClinicTexts,
+} from '@/modules/clinica/texts'
 
 import type { AgendaAppointmentSummary } from '../texts'
 import { mergeBotTexts, type AgendaAgentTextsMerged } from '../bot-texts'
@@ -74,6 +81,7 @@ import {
   ansSkipId,
   containsHandoffWord,
   containsIntentWord,
+  containsUrgencyWord,
   dayId,
   isHandoffOnly,
   isSkipAnswer,
@@ -92,6 +100,15 @@ import {
   type ReminderAction,
   type ReminderTap,
 } from './state'
+import {
+  handleClinicChoice,
+  isClinicStep,
+  looksLikeQuestion,
+  renderClinicStep,
+  type ClinicHandoff,
+  type ClinicOutcome,
+  type ClinicStepCtx,
+} from './steps/clinic-steps'
 import { addDaysToKey, zonedDateKey, zonedParts } from './time'
 
 /** La sesión muere a los 15 minutos sin actividad. */
@@ -192,9 +209,11 @@ export async function handleAgendaInbound(
     return { consumed: false }
   }
 
-  const [settings, account] = await Promise.all([
+  const clinicActive = args.modules?.includes('clinica') === true
+  const [settings, account, clinicResult] = await Promise.all([
     loadBotSettings(args.db, args.accountId),
     loadAccount(args.db, args.accountId),
+    clinicActive ? loadClinicContext(args.db, args.accountId) : Promise.resolve(null),
   ])
   const dialog: Dialog = {
     db: args.db,
@@ -209,6 +228,13 @@ export async function handleAgendaInbound(
     settings,
     texts: mergeBotTexts(settings.botTexts, settings.labels),
     backend: args.backend ?? createInternalBackend({ db: args.db, accountId: args.accountId }),
+    clinic: clinicResult?.status === 'ok' ? clinicResult.clinic : null,
+    // Con el módulo activo, una configuración que falta o no se pudo leer NO
+    // equivale a una cuenta sin clínica: ver el cierre de más abajo.
+    clinicUnavailable: clinicResult !== null && clinicResult.status !== 'ok',
+    clinicTexts: buildClinicTexts(settings.labels),
+    inboundMessageId: args.inboundMessageId ?? null,
+    humanOwned,
   }
 
   // 0) Tap de un recordatorio (Confirmar / Reprogramar / Cancelar).
@@ -227,6 +253,17 @@ export async function handleAgendaInbound(
   // cancelación que abrió el recordatorio (filtrado arriba).
   if (humanOwned && args.session) {
     await advanceSession(dialog, args.session, { text, replyId })
+    return { consumed: true }
+  }
+
+  // Clínica sin configuración usable (falta o no se pudo leer): no se sabe qué
+  // autorización pedir ni qué urgencias vigilar, y seguir como una agenda
+  // normal dejaría la conversación de un paciente a la IA sin su permiso. El
+  // bot consume el mensaje y lo deja con una persona. Los toques de
+  // recordatorio ya se atendieron arriba, y un hilo que ya es de una persona
+  // no llega hasta aquí.
+  if (dialog.clinicUnavailable) {
+    await handoffClinicUnavailable(dialog, args.session?.id ?? null, text)
     return { consumed: true }
   }
 
@@ -257,6 +294,22 @@ export async function handleAgendaInbound(
     dialog.nowIso,
   )
 
+  // Clínica: sin autorización no se sigue, y la IA no ve la conversación.
+  // Si la autorización no se pudo leer, se vuelve a pedir.
+  if (dialog.clinic) {
+    const consent = await latestConsent(args.db, {
+      accountId: args.accountId,
+      contactId: args.contactId,
+      kind: 'datos_sensibles',
+    })
+    if (!consent?.granted) {
+      const state = newBookingState('consent')
+      const sessionId = await openSession(dialog, state)
+      await conclude(dialog, sessionId, state)
+      return { consumed: true }
+    }
+  }
+
   // Un tap de un menú viejo no arranca nada (y no se consume).
   if (replyId !== null) return { consumed: false }
 
@@ -265,6 +318,15 @@ export async function handleAgendaInbound(
   const { labels } = dialog.settings
   if (!containsIntentWord(text, [labels.cita, labels.citas, labels.servicio, labels.servicios])) {
     return { consumed: false }
+  }
+
+  // Clínica: una duda va a la IA; lo demás abre el menú principal.
+  if (dialog.clinic) {
+    if (looksLikeQuestion(text)) return { consumed: false }
+    const state = newBookingState('clinic_menu')
+    const sessionId = await openSession(dialog, state)
+    await conclude(dialog, sessionId, state)
+    return { consumed: true }
   }
 
   const existing = await findNextAppointment(
@@ -442,6 +504,18 @@ interface Dialog {
    * de Configuración ya aplicados (Fase 4).
    */
   texts: AgendaAgentTextsMerged
+  /** Configuración de la clínica; null en cuentas sin el módulo o si no está disponible. */
+  clinic: ClinicContext | null
+  /**
+   * La cuenta tiene el módulo clínica pero su configuración falta o no se pudo
+   * leer. Nunca se atiende como una agenda normal: pasa a una persona.
+   */
+  clinicUnavailable: boolean
+  /** Copy del bot clínico. No depende de la configuración, así que siempre existe. */
+  clinicTexts: ClinicTexts
+  /** Id de Meta del mensaje que se está atendiendo; queda en la autorización. */
+  inboundMessageId: string | null
+  humanOwned: boolean
   /**
    * Preguntas extra, leídas una sola vez por mensaje del cliente y compartidas
    * por todos los pasos (null = no se pudieron leer).
@@ -489,6 +563,8 @@ function coerceState(raw: Record<string, unknown>): BookingState {
       : {}),
     ...(typeof raw.patientId === 'string' ? { patientId: raw.patientId } : {}),
     ...(typeof raw.dayPage === 'number' ? { dayPage: raw.dayPage } : {}),
+    ...(typeof raw.consentText === 'string' ? { consentText: raw.consentText } : {}),
+    ...(typeof raw.consentVersion === 'number' ? { consentVersion: raw.consentVersion } : {}),
     ...(raw.afterConsent === 'urgency_book' ? { afterConsent: 'urgency_book' as const } : {}),
     ...(raw.urgent === true ? { urgent: true } : {}),
     ...(typeof raw.reminderAction === 'string'
@@ -729,6 +805,21 @@ async function handleChoice(
   choice: string,
 ): Promise<void> {
   const parsed = parseOptionId(choice)
+
+  if (isClinicStep(state.step)) {
+    if (!dialog.clinic) {
+      await closeSession(dialog.db, {
+        id: sessionId,
+        accountId: dialog.accountId,
+        status: 'completed',
+        updatedAtIso: dialog.nowIso,
+      })
+      return
+    }
+    const outcome = await handleClinicChoice(clinicCtx(dialog), state, parsed)
+    await applyClinicOutcome(dialog, sessionId, state, outcome)
+    return
+  }
 
   // Pieza "reprogramar/cancelar" apagada: un menú, una confirmación o
   // una reprogramación abiertos antes de apagarla no son un atajo.
@@ -1539,7 +1630,8 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
     case 'new_patient_name':
     case 'pick_appointment':
     case 'marketing_consent':
-      return { state, closed: true }
+      if (!dialog.clinic) return { state, closed: true }
+      return renderClinicStep(clinicCtx(dialog), state)
   }
 }
 
@@ -1845,11 +1937,12 @@ async function sendButtons(
 async function performHandoff(
   dialog: Dialog,
   sessionId: string | null,
+  opts: Omit<ClinicHandoff, 'kind'> = {},
 ): Promise<void> {
   await markConversationHandoff(dialog.db, {
     accountId: dialog.accountId,
     conversationId: dialog.conversationId,
-    note: dialog.texts.handoffNote,
+    note: opts.note ?? dialog.texts.handoffNote,
     agentId: await loadHandoffAgentId(dialog.db, dialog.accountId),
   })
 
@@ -1879,8 +1972,8 @@ async function performHandoff(
         userId: owner,
         conversationId: dialog.conversationId,
         contactId: dialog.contactId,
-        title: dialog.texts.handoffNotificationTitle,
-        body: dialog.texts.handoffNotificationBody(who),
+        title: opts.notification?.title ?? dialog.texts.handoffNotificationTitle,
+        body: (opts.notification?.body ?? dialog.texts.handoffNotificationBody)(who),
       }),
     )
   }
@@ -1894,7 +1987,34 @@ async function performHandoff(
     })
   }
 
-  await dialog.sender.sendText({ text: dialog.texts.handoff })
+  await dialog.sender.sendText({ text: opts.message ?? dialog.texts.handoff })
+}
+
+/**
+ * Clínica sin configuración usable: el hilo queda con una persona. Si el
+ * mensaje parece una urgencia (con las palabras de siempre, porque las de la
+ * clínica no se pudieron leer), el aviso al equipo es el prioritario.
+ */
+async function handoffClinicUnavailable(
+  dialog: Dialog,
+  sessionId: string | null,
+  text: string,
+): Promise<void> {
+  const { clinicTexts: texts } = dialog
+  const urgent = containsUrgencyWord(text, DEFAULT_URGENCY_WORDS)
+  await performHandoff(
+    dialog,
+    sessionId,
+    urgent
+      ? {
+          note: texts.clinicUnavailableUrgentNote,
+          notification: {
+            title: texts.urgencyNotificationTitle,
+            body: texts.urgencyNotificationBody,
+          },
+        }
+      : { note: texts.clinicUnavailableNote },
+  )
 }
 
 /**
@@ -2137,5 +2257,56 @@ async function bestEffort(label: string, fn: () => Promise<unknown>) {
     await fn()
   } catch (err) {
     console.error(`[agenda] ${label} falló:`, err)
+  }
+}
+
+// ------------------------------------------------------------
+// Pasos clínicos
+// ------------------------------------------------------------
+
+function clinicCtx(dialog: Dialog): ClinicStepCtx {
+  return {
+    db: dialog.db,
+    sender: dialog.sender,
+    backend: dialog.backend,
+    clinic: dialog.clinic!,
+    texts: dialog.clinicTexts,
+    accountId: dialog.accountId,
+    contactId: dialog.contactId,
+    conversationId: dialog.conversationId,
+    now: dialog.now,
+    nowIso: dialog.nowIso,
+    inboundMessageId: dialog.inboundMessageId,
+    sendOptions: (args) => sendOptions(dialog, args),
+  }
+}
+
+async function applyClinicOutcome(
+  dialog: Dialog,
+  sessionId: string,
+  state: BookingState,
+  outcome: ClinicOutcome,
+): Promise<void> {
+  switch (outcome.kind) {
+    case 'next':
+      await conclude(dialog, sessionId, outcome.state)
+      return
+    case 'handoff':
+      await performHandoff(dialog, sessionId, outcome)
+      return
+    case 'done':
+      await closeSession(dialog.db, {
+        id: sessionId,
+        accountId: dialog.accountId,
+        status: 'completed',
+        updatedAtIso: dialog.nowIso,
+      })
+      return
+    case 'fail':
+      await registerFail(dialog, sessionId, state, outcome.message)
+      return
+    case 'reminder':
+      await registerFail(dialog, sessionId, state)
+      return
   }
 }

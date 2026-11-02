@@ -68,6 +68,12 @@ export function buildClinicTexts(l: AgendaLabels) {
     consentDeclinedNote: 'Paciente: no aceptó la autorización de datos (bot en pausa).',
     consentError: 'No pude guardar tu respuesta en este momento 😅. Intenta de nuevo, por favor.',
 
+    /** La configuración de la clínica falta o no se pudo leer: el bot no atiende y pasa a una persona. */
+    clinicUnavailableNote:
+      'Paciente: el bot no lo atendió porque la configuración de la clínica no está disponible (bot en pausa). Revisa la configuración de la clínica.',
+    clinicUnavailableUrgentNote:
+      'Paciente: escribió una posible urgencia y la configuración de la clínica no está disponible (bot en pausa). Comunícate con esa persona ya.',
+
     menuBody: '¡Hola! 👋 Soy el asistente de la clínica. ¿En qué te ayudo?',
     menuButton: 'Ver opciones',
     menuBook: `Agendar ${l.cita}`,
