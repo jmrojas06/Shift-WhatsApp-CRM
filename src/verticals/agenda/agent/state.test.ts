@@ -560,6 +560,12 @@ describe('signos de alarma escritos', () => {
     'no señora',
     'nada de eso',
     'no, nada de eso',
+    'no doctora',
+    'No, doctor',
+    'no señorita',
+    'no senorita',
+    'creo que no',
+    'no tengo ninguno de esos signos',
   ])('solo el mensaje completo de la lista dice que no hay signos: %j', (text) => {
     expect(choice(text)).toBe('act:alarm_no')
   })
@@ -582,6 +588,8 @@ describe('signos de alarma escritos', () => {
     'me cuesta tragar',
     'me dieron un golpe fuerte en la cara',
     'siento que me ahogo',
+    'me falta el aire',
+    'tengo calentura desde ayer',
   ])('un signo dicho con palabras va a una persona: %j', (text) => {
     expect(choice(text)).toBe('act:alarm_yes')
   })
@@ -591,6 +599,14 @@ describe('signos de alarma escritos', () => {
     'no puedo tragar',
     'no para de sangrar',
     'la fiebre no baja',
+    'no me llega el aire',
+    'no tengo fiebre pero no puedo respirar',
+  ])('una negación dentro de una frase CON un signo va a una persona: %j', (text) => {
+    expect(choice(text)).toBe('act:alarm_yes')
+  })
+
+  it.each([
+    'no, solo me duele',
     'no sé',
     'no se',
     'no estoy seguro',
@@ -598,8 +614,10 @@ describe('signos de alarma escritos', () => {
     'no siento nada',
     '¿no?',
     '¿no tengo ninguno?',
-  ])('una negación dentro de una frase va a una persona: %j', (text) => {
-    expect(choice(text)).toBe('act:alarm_yes')
+    'no, pero me duele mucho',
+  ])('una negación dentro de una frase SIN un signo no descarta nada: %j', (text) => {
+    // Ni dice "ve a urgencias" a ciegas ni agenda: se avisa a la clínica con los signos.
+    expect(choice(text)).toBe('act:alarm_unsure')
   })
 
   it.each([

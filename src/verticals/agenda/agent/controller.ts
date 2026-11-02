@@ -120,6 +120,7 @@ import {
   renderClinicStep,
   routeClinicText,
   urgencyConsentUnansweredHandoff,
+  urgencyGoErHandoff,
   urgencyUnconfirmedHandoff,
   type ClinicHandoff,
   type ClinicOutcome,
@@ -139,6 +140,12 @@ const MAX_LIST_OPTIONS = 10
 const BUTTON_TITLE_MAX = 20
 const LIST_TITLE_MAX = 24
 const LIST_DESC_MAX = 72
+
+/**
+ * Quien contesta los signos de alarma puede tardar: está con dolor, o buscando
+ * cómo llegar a urgencias. Esa sesión dura 2 horas, no 15 minutos.
+ */
+export const URGENCY_SESSION_TTL_MS = 2 * 60 * 60_000
 
 /** Días por página: una fila de la lista queda para "Ver más días". */
 const DAY_PAGE_SIZE = MAX_LIST_OPTIONS - 1
@@ -307,6 +314,13 @@ export async function handleAgendaInbound(
 
   const asking = args.session ? coerceState(args.session.state) : null
 
+  // Un "Sí, tengo alguno" de unos signos que ya no están en pantalla vale igual: sin
+  // sesión, sin autorización y en cualquier paso. (En los signos lo lee el paso.)
+  if (dialog.clinic && replyId === actId('alarm_yes') && asking?.step !== 'urgency') {
+    await performHandoff(dialog, args.session?.id ?? null, urgencyGoErHandoff(dialog.clinicTexts))
+    return { consumed: true }
+  }
+
   // Clínica: la urgencia gana sobre todo lo demás, también sobre la autorización,
   // sobre una reserva abierta (la reemplaza) y sobre pedir una persona. Se mira
   // antes de que ningún otro paso lea el mensaje.
@@ -399,10 +413,21 @@ function opensUrgency(
   input: { text: string; replyId: string | null },
   current: BookingState | null,
 ): boolean {
-  if (input.replyId !== null) return input.replyId === actId('urgent')
+  if (input.replyId !== null) {
+    // Un "No, ninguno" de unos signos que ya no están no descarta nada: se vuelve a preguntar.
+    if (input.replyId === actId('alarm_no')) return current?.step !== 'urgency'
+    return input.replyId === actId('urgent')
+  }
   if (isNonTextInbound(input.text)) return false
   return current?.step !== 'urgency' && detectsUrgency(input.text, clinic.urgencyWords)
 }
+
+/**
+ * Los toques que dicen que hay una urgencia, para el hilo de una persona y para
+ * la clínica sin configuración (donde el bot no puede atenderlos): "Tengo una
+ * urgencia" y "Sí, tengo alguno" de los signos de alarma.
+ */
+const URGENT_TAPS: readonly string[] = [actId('urgent'), actId('alarm_yes')]
 
 /** Los signos de alarma de la clínica; sin su configuración, los de siempre. */
 function urgencyAlarmText(dialog: Dialog): string {
@@ -420,8 +445,9 @@ async function warnHumanOfUrgency(
   input: { text: string; replyId: string | null },
 ): Promise<void> {
   const { text, replyId } = input
-  // Un toque que no es el de urgencias, o un mensaje sin texto, no abre nada.
-  if (replyId !== null ? replyId !== actId('urgent') : isNonTextInbound(text)) return
+  // Un toque que no es de urgencias ("Tengo una urgencia", "Sí, tengo alguno"), o un
+  // mensaje sin texto, no avisa nada.
+  if (replyId !== null ? !URGENT_TAPS.includes(replyId) : isNonTextInbound(text)) return
 
   await bestEffort('aviso de urgencia a la persona del hilo', async () => {
     if (replyId === null) {
@@ -682,7 +708,7 @@ async function openSession(dialog: Dialog, state: BookingState): Promise<string>
     accountId: dialog.accountId,
     contactId: dialog.contactId,
     state: toJson(state),
-    expiresAtIso: expiryIso(dialog),
+    expiresAtIso: expiryIso(dialog, state),
   })
   return sessionId
 }
@@ -854,8 +880,9 @@ function rescheduleStaffId(dialog: Dialog, appt: AppointmentInfo): string {
   return dialog.settings.toggles.chooseStaff ? (appt.staffId ?? 'any') : 'any'
 }
 
-function expiryIso(dialog: Dialog): string {
-  return new Date(dialog.now.getTime() + SESSION_TTL_MS).toISOString()
+function expiryIso(dialog: Dialog, state?: BookingState): string {
+  const ttl = state?.step === 'urgency' ? URGENCY_SESSION_TTL_MS : SESSION_TTL_MS
+  return new Date(dialog.now.getTime() + ttl).toISOString()
 }
 
 /** JSON plano para `state` (jsonb en producción, objeto en tests). */
@@ -2059,7 +2086,7 @@ async function conclude(
     accountId: dialog.accountId,
     state: toJson(effective),
     updatedAtIso: dialog.nowIso,
-    expiresAtIso: expiryIso(dialog),
+    expiresAtIso: expiryIso(dialog, effective),
   })
 }
 
@@ -2414,7 +2441,8 @@ async function handoffClinicUnavailable(
 ): Promise<void> {
   const { clinicTexts: texts } = dialog
   const urgent =
-    input.replyId === actId('urgent') || detectsUrgency(input.text, DEFAULT_URGENCY_WORDS)
+    (input.replyId !== null && URGENT_TAPS.includes(input.replyId)) ||
+    detectsUrgency(input.text, DEFAULT_URGENCY_WORDS)
   await performHandoff(
     dialog,
     sessionId,

@@ -450,6 +450,11 @@ const ALARM_NO_WHOLE: readonly string[] = [
   'no senora',
   'nada de eso',
   'no nada de eso',
+  'no doctora',
+  'no doctor',
+  'no senorita',
+  'creo que no',
+  'no tengo ninguno de esos signos',
 ]
 
 /**
@@ -460,10 +465,17 @@ const ALARM_NO_WHOLE: readonly string[] = [
 const PLAIN_TEXT = /^[\p{L}\p{N}\s.,;:!¡]+$/u
 
 /** Un signo de alarma dicho con palabras (texto ya normalizado). */
-const ALARM_SIGNS = /\b(si|respir\w*|trag\w*|sangr\w*|hinch\w*|inflam\w*|fiebre|golpe\w*|ahog\w*)\b/
+const ALARM_SIGNS =
+  /\b(si|respir\w*|trag\w*|sangr\w*|hinch\w*|inflam\w*|fiebre|calentura|golpe\w*|ahog\w*|aire)\b/
 
 /** Mensajes completos que dicen que sí hay signos de alarma. */
 const ALARM_YES_WHOLE: readonly string[] = ['si', 'si tengo', 'si tengo alguno', 'tengo alguno']
+
+/**
+ * Una respuesta a los signos que no es ni "sí" ni "no": una negación sin ningún
+ * signo. No es una opción del menú; `handleClinicChoice` la lee.
+ */
+export const ALARM_UNSURE = 'act:alarm_unsure'
 
 /** Negaciones en texto ya normalizado: "noo", "nop", "para nada", "nunca"… */
 const NEGATION = /\b(no+|nop|nope|ni|nunca|jamas|tampoco|nada)\b/
@@ -490,11 +502,12 @@ function matchDecision(
     if (offered.has('act:alarm_no') && PLAIN_TEXT.test(text) && ALARM_NO_WHOLE.includes(squashed)) {
       return 'act:alarm_no'
     }
-    if (
-      offered.has('act:alarm_yes') &&
-      (ALARM_YES_WHOLE.includes(squashed) || NEGATION.test(squashed) || ALARM_SIGNS.test(squashed))
-    ) {
-      return 'act:alarm_yes'
+    if (offered.has('act:alarm_yes')) {
+      // Un signo, dicho con palabras o dentro de una negación ("no puedo respirar"), va a urgencias.
+      if (ALARM_YES_WHOLE.includes(squashed) || ALARM_SIGNS.test(squashed)) return 'act:alarm_yes'
+      // Una negación en una frase sin ningún signo ("no, solo me duele") no descarta
+      // nada y tampoco dice "ve a urgencias" a ciegas: se avisa a la clínica.
+      if (NEGATION.test(squashed)) return ALARM_UNSURE
     }
     return null
   }

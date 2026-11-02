@@ -310,6 +310,16 @@ export function urgencyUnconfirmedHandoff(texts: ClinicTexts, alarmText: string)
   }
 }
 
+/** "Sí, tengo alguno": a urgencias, y el equipo recibe el aviso prioritario. */
+export function urgencyGoErHandoff(texts: ClinicTexts): ClinicHandoff {
+  return {
+    kind: 'handoff',
+    message: texts.urgencyGoEr,
+    note: texts.urgencyNote,
+    notification: urgencyNotice(texts),
+  }
+}
+
 /**
  * Sin signos de alarma: la primera hora de hoy de la atención de urgencia.
  * Sin cupo hoy (fuera de horario o agenda llena) pasa a una persona. Si no se
@@ -522,13 +532,10 @@ export async function handleClinicChoice(
 
     case 'urgency': {
       if (parsed?.kind !== 'act') return { kind: 'fail' }
-      if (parsed.value === 'alarm_yes') {
-        return {
-          kind: 'handoff',
-          message: texts.urgencyGoEr,
-          note: texts.urgencyNote,
-          notification: urgencyNotice(texts),
-        }
+      if (parsed.value === 'alarm_yes') return urgencyGoErHandoff(texts)
+      // Una negación sin ningún signo ("no, solo me duele"): ni "ve a urgencias" ni agendar.
+      if (parsed.value === 'alarm_unsure') {
+        return urgencyUnconfirmedHandoff(texts, ctx.clinic.urgencyAlarmText)
       }
       if (parsed.value !== 'alarm_no') return { kind: 'fail' }
       // La urgencia no espera la autorización para mostrar los signos de alarma,

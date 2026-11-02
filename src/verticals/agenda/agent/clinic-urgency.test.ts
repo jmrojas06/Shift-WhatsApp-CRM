@@ -410,6 +410,29 @@ describe('urgencias', () => {
       expect(activeSteps(db)).toEqual([])
     })
 
+    it.each(['no, solo me duele', 'no sé', 'no estoy seguro'])(
+      'una negación sin un signo (%j) avisa con prioridad y repite los signos, sin decir "ve a urgencias"',
+      async (text) => {
+        const { db, rec } = await withAlarmQuestion()
+        await send(db, rec, { text })
+        expect(last(rec).bodyText).toBe(texts.urgencyPending(ALARM_TEXT))
+        expect(last(rec).bodyText).not.toBe(texts.urgencyGoEr)
+        expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.urgencyPendingNote)
+        expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+        expect(priorityNotifications(db)).toMatchObject([{ user_id: OWNER }])
+      },
+    )
+
+    it.each(['no doctora', 'creo que no', 'no tengo ninguno de esos signos'])(
+      'una negación de la lista (%j) descarta los signos',
+      async (text) => {
+        const { db, rec } = await withAlarmQuestion(clinicDb({ clinic_consents: [grantedConsent()] }))
+        await send(db, rec, { text })
+        expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
+        expect(db._tables.notifications).toHaveLength(0)
+      },
+    )
+
     it('un toque de un botón viejo cuenta como respuesta que no se entiende', async () => {
       const { db, rec } = await withAlarmQuestion()
       await send(db, rec, { replyId: 'svc:viejo' })
@@ -457,6 +480,93 @@ describe('urgencias', () => {
         expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.urgencyPendingNote)
         expect(priorityNotifications(db)).toMatchObject([{ user_id: OWNER }])
       })
+    })
+  })
+
+  describe('los botones viejos de los signos de alarma', () => {
+    it('"Sí, tengo alguno" vale sin sesión y sin autorización', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:alarm_yes' })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).bodyText).toBe(texts.urgencyGoEr)
+      expect(db._tables.clinic_consents).toHaveLength(0)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(priorityNotifications(db)).toMatchObject([{ user_id: OWNER }])
+    })
+
+    it('"Sí, tengo alguno" vale en cualquier otro paso y cierra la sesión', async () => {
+      const db = clinicDb({
+        clinic_consents: [grantedConsent()],
+        booking_sessions: [session({ step: 'pick_slot', serviceId: SERVICE_LIMPIEZA, staffId: STAFF_ANA })],
+      })
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: 'act:alarm_yes' })
+      expect(last(rec).bodyText).toBe(texts.urgencyGoEr)
+      expect(db._tables.booking_sessions[0].status).toBe('cancelled')
+      expect(priorityNotifications(db)).toHaveLength(1)
+    })
+
+    it('"No, ninguno" viejo no descarta nada: vuelve a mostrar los signos', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:alarm_no' })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).bodyText).toBe(texts.urgencyBody(ALARM_TEXT))
+      expect(last(rec).ids).toEqual(ALARM_BUTTONS)
+      expect(activeSteps(db)).toEqual(['urgency'])
+      expect(db._tables.clinic_consents).toHaveLength(1)
+    })
+
+    it('en un hilo de una persona solo avisa a quien lo lleva', async () => {
+      const db = clinicDb()
+      db._tables.conversations[0].assigned_agent_id = AGENT
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:alarm_yes' }, { humanOwned: true })
+      expect(result).toEqual({ consumed: false })
+      expect(rec.calls).toHaveLength(0)
+      expect(priorityNotifications(db)).toMatchObject([{ user_id: AGENT }])
+      expect(db._tables.conversations[0].assigned_agent_id).toBe(AGENT)
+    })
+
+    it('con la configuración de la clínica caída también es una urgencia', async () => {
+      const db = clinicDb({ clinic_settings: [] })
+      await send(db, makeRecorder(), { replyId: 'act:alarm_yes' })
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.clinicUnavailableUrgentNote)
+      expect(priorityNotifications(db)).toHaveLength(1)
+    })
+
+    it('en una cuenta sin el módulo no pasa nada', async () => {
+      const db = clinicDb()
+      const result = await send(db, makeRecorder(), { replyId: 'act:alarm_yes' }, { modules: ['agenda'] })
+      expect(result).toEqual({ consumed: false })
+      expect(db._tables.notifications).toHaveLength(0)
+    })
+  })
+
+  describe('cuánto dura la sesión', () => {
+    const expiresAt = (db: ReturnType<typeof clinicDb>) =>
+      db._tables.booking_sessions.find((s) => s.status === 'active')?.expires_at as string
+
+    it('en los signos de alarma dura 2 horas, no 15 minutos', async () => {
+      const { db, rec } = await withAlarmQuestion()
+      expect(expiresAt(db)).toBe('2026-10-19T15:00:00.000Z')
+      // Cada mensaje la refresca.
+      await send(db, rec, { text: 'tengo mucho dolor' }, { now: new Date('2026-10-19T13:30:00Z') })
+      expect(expiresAt(db)).toBe('2026-10-19T15:30:00.000Z')
+    })
+
+    it('los demás pasos siguen en 15 minutos', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      await send(db, makeRecorder(), { text: 'Hola' })
+      expect(expiresAt(db)).toBe('2026-10-19T13:15:00.000Z')
+    })
+
+    it('a casi 2 horas la sesión de los signos sigue viva', async () => {
+      const { db, rec } = await withAlarmQuestion()
+      const later = { now: new Date('2026-10-19T14:50:00Z') }
+      await send(db, rec, { replyId: 'act:alarm_yes' }, later)
+      expect(last(rec).bodyText).toBe(texts.urgencyGoEr)
     })
   })
 
