@@ -216,8 +216,9 @@ interface ClinicBackend {
 }
 ```
 
-`BookResult` distingue `ok`, `slot_taken` y `unknown`. Este último significa que no se sabe si la cita
-quedó creada (§8).
+`BookResult` distingue `ok`, `slot_taken` y `failed`. Con el conector se suma `unknown`, que significa
+que no se sabe si la cita quedó creada (§8). `move` y `unknown` entran en la Fase 4: hasta entonces,
+reprogramar sigue siendo crear y cancelar, como hoy.
 
 - `InternalBackend` envuelve las funciones actuales sin cambiar su conducta. Es el camino real de la
   primera clínica, no un simulador. Las pruebas actuales de `controller.test.ts` deben pasar sin
@@ -353,7 +354,8 @@ OK del usuario. Nunca `supabase db push`.
 - `clinic_consents`: `id`, `account_id`, `contact_id`, `kind`, `granted`, `text_version`, `source`,
   `message_id`, `created_at`. Sin UPDATE ni DELETE para clientes.
 - `booking_appointments.patient_id` y `location_id`, null para los demás negocios.
-- `booking_sessions.locked_until`: candado por conversación.
+- `conversations.bot_lock_until`: candado por conversación. Va en la conversación porque esa fila
+  siempre existe, también en el primer mensaje.
 - `booking_services.prep_instructions` y `aftercare_instructions`, máximo 900 caracteres.
 
 **056 (seguimientos)**
@@ -394,7 +396,7 @@ OK del usuario. Nunca `supabase db push`.
 | Fase | Entrega | Depende de |
 | --- | --- | --- |
 | 1 | Bot dental sobre `ClinicBackend` con la Agenda de Shift: pacientes y familia, autorización, urgencias, punto de partida, candado, citas lejanas, plantilla sin procedimiento. Demo con clínica ficticia, presentada como ficticia. Después, texto libre y audio con IA. | Nada |
-| 2 | Agenda para recepción: calendario, crear, mover y cancelar citas, cupo de sillones (§6.9). | Fase 1 |
+| 2 | Agenda para recepción: calendario, crear, mover y cancelar citas, cupo de sillones (§6.9), y citas sin confirmar para llamar. | Fase 1 |
 | 3 | Después de la cita: cierre del día, cuidados, "¿Cómo sigues?", calificación. | Fase 1 |
 | 0 | Acceso a Dentalink y prueba real de la API (§10). Sin código de producto. | Respuesta de Dentalink |
 | 4 | Conector Dentalink: copia de citas, sedes, ficha de ingreso, cambios de la clínica, montaje guiado. | Fases 0 y 1 |
