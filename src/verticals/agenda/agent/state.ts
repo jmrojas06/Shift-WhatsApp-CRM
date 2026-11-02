@@ -396,14 +396,17 @@ const ACTION_SYNONYMS: Record<string, string[]> = {
 // Aquí un malentendido cuesta caro: leer un "no" como "sí" registra una
 // autorización que nadie dio, y leer "no puedo respirar" como "ninguno"
 // manda a agendar a quien necesita urgencias.
-//   - Autorización (consent_*) y aviso de marketing (mkt_*): el SÍ solo llega
+//   - Autorización (consent_*): el SÍ solo llega
 //     por TOQUE de botón. Ningún texto acepta, ni "acepto" ni "sí": un texto
 //     se lee mal (emojis, tildes, "autorizó", dudas) y una autorización tiene
 //     que ser explícita. Un texto con una negación en cualquier parte es un
 //     rechazo ("acepto, no hay problema" también); cualquier otro, null: el
-//     bot vuelve a mostrar los botones y a la segunda pasa a una persona. (El
-//     aviso de marketing es opcional: el controlador cierra la pregunta con un
-//     null, en vez de repetirla.)
+//     bot vuelve a mostrar los botones y a la segunda pasa a una persona.
+//   - Aviso de marketing (mkt_*): el SÍ también solo llega por toque. Es opcional
+//     y el rechazo queda registrado, así que solo un mensaje COMPLETO que es un
+//     "no" lo rechaza (`MKT_NO_WHOLE`).
+//     Cualquier otro, null: el controlador cierra la pregunta sin registrar nada
+//     y el mensaje sigue su camino.
 //   - Signos de alarma (alarm_*): descartarlos (alarm_no) exige el toque o un
 //     mensaje completo de una lista cerrada y SIN emojis ni símbolos
 //     ("ninguno 🤔" no descarta nada). Va a una persona (alarm_yes) un toque,
@@ -484,6 +487,9 @@ const ALARM_YES_WHOLE: readonly string[] = ['si', 'si tengo', 'si tengo alguno',
  */
 export const ALARM_UNSURE = 'act:alarm_unsure'
 
+/** Mensajes completos que rechazan los avisos de control, ya en forma `squash`. */
+const MKT_NO_WHOLE: readonly string[] = ['no', 'no gracias', 'mejor no', 'no senor', 'no senora']
+
 /** Negaciones en texto ya normalizado: "noo", "nop", "para nada", "nunca"… */
 const NEGATION = /\b(no+|nop|nope|ni|nunca|jamas|tampoco|nada)\b/
 
@@ -496,12 +502,17 @@ function matchDecision(
   squashed: string,
   offered: ReadonlySet<string>,
 ): string | null | undefined {
-  for (const [yes, no] of [
-    ['act:consent_yes', 'act:consent_no'],
-    ['act:mkt_yes', 'act:mkt_no'],
-  ] as const) {
-    if (!offered.has(yes) && !offered.has(no)) continue
-    return offered.has(no) && NEGATION.test(squashed) ? no : null
+  if (offered.has('act:consent_yes') || offered.has('act:consent_no')) {
+    return offered.has('act:consent_no') && NEGATION.test(squashed) ? 'act:consent_no' : null
+  }
+
+  // Los avisos de control son opcionales y el rechazo queda registrado: solo un mensaje
+  // que ES un "no" lo registra. Una negación dentro de otra frase ("no voy a poder
+  // asistir a la cita", "¿no hay parqueadero?") sigue su camino sin registrar nada.
+  if (offered.has('act:mkt_yes') || offered.has('act:mkt_no')) {
+    return offered.has('act:mkt_no') && PLAIN_TEXT.test(text) && MKT_NO_WHOLE.includes(squashed)
+      ? 'act:mkt_no'
+      : null
   }
 
   if (offered.has('act:alarm_yes') || offered.has('act:alarm_no')) {

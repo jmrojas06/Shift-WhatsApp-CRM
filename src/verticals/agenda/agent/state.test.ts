@@ -506,12 +506,40 @@ describe('aviso de marketing escrito', () => {
     },
   )
 
-  it.each(['no', 'no, gracias', 'no avísame', 'noo', 'nunca', 'tampoco', '❌ no'])(
-    'un no nunca se lee como aceptación: %j',
-    (text) => {
-      expect(choice(text)).toBe('act:mkt_no')
-    },
-  )
+  // La pregunta es opcional y el rechazo queda en un registro: solo un mensaje que ES
+  // un "no" lo registra. Una negación dentro de otra frase ("no voy a poder asistir a la
+  // cita", "¿no hay parqueadero?") no es la respuesta, y registrarla perdería el aviso.
+  it.each([
+    'no',
+    'No.',
+    'no, gracias',
+    'No gracias',
+    'mejor no',
+    'Mejor no.',
+    'no señor',
+    'no, señora',
+  ])('un no completo es el rechazo: %j', (text) => {
+    expect(choice(text)).toBe('act:mkt_no')
+  })
+
+  it.each([
+    'no voy a poder asistir a la cita',
+    'no puedo ir a la cita',
+    '¿no hay parqueadero?',
+    'no sé',
+    'no estoy segura',
+    'no, gracias por todo',
+    'no avísame',
+    'noo',
+    'nunca',
+    'tampoco',
+    '❌ no',
+    'no 🤔',
+    '¿no?',
+    'no, ¿dónde queda?',
+  ])('una negación dentro de otra frase no es la respuesta: %j', (text) => {
+    expect(choice(text)).toBeNull()
+  })
 
   it.each(['¿avísame?', '¿qué es eso?', 'ok', 'dale', 'quizás', 'sí, gracias', '1', '2', '2.', '3', ''])(
     'una duda, una pregunta o un mensaje a medias no acepta: %j',

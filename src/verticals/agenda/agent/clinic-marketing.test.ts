@@ -174,6 +174,44 @@ describe('permiso para avisos de control', () => {
       },
     )
 
+    it.each([
+      'no voy a poder asistir a la cita',
+      'no puedo ir a la cita',
+      '¿no hay parqueadero?',
+      'no sé',
+      'no, gracias por todo',
+    ])('una negación dentro de otra frase (%j) no registra un rechazo', async (text) => {
+      const { db, rec } = await afterQuestion()
+
+      await send(db, rec, { text })
+
+      // Registrarlo perdería el aviso para siempre: la pregunta no se vuelve a hacer.
+      expect(marketingRows(db)).toHaveLength(0)
+      expect(activeSteps(db)).not.toContain('marketing_consent')
+      expect(rec.calls.some((c) => c.bodyText === texts.marketingThanksNo)).toBe(false)
+    })
+
+    it('"no voy a poder asistir a la cita" sigue su camino: se le muestran sus citas', async () => {
+      const { db, rec } = await afterQuestion()
+
+      const result = await send(db, rec, { text: 'no voy a poder asistir a la cita' })
+
+      expect(result).toEqual({ consumed: true })
+      expect(rec.calls.some((c) => c.bodyText.includes('Marta') || c.bodyText === texts.noUpcoming)).toBe(true)
+    })
+
+    it.each(['no', 'No.', 'no gracias', 'Mejor no', 'no señor', 'no señora'])(
+      'un no completo (%j) sí es el rechazo',
+      async (text) => {
+        const { db, rec } = await afterQuestion()
+
+        const result = await send(db, rec, { text })
+
+        expect(result).toEqual({ consumed: true })
+        expect(marketingRows(db)).toMatchObject([{ granted: false }])
+      },
+    )
+
     it('dos mensajes seguidos no pasan la conversación a una persona', async () => {
       const { db, rec } = await afterQuestion()
 
