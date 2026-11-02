@@ -10,7 +10,7 @@ import { latestUserMessage } from '@/lib/ai/query'
 import { logAiUsage } from '@/lib/ai/usage'
 import { supabaseAdmin } from '@/lib/ai/admin-client'
 import { AiError } from '@/lib/ai/types'
-import { canUseAi } from '@/modules/clinica/ai-gate'
+import { clinicAiGate } from '@/modules/clinica/ai-gate'
 import { getT } from '@/lib/i18n/translate'
 
 const t = getT('Api')
@@ -66,11 +66,11 @@ export async function POST(request: Request) {
     // of their data goes to the AI provider, not even to draft for an agent.
     // The service role reads the authorization: it does not depend on what
     // the caller's session is allowed to see.
-    const allowed = await canUseAi(supabaseAdmin(), {
+    const gate = await clinicAiGate(supabaseAdmin(), {
       accountId,
       contactId: conversation.contact_id as string,
     })
-    if (!allowed) {
+    if (!gate.allowed) {
       return NextResponse.json(
         { error: t('ai.consentRequired'), code: 'consent_required' },
         { status: 403 },
@@ -121,6 +121,8 @@ export async function POST(request: Request) {
       userPrompt: config.systemPrompt,
       mode: 'draft',
       knowledge,
+      // En una clínica, el bloque fijo: nada de diagnósticos ni medicamentos.
+      clinic: gate.clinic,
     })
 
     const { text, usage } = await generateReply({ config, systemPrompt, messages })

@@ -13,7 +13,7 @@ import {
 } from '@/lib/flows/meta-send'
 import { sendTypingIndicator } from '@/lib/whatsapp/meta-api'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
-import { canUseAi } from '@/modules/clinica/ai-gate'
+import { clinicAiGate } from '@/modules/clinica/ai-gate'
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -68,7 +68,8 @@ export async function dispatchInboundToAiReply(
     // Clinic accounts: a patient's chat can carry health data, so it never
     // reaches the provider until they authorize it. Fails closed (an
     // unreadable account or authorization is a no).
-    if (!(await canUseAi(db, { accountId, contactId }))) return
+    const gate = await clinicAiGate(db, { accountId, contactId })
+    if (!gate.allowed) return
 
     // Deterministic, user-configured responders win over the LLM — the
     // caller already excludes messages a Flow consumed. Message-level
@@ -140,6 +141,8 @@ export async function dispatchInboundToAiReply(
       userPrompt: config.systemPrompt,
       mode: 'auto_reply',
       knowledge,
+      // En una clínica, el bloque fijo: nada de diagnósticos ni medicamentos.
+      clinic: gate.clinic,
     })
 
     const { text, handoff, usage } = await generateReply({

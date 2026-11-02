@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   requireRole: vi.fn(),
-  canUseAi: vi.fn(),
+  clinicAiGate: vi.fn(),
   loadAiConfig: vi.fn(),
   buildConversationContext: vi.fn(),
   retrieveKnowledge: vi.fn(),
@@ -27,7 +27,7 @@ vi.mock('@/lib/ai/knowledge', () => ({ retrieveKnowledge: mocks.retrieveKnowledg
 vi.mock('@/lib/ai/generate', () => ({ generateReply: mocks.generateReply }))
 vi.mock('@/lib/ai/usage', () => ({ logAiUsage: mocks.logAiUsage }))
 vi.mock('@/lib/ai/admin-client', () => ({ supabaseAdmin: () => mocks.admin }))
-vi.mock('@/modules/clinica/ai-gate', () => ({ canUseAi: mocks.canUseAi }))
+vi.mock('@/modules/clinica/ai-gate', () => ({ clinicAiGate: mocks.clinicAiGate }))
 
 import { POST } from './route'
 
@@ -54,7 +54,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   mocks.conversation = { data: { id: 'conv-1', contact_id: 'ct-1' }, error: null }
   mocks.requireRole.mockResolvedValue({ supabase: scoped, accountId: 'acc-1', userId: 'user-1' })
-  mocks.canUseAi.mockResolvedValue(true)
+  mocks.clinicAiGate.mockResolvedValue({ allowed: true, clinic: false })
   mocks.loadAiConfig.mockResolvedValue({ provider: 'openai', model: 'm', systemPrompt: null })
   mocks.buildConversationContext.mockResolvedValue([{ role: 'user', content: 'hola' }])
   mocks.retrieveKnowledge.mockResolvedValue([])
@@ -66,14 +66,28 @@ describe('POST /api/ai/draft', () => {
     const response = await POST(request({ conversation_id: 'conv-1' }))
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ draft: 'Borrador' })
-    expect(mocks.canUseAi).toHaveBeenCalledWith(mocks.admin, {
+    expect(mocks.clinicAiGate).toHaveBeenCalledWith(mocks.admin, {
       accountId: 'acc-1',
       contactId: 'ct-1',
     })
   })
 
+  it('en una clínica, el borrador lleva el bloque fijo de seguridad', async () => {
+    mocks.clinicAiGate.mockResolvedValue({ allowed: true, clinic: true })
+    await POST(request({ conversation_id: 'conv-1' }))
+    const prompt = mocks.generateReply.mock.calls[0][0].systemPrompt as string
+    expect(prompt).toContain('Never give a diagnosis')
+    expect(prompt).not.toContain('[[HANDOFF]]')
+  })
+
+  it('en una cuenta sin clínica no lo lleva', async () => {
+    await POST(request({ conversation_id: 'conv-1' }))
+    const prompt = mocks.generateReply.mock.calls[0][0].systemPrompt as string
+    expect(prompt).not.toContain('Never give a diagnosis')
+  })
+
   it('sin autorización responde 403 y no manda el chat a la IA', async () => {
-    mocks.canUseAi.mockResolvedValue(false)
+    mocks.clinicAiGate.mockResolvedValue({ allowed: false, clinic: true })
     const response = await POST(request({ conversation_id: 'conv-1' }))
     expect(response.status).toBe(403)
     const body = await response.json()
@@ -89,6 +103,6 @@ describe('POST /api/ai/draft', () => {
     mocks.conversation = { data: null, error: null }
     const response = await POST(request({ conversation_id: 'conv-9' }))
     expect(response.status).toBe(404)
-    expect(mocks.canUseAi).not.toHaveBeenCalled()
+    expect(mocks.clinicAiGate).not.toHaveBeenCalled()
   })
 })

@@ -19,25 +19,45 @@ import { hasModule } from '@/lib/verticals/registry'
 
 import { latestConsent } from './consent'
 
-export async function canUseAi(
+export interface ClinicAiGate {
+  /** ¿Se puede mandar este chat a la IA? */
+  allowed: boolean
+  /** ¿La cuenta es una clínica? Entonces la IA lleva el bloque fijo de seguridad. */
+  clinic: boolean
+}
+
+/**
+ * Lo mismo que `canUseAi`, y además si la cuenta es una clínica: quien manda un
+ * chat a la IA necesita las dos cosas (la autorización y el bloque fijo de
+ * seguridad del prompt) y las dos salen de la misma lectura. Si la cuenta no se
+ * puede leer, no se manda y se trata como clínica.
+ */
+export async function clinicAiGate(
   db: SupabaseClient,
   args: { accountId: string; contactId: string },
-): Promise<boolean> {
+): Promise<ClinicAiGate> {
   const { account, error } = await readAccountModules(db, args.accountId)
   if (error) {
     console.error('[clinica] no se pudo leer la cuenta para decidir si usa la IA:', error.message)
-    return false
+    return { allowed: false, clinic: true }
   }
   // Una conversación siempre tiene cuenta: sin fila no hay a quién preguntarle.
-  if (!account) return false
-  if (!hasModule(account, 'clinica')) return true
+  if (!account) return { allowed: false, clinic: true }
+  if (!hasModule(account, 'clinica')) return { allowed: true, clinic: false }
 
   const consent = await latestConsent(db, {
     accountId: args.accountId,
     contactId: args.contactId,
     kind: 'datos_sensibles',
   })
-  return consent?.granted === true
+  return { allowed: consent?.granted === true, clinic: true }
+}
+
+export async function canUseAi(
+  db: SupabaseClient,
+  args: { accountId: string; contactId: string },
+): Promise<boolean> {
+  return (await clinicAiGate(db, args)).allowed
 }
 
 /**

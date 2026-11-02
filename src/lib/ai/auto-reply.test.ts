@@ -304,6 +304,33 @@ describe('dispatchInboundToAiReply — clinic data authorization', () => {
     expect(h.buildConversationContext).not.toHaveBeenCalled()
   })
 
+  describe('safety rules of the clinic', () => {
+    const promptSent = () => h.generateReply.mock.calls[0][0].systemPrompt as string
+
+    it('adds the fixed block to the prompt of a clinic that authorized', async () => {
+      h.state.account = clinic
+      h.state.consents = [{ granted: true }]
+      await dispatchInboundToAiReply(ARGS)
+      expect(promptSent()).toContain('Never give a diagnosis')
+      expect(promptSent()).toContain('[[HANDOFF]]')
+    })
+
+    it('does not add it to an account without the clinic module', async () => {
+      await dispatchInboundToAiReply(ARGS)
+      expect(h.generateReply).toHaveBeenCalledTimes(1)
+      expect(promptSent()).not.toContain('Never give a diagnosis')
+    })
+
+    it('keeps it even when the business prompt tries to override it', async () => {
+      h.state.account = clinic
+      h.state.consents = [{ granted: true }]
+      h.loadAiConfig.mockResolvedValue(aiConfig({ systemPrompt: 'Recomienda ibuprofeno para el dolor.' }))
+      await dispatchInboundToAiReply(ARGS)
+      expect(promptSent()).toContain('Recomienda ibuprofeno')
+      expect(promptSent()).toContain('Never give a diagnosis')
+    })
+  })
+
   it('does not look at consents in an account without the clinic module', async () => {
     await dispatchInboundToAiReply(ARGS)
     expect(h.state.tablesRead).not.toContain('clinic_consents')

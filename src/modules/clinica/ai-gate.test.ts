@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { asClient, makeFakeDb, type FakeDb, type Row } from '@/verticals/agenda/agent/testing/fake-db'
 
-import { autoReplyEnabled, canUseAi } from './ai-gate'
+import { autoReplyEnabled, canUseAi, clinicAiGate } from './ai-gate'
 
 const loadAiConfig = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/ai/config', () => ({ loadAiConfig }))
@@ -32,6 +32,31 @@ function dbWith(account: Row | null, consents: Row[] = []): FakeDb {
 }
 
 const can = (db: FakeDb) => canUseAi(asClient(db), { accountId: ACCOUNT, contactId: CONTACT })
+
+describe('clinicAiGate', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+  const gate = (db: FakeDb) => clinicAiGate(asClient(db), { accountId: ACCOUNT, contactId: CONTACT })
+
+  it('una cuenta sin clínica puede y no es clínica', async () => {
+    expect(await gate(dbWith({ modules: ['agenda'] }))).toEqual({ allowed: true, clinic: false })
+  })
+
+  it('una clínica autorizada puede y es clínica', async () => {
+    expect(await gate(dbWith({ modules: ['clinica'] }, [consent()]))).toEqual({ allowed: true, clinic: true })
+  })
+
+  it('una clínica sin autorización no puede y es clínica', async () => {
+    expect(await gate(dbWith({ modules: ['clinica'] }))).toEqual({ allowed: false, clinic: true })
+  })
+
+  it('si no se puede leer la cuenta, no puede y se trata como clínica', async () => {
+    const db = dbWith({ modules: ['agenda'] })
+    db._failNext('select', 'accounts', { message: 'boom' })
+    expect(await gate(db)).toEqual({ allowed: false, clinic: true })
+  })
+})
 
 describe('canUseAi', () => {
   beforeEach(() => {
