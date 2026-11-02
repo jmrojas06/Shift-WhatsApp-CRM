@@ -125,6 +125,41 @@ const QUESTION_STARTS = [
   'reciben',
 ]
 
+/** Palabras que no piden nada: "ok", "gracias", "listo". */
+const CONTENTLESS_WORDS = [
+  'ok',
+  'okay',
+  'oki',
+  'listo',
+  'vale',
+  'gracias',
+  'muchas',
+  'mil',
+  'bueno',
+  'bien',
+  'perfecto',
+  'excelente',
+  'genial',
+  'entendido',
+  'claro',
+  'dale',
+  'ya',
+  'si',
+  'no',
+  'de',
+  'nada',
+]
+
+/**
+ * Un mensaje corto que no dice nada ("ok", "gracias", "de nada", un 👍): con el menú
+ * abierto no es una duda para la IA ni un error, sino alguien que no sabe qué
+ * contestar. Se le repite el menú.
+ */
+export function isContentless(text: string): boolean {
+  const words = normalizeText(text).match(WORD) ?? []
+  return words.length <= 4 && words.every((word) => CONTENTLESS_WORDS.includes(word))
+}
+
 /** Adónde va un texto libre en una clínica. */
 export type ClinicRoute = 'book' | 'greeting' | 'human' | 'ai'
 

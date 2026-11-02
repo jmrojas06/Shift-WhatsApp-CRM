@@ -179,6 +179,10 @@ export function buildClinicTexts(l: AgendaLabels) {
     menuUrgent: 'Tengo una urgencia',
     menuHuman: 'Hablar con una persona',
     faqPrompt: 'Cuéntame tu duda y te respondo. 🙌',
+    /** Una foto, un audio o un sticker: el bot no los lee, y no se queda callado. */
+    nonTextNotice: 'Aún no puedo oír audios ni ver fotos. Escríbeme o elige una opción.',
+    /** Un botón de un menú que ya no está activo. */
+    optionExpired: 'Esa opción venció.',
 
     noUpcoming: `Por ahora no hay ${l.citas} a tu nombre. ¿Quieres agendar?`,
     pickAppointmentBody: `¿Sobre cuál ${l.cita}?`,

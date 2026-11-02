@@ -207,8 +207,11 @@ export async function send(
     now?: Date
     modules?: ModuleKey[]
     humanOwned?: boolean
-    /** La respuesta automática con IA está activa. Por defecto, sí. */
-    aiOn?: boolean | (() => Promise<boolean>)
+    /**
+     * La respuesta automática con IA está activa. Por defecto, sí. Con 'default' no
+     * se inyecta nada y el bot usa su lectura real (`aiWillAnswer`).
+     */
+    aiOn?: boolean | 'default' | (() => Promise<boolean>)
     /** Dónde viven las citas. Por defecto, la Agenda de Shift sobre `db`. */
     backend?: ClinicBackend
   } = {},
@@ -237,6 +240,7 @@ export async function send(
     humanOwned: opts.humanOwned,
     modules: opts.modules ?? ['agenda', 'clinica'],
     backend: opts.backend,
-    aiAutoReplyOn: typeof aiOn === 'function' ? aiOn : async () => aiOn,
+    aiAutoReplyOn:
+      aiOn === 'default' ? undefined : typeof aiOn === 'function' ? aiOn : async () => aiOn,
   })
 }

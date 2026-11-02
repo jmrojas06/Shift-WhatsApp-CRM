@@ -1092,8 +1092,11 @@ describe('urgencias', () => {
       const db = clinicDb({ clinic_consents: [grantedConsent()] })
       const rec = makeRecorder()
       const result = await send(db, rec, { text: '[Unsupported message type: audio]' })
-      expect(result).toEqual({ consumed: false })
-      expect(rec.calls).toHaveLength(0)
+      // No abre los signos: recibe el aviso de que no se leen audios, y el menú.
+      expect(result).toEqual({ consumed: true })
+      expect(rec.calls[0].bodyText).toBe(texts.nonTextNotice)
+      expect(activeSteps(db)).toEqual(['clinic_menu'])
+      expect(priorityNotifications(db)).toHaveLength(0)
     })
 
     it('un texto sin palabras de urgencia sigue su camino', async () => {

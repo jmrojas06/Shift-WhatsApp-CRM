@@ -1,6 +1,27 @@
 import { describe, expect, it } from 'vitest'
 
-import { routeClinicText } from './clinic-steps'
+import { isContentless, routeClinicText } from './clinic-steps'
+
+describe('isContentless', () => {
+  it.each(['ok', 'Ok.', 'gracias', 'Muchas gracias', 'mil gracias', 'listo', 'vale', 'de nada', 'perfecto', '👍', 'ok 🙏'])(
+    'no dice nada: %j',
+    (text) => {
+      expect(isContentless(text)).toBe(true)
+    },
+  )
+
+  it.each([
+    'cuánto vale',
+    'gracias, ¿y cuánto vale?',
+    'ok quiero una cita',
+    'hola',
+    'quiero hablar con alguien',
+    'ok ok ok ok ok',
+    'mi hijo tiene dolor',
+  ])('dice algo: %j', (text) => {
+    expect(isContentless(text)).toBe(false)
+  })
+})
 
 describe('routeClinicText', () => {
   it.each([

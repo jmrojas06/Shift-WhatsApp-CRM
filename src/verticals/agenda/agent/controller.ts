@@ -29,7 +29,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import type { ModuleKey, VerticalDispatchResult, VerticalSession } from '@/lib/verticals/types'
 import { notifyAlert } from '@/lib/ops/alert'
-import { autoReplyEnabled } from '@/modules/clinica/ai-gate'
+import { aiWillAnswer } from '@/lib/ai/eligibility'
 import { latestConsent } from '@/modules/clinica/consent'
 import {
   loadClinicContext,
@@ -117,6 +117,7 @@ import {
   handlePatientName,
   isClinicMenuTap,
   isClinicStep,
+  isContentless,
   recordConsentRevoked,
   renderClinicStep,
   routeClinicText,
@@ -276,7 +277,9 @@ export async function handleAgendaInbound(
     clinicTexts: buildClinicTexts(settings.labels),
     inboundMessageId: args.inboundMessageId ?? null,
     humanOwned,
-    aiProbe: args.aiAutoReplyOn ?? (() => autoReplyEnabled(args.db, args.accountId)),
+    aiProbe:
+      args.aiAutoReplyOn ??
+      (() => aiWillAnswer(args.db, { accountId: args.accountId, conversationId: args.conversationId })),
   }
 
   // 0) Tap de un recordatorio (Confirmar / Reprogramar / Cancelar).
@@ -340,7 +343,9 @@ export async function handleAgendaInbound(
   //    una persona mayor" es la respuesta; "Ana Persona" es un nombre).
   const writingAnswer =
     (asking?.step === 'ask_question' && asking.options.length === 0) ||
-    asking?.step === 'new_patient_name'
+    asking?.step === 'new_patient_name' ||
+    // "Otra persona" es el título de una opción de la lista de pacientes.
+    asking?.step === 'pick_patient'
   if (
     replyId === null &&
     (writingAnswer ? isHandoffOnly(text) : containsHandoffWord(text))
@@ -633,6 +638,20 @@ async function handleClinicInbound(
         await conclude(dialog, session.id, step === 'faq_open' ? newBookingState('clinic_menu') : state)
         return { consumed: true }
       }
+      if (step === 'clinic_menu' && replyId === null && !isNonTextInbound(text)) {
+        // "1" o el título de una opción eligen esa opción antes de soltar nada a la
+        // IA. "ok" o "gracias" no dicen nada: se repite el menú, sin contarlo como
+        // fallo ni mandarlo a la IA.
+        const choice = matchChoice({ text, options: state.options })
+        if (choice) {
+          await handleChoice(dialog, session.id, newBookingState('clinic_menu'), choice)
+          return { consumed: true }
+        }
+        if (isContentless(text)) {
+          await conclude(dialog, session.id, state)
+          return { consumed: true }
+        }
+      }
       if (route !== null) return releaseToAi(dialog, session.id)
       // Una foto o un audio mientras espera la duda: no es la duda ni la cierra.
       if (step === 'faq_open' && replyId === null) {
@@ -668,12 +687,31 @@ async function handleClinicInbound(
   }
 
   // Con autorización, los botones del menú valen aunque el menú ya haya vencido.
-  // Cualquier otro tap de un menú viejo no arranca nada (y no se consume).
   if (replyId !== null) {
-    if (!isClinicMenuTap(replyId)) return { consumed: false }
+    const menu = newBookingState('clinic_menu')
+    if (isClinicMenuTap(replyId)) {
+      const sessionId = await openSession(dialog, menu)
+      await handleChoice(dialog, sessionId, menu, replyId)
+      return { consumed: true }
+    }
+    // Un botón de otro menú de este bot (un servicio, un día, una hora...) que ya no
+    // está activo: se dice, y se muestra el menú. Nunca se manda a la IA.
+    if (parseOptionId(replyId) !== null) {
+      await dialog.sender.sendText({ text: dialog.clinicTexts.optionExpired })
+      const sessionId = await openSession(dialog, menu)
+      await conclude(dialog, sessionId, menu)
+      return { consumed: true }
+    }
+    // Un toque que no es de este bot (otro botón, una plantilla) no es asunto suyo.
+    return { consumed: false }
+  }
+
+  // Una foto, un audio o un sticker: no se leen, y no se deja a nadie en silencio.
+  if (isNonTextInbound(text)) {
+    await dialog.sender.sendText({ text: dialog.clinicTexts.nonTextNotice })
     const menu = newBookingState('clinic_menu')
     const sessionId = await openSession(dialog, menu)
-    await handleChoice(dialog, sessionId, menu, replyId)
+    await conclude(dialog, sessionId, menu)
     return { consumed: true }
   }
 
@@ -681,6 +719,12 @@ async function handleClinicInbound(
     const menu = newBookingState('clinic_menu')
     const sessionId = await openSession(dialog, menu)
     await conclude(dialog, sessionId, menu)
+    return { consumed: true }
+  }
+
+  // Lo demás es para la IA. Si la IA no va a contestar, nadie se queda sin respuesta.
+  if (!(await aiAnswers(dialog))) {
+    await performHandoff(dialog, null, { note: dialog.clinicTexts.aiOffNote })
     return { consumed: true }
   }
   return { consumed: false }

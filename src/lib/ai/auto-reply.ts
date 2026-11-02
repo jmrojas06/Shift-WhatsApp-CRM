@@ -14,6 +14,7 @@ import {
 import { sendTypingIndicator } from '@/lib/whatsapp/meta-api'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 import { clinicAiGate } from '@/modules/clinica/ai-gate'
+import { hasActiveAutoResponder, replyCapReached } from './eligibility'
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -79,14 +80,7 @@ export async function dispatchInboundToAiReply(
     // avoid double-texting the customer. (Relationship triggers like
     // `first_inbound_message` don't count — they're not per-message
     // auto-responders.)
-    const { data: autoResponders } = await db
-      .from('automations')
-      .select('id')
-      .eq('account_id', accountId)
-      .eq('is_active', true)
-      .in('trigger_type', ['new_message_received', 'keyword_match'])
-      .limit(1)
-    if (autoResponders && autoResponders.length > 0) return
+    if (await hasActiveAutoResponder(db, accountId)) return
 
     const { data: conv, error: convErr } = await db
       .from('conversations')
@@ -98,7 +92,7 @@ export async function dispatchInboundToAiReply(
     if (conv.ai_autoreply_disabled) return // handed off / turned off here
     // Cheap early-out; the authoritative cap check is the atomic claim
     // below (this read can race a concurrent inbound).
-    if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) return
+    if (replyCapReached(conv, config)) return
 
     const messages = await buildConversationContext(db, conversationId)
     if (messages.length === 0) return

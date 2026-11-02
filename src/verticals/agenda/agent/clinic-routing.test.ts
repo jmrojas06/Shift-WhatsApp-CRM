@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CLINIC_HUMAN_WORDS, buildClinicTexts } from '@/modules/clinica/texts'
 
@@ -13,6 +13,10 @@ import {
   makeRecorder,
   send,
 } from './testing/clinic-harness'
+
+// La configuración de la IA se lee de verdad; aquí solo se fija qué devuelve.
+const loadAiConfig = vi.hoisted(() => vi.fn())
+vi.mock('@/lib/ai/config', () => ({ loadAiConfig }))
 
 const texts = buildClinicTexts(DEFAULT_LABELS)
 
@@ -148,14 +152,30 @@ describe('sin sesión', () => {
       expect(last(rec).ids).toEqual(MENU_IDS)
     })
 
-    it('una foto, un audio o un tipo no soportado no se enruta: va a la IA', async () => {
-      for (const text of ['', '[Unsupported message type: audio]']) {
+    it('una foto, un audio o un tipo no soportado: una línea que lo dice y el menú, no silencio', async () => {
+      for (const text of ['', '[Unsupported message type: audio]', '[Unsupported message type: image]']) {
         const db = authorized()
         const rec = makeRecorder()
         const result = await send(db, rec, { text })
-        expect(result).toEqual({ consumed: false })
-        expect(rec.calls).toHaveLength(0)
+        expect(result).toEqual({ consumed: true })
+        expect(rec.calls.map((c) => c.bodyText)).toEqual([
+          'Aún no puedo oír audios ni ver fotos. Escríbeme o elige una opción.',
+          texts.menuBody,
+        ])
+        expect(rec.calls[0].bodyText).toBe(texts.nonTextNotice)
+        expect(last(rec).ids).toEqual(MENU_IDS)
+        expect(activeSteps(db)).toEqual(['clinic_menu'])
+        expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
       }
+    })
+
+    it('sin autorización, una foto o un audio pide la autorización como cualquier mensaje', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: '[Unsupported message type: audio]' })
+      expect(result).toEqual({ consumed: true })
+      expect(rec.calls.some((c) => c.bodyText === texts.nonTextNotice)).toBe(false)
+      expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
     })
 
     it('"gracias por la atención" no abre el menú aunque la clínica llame "atención" a su servicio', async () => {
@@ -516,16 +536,6 @@ describe('el menú sigue vivo', () => {
     }
   })
 
-  it('un toque que no es del menú sigue sin arrancar nada', async () => {
-    for (const replyId of ['svc:svc-limpieza', 'day:2026-10-20', 'act:confirm', 'pat:abc']) {
-      const db = authorized()
-      const rec = makeRecorder()
-      const result = await send(db, rec, { replyId })
-      expect(result).toEqual({ consumed: false })
-      expect(rec.calls).toHaveLength(0)
-    }
-  })
-
   it('desde "Precios y dudas", "Agendar" funciona', async () => {
     const { db, rec } = await withFaqOpen()
     const result = await send(db, rec, { replyId: 'act:book' })
@@ -786,12 +796,197 @@ describe('si la IA está apagada', () => {
     expect(asked).toBe(1)
   })
 
-  it('sin sesión no cambia: el mensaje queda en la bandeja para quien lo atienda', async () => {
+  it('sin sesión y con la IA apagada, una duda pasa a una persona: nadie se queda sin respuesta', async () => {
     const db = authorized()
     const rec = makeRecorder()
     const result = await send(db, rec, { text: '¿Cuánto vale una limpieza?' }, { aiOn: false })
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
+  })
+
+  it('sin sesión y con la IA prendida, la duda sigue para la IA', async () => {
+    const db = authorized()
+    const rec = makeRecorder()
+    const result = await send(db, rec, { text: '¿Cuánto vale una limpieza?' }, { aiOn: true })
     expect(result).toEqual({ consumed: false })
+    expect(rec.calls).toHaveLength(0)
+  })
+
+  it('lo que no es para la IA no la consulta, ni sin sesión', async () => {
+    for (const text of ['necesito una cita', 'hola', 'quiero pagar']) {
+      let asked = 0
+      await send(authorized(), makeRecorder(), { text }, { aiOn: async () => (asked += 1) > 0 })
+      expect(asked).toBe(0)
+    }
+  })
+
+  describe('la lectura real de "¿la IA va a contestar?"', () => {
+    beforeEach(() => {
+      loadAiConfig.mockReset()
+      loadAiConfig.mockResolvedValue({ autoReplyEnabled: true, autoReplyMaxPerConversation: 3 })
+    })
+
+    it('con la IA prendida y nada que la frene, la duda es para ella', async () => {
+      const db = authorized()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: '¿Cuánto vale una limpieza?' }, { aiOn: 'default' })
+      expect(result).toEqual({ consumed: false })
+      expect(rec.calls).toHaveLength(0)
+    })
+
+    it('una automatización que contesta la frena: pasa a una persona', async () => {
+      const db = authorized()
+      db._tables.automations = [
+        { id: 'a', account_id: ACCOUNT, is_active: true, trigger_type: 'new_message_received' },
+      ]
+      const result = await send(db, makeRecorder(), { text: '¿Cuánto vale una limpieza?' }, { aiOn: 'default' })
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+    })
+
+    it('el tope de respuestas de la conversación también', async () => {
+      const db = authorized()
+      db._tables.automations = []
+      db._tables.conversations[0].ai_reply_count = 3
+      const result = await send(db, makeRecorder(), { text: '¿Cuánto vale una limpieza?' }, { aiOn: 'default' })
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+    })
+
+    it('con el menú abierto, una duda tampoco se suelta si nadie va a contestar', async () => {
+      const { db, rec } = await withMenuOpen()
+      db._tables.automations = [
+        { id: 'a', account_id: ACCOUNT, is_active: true, trigger_type: 'keyword_match' },
+      ]
+      const result = await send(db, rec, { text: '¿Cuánto vale una limpieza?' }, { aiOn: 'default' })
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.booking_sessions[0].status).toBe('cancelled')
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+    })
+  })
+})
+
+describe('un menú que ya no está activo', () => {
+  it.each(['svc:svc-limpieza', 'day:2026-10-20', 'act:confirm', 'pat:abc', 'slot:2026-10-19T14:00:00.000Z'])(
+    '%s responde que venció y muestra el menú, sin mandarlo a la IA',
+    async (replyId) => {
+      let asked = 0
+      const db = authorized()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId }, { aiOn: async () => (asked += 1) > 0 })
+      expect(result).toEqual({ consumed: true })
+      expect(rec.calls.map((c) => c.bodyText)).toEqual(['Esa opción venció.', texts.menuBody])
+      expect(rec.calls[0].bodyText).toBe(texts.optionExpired)
+      expect(last(rec).ids).toEqual(MENU_IDS)
+      expect(activeSteps(db)).toEqual(['clinic_menu'])
+      expect(asked).toBe(0)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    },
+  )
+
+  it('un toque que no es de este bot (otro botón, una plantilla) no se toca', async () => {
+    for (const replyId of ['btn_promo_1', 'Ver ofertas', 'otra:cosa']) {
+      const db = authorized()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId })
+      expect(result).toEqual({ consumed: false })
+      expect(rec.calls).toHaveLength(0)
+    }
+  })
+
+  it('sin autorización, muestra la autorización', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: 'svc:svc-limpieza' })
+    expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
+    expect(rec.calls.some((c) => c.bodyText === texts.optionExpired)).toBe(false)
+  })
+
+  it('con una sesión abierta sigue como siempre: "No entendí" y el paso otra vez', async () => {
+    const db = clinicDb({
+      clinic_consents: [grantedConsent()],
+      booking_sessions: [session({ step: 'pick_service', options: [{ id: 'svc:svc-limpieza', title: 'Limpieza' }] })],
+    })
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: 'day:2026-10-19' })
+    expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(true)
+    expect(rec.calls.some((c) => c.bodyText === texts.optionExpired)).toBe(false)
+  })
+})
+
+describe('con el menú abierto, "1", "ok" o "gracias"', () => {
+  it('un número elige esa opción del menú, antes de soltar nada a la IA', async () => {
+    let asked = 0
+    const { db, rec } = await withMenuOpen()
+    await send(db, rec, { text: '1' }, { aiOn: async () => (asked += 1) > 0 })
+    expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
+    expect(activeSteps(db)).toEqual(['new_patient_name'])
+    expect(asked).toBe(0)
+  })
+
+  it('el título de una opción también', async () => {
+    const { db, rec } = await withMenuOpen()
+    await send(db, rec, { text: 'precios' })
+    expect(last(rec).bodyText).toBe(texts.faqPrompt)
+    expect(activeSteps(db)).toEqual(['faq_open'])
+  })
+
+  it.each(['ok', 'gracias', 'Muchas gracias', 'listo', 'vale', 'perfecto', 'de nada', '👍', 'ok 🙏'])(
+    '%j repite el menú, sin contarlo como fallo ni mandarlo a la IA',
+    async (text) => {
+      let asked = 0
+      const { db, rec, sent } = await withMenuOpen()
+      const result = await send(db, rec, { text }, { aiOn: async () => (asked += 1) > 0 })
+      expect(result).toEqual({ consumed: true })
+      expect(rec.calls).toHaveLength(sent + 1)
+      expect(last(rec).ids).toEqual(MENU_IDS)
+      expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(false)
+      expect(activeStates(db)).toMatchObject([{ step: 'clinic_menu', fails: 0 }])
+      expect(asked).toBe(0)
+    },
+  )
+
+  it('una pregunta con una de esas palabras sigue siendo una duda para la IA', async () => {
+    const { db, rec, sent } = await withMenuOpen()
+    const result = await send(db, rec, { text: 'gracias, ¿y cuánto vale la limpieza?' })
+    expect(result).toEqual({ consumed: false, released: true })
+    expect(rec.calls).toHaveLength(sent)
+    expect(activeSteps(db)).toEqual([])
+  })
+})
+
+describe('"Otra persona" escrito al elegir el paciente', () => {
+  const PATIENT = { id: 'pat-1', account_id: ACCOUNT, contact_id: CONTACT, full_name: 'Marta Ruiz' }
+  const atPatients = () =>
+    clinicDb({
+      clinic_consents: [grantedConsent()],
+      clinic_patients: [PATIENT],
+      booking_sessions: [
+        session({
+          step: 'pick_patient',
+          options: [
+            { id: 'pat:pat-1', title: 'Marta Ruiz' },
+            { id: 'pat:new', title: texts.patientOther },
+          ],
+        }),
+      ],
+    })
+
+  it('no pasa el hilo a una persona: es la opción "Otra persona"', async () => {
+    const db = atPatients()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Otra persona' })
     expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
+    expect(activeSteps(db)).toEqual(['new_patient_name'])
+  })
+
+  it('pedir una persona, solo, sí la pasa', async () => {
+    const db = atPatients()
+    await send(db, makeRecorder(), { text: 'asesor' })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
   })
 })
 
