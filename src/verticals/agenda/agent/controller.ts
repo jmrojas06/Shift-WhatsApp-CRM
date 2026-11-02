@@ -140,6 +140,9 @@ const BUTTON_TITLE_MAX = 20
 const LIST_TITLE_MAX = 24
 const LIST_DESC_MAX = 72
 
+/** Días por página: una fila de la lista queda para "Ver más días". */
+const DAY_PAGE_SIZE = MAX_LIST_OPTIONS - 1
+
 // ------------------------------------------------------------
 // Contrato de envío (inyectable; en producción lo implementa
 // meta-send.ts y en tests un grabador)
@@ -1288,6 +1291,10 @@ async function handleChoice(
     }
 
     case 'pick_day': {
+      if (parsed?.kind === 'act' && parsed.value === 'more_days') {
+        await conclude(dialog, sessionId, { ...state, dayPage: (state.dayPage ?? 0) + 1 })
+        return
+      }
       if (parsed?.kind !== 'day') break
       const dateKey = parsed.value
       if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) break
@@ -1340,6 +1347,8 @@ async function handleChoice(
           ...state,
           slotStartsAt: undefined,
           questionId: undefined,
+          // Cambiar la hora es empezar a elegir otra vez: desde el primer día.
+          dayPage: undefined,
           step: 'pick_day',
         })
         return
@@ -1845,10 +1854,18 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
         })
         return { state, closed: true }
       }
-      const options: OfferedOption[] = days.map((day) => ({
+      // Si la agenda cambió y la página quedó vacía, se vuelve a la primera.
+      const requested = state.dayPage ?? 0
+      const page = requested * DAY_PAGE_SIZE < days.length ? requested : 0
+      const shown = days.slice(page * DAY_PAGE_SIZE, (page + 1) * DAY_PAGE_SIZE)
+      const options: OfferedOption[] = shown.map((day) => ({
         id: dayId(day.key),
         title: day.label,
       }))
+      // "Ver más días" es de la clínica: una agenda normal ofrece 7 y cabe entera.
+      if (dialog.clinic && days.length > (page + 1) * DAY_PAGE_SIZE) {
+        options.push({ id: actId('more_days'), title: dialog.clinicTexts.moreDays })
+      }
       await sendOptions(dialog, {
         bodyText:
           state.mode === 'reschedule'
@@ -1857,7 +1874,11 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
         buttonLabel: dialog.texts.dayMenuButton,
         options,
       })
-      return { state: { ...state, options }, closed: false }
+      // La primera página no guarda `dayPage`: la sesión queda como siempre.
+      return {
+        state: { ...state, options, dayPage: page > 0 ? page : undefined },
+        closed: false,
+      }
     }
 
     case 'pick_slot': {
@@ -2072,7 +2093,7 @@ async function mergedSlotsForDay(
   return dialog.backend.getDaySlots({ ...scope, dateKey, now: dialog.now })
 }
 
-/** Próximos días (hasta 7) que tienen al menos una hora ofrecible. */
+/** Próximos días (7, o los que fije la clínica) con al menos una hora ofrecible. */
 async function dayOptions(
   dialog: Dialog,
   state: BookingState,
@@ -2084,7 +2105,7 @@ async function dayOptions(
   const keys = await dialog.backend.getDaysWithSlots({
     ...scope,
     fromKey: todayKey,
-    days: OFFER_DAYS,
+    days: dialog.clinic?.offerDays ?? OFFER_DAYS,
     now: dialog.now,
   })
   return keys.map((key) => ({
