@@ -3066,8 +3066,17 @@ git commit -m "feat(agenda): read reminder taps by label and by appointment id"
 ### Task 7: Autorización y menú principal
 
 **Files:**
-- Create: `src/modules/clinica/consent.ts`, `src/verticals/agenda/agent/steps/clinic-steps.ts`, `src/verticals/agenda/agent/testing/clinic-harness.ts`, `src/verticals/agenda/agent/clinic-consent.test.ts`
-- Modify: `src/verticals/agenda/agent/controller.ts`
+- Create: `src/modules/clinica/consent.ts`, `src/modules/clinica/consent.test.ts`, `src/verticals/agenda/agent/steps/clinic-steps.ts`, `src/verticals/agenda/agent/testing/clinic-harness.ts`, `src/verticals/agenda/agent/clinic-consent.test.ts`, `src/verticals/agenda/agent/index.test.ts`
+- Modify: `src/verticals/agenda/agent/controller.ts`, `src/verticals/agenda/agent/index.ts`, `src/verticals/agenda/agent/state.ts`, `src/modules/clinica/texts.ts`
+
+Reglas que fija esta tarea, todas con prueba:
+
+- **Sin autorización, la IA nunca ve la conversación.** En una cuenta con el módulo `clinica`, el primer mensaje, sea el que sea, recibe la autorización. La configuración se lee con `loadClinicContext`, que devuelve `ok`, `missing` o `error`.
+- **Falla cerrado.** Con el módulo activo y la configuración en `missing` o `error`, el bot consume el mensaje, deja el hilo con una persona (`performHandoff`, con una nota clara) y no sigue como una agenda normal. Si el texto trae una palabra de `DEFAULT_URGENCY_WORDS` (las de la clínica no se pudieron leer), el aviso al equipo es el de urgencia. Los toques de recordatorio se siguen atendiendo, y un hilo que ya es de una persona no se toca.
+- **Un error inesperado tampoco abre la puerta a la IA.** El dispatcher devuelve `consumed: false` si un handler lanza, y entonces la IA vería el mensaje. En `agendaInboundHandler`, solo en cuentas con `clinica`, el error se registra, se avisa con `notifyAlert` y el mensaje se da por consumido. Las demás cuentas siguen lanzando como hoy.
+- **La autorización solo se acepta por toque.** Ningún texto acepta (`matchChoice`, Task 6). Un texto con una negación queda como rechazo; cualquier otro vuelve a mostrar los botones y, a la segunda vez, pasa a una persona.
+- **El registro dice lo que la persona vio.** El texto y la versión que se le mostraron viajan en el estado de la sesión (`consentText`, `consentVersion`) y son los que se guardan al responder, aunque la clínica edite su texto entre tanto. `contact_ref` sale del contacto (teléfono, o `wa_user_id` si no tiene); si no tiene ninguno, `recordConsent` lanza y no se guarda nada.
+- **Una cuenta sin `clinica` se comporta exactamente igual que hoy.** No lee la configuración de la clínica ni cambia ningún paso.
 
 - [ ] **Step 1: Crea las utilidades de prueba**
 
@@ -3308,12 +3317,45 @@ export async function send(
 
 - [ ] **Step 2: Escribe las pruebas que fallan**
 
-Crea `src/verticals/agenda/agent/clinic-consent.test.ts`:
+Crea `src/verticals/agenda/agent/clinic-consent.test.ts`. Los textos salen de `buildClinicTexts`, así que la prueba sigue al copy real sin repetirlo:
 
 ```ts
 import { describe, expect, it } from 'vitest'
 
-import { ACCOUNT, CONTACT, clinicDb, grantedConsent, last, makeRecorder, send } from './testing/clinic-harness'
+import { buildClinicTexts } from '@/modules/clinica/texts'
+import { AGENDA_AGENT_TEXTS } from '../texts'
+import { DEFAULT_LABELS } from '../labels'
+
+import {
+  ACCOUNT,
+  CONTACT,
+  CONVERSATION,
+  OWNER,
+  SERVICE_LIMPIEZA,
+  STAFF_ANA,
+  clinicDb,
+  grantedConsent,
+  last,
+  makeRecorder,
+  send,
+} from './testing/clinic-harness'
+
+const texts = buildClinicTexts(DEFAULT_LABELS)
+
+const CONSENT_BUTTONS = ['act:consent_yes', 'act:consent_no']
+const MENU_IDS = ['act:book', 'act:mine', 'act:faq', 'act:urgent', 'act:human']
+
+/** Una clínica que llama "atención" a su servicio, como el preset de odontología. */
+const clinicLabels = {
+  account_id: ACCOUNT,
+  bot_texts: {},
+  labels: { servicio: 'atención', servicios: 'atenciones' },
+  choose_staff: true,
+  show_price: false,
+  show_duration: false,
+  reminders_enabled: true,
+  allow_reschedule: true,
+}
 
 describe('autorización de datos', () => {
   it('el primer mensaje pide autorización antes que nada', async () => {
@@ -3322,7 +3364,24 @@ describe('autorización de datos', () => {
     const result = await send(db, rec, { text: 'Hola, quiero una cita' })
     expect(result).toEqual({ consumed: true })
     expect(last(rec).bodyText).toBe('Texto de autorización')
-    expect(last(rec).ids).toEqual(['act:consent_yes', 'act:consent_no'])
+    expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
+    expect(last(rec).titles).toEqual([texts.consentAccept, texts.consentDecline])
+  })
+
+  it('sin autorización, ni una pregunta le llega a la IA', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    const result = await send(db, rec, { text: '¿Cuánto vale una limpieza?' })
+    expect(result).toEqual({ consumed: true })
+    expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
+  })
+
+  it('sin autorización, un toque de un menú viejo tampoco llega a la IA', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    const result = await send(db, rec, { replyId: 'act:book' })
+    expect(result).toEqual({ consumed: true })
+    expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
   })
 
   it('aceptar guarda la autorización con su versión y abre el menú', async () => {
@@ -3342,13 +3401,37 @@ describe('autorización de datos', () => {
         source: 'whatsapp',
       },
     ])
-    expect(last(rec).ids).toEqual([
-      'act:book',
-      'act:mine',
-      'act:faq',
-      'act:urgent',
-      'act:human',
-    ])
+    expect(last(rec).ids).toEqual(MENU_IDS)
+    expect(last(rec).bodyText).toBe(texts.menuBody)
+  })
+
+  it('guarda el texto que vio la persona, no el que la clínica puso mientras tanto', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    // La clínica edita el texto después de que el paciente lo recibió y antes de que responda.
+    db._tables.clinic_settings[0].consent_text = 'Texto nuevo'
+    db._tables.clinic_settings[0].consent_version = 3
+    await send(db, rec, { replyId: 'act:consent_yes' })
+    expect(db._tables.clinic_consents[0]).toMatchObject({
+      text_version: 2,
+      text_snapshot: 'Texto de autorización',
+    })
+  })
+
+  it('si lo vuelve a recibir, guarda el texto nuevo que ve ahora', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    db._tables.clinic_settings[0].consent_text = 'Texto nuevo'
+    db._tables.clinic_settings[0].consent_version = 3
+    await send(db, rec, { text: 'acepto' })
+    expect(last(rec).bodyText).toBe('Texto nuevo')
+    await send(db, rec, { replyId: 'act:consent_yes' })
+    expect(db._tables.clinic_consents[0]).toMatchObject({
+      text_version: 3,
+      text_snapshot: 'Texto nuevo',
+    })
   })
 
   it('sin teléfono, la autorización guarda el identificador de WhatsApp del titular', async () => {
@@ -3369,6 +3452,31 @@ describe('autorización de datos', () => {
     expect(db._tables.clinic_consents[0].contact_ref).toBe('US.13491208655302741918')
   })
 
+  it('sin teléfono ni identificador no hay a nombre de quién guardar: no se registra nada', async () => {
+    const db = clinicDb({
+      contacts: [{ id: CONTACT, account_id: ACCOUNT, name: 'Marta Ruiz', phone: '' }],
+    })
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { replyId: 'act:consent_yes' })
+    expect(db._tables.clinic_consents).toHaveLength(0)
+    expect(rec.calls.some((c) => c.bodyText === texts.consentError)).toBe(true)
+    // Vuelve a ofrecer los botones y no abre el menú ni pausa el hilo.
+    expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+  })
+
+  it('si la base rechaza el registro, no hay autorización y se avisa', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    db._failNext('insert', 'clinic_consents', { message: 'boom' })
+    await send(db, rec, { replyId: 'act:consent_yes' })
+    expect(db._tables.clinic_consents).toHaveLength(0)
+    expect(rec.calls.some((c) => c.bodyText === texts.consentError)).toBe(true)
+    expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
+  })
+
   it('no aceptar registra la negativa y deja el hilo con una persona', async () => {
     const db = clinicDb()
     const rec = makeRecorder()
@@ -3376,14 +3484,66 @@ describe('autorización de datos', () => {
     await send(db, rec, { replyId: 'act:consent_no' })
     expect(db._tables.clinic_consents[0].granted).toBe(false)
     expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
-    expect(last(rec).bodyText).toContain('no guardaremos tus datos')
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.consentDeclinedNote)
+    expect(last(rec).bodyText).toBe(texts.consentDeclined)
+    expect(db._tables.booking_sessions.every((s) => s.status !== 'active')).toBe(true)
+  })
+
+  it('escribir "acepto" no autoriza nada: vuelve a mostrar los botones', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    const result = await send(db, rec, { text: 'acepto' })
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.clinic_consents).toHaveLength(0)
+    expect(last(rec).bodyText).toBe('Texto de autorización')
+    expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+  })
+
+  it('escribir "acepto" dos veces seguidas pasa el hilo a una persona, sin autorización', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { text: 'acepto' })
+    await send(db, rec, { text: 'sí, acepto' })
+    expect(db._tables.clinic_consents).toHaveLength(0)
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
+  })
+
+  it('escribir que no acepta sí queda como negativa', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { text: 'no acepto' })
+    expect(db._tables.clinic_consents).toMatchObject([{ granted: false }])
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+  })
+
+  it('un "acepto, no hay problema" tampoco autoriza', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { text: 'acepto, no hay problema' })
+    expect(db._tables.clinic_consents).toMatchObject([{ granted: false }])
   })
 
   it('con autorización, un saludo abre el menú sin volver a pedirla', async () => {
     const db = clinicDb({ clinic_consents: [grantedConsent()] })
     const rec = makeRecorder()
     await send(db, rec, { text: 'Hola' })
-    expect(last(rec).ids[0]).toBe('act:book')
+    expect(last(rec).ids).toEqual(MENU_IDS)
+    expect(db._tables.clinic_consents).toHaveLength(1)
+  })
+
+  it('si el paciente la rechazó antes y el hilo se reabre, la vuelve a pedir', async () => {
+    const db = clinicDb({
+      clinic_consents: [{ ...grantedConsent(), granted: false }],
+    })
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
   })
 
   it('con autorización, una pregunta pasa a la IA', async () => {
@@ -3394,13 +3554,44 @@ describe('autorización de datos', () => {
     expect(rec.calls).toHaveLength(0)
   })
 
+  it('con autorización, "gracias por la atención" no abre el menú', async () => {
+    const db = clinicDb({
+      clinic_consents: [grantedConsent()],
+      booking_settings: [clinicLabels],
+    })
+    const rec = makeRecorder()
+    const result = await send(db, rec, { text: 'Muchas gracias por la atención' })
+    expect(result).toEqual({ consumed: false })
+    expect(rec.calls).toHaveLength(0)
+  })
+
+  it('con autorización, "gracias por las atenciones" tampoco abre el menú', async () => {
+    const db = clinicDb({
+      clinic_consents: [grantedConsent()],
+      booking_settings: [clinicLabels],
+    })
+    const rec = makeRecorder()
+    const result = await send(db, rec, { text: 'gracias por las atenciones' })
+    expect(result).toEqual({ consumed: false })
+    expect(rec.calls).toHaveLength(0)
+  })
+
   it('"Precios y dudas" invita a preguntar y suelta la sesión', async () => {
     const db = clinicDb({ clinic_consents: [grantedConsent()] })
     const rec = makeRecorder()
     await send(db, rec, { text: 'Hola' })
     await send(db, rec, { replyId: 'act:faq' })
-    expect(last(rec).bodyText).toContain('Cuéntame tu duda')
+    expect(last(rec).bodyText).toBe(texts.faqPrompt)
     expect(db._tables.booking_sessions.every((s) => s.status !== 'active')).toBe(true)
+  })
+
+  it('"Hablar con una persona" pasa el hilo a un asesor', async () => {
+    const db = clinicDb({ clinic_consents: [grantedConsent()] })
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { replyId: 'act:human' })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
   })
 
   it('una cuenta sin el módulo no pide autorización', async () => {
@@ -3410,13 +3601,449 @@ describe('autorización de datos', () => {
     expect(db._tables.clinic_consents).toHaveLength(0)
     expect(last(rec).ids[0]).toMatch(/^svc:/)
   })
+
+  it('una cuenta sin el módulo no lee la configuración de la clínica', async () => {
+    // Sin el módulo, ni la fila que falta ni un fallo de lectura cambian nada.
+    const db = clinicDb({ clinic_settings: [] })
+    const rec = makeRecorder()
+    const result = await send(db, rec, { text: 'Hola' }, { modules: ['agenda'] })
+    expect(result).toEqual({ consumed: true })
+    expect(last(rec).ids[0]).toMatch(/^svc:/)
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+  })
+})
+
+describe('la clínica no está disponible', () => {
+  const urgencyNotification = (db: ReturnType<typeof clinicDb>) =>
+    db._tables.notifications.find((n) => n.title === texts.urgencyNotificationTitle)
+
+  it('sin configuración, el bot consume el mensaje y lo deja con una persona', async () => {
+    const db = clinicDb({ clinic_settings: [] })
+    const rec = makeRecorder()
+    const result = await send(db, rec, { text: 'Hola, quiero una cita' })
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.clinicUnavailableNote)
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
+    // Sin configuración tampoco se sabe qué autorización pedir.
+    expect(db._tables.clinic_consents).toHaveLength(0)
+    expect(db._tables.booking_sessions).toHaveLength(0)
+  })
+
+  it('si la configuración no se pudo leer, igual: consume y pasa a una persona', async () => {
+    const db = clinicDb()
+    db._failNext('select', 'clinic_settings', { message: 'connection reset' })
+    const rec = makeRecorder()
+    const result = await send(db, rec, { text: '¿Cuánto vale una limpieza?' })
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.clinicUnavailableNote)
+    expect(db._tables.clinic_consents).toHaveLength(0)
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
+  })
+
+  it('una configuración sin textos tampoco se usa', async () => {
+    const db = clinicDb({
+      clinic_settings: [
+        {
+          account_id: ACCOUNT,
+          consent_text: '   ',
+          consent_version: 1,
+          urgency_words: [],
+          urgency_alarm_text: 'Signos de alarma',
+          urgency_service_id: null,
+          offer_days: 30,
+        },
+      ],
+    })
+    const rec = makeRecorder()
+    const result = await send(db, rec, { text: 'Hola' })
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(rec.calls.every((c) => c.bodyText !== '   ')).toBe(true)
+  })
+
+  it('aunque el paciente ya haya autorizado, no sigue sin saber cómo está configurada la clínica', async () => {
+    const db = clinicDb({ clinic_settings: [], clinic_consents: [grantedConsent()] })
+    const rec = makeRecorder()
+    const result = await send(db, rec, { text: '¿Atienden hoy?' })
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+  })
+
+  it('un toque de un menú viejo también queda con una persona', async () => {
+    const db = clinicDb({ clinic_settings: [] })
+    const rec = makeRecorder()
+    const result = await send(db, rec, { replyId: 'act:book' })
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+  })
+
+  it('avisa al dueño con el aviso normal de un asesor', async () => {
+    const db = clinicDb({ clinic_settings: [] })
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    expect(db._tables.notifications).toHaveLength(1)
+    expect(db._tables.notifications[0]).toMatchObject({
+      user_id: OWNER,
+      conversation_id: CONVERSATION,
+      title: AGENDA_AGENT_TEXTS.handoffNotificationTitle,
+    })
+    expect(urgencyNotification(db)).toBeUndefined()
+  })
+
+  it('si el mensaje trae una palabra de urgencia, usa el aviso prioritario', async () => {
+    const db = clinicDb({ clinic_settings: [] })
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Tengo mucho dolor de muela' })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.clinicUnavailableUrgentNote)
+    expect(db._tables.notifications).toHaveLength(1)
+    expect(urgencyNotification(db)).toMatchObject({
+      user_id: OWNER,
+      body: texts.urgencyNotificationBody('Marta Ruiz'),
+    })
+  })
+
+  it('las palabras de urgencia son las de siempre, no las de una configuración que no se pudo leer', async () => {
+    const db = clinicDb()
+    db._failNext('select', 'clinic_settings', { message: 'timeout' })
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'me sangran las encías' })
+    expect(urgencyNotification(db)).toBeDefined()
+  })
+
+  it('una sesión a medias se cierra al pasar a la persona', async () => {
+    const db = clinicDb({
+      clinic_settings: [],
+      booking_sessions: [
+        {
+          id: 'ses-1',
+          account_id: ACCOUNT,
+          contact_id: CONTACT,
+          status: 'active',
+          expires_at: '2026-10-19T13:10:00.000Z',
+          state: { step: 'pick_service', mode: 'book', options: [], fails: 0 },
+        },
+      ],
+    })
+    const rec = makeRecorder()
+    const result = await send(db, rec, { text: 'Hola' })
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.booking_sessions[0].status).toBe('cancelled')
+  })
+
+  it('los toques de un recordatorio se siguen atendiendo', async () => {
+    const db = clinicDb({
+      clinic_settings: [],
+      booking_appointments: [
+        {
+          id: 'ap-1',
+          account_id: ACCOUNT,
+          contact_id: CONTACT,
+          service_id: SERVICE_LIMPIEZA,
+          staff_id: STAFF_ANA,
+          starts_at: '2026-10-20T15:00:00.000Z',
+          ends_at: '2026-10-20T15:30:00.000Z',
+          status: 'pending',
+          answers: {},
+        },
+      ],
+    })
+    const rec = makeRecorder()
+    const result = await send(db, rec, { replyId: 'rem:confirm' })
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.booking_appointments[0].status).toBe('confirmed')
+    expect(last(rec).bodyText).toContain('Queda confirmado')
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+  })
+
+  it('si una persona ya tiene el hilo, no lo toca ni repite el aviso', async () => {
+    const db = clinicDb({ clinic_settings: [] })
+    const rec = makeRecorder()
+    const result = await send(db, rec, { text: 'Hola' }, { humanOwned: true })
+    expect(result).toEqual({ consumed: false })
+    expect(rec.calls).toHaveLength(0)
+    expect(db._tables.notifications).toHaveLength(0)
+  })
+
+  it('en una cuenta sin el módulo, una clínica sin configurar no cambia nada', async () => {
+    const db = clinicDb({ clinic_settings: [] })
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' }, { modules: ['agenda'] })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    expect(db._tables.notifications).toHaveLength(0)
+  })
+})
+```
+
+Crea `src/verticals/agenda/agent/index.test.ts`, que prueba el handler de producción con una base que se cae:
+
+```ts
+import type { SupabaseClient } from '@supabase/supabase-js'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import type { ModuleKey, VerticalInboundContext } from '@/lib/verticals/types'
+
+import { ACCOUNT, CONTACT, CONVERSATION, OWNER, clinicDb } from './testing/clinic-harness'
+import { asClient } from './testing/fake-db'
+
+const mocks = vi.hoisted(() => ({
+  notifyAlert: vi.fn<(text: string) => Promise<void>>(async () => {}),
+  sendText: vi.fn<(args: unknown) => Promise<void>>(async () => {}),
+  sendButtons: vi.fn<(args: unknown) => Promise<void>>(async () => {}),
+  sendList: vi.fn<(args: unknown) => Promise<void>>(async () => {}),
+}))
+
+vi.mock('@/lib/ops/alert', () => ({ notifyAlert: mocks.notifyAlert }))
+vi.mock('@/lib/flows/meta-send', () => ({
+  engineSendText: mocks.sendText,
+  engineSendInteractiveButtons: mocks.sendButtons,
+  engineSendInteractiveList: mocks.sendList,
+}))
+
+import { agendaInboundHandler } from './index'
+
+/** Una base que se cae en cuanto el bot la toca. */
+const brokenDb = {
+  from() {
+    throw new Error('base caída')
+  },
+} as unknown as SupabaseClient
+
+function context(
+  db: SupabaseClient,
+  modules: readonly ModuleKey[] | undefined,
+): VerticalInboundContext {
+  return {
+    accountId: ACCOUNT,
+    conversationId: CONVERSATION,
+    contactId: CONTACT,
+    configOwnerUserId: OWNER,
+    db,
+    session: null,
+    modules,
+  }
+}
+
+describe('agendaInboundHandler', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.clearAllMocks()
+  })
+
+  it('en una cuenta con clínica, un error inesperado consume el mensaje y avisa', async () => {
+    const result = await agendaInboundHandler(context(brokenDb, ['agenda', 'clinica']))
+
+    // Consumido: la IA no ve el chat de un paciente cuando el bot falló.
+    expect(result).toEqual({ consumed: true })
+    expect(mocks.notifyAlert).toHaveBeenCalledTimes(1)
+    const text = mocks.notifyAlert.mock.calls[0][0]
+    expect(text).toContain(ACCOUNT)
+    expect(text).toContain(CONVERSATION)
+    expect(text).toContain('base caída')
+    expect(console.error).toHaveBeenCalled()
+  })
+
+  it('en una cuenta sin clínica, el error sigue subiendo como antes', async () => {
+    await expect(agendaInboundHandler(context(brokenDb, ['agenda']))).rejects.toThrow('base caída')
+    expect(mocks.notifyAlert).not.toHaveBeenCalled()
+  })
+
+  it('si el contexto no trae módulos, tampoco se traga el error', async () => {
+    await expect(agendaInboundHandler(context(brokenDb, undefined))).rejects.toThrow('base caída')
+    expect(mocks.notifyAlert).not.toHaveBeenCalled()
+  })
+
+  it('el aviso no incluye texto del paciente ni su teléfono', async () => {
+    await agendaInboundHandler(context(brokenDb, ['clinica']))
+    const text = mocks.notifyAlert.mock.calls[0][0]
+    expect(text).not.toContain('573001112233')
+  })
+
+  it('sin fallos, devuelve lo que decide el bot y no avisa nada', async () => {
+    // Una cuenta con clínica que aún no autorizó: el bot pide la autorización
+    // por el envío real (aquí, el simulado del motor de flujos).
+    const result = await agendaInboundHandler(
+      context(asClient(clinicDb()), ['agenda', 'clinica']),
+    )
+    expect(result).toEqual({ consumed: true })
+    expect(mocks.sendButtons).toHaveBeenCalledTimes(1)
+    expect(mocks.sendButtons.mock.calls[0][0]).toMatchObject({
+      accountId: ACCOUNT,
+      conversationId: CONVERSATION,
+      bodyText: 'Texto de autorización',
+    })
+    expect(mocks.notifyAlert).not.toHaveBeenCalled()
+  })
+})
+```
+
+Crea `src/modules/clinica/consent.test.ts`:
+
+```ts
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { asClient, makeFakeDb, type FakeDb } from '@/verticals/agenda/agent/testing/fake-db'
+
+import { latestConsent, recordConsent } from './consent'
+
+const ACCOUNT = 'acc-1'
+const OTHER_ACCOUNT = 'acc-2'
+const CONTACT = 'ct-1'
+
+function consentRow(overrides: Record<string, unknown>) {
+  return {
+    id: crypto.randomUUID(),
+    account_id: ACCOUNT,
+    contact_id: CONTACT,
+    contact_ref: '573001112233',
+    kind: 'datos_sensibles',
+    granted: true,
+    text_version: 1,
+    text_snapshot: 'Texto',
+    source: 'whatsapp',
+    created_at: '2026-10-01T00:00:00.000Z',
+    ...overrides,
+  }
+}
+
+const recordArgs = {
+  accountId: ACCOUNT,
+  contactId: CONTACT,
+  kind: 'datos_sensibles' as const,
+  granted: true,
+  textVersion: 3,
+  textSnapshot: 'Texto que vio',
+  source: 'whatsapp' as const,
+  createdAtIso: '2026-10-19T13:00:00.000Z',
+}
+
+describe('latestConsent', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  it('sin registros, no hay decisión', async () => {
+    const db = makeFakeDb({ clinic_consents: [] })
+    expect(
+      await latestConsent(asClient(db), { accountId: ACCOUNT, contactId: CONTACT, kind: 'datos_sensibles' }),
+    ).toBeNull()
+  })
+
+  it('vale la más reciente, no la primera', async () => {
+    const db = makeFakeDb({
+      clinic_consents: [
+        consentRow({ granted: true, created_at: '2026-10-01T00:00:00.000Z' }),
+        consentRow({ granted: false, created_at: '2026-10-10T00:00:00.000Z' }),
+      ],
+    })
+    expect(
+      await latestConsent(asClient(db), { accountId: ACCOUNT, contactId: CONTACT, kind: 'datos_sensibles' }),
+    ).toEqual({ granted: false })
+  })
+
+  it('no mezcla tipos, contactos ni cuentas', async () => {
+    const db = makeFakeDb({
+      clinic_consents: [
+        consentRow({ kind: 'mercadeo' }),
+        consentRow({ contact_id: 'ct-2' }),
+        consentRow({ account_id: OTHER_ACCOUNT }),
+      ],
+    })
+    expect(
+      await latestConsent(asClient(db), { accountId: ACCOUNT, contactId: CONTACT, kind: 'datos_sensibles' }),
+    ).toBeNull()
+  })
+
+  it('si no se pudo leer, no hay decisión (nunca "autorizó")', async () => {
+    const db = makeFakeDb({ clinic_consents: [consentRow({ granted: true })] })
+    db._failNext('select', 'clinic_consents', { message: 'timeout' })
+    expect(
+      await latestConsent(asClient(db), { accountId: ACCOUNT, contactId: CONTACT, kind: 'datos_sensibles' }),
+    ).toBeNull()
+  })
+})
+
+describe('recordConsent', () => {
+  let db: FakeDb
+
+  beforeEach(() => {
+    db = makeFakeDb({
+      contacts: [
+        { id: CONTACT, account_id: ACCOUNT, name: 'Marta', phone: ' 573001112233 ', wa_user_id: null },
+        { id: 'ct-user', account_id: ACCOUNT, name: 'Luis', phone: '', wa_user_id: 'US.123' },
+        { id: 'ct-none', account_id: ACCOUNT, name: 'Sin datos', phone: '', wa_user_id: null },
+        { id: 'ct-other', account_id: OTHER_ACCOUNT, name: 'Ajena', phone: '573009998877' },
+      ],
+      clinic_consents: [],
+    })
+  })
+
+  it('guarda quién autorizó, qué texto vio y desde dónde', async () => {
+    await recordConsent(asClient(db), { ...recordArgs, messageId: 'wamid-9' })
+    expect(db._tables.clinic_consents).toMatchObject([
+      {
+        account_id: ACCOUNT,
+        contact_id: CONTACT,
+        contact_ref: '573001112233',
+        kind: 'datos_sensibles',
+        granted: true,
+        text_version: 3,
+        text_snapshot: 'Texto que vio',
+        source: 'whatsapp',
+        message_id: 'wamid-9',
+        created_at: '2026-10-19T13:00:00.000Z',
+      },
+    ])
+  })
+
+  it('sin mensaje de origen, guarda null', async () => {
+    await recordConsent(asClient(db), recordArgs)
+    expect(db._tables.clinic_consents[0].message_id).toBeNull()
+  })
+
+  it('sin teléfono, quién autorizó es su identificador de WhatsApp', async () => {
+    await recordConsent(asClient(db), { ...recordArgs, contactId: 'ct-user' })
+    expect(db._tables.clinic_consents[0].contact_ref).toBe('US.123')
+  })
+
+  it('sin teléfono ni identificador, lanza y no guarda nada', async () => {
+    await expect(recordConsent(asClient(db), { ...recordArgs, contactId: 'ct-none' })).rejects.toThrow(
+      'teléfono ni identificador',
+    )
+    expect(db._tables.clinic_consents).toHaveLength(0)
+  })
+
+  it('un contacto de otra cuenta no sirve de referencia', async () => {
+    await expect(recordConsent(asClient(db), { ...recordArgs, contactId: 'ct-other' })).rejects.toThrow()
+    expect(db._tables.clinic_consents).toHaveLength(0)
+  })
+
+  it('si no se pudo leer el contacto, lanza y no guarda nada', async () => {
+    db._failNext('select', 'contacts', { message: 'timeout' })
+    await expect(recordConsent(asClient(db), recordArgs)).rejects.toThrow('No se pudo leer el contacto')
+    expect(db._tables.clinic_consents).toHaveLength(0)
+  })
+
+  it('si la base rechaza el registro, lanza', async () => {
+    db._failNext('insert', 'clinic_consents', { message: 'boom' })
+    await expect(recordConsent(asClient(db), recordArgs)).rejects.toThrow(
+      'No se pudo guardar la autorización: boom',
+    )
+    expect(db._tables.clinic_consents).toHaveLength(0)
+  })
 })
 ```
 
 - [ ] **Step 3: Córrelas y verifica que fallan**
 
-Run: `npx vitest run src/verticals/agenda/agent/clinic-consent.test.ts`
-Expected: FAIL, el bot abre el menú de servicios en vez de pedir autorización.
+Run: `npx vitest run src/verticals/agenda/agent/clinic-consent.test.ts src/verticals/agenda/agent/index.test.ts`
+Expected: FAIL. El bot abre el menú de servicios en vez de pedir autorización, y el handler deja subir el error.
 
 - [ ] **Step 4: Crea el acceso a autorizaciones**
 
@@ -3459,7 +4086,8 @@ export async function latestConsent(
 /**
  * Teléfono del contacto, o su identificador de WhatsApp si no tiene teléfono
  * (un contacto que solo escribe con nombre de usuario guarda `phone` vacío).
- * Es lo que queda en la autorización si el contacto se borra después.
+ * Es lo que queda en la autorización si el contacto se borra después, y la
+ * base no admite una vacía: sin a nombre de quién guardar, no hay registro.
  */
 async function contactRef(
   db: SupabaseClient,
@@ -3512,7 +4140,31 @@ export async function recordConsent(
 }
 ```
 
-- [ ] **Step 5: Crea los pasos clínicos**
+- [ ] **Step 5: Agrega los textos de la clínica no disponible y los campos del estado**
+
+En `src/modules/clinica/texts.ts`, después de `consentError`:
+
+```ts
+    /** La configuración de la clínica falta o no se pudo leer: el bot no atiende y pasa a una persona. */
+    clinicUnavailableNote:
+      'Paciente: el bot no lo atendió porque la configuración de la clínica no está disponible (bot en pausa). Revisa la configuración de la clínica.',
+    clinicUnavailableUrgentNote:
+      'Paciente: escribió una posible urgencia y la configuración de la clínica no está disponible (bot en pausa). Comunícate con esa persona ya.',
+```
+
+En `src/verticals/agenda/agent/state.ts`, en `BookingState`, antes de `afterConsent`:
+
+```ts
+  /**
+   * Texto y versión de la autorización tal como se le mostraron a la persona.
+   * Se guardan al responder: la clínica puede editar su texto mientras tanto, y
+   * el registro tiene que decir lo que la persona vio, no lo que hay ahora.
+   */
+  consentText?: string
+  consentVersion?: number
+```
+
+- [ ] **Step 6: Crea los pasos clínicos**
 
 Crea `src/verticals/agenda/agent/steps/clinic-steps.ts`:
 
@@ -3640,7 +4292,16 @@ export async function renderClinicStep(
         buttonLabel: texts.menuButton,
         options,
       })
-      return { state: { ...state, options }, closed: false }
+      // Lo que se acaba de mostrar es lo que la respuesta va a registrar.
+      return {
+        state: {
+          ...state,
+          options,
+          consentText: ctx.clinic.consentText,
+          consentVersion: ctx.clinic.consentVersion,
+        },
+        closed: false,
+      }
     }
 
     case 'clinic_menu': {
@@ -3674,6 +4335,8 @@ export async function handleClinicChoice(
     case 'consent': {
       if (parsed?.kind !== 'act') return { kind: 'fail' }
       if (parsed.value !== 'consent_yes' && parsed.value !== 'consent_no') return { kind: 'fail' }
+      // Sin el texto que se le mostró no hay qué registrar: se vuelve a mostrar.
+      if (!state.consentText || !state.consentVersion) return { kind: 'fail' }
       const granted = parsed.value === 'consent_yes'
       try {
         await recordConsent(ctx.db, {
@@ -3681,8 +4344,8 @@ export async function handleClinicChoice(
           contactId: ctx.contactId,
           kind: 'datos_sensibles',
           granted,
-          textVersion: ctx.clinic.consentVersion,
-          textSnapshot: ctx.clinic.consentText,
+          textVersion: state.consentVersion,
+          textSnapshot: state.consentText,
           source: 'whatsapp',
           messageId: ctx.inboundMessageId,
           createdAtIso: ctx.nowIso,
@@ -3724,7 +4387,7 @@ export async function handleClinicChoice(
 
 La tarea 8 cambia `book` para que pase por `pick_patient`. Las tareas 9 y 11 agregan `urgent` y `mine`.
 
-- [ ] **Step 6: Conecta el controlador**
+- [ ] **Step 7: Conecta el controlador**
 
 En `src/verticals/agenda/agent/controller.ts`:
 
@@ -3733,7 +4396,11 @@ En `src/verticals/agenda/agent/controller.ts`:
 ```ts
 import { latestConsent } from '@/modules/clinica/consent'
 import { loadClinicContext, type ClinicContext } from '@/modules/clinica/settings'
-import { buildClinicTexts, type ClinicTexts } from '@/modules/clinica/texts'
+import {
+  buildClinicTexts,
+  DEFAULT_URGENCY_WORDS,
+  type ClinicTexts,
+} from '@/modules/clinica/texts'
 ```
 
 ```ts
@@ -3748,21 +4415,30 @@ import {
 } from './steps/clinic-steps'
 ```
 
-2. En `Dialog` agrega:
+Y `containsUrgencyWord` en el import de `./state`.
+
+2. En `Dialog` agrega, después de `texts`:
 
 ```ts
-  /** Configuración de la clínica; null en cuentas sin el módulo. */
+  /** Configuración de la clínica; null en cuentas sin el módulo o si no está disponible. */
   clinic: ClinicContext | null
-  clinicTexts: ClinicTexts | null
+  /**
+   * La cuenta tiene el módulo clínica pero su configuración falta o no se pudo
+   * leer. Nunca se atiende como una agenda normal: pasa a una persona.
+   */
+  clinicUnavailable: boolean
+  /** Copy del bot clínico. No depende de la configuración, así que siempre existe. */
+  clinicTexts: ClinicTexts
+  /** Id de Meta del mensaje que se está atendiendo; queda en la autorización. */
   inboundMessageId: string | null
   humanOwned: boolean
 ```
 
-3. En `handleAgendaInbound`, reemplaza la lectura y el armado del `dialog`:
+3. En `handleAgendaInbound`, reemplaza la lectura y el armado del `dialog`. **No** reduzcas el resultado con `status === 'ok' ? clinic : null` a secas: eso trata una clínica sin configuración como una agenda normal, se salta la autorización y deja el chat a la IA. `clinicUnavailable` es lo que lo impide.
 
 ```ts
   const clinicActive = args.modules?.includes('clinica') === true
-  const [settings, account, clinic] = await Promise.all([
+  const [settings, account, clinicResult] = await Promise.all([
     loadBotSettings(args.db, args.accountId),
     loadAccount(args.db, args.accountId),
     clinicActive ? loadClinicContext(args.db, args.accountId) : Promise.resolve(null),
@@ -3780,17 +4456,36 @@ import {
     settings,
     texts: mergeBotTexts(settings.botTexts, settings.labels),
     backend: args.backend ?? createInternalBackend({ db: args.db, accountId: args.accountId }),
-    clinic,
-    clinicTexts: clinic ? buildClinicTexts(settings.labels) : null,
+    clinic: clinicResult?.status === 'ok' ? clinicResult.clinic : null,
+    // Con el módulo activo, una configuración que falta o no se pudo leer NO
+    // equivale a una cuenta sin clínica: ver el cierre de más abajo.
+    clinicUnavailable: clinicResult !== null && clinicResult.status !== 'ok',
+    clinicTexts: buildClinicTexts(settings.labels),
     inboundMessageId: args.inboundMessageId ?? null,
     humanOwned,
   }
 ```
 
-4. Reemplaza el bloque desde `// Un tap de un menú viejo no arranca nada` hasta el final de `handleAgendaInbound` por:
+4. Justo antes de `// 1) Pedir un humano gana sobre cualquier paso del flujo.` (después del bloque `humanOwned && args.session`), agrega:
+
+```ts
+  // Clínica sin configuración usable (falta o no se pudo leer): no se sabe qué
+  // autorización pedir ni qué urgencias vigilar, y seguir como una agenda
+  // normal dejaría la conversación de un paciente a la IA sin su permiso. El
+  // bot consume el mensaje y lo deja con una persona. Los toques de
+  // recordatorio ya se atendieron arriba, y un hilo que ya es de una persona
+  // no llega hasta aquí.
+  if (dialog.clinicUnavailable) {
+    await handoffClinicUnavailable(dialog, args.session?.id ?? null, text)
+    return { consumed: true }
+  }
+```
+
+5. Después de `expireStaleSessions` (paso 3), reemplaza lo que sigue hasta el final de `handleAgendaInbound` por:
 
 ```ts
   // Clínica: sin autorización no se sigue, y la IA no ve la conversación.
+  // Si la autorización no se pudo leer, se vuelve a pedir.
   if (dialog.clinic) {
     const consent = await latestConsent(args.db, {
       accountId: args.accountId,
@@ -3840,7 +4535,93 @@ import {
 }
 ```
 
-5. Agrega, después de `bestEffort` al final del archivo:
+6. En `coerceState`, antes de la línea de `afterConsent`:
+
+```ts
+    ...(typeof raw.consentText === 'string' ? { consentText: raw.consentText } : {}),
+    ...(typeof raw.consentVersion === 'number' ? { consentVersion: raw.consentVersion } : {}),
+```
+
+7. En `handleChoice`, justo después de `const parsed = parseOptionId(choice)`:
+
+```ts
+  if (isClinicStep(state.step)) {
+    if (!dialog.clinic) {
+      await closeSession(dialog.db, {
+        id: sessionId,
+        accountId: dialog.accountId,
+        status: 'completed',
+        updatedAtIso: dialog.nowIso,
+      })
+      return
+    }
+    const outcome = await handleClinicChoice(clinicCtx(dialog), state, parsed)
+    await applyClinicOutcome(dialog, sessionId, state, outcome)
+    return
+  }
+```
+
+8. En `renderStep`, reemplaza el `return { state, closed: true }` de los pasos clínicos por:
+
+```ts
+      if (!dialog.clinic) return { state, closed: true }
+      return renderClinicStep(clinicCtx(dialog), state)
+```
+
+9. Cambia `performHandoff` para aceptar las opciones, y agrega `handoffClinicUnavailable` justo después. La firma y las líneas que cambian:
+
+```ts
+async function performHandoff(
+  dialog: Dialog,
+  sessionId: string | null,
+  opts: Omit<ClinicHandoff, 'kind'> = {},
+): Promise<void> {
+  await markConversationHandoff(dialog.db, {
+    accountId: dialog.accountId,
+    conversationId: dialog.conversationId,
+    note: opts.note ?? dialog.texts.handoffNote,
+    agentId: await loadHandoffAgentId(dialog.db, dialog.accountId),
+  })
+```
+
+```ts
+        title: opts.notification?.title ?? dialog.texts.handoffNotificationTitle,
+        body: (opts.notification?.body ?? dialog.texts.handoffNotificationBody)(who),
+```
+
+```ts
+  await dialog.sender.sendText({ text: opts.message ?? dialog.texts.handoff })
+}
+
+/**
+ * Clínica sin configuración usable: el hilo queda con una persona. Si el
+ * mensaje parece una urgencia (con las palabras de siempre, porque las de la
+ * clínica no se pudieron leer), el aviso al equipo es el prioritario.
+ */
+async function handoffClinicUnavailable(
+  dialog: Dialog,
+  sessionId: string | null,
+  text: string,
+): Promise<void> {
+  const { clinicTexts: texts } = dialog
+  const urgent = containsUrgencyWord(text, DEFAULT_URGENCY_WORDS)
+  await performHandoff(
+    dialog,
+    sessionId,
+    urgent
+      ? {
+          note: texts.clinicUnavailableUrgentNote,
+          notification: {
+            title: texts.urgencyNotificationTitle,
+            body: texts.urgencyNotificationBody,
+          },
+        }
+      : { note: texts.clinicUnavailableNote },
+  )
+}
+```
+
+10. Agrega, después de `bestEffort` al final del archivo:
 
 ```ts
 // ------------------------------------------------------------
@@ -3853,7 +4634,7 @@ function clinicCtx(dialog: Dialog): ClinicStepCtx {
     sender: dialog.sender,
     backend: dialog.backend,
     clinic: dialog.clinic!,
-    texts: dialog.clinicTexts!,
+    texts: dialog.clinicTexts,
     accountId: dialog.accountId,
     contactId: dialog.contactId,
     conversationId: dialog.conversationId,
@@ -3897,66 +4678,68 @@ async function applyClinicOutcome(
 
 La tarea 11 reemplaza el caso `reminder`.
 
-6. En `handleChoice`, justo después de `const parsed = parseOptionId(choice)`:
+- [ ] **Step 8: Cierra la puerta a la IA ante un error inesperado**
+
+En `src/verticals/agenda/agent/index.ts`, agrega el import de `notifyAlert` y reemplaza `agendaInboundHandler`:
 
 ```ts
-  if (isClinicStep(state.step)) {
-    if (!dialog.clinic) {
-      await closeSession(dialog.db, {
-        id: sessionId,
-        accountId: dialog.accountId,
-        status: 'completed',
-        updatedAtIso: dialog.nowIso,
-      })
-      return
-    }
-    const outcome = await handleClinicChoice(clinicCtx(dialog), state, parsed)
-    await applyClinicOutcome(dialog, sessionId, state, outcome)
-    return
+import { notifyAlert } from '@/lib/ops/alert'
+```
+
+```ts
+/** Cuánto del error cabe en la alerta: sirve para ubicarlo, no para volcar datos. */
+const ALERT_ERROR_MAX = 300
+
+/**
+ * Punto de entrada del seam: el webhook ya validó la firma, guardó
+ * el mensaje entrante y resolvió cuenta/contacto/conversación. Aquí
+ * solo se construye el sender y se delega en el controlador.
+ *
+ * Si el controlador lanza, el dispatcher lo registra y devuelve
+ * `consumed: false`, y entonces la IA ve el mensaje. Con el módulo clínica
+ * eso no puede pasar: sería la conversación de un paciente, quizá sin su
+ * autorización. Por eso, solo en esas cuentas, el error se registra, se avisa
+ * al equipo técnico y el mensaje se da por consumido. Las demás cuentas
+ * siguen igual: el error sube.
+ */
+export const agendaInboundHandler: VerticalInboundHandler = async (ctx) => {
+  try {
+    return await handleAgendaInbound({
+      db: ctx.db,
+      sender: createAgendaSender(ctx),
+      accountId: ctx.accountId,
+      conversationId: ctx.conversationId,
+      contactId: ctx.contactId,
+      configOwnerUserId: ctx.configOwnerUserId,
+      inboundMessageId: ctx.inboundMessageId,
+      session: ctx.session,
+      humanOwned: ctx.humanOwned ?? false,
+      modules: ctx.modules,
+    })
+  } catch (err) {
+    if (ctx.modules?.includes('clinica') !== true) throw err
+    console.error('[clinica] el bot falló con un mensaje; no se pasa a la IA:', err)
+    const reason = err instanceof Error ? err.message : String(err)
+    await notifyAlert(
+      `Clínica: el bot falló con un mensaje y no se lo pasó a la IA (cuenta ${ctx.accountId}, conversación ${ctx.conversationId}). ` +
+        `El paciente puede haberse quedado sin respuesta; hay que revisar el chat. Error: ${reason.slice(0, ALERT_ERROR_MAX)}`,
+    )
+    return { consumed: true }
   }
+}
 ```
 
-7. En `renderStep`, reemplaza el `return { state, closed: true }` de los pasos clínicos por:
+El dispatcher sigue con su propio `catch` (devuelve `consumed: false` si lo que falla es la lectura de módulos antes de llamar al handler). Eso queda fuera de esta tarea.
 
-```ts
-      if (!dialog.clinic) return { state, closed: true }
-      return renderClinicStep(clinicCtx(dialog), state)
-```
+- [ ] **Step 9: Corre las pruebas**
 
-8. Cambia `performHandoff` para aceptar las opciones. La firma y las líneas que cambian:
+Run: `npx vitest run && npx tsc --noEmit`
+Expected: PASS. Ninguna prueba de `controller.test.ts` ni de `reminders.test.ts` se modifica.
 
-```ts
-async function performHandoff(
-  dialog: Dialog,
-  sessionId: string | null,
-  opts: Omit<ClinicHandoff, 'kind'> = {},
-): Promise<void> {
-  await markConversationHandoff(dialog.db, {
-    accountId: dialog.accountId,
-    conversationId: dialog.conversationId,
-    note: opts.note ?? dialog.texts.handoffNote,
-    agentId: await loadHandoffAgentId(dialog.db, dialog.accountId),
-  })
-```
-
-```ts
-        title: opts.notification?.title ?? dialog.texts.handoffNotificationTitle,
-        body: (opts.notification?.body ?? dialog.texts.handoffNotificationBody)(who),
-```
-
-```ts
-  await dialog.sender.sendText({ text: opts.message ?? dialog.texts.handoff })
-```
-
-- [ ] **Step 7: Corre las pruebas**
-
-Run: `npx vitest run src/verticals/agenda && npx tsc --noEmit`
-Expected: PASS.
-
-- [ ] **Step 8: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
-git add src/modules/clinica/consent.ts src/verticals/agenda/agent
+git add src/modules/clinica src/verticals/agenda/agent
 git commit -m "feat(clinica): ask for data consent and open the clinic menu"
 ```
 
