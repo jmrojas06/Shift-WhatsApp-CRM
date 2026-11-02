@@ -79,22 +79,51 @@ export async function loadAccount(
   }
 }
 
+export interface InboundMessage {
+  text: string
+  replyId: string | null
+  /**
+   * `template_name` del mensaje al que responde el cliente (un toque en el
+   * botón de una plantilla llega como respuesta a ella). null si no responde
+   * a ninguno, si ese mensaje no está en ESTA conversación o si no es una
+   * plantilla.
+   */
+  repliedTemplateName: string | null
+}
+
 export async function loadInboundMessage(
   db: SupabaseClient,
   conversationId: string,
   messageId: string,
-): Promise<{ text: string; replyId: string | null } | null> {
+): Promise<InboundMessage | null> {
   const { data } = await db
     .from('messages')
-    .select('content_text, interactive_reply_id')
+    .select('content_text, interactive_reply_id, reply_to_message_id')
     .eq('conversation_id', conversationId)
     .eq('message_id', messageId)
     .maybeSingle()
   if (!data) return null
   const row = data as Record<string, unknown>
+
+  // El webhook guarda en `reply_to_message_id` el id INTERNO (messages.id) del
+  // mensaje citado, no el wamid.
+  const repliedToId = (row.reply_to_message_id as string | null) ?? null
+  let repliedTemplateName: string | null = null
+  if (repliedToId) {
+    const { data: parent } = await db
+      .from('messages')
+      .select('template_name')
+      .eq('id', repliedToId)
+      .eq('conversation_id', conversationId)
+      .maybeSingle()
+    repliedTemplateName =
+      ((parent as Record<string, unknown> | null)?.template_name as string | null) ?? null
+  }
+
   return {
     text: (row.content_text as string | null) ?? '',
     replyId: (row.interactive_reply_id as string | null) ?? null,
+    repliedTemplateName,
   }
 }
 

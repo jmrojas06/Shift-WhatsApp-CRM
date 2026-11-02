@@ -53,6 +53,19 @@ export const AGENDA_REMINDER_TEMPLATE = {
   language: 'es',
 } as const
 
+/** Plantilla del recordatorio de las clínicas (módulo clínica). */
+export const CLINIC_REMINDER_TEMPLATE_NAME = 'recordatorio_cita_clinica'
+
+const REMINDER_TEMPLATE_NAMES: ReadonlySet<string> = new Set([
+  AGENDA_REMINDER_TEMPLATE.name,
+  CLINIC_REMINDER_TEMPLATE_NAME,
+])
+
+/** ¿Es el nombre de una plantilla de recordatorio de cita? */
+export function isReminderTemplateName(name: string | null | undefined): boolean {
+  return typeof name === 'string' && REMINDER_TEMPLATE_NAMES.has(name)
+}
+
 export type ReminderKind = 'h24' | 'h2'
 
 // ------------------------------------------------------------

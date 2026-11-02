@@ -438,7 +438,7 @@ let msgCounter = 0
 
 function seedInbound(
   db: FakeDb,
-  input: { text?: string; replyId?: string | null },
+  input: { text?: string; replyId?: string | null; replyTo?: string | null },
 ): string {
   msgCounter += 1
   const messageId = `wamid-${msgCounter}`
@@ -450,8 +450,36 @@ function seedInbound(
     content_text: input.text ?? '',
     content_type: input.replyId ? 'interactive' : 'text',
     interactive_reply_id: input.replyId ?? null,
+    // Como el webhook: el id interno del mensaje al que responde el cliente.
+    reply_to_message_id: input.replyTo ?? null,
   })
   return messageId
+}
+
+/**
+ * Un saliente de plantilla que el cliente puede citar (el toque de un botón
+ * llega como respuesta a él). Devuelve su id interno.
+ */
+function seedTemplateMessage(
+  db: FakeDb,
+  templateName: string,
+  conversationId: string = CONVERSATION,
+): string {
+  msgCounter += 1
+  const id = `msg-tpl-${msgCounter}`
+  db._tables.messages.push({
+    id,
+    account_id: ACCOUNT,
+    conversation_id: conversationId,
+    message_id: `wamid-tpl-${msgCounter}`,
+    sender_type: 'bot',
+    content_type: 'template',
+    content_text: 'Texto de la plantilla',
+    template_name: templateName,
+    interactive_reply_id: null,
+    reply_to_message_id: null,
+  })
+  return id
 }
 
 /** Lo que el dispatcher pasaría: solo la sesión activa y vigente. */
@@ -508,7 +536,7 @@ type Recorder = ReturnType<typeof makeRecorder>
 async function send(
   db: FakeDb,
   rec: Recorder,
-  input: { text?: string; replyId?: string | null },
+  input: { text?: string; replyId?: string | null; replyTo?: string | null },
   now: Date = NOW,
   opts: { humanOwned?: boolean } = {},
 ) {
@@ -531,7 +559,7 @@ async function send(
 const sendHuman = (
   db: FakeDb,
   rec: Recorder,
-  input: { text?: string; replyId?: string | null },
+  input: { text?: string; replyId?: string | null; replyTo?: string | null },
 ) => send(db, rec, input, NOW, { humanOwned: true })
 
 function last(rec: Recorder): SenderCall {
@@ -1559,20 +1587,123 @@ describe('botones del recordatorio (rem:*)', () => {
     expect(sessionRow(db)).toBeUndefined()
   })
 
-  it('el toque de una plantilla sin payload llega con la etiqueta y también confirma', async () => {
+})
+
+describe('etiquetas de botón de plantilla (Confirmar / Reprogramar / Cancelar)', () => {
+  function pendingSeed() {
     const seed = baseSeed()
     seed.booking_appointments = [
       appointmentRow({ status: 'pending', confirmed_at: null }),
     ]
-    const db = makeFakeDb(seed)
+    return seed
+  }
+
+  it.each(['recordatorio_cita', 'recordatorio_cita_clinica'])(
+    'la etiqueta que responde a la plantilla %s confirma la cita',
+    async (templateName) => {
+      const db = makeFakeDb(pendingSeed())
+      const rec = makeRecorder()
+      const replyTo = seedTemplateMessage(db, templateName)
+
+      const res = await send(db, rec, { replyId: 'Confirmar', replyTo })
+
+      expect(res.consumed).toBe(true)
+      expect(db._tables.booking_appointments[0].status).toBe('confirmed')
+      expect(last(rec).bodyText).toContain('Queda confirmado')
+      expect(sessionRow(db)).toBeUndefined()
+    },
+  )
+
+  it('la etiqueta de un hilo con humano también vale si responde al recordatorio', async () => {
+    const db = makeFakeDb(pendingSeed())
+    const rec = makeRecorder()
+    const replyTo = seedTemplateMessage(db, 'recordatorio_cita')
+
+    const res = await sendHuman(db, rec, { replyId: 'Confirmar', replyTo })
+
+    expect(res.consumed).toBe(true)
+    expect(db._tables.booking_appointments[0].status).toBe('confirmed')
+  })
+
+  it.each(['Confirmar', 'Reprogramar', 'Cancelar'])(
+    'la etiqueta %s de OTRA plantilla no toca nada y no se consume',
+    async (label) => {
+      const db = makeFakeDb(pendingSeed())
+      const rec = makeRecorder()
+      const replyTo = seedTemplateMessage(db, 'promo_noviembre')
+
+      const res = await send(db, rec, { replyId: label, replyTo })
+
+      expect(res.consumed).toBe(false)
+      expect(rec.calls).toHaveLength(0)
+      expect(db._tables.booking_appointments[0].status).toBe('pending')
+      expect(db._tables.booking_events ?? []).toHaveLength(0)
+      expect(sessionRow(db)).toBeUndefined()
+    },
+  )
+
+  it('la etiqueta sin referencia al mensaje al que responde no toca nada', async () => {
+    const db = makeFakeDb(pendingSeed())
     const rec = makeRecorder()
 
     const res = await send(db, rec, { replyId: 'Confirmar' })
 
+    expect(res.consumed).toBe(false)
+    expect(rec.calls).toHaveLength(0)
+    expect(db._tables.booking_appointments[0].status).toBe('pending')
+    expect(sessionRow(db)).toBeUndefined()
+  })
+
+  it('la etiqueta cuyo mensaje citado no existe en esta conversación no toca nada', async () => {
+    const db = makeFakeDb(pendingSeed())
+    const rec = makeRecorder()
+    const elsewhere = seedTemplateMessage(db, 'recordatorio_cita', 'cv-otra')
+
+    const unknown = await send(db, rec, { replyId: 'Confirmar', replyTo: 'msg-no-existe' })
+    const foreign = await send(db, rec, { replyId: 'Confirmar', replyTo: elsewhere })
+
+    expect(unknown.consumed).toBe(false)
+    expect(foreign.consumed).toBe(false)
+    expect(rec.calls).toHaveLength(0)
+    expect(db._tables.booking_appointments[0].status).toBe('pending')
+  })
+
+  it('en un hilo con humano, la etiqueta de otra plantilla ni se atiende ni se consume', async () => {
+    const db = makeFakeDb(pendingSeed())
+    const rec = makeRecorder()
+    const replyTo = seedTemplateMessage(db, 'promo_noviembre')
+
+    const withReference = await sendHuman(db, rec, { replyId: 'Cancelar', replyTo })
+    const withoutReference = await sendHuman(db, rec, { replyId: 'Cancelar' })
+
+    expect(withReference.consumed).toBe(false)
+    expect(withoutReference.consumed).toBe(false)
+    expect(rec.calls).toHaveLength(0)
+    expect(db._tables.booking_appointments[0].status).toBe('pending')
+    expect(sessionRow(db)).toBeUndefined()
+  })
+
+  it('con una cita ya cancelada, la etiqueta de otra plantilla no responde "ya no está activo"', async () => {
+    const seed = baseSeed()
+    seed.booking_appointments = [appointmentRow({ status: 'cancelled' })]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+    const replyTo = seedTemplateMessage(db, 'promo_noviembre')
+
+    const res = await send(db, rec, { replyId: 'Confirmar', replyTo })
+
+    expect(res.consumed).toBe(false)
+    expect(rec.calls).toHaveLength(0)
+  })
+
+  it('un id rem:* no necesita citar nada', async () => {
+    const db = makeFakeDb(pendingSeed())
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, { replyId: 'rem:confirm' })
+
     expect(res.consumed).toBe(true)
     expect(db._tables.booking_appointments[0].status).toBe('confirmed')
-    expect(last(rec).bodyText).toContain('Queda confirmado')
-    expect(sessionRow(db)).toBeUndefined()
   })
 })
 

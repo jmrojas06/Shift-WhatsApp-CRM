@@ -8,6 +8,7 @@ import {
   buildReminderBody,
   buildReminderTemplateParams,
   claimReminder,
+  isReminderTemplateName,
   pickDueReminder,
   reminderButtons,
   runAgendaReminders,
@@ -511,6 +512,16 @@ describe('builders del recordatorio', () => {
       name: 'recordatorio_cita',
       language: 'es',
     })
+  })
+
+  it('reconoce solo las plantillas de recordatorio de cita', () => {
+    expect(isReminderTemplateName('recordatorio_cita')).toBe(true)
+    expect(isReminderTemplateName('recordatorio_cita_clinica')).toBe(true)
+    expect(isReminderTemplateName('promo_noviembre')).toBe(false)
+    expect(isReminderTemplateName('Recordatorio_Cita')).toBe(false)
+    expect(isReminderTemplateName('')).toBe(false)
+    expect(isReminderTemplateName(null)).toBe(false)
+    expect(isReminderTemplateName(undefined)).toBe(false)
   })
 })
 

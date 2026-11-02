@@ -67,6 +67,7 @@ import {
 } from './db'
 import { formatDayLabel, formatLongDate, formatPrice, formatTimeLabel, truncate } from './format'
 import { createInternalBackend } from './internal-backend'
+import { isReminderTemplateName } from './reminders'
 import {
   actId,
   ansId,
@@ -169,7 +170,16 @@ export async function handleAgendaInbound(
     : null
   const text = inbound?.text ?? ''
   const replyId = inbound?.replyId ?? null
-  const reminderTap = replyId ? parseReminderTap(replyId) : null
+  // Una ETIQUETA ("Confirmar") la puede traer el botón de cualquier otra
+  // plantilla o difusión: solo es un toque de recordatorio si el mensaje
+  // responde a una plantilla de recordatorio. Los ids `rem:*` los pone este
+  // módulo, no necesitan esa comprobación. Sin referencia o con otra
+  // plantilla, el mensaje sigue el camino normal.
+  const parsedTap = replyId ? parseReminderTap(replyId) : null
+  const reminderTap =
+    parsedTap && (!parsedTap.viaLabel || isReminderTemplateName(inbound?.repliedTemplateName))
+      ? parsedTap
+      : null
   const humanOwned = args.humanOwned === true
 
   // Hilo de un humano: antes de cargar nada más, soltar todo lo que no

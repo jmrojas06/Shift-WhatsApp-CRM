@@ -316,9 +316,15 @@ describe('toques del recordatorio', () => {
   })
 
   it('entiende la etiqueta que Meta devuelve cuando la plantilla no trae payload', () => {
-    expect(parseReminderTap('Confirmar')).toEqual({ action: 'confirm', appointmentId: null })
-    expect(parseReminderTap('Reprogramar')).toEqual({ action: 'reschedule', appointmentId: null })
-    expect(parseReminderTap('Cancelar')).toEqual({ action: 'cancel', appointmentId: null })
+    expect(parseReminderTap('Confirmar')).toEqual({ action: 'confirm', appointmentId: null, viaLabel: true })
+    expect(parseReminderTap('Reprogramar')).toEqual({ action: 'reschedule', appointmentId: null, viaLabel: true })
+    expect(parseReminderTap('Cancelar')).toEqual({ action: 'cancel', appointmentId: null, viaLabel: true })
+  })
+
+  it('marca las etiquetas, que cualquier otra plantilla también puede traer, y los ids no', () => {
+    expect(parseReminderTap('Confirmar')?.viaLabel).toBe(true)
+    expect(parseReminderTap('rem:confirm')?.viaLabel).toBeUndefined()
+    expect(parseReminderTap('rem:cancel:ap-1')?.viaLabel).toBeUndefined()
   })
 })
 

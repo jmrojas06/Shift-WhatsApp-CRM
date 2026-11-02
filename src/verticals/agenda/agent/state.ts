@@ -144,6 +144,13 @@ export const remId = (action: ReminderAction, appointmentId?: string): string =>
 export interface ReminderTap {
   action: ReminderAction
   appointmentId: string | null
+  /**
+   * El toque llegó como ETIQUETA ("Confirmar"), no como id `rem:*`. Cualquier
+   * otra plantilla o difusión puede traer un botón con esa misma etiqueta,
+   * así que el controlador solo la acepta si el mensaje responde a un
+   * recordatorio.
+   */
+  viaLabel?: true
 }
 
 const REMINDER_LABELS: Readonly<Record<string, ReminderAction>> = {
@@ -155,7 +162,7 @@ const REMINDER_LABELS: Readonly<Record<string, ReminderAction>> = {
 /** 'rem:confirm', 'rem:confirm:<id>' o la etiqueta 'Confirmar'; lo demás → null. */
 export function parseReminderTap(id: string): ReminderTap | null {
   if (Object.hasOwn(REMINDER_LABELS, id)) {
-    return { action: REMINDER_LABELS[id], appointmentId: null }
+    return { action: REMINDER_LABELS[id], appointmentId: null, viaLabel: true }
   }
   const [prefix, action, appointmentId] = id.split(':')
   if (prefix !== 'rem') return null
