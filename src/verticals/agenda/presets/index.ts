@@ -12,11 +12,12 @@ import type { AgendaSeed } from '../seed'
 import { BARBERIA_PRESET } from './barberia'
 import { BLANCO_PRESET } from './blanco'
 import { CLASES_PRESET } from './clases'
+import { ODONTOLOGIA_PRESET } from './odontologia'
 import { SALON_PRESET } from './salon'
 import { SALUD_PRESET } from './salud'
 import { TALLER_PRESET } from './taller'
 
-export const PRESET_KEYS = ['barberia', 'salon', 'salud', 'taller', 'clases', 'blanco'] as const
+export const PRESET_KEYS = ['barberia', 'salon', 'salud', 'odontologia', 'taller', 'clases', 'blanco'] as const
 export type PresetKey = (typeof PRESET_KEYS)[number]
 
 export interface AgendaPreset {
@@ -39,6 +40,7 @@ export const AGENDA_PRESETS: Record<PresetKey, AgendaPreset> = {
   barberia: BARBERIA_PRESET,
   salon: SALON_PRESET,
   salud: SALUD_PRESET,
+  odontologia: ODONTOLOGIA_PRESET,
   taller: TALLER_PRESET,
   clases: CLASES_PRESET,
   blanco: BLANCO_PRESET,
