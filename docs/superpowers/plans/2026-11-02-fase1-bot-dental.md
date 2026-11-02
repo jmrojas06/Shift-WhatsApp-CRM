@@ -14102,9 +14102,31 @@ git commit -m "feat(clinica): resolve appointments per patient and send prep inf
 
 ### Task 12: Recordatorio clínico, sin procedimiento
 
+Un recordatorio de clínica nombra al **paciente** y la **sede**, y nunca el procedimiento: el teléfono puede ser
+compartido y el texto pasa por Meta. Vale para la plantilla, para el mensaje libre y para lo que se guarda en
+`messages.content_text`.
+
+Reglas que esta tarea deja fijas:
+
+- La entrega de una clínica ni siquiera carga el nombre del servicio (`serviceName` queda en `null`): los
+  builders lo ignoran, y además no hay por dónde se cuele.
+- Las cuentas sin el módulo `clinica` envían exactamente lo mismo que antes: `recordatorio_cita`, las mismas
+  cinco variables y ningún componente de botón nuevo. `DUE_COLUMNS` no cambia y no se consulta nada de la
+  migración 055 para ellas; el paciente y la sede se leen aparte, en `reminder-info.ts`.
+- Si no se puede leer al paciente o la sede, el recordatorio no sale y la señal **no se reclama**: la próxima
+  corrida lo reintenta. Un error de lectura no es "la cita no tiene paciente", y mandar otro nombre u otra
+  sede es peor que mandarlo después. El error lleva la cita y el mensaje de la base, nunca el nombre.
+- Los botones de la plantilla son fijos. Los tres payloads salen siempre, en el orden de los botones aprobados
+  (Confirmar, Reprogramar, Cancelar), aunque la cuenta tenga apagada la pieza de reprogramar: quitar uno
+  correría "cancelar" al índice del botón de reprogramar. El orden sale de `reminderButtons(true, cita)`, la
+  misma fuente que los botones del mensaje libre.
+- El nombre de plantilla sale de `CLINIC_REMINDER_TEMPLATE_NAME` (ya existe en `reminders.ts`), y
+  `handleAgendaInbound` ya acepta la etiqueta "Confirmar" si responde a `recordatorio_cita_clinica`
+  (`isReminderTemplateName`); `controller.test.ts` y `clinic-appointments.test.ts` ya lo cubren.
+
 **Files:**
 - Create: `src/modules/clinica/reminder-info.ts`, `src/lib/whatsapp/template-quick-reply.test.ts`
-- Modify: `src/lib/whatsapp/meta-api.ts`, `src/verticals/agenda/agent/reminders.ts`, `src/verticals/agenda/agent/reminders.test.ts`, `src/verticals/agenda/agent/reminders-send.ts`
+- Modify: `src/lib/whatsapp/meta-api.ts`, `src/verticals/agenda/agent/reminders.ts`, `src/verticals/agenda/agent/reminders.test.ts`, `src/verticals/agenda/agent/reminders-send.ts`, `src/verticals/agenda/agent/reminders-send.test.ts`
 
 - [ ] **Step 1: Escribe las pruebas que fallan**
 
@@ -14117,12 +14139,22 @@ import { sendTemplateMessage } from './meta-api'
 
 afterEach(() => vi.unstubAllGlobals())
 
+function stubFetch() {
+  const fetchMock = vi.fn(
+    async () => new Response(JSON.stringify({ messages: [{ id: 'wamid-1' }] }), { status: 200 }),
+  )
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock
+}
+
+function sentTemplate(fetchMock: ReturnType<typeof stubFetch>): Record<string, unknown> {
+  const [, init] = fetchMock.mock.calls[0] as unknown as [string, { body: string }]
+  return JSON.parse(init.body).template
+}
+
 describe('sendTemplateMessage con payloads de quick reply', () => {
   it('agrega un componente de botón por cada payload, en orden', async () => {
-    const fetchMock = vi.fn(
-      async () => new Response(JSON.stringify({ messages: [{ id: 'wamid-1' }] }), { status: 200 }),
-    )
-    vi.stubGlobal('fetch', fetchMock)
+    const fetchMock = stubFetch()
 
     await sendTemplateMessage({
       phoneNumberId: '1',
@@ -14134,8 +14166,7 @@ describe('sendTemplateMessage con payloads de quick reply', () => {
       quickReplyPayloads: ['rem:confirm:ap-1', 'rem:cancel:ap-1'],
     })
 
-    const [, init] = fetchMock.mock.calls[0] as unknown as [string, { body: string }]
-    expect(JSON.parse(init.body).template.components).toEqual([
+    expect(sentTemplate(fetchMock).components).toEqual([
       { type: 'body', parameters: [{ type: 'text', text: 'Clínica' }] },
       {
         type: 'button',
@@ -14151,10 +14182,73 @@ describe('sendTemplateMessage con payloads de quick reply', () => {
       },
     ])
   })
+
+  it('los payloads sin variables de cuerpo no dejan un cuerpo vacío', async () => {
+    const fetchMock = stubFetch()
+
+    await sendTemplateMessage({
+      phoneNumberId: '1',
+      accessToken: 't',
+      to: '573001112233',
+      templateName: 'recordatorio_cita_clinica',
+      language: 'es',
+      quickReplyPayloads: ['rem:confirm:ap-1'],
+    })
+
+    expect(sentTemplate(fetchMock).components).toEqual([
+      {
+        type: 'button',
+        sub_type: 'quick_reply',
+        index: '0',
+        parameters: [{ type: 'payload', payload: 'rem:confirm:ap-1' }],
+      },
+    ])
+  })
+
+  it('sin payloads el envío es el de siempre: solo el cuerpo', async () => {
+    const fetchMock = stubFetch()
+
+    await sendTemplateMessage({
+      phoneNumberId: '1',
+      accessToken: 't',
+      to: '573001112233',
+      templateName: 'recordatorio_cita',
+      language: 'es',
+      params: ['Barbería', 'Corte'],
+    })
+
+    expect(sentTemplate(fetchMock).components).toEqual([
+      {
+        type: 'body',
+        parameters: [
+          { type: 'text', text: 'Barbería' },
+          { type: 'text', text: 'Corte' },
+        ],
+      },
+    ])
+  })
+
+  it('una lista de payloads vacía no agrega componentes', async () => {
+    const fetchMock = stubFetch()
+
+    await sendTemplateMessage({
+      phoneNumberId: '1',
+      accessToken: 't',
+      to: '573001112233',
+      templateName: 'plantilla_sin_variables',
+      language: 'es',
+      quickReplyPayloads: [],
+    })
+
+    expect(sentTemplate(fetchMock)).not.toHaveProperty('components')
+  })
 })
 ```
 
-En `src/verticals/agenda/agent/reminders.test.ts`, agrega `CLINIC_REMINDER_TEMPLATE` al import de `./reminders`, y dentro de `describe('builders del recordatorio', ...)`:
+En `src/verticals/agenda/agent/reminders.test.ts` **solo se agregan pruebas**; no se toca ninguna existente.
+Agrega `CLINIC_REMINDER_TEMPLATE` y `CLINIC_REMINDER_TEMPLATE_NAME` al import de `./reminders`.
+
+Dentro de `describe('builders del recordatorio', ...)`, después de la última prueba:
 
 ```ts
   describe('clínica', () => {
@@ -14165,22 +14259,37 @@ En `src/verticals/agenda/agent/reminders.test.ts`, agrega `CLINIC_REMINDER_TEMPL
     })
 
     it('el mensaje nombra al paciente y la sede, pero no el procedimiento', () => {
-      const body = buildReminderBody(clinicDelivery)
-      expect(body).toContain('Tomás Gil')
-      expect(body).toContain('Centro')
-      expect(body).not.toContain('Endodoncia')
+      expect(buildReminderBody(clinicDelivery)).toBe(
+        '¡Hola! 👋 Te recordamos que Tomás Gil tiene cita en Barbería El Parche, sede Centro:\n\n👤 Dra. Ana\n📅 martes 20 de octubre de 2026\n🕐 7:00 a. m.\n\n¿Nos confirmas?',
+      )
+      expect(buildReminderBody(clinicDelivery)).not.toContain('Endodoncia')
     })
 
     it('la plantilla lleva seis variables y ninguna es el procedimiento', () => {
       const params = buildReminderTemplateParams(clinicDelivery)
-      expect(params).toHaveLength(6)
-      expect(params.slice(0, 4)).toEqual([
+      expect(params).toEqual([
         'Tomás Gil',
-        clinicDelivery.businessName,
+        'Barbería El Parche',
         'Centro',
         'Dra. Ana',
+        'martes 20 de octubre de 2026',
+        '7:00 a. m.',
       ])
       expect(params).not.toContain('Endodoncia')
+    })
+
+    it('sin profesional asignado dice "el equipo de la clínica" en el mensaje y en la plantilla', () => {
+      const noStaff = { ...clinicDelivery, staffName: null }
+      expect(buildReminderBody(noStaff)).toContain('👤 el equipo de la clínica')
+      expect(buildReminderTemplateParams(noStaff)[3]).toBe('el equipo de la clínica')
+    })
+
+    it('el procedimiento no sale aunque la entrega lo traiga y el catálogo no lo tenga', () => {
+      for (const serviceName of ['Endodoncia', null]) {
+        const d = { ...clinicDelivery, serviceName }
+        expect(buildReminderBody(d)).not.toMatch(/endodoncia|tu servicio/i)
+        expect(buildReminderTemplateParams(d)).not.toContain('tu servicio')
+      }
     })
 
     it('los botones llevan el id de la cita', () => {
@@ -14189,57 +14298,430 @@ En `src/verticals/agenda/agent/reminders.test.ts`, agrega `CLINIC_REMINDER_TEMPL
         'rem:reschedule:ap-1',
         'rem:cancel:ap-1',
       ])
+      expect(reminderButtons(false, 'ap-1').map((b) => b.id)).toEqual(['rem:confirm:ap-1'])
+    })
+
+    it('sin id de cita los botones son los de siempre', () => {
+      expect(reminderButtons(true, undefined).map((b) => b.id)).toEqual([
+        'rem:confirm',
+        'rem:reschedule',
+        'rem:cancel',
+      ])
     })
 
     it('la plantilla clínica tiene otro nombre', () => {
       expect(CLINIC_REMINDER_TEMPLATE).toEqual({ name: 'recordatorio_cita_clinica', language: 'es' })
+      expect(CLINIC_REMINDER_TEMPLATE.name).toBe(CLINIC_REMINDER_TEMPLATE_NAME)
+      expect(CLINIC_REMINDER_TEMPLATE.name).not.toBe(AGENDA_REMINDER_TEMPLATE.name)
+      // La etiqueta de un botón solo vale si responde a una plantilla de recordatorio.
+      expect(isReminderTemplateName(CLINIC_REMINDER_TEMPLATE.name)).toBe(true)
+    })
+
+    it('una cuenta sin clínica sigue recibiendo el cuerpo y las variables de siempre', () => {
+      const plain = delivery()
+      expect(buildReminderBody(plain)).toContain('Corte clásico')
+      expect(buildReminderTemplateParams(plain)).toHaveLength(5)
     })
   })
 ```
 
-Agrega dentro de `describe('runAgendaReminders', ...)`:
+Antes de `// Runner`, un ayudante a nivel de módulo (anota qué lee el runner y hace fallar una tabla):
 
 ```ts
-  it('en una cuenta con clínica la entrega lleva paciente y sede', async () => {
-    const seed = baseSeed()
-    seed.accounts[0].modules = ['agenda', 'clinica']
-    seed.booking_appointments[0].patient_id = 'pat-1'
-    seed.booking_appointments[0].location_id = 'loc-1'
-    seed.clinic_patients = [{ id: 'pat-1', account_id: ACCOUNT, contact_id: CONTACT, full_name: 'Tomás Gil' }]
-    seed.clinic_locations = [{ id: 'loc-1', account_id: ACCOUNT, name: 'Centro', is_active: true }]
-    const db = makeFakeDb(seed)
-    const deliveries: ReminderDelivery[] = []
+/** Anota qué tablas y columnas lee el runner; `failTable` hace fallar sus lecturas de una fila. */
+function instrument(db: FakeDb, failTable?: string) {
+  const reads: { table: string; columns: string | undefined }[] = []
+  const from = (table: string) => {
+    const api = db.from(table) as {
+      select: (columns?: string) => unknown
+      maybeSingle: () => Promise<unknown>
+    }
+    const select = api.select
+    api.select = (columns?: string) => {
+      reads.push({ table, columns })
+      return select(columns)
+    }
+    if (table === failTable) {
+      api.maybeSingle = async () => ({ data: null, error: { message: 'boom' } })
+    }
+    return api
+  }
+  return { db: { ...db, from } as FakeDb, reads }
+}
+```
 
-    await runAgendaReminders({
-      db: db as unknown as SupabaseClient,
-      now: NOW,
-      send: async (d) => {
-        deliveries.push(d)
-      },
+Dentro de `describe('runAgendaReminders', ...)`, después de la última prueba:
+
+```ts
+  describe('cuentas con clínica', () => {
+    /** Una clínica con un paciente y una sede, y el contacto del número. */
+    function clinicSeed(): Record<string, Row[]> {
+      const seed = baseSeed()
+      seed.accounts[0].modules = ['agenda', 'clinica']
+      seed.booking_appointments[0].patient_id = 'pat-1'
+      seed.booking_appointments[0].location_id = 'loc-1'
+      seed.clinic_patients = [
+        { id: 'pat-1', account_id: ACCOUNT, contact_id: CONTACT, full_name: 'Tomás Gil' },
+      ]
+      seed.clinic_locations = [{ id: 'loc-1', account_id: ACCOUNT, name: 'Centro', is_active: true }]
+      seed.contacts = [{ id: CONTACT, account_id: ACCOUNT, name: 'Laura Gil' }]
+      return seed
+    }
+
+    it('la entrega lleva paciente y sede, y no el procedimiento', async () => {
+      const db = makeFakeDb(clinicSeed())
+      const rec = makeRecorder()
+
+      const summary = await runAgendaReminders({ db: asClient(db), now: NOW, send: rec.send })
+
+      expect(summary.sent).toBe(1)
+      expect(rec.deliveries[0].appointmentId).toBe(APPT)
+      expect(rec.deliveries[0].clinic).toEqual({ patientName: 'Tomás Gil', locationName: 'Centro' })
+      // La entrega ni siquiera carga el procedimiento: no hay por dónde se cuele.
+      expect(rec.deliveries[0].serviceName).toBeNull()
+      expect(buildReminderBody(rec.deliveries[0])).not.toContain('Corte clásico')
     })
 
-    expect(deliveries[0].appointmentId).toBe(APPT)
-    expect(deliveries[0].clinic).toEqual({ patientName: 'Tomás Gil', locationName: 'Centro' })
+    it('el paciente y la sede se leen aparte: la consulta de las citas no cambia', async () => {
+      const spy = instrument(makeFakeDb(clinicSeed()))
+
+      await runAgendaReminders({ db: asClient(spy.db), now: NOW, send: makeRecorder().send })
+
+      const due = spy.reads.find(
+        (r) => r.table === 'booking_appointments' && r.columns?.startsWith('id, account_id'),
+      )
+      expect(due?.columns).not.toMatch(/patient_id|location_id/)
+      expect(spy.reads).toContainEqual({
+        table: 'booking_appointments',
+        columns: 'patient_id, location_id',
+      })
+    })
+
+    it('una cita sin paciente usa el nombre del contacto, y sin eso, "tu familiar"', async () => {
+      const seed = clinicSeed()
+      seed.booking_appointments[0].patient_id = null
+      const named = makeRecorder()
+      await runAgendaReminders({ db: asClient(makeFakeDb(seed)), now: NOW, send: named.send })
+      expect(named.deliveries[0].clinic?.patientName).toBe('Laura Gil')
+
+      seed.contacts = [{ id: CONTACT, account_id: ACCOUNT, name: null }]
+      const anonymous = makeRecorder()
+      await runAgendaReminders({ db: asClient(makeFakeDb(seed)), now: NOW, send: anonymous.send })
+      expect(anonymous.deliveries[0].clinic?.patientName).toBe('tu familiar')
+    })
+
+    it('un nombre de contacto sin letras (un número) no se usa como paciente', async () => {
+      const seed = clinicSeed()
+      seed.booking_appointments[0].patient_id = null
+      seed.contacts = [{ id: CONTACT, account_id: ACCOUNT, name: '573001112233' }]
+      const rec = makeRecorder()
+
+      await runAgendaReminders({ db: asClient(makeFakeDb(seed)), now: NOW, send: rec.send })
+
+      expect(rec.deliveries[0].clinic?.patientName).toBe('tu familiar')
+    })
+
+    it('una cita sin sede dice "principal"', async () => {
+      const seed = clinicSeed()
+      seed.booking_appointments[0].location_id = null
+      const rec = makeRecorder()
+
+      await runAgendaReminders({ db: asClient(makeFakeDb(seed)), now: NOW, send: rec.send })
+
+      expect(rec.deliveries[0].clinic?.locationName).toBe('principal')
+    })
+
+    it('no lee pacientes ni sedes de otra cuenta', async () => {
+      const seed = clinicSeed()
+      seed.clinic_patients = [
+        { id: 'pat-1', account_id: OTHER_ACCOUNT, contact_id: CONTACT, full_name: 'Ajeno Intruso' },
+      ]
+      seed.clinic_locations = [
+        { id: 'loc-1', account_id: OTHER_ACCOUNT, name: 'Sede Ajena', is_active: true },
+      ]
+      const rec = makeRecorder()
+
+      await runAgendaReminders({ db: asClient(makeFakeDb(seed)), now: NOW, send: rec.send })
+
+      expect(rec.deliveries[0].clinic).toEqual({ patientName: 'Laura Gil', locationName: 'principal' })
+    })
+
+    it('si no puede leer al paciente no envía ni reclama la señal, y sigue con las demás', async () => {
+      const seed = clinicSeed()
+      seed.booking_appointments.push({
+        id: 'ap-2',
+        account_id: ACCOUNT,
+        contact_id: CONTACT,
+        conversation_id: CONV,
+        service_id: SERVICE,
+        staff_id: STAFF,
+        starts_at: '2026-10-20T12:30:00.000Z',
+        status: 'confirmed',
+        reminder_sent_at: null,
+        reminder_2h_sent_at: null,
+        // Sin paciente ni sede: no necesita las lecturas que fallan.
+        patient_id: null,
+        location_id: null,
+      })
+      const db = makeFakeDb(seed)
+      const spy = instrument(db, 'clinic_patients')
+      const rec = makeRecorder()
+
+      const summary = await runAgendaReminders({ db: asClient(spy.db), now: NOW, send: rec.send })
+
+      expect(summary.failed).toBe(1)
+      expect(summary.sent).toBe(1)
+      expect(rec.deliveries.map((d) => d.appointmentId)).toEqual(['ap-2'])
+      // Sin reclamar: la próxima corrida lo reintenta.
+      expect(appointmentRow(db).reminder_sent_at).toBeNull()
+      // El error dice qué cita y qué falló, nunca el nombre del paciente.
+      expect(summary.errors).toHaveLength(1)
+      expect(summary.errors[0]).toContain(APPT)
+      expect(JSON.stringify(summary)).not.toContain('Tomás')
+    })
+
+    it('si no puede leer la sede tampoco envía una sede inventada', async () => {
+      const db = makeFakeDb(clinicSeed())
+      const spy = instrument(db, 'clinic_locations')
+      const rec = makeRecorder()
+
+      const summary = await runAgendaReminders({ db: asClient(spy.db), now: NOW, send: rec.send })
+
+      expect(summary.failed).toBe(1)
+      expect(rec.deliveries).toHaveLength(0)
+      expect(appointmentRow(db).reminder_sent_at).toBeNull()
+    })
   })
 
-  it('una cuenta sin clínica no lleva esos datos', async () => {
-    const db = makeFakeDb(baseSeed())
-    const deliveries: ReminderDelivery[] = []
-    await runAgendaReminders({
-      db: db as unknown as SupabaseClient,
-      now: NOW,
-      send: async (d) => {
-        deliveries.push(d)
-      },
+  describe('cuentas sin clínica', () => {
+    it('la entrega no lleva datos de clínica y conserva el servicio', async () => {
+      const rec = makeRecorder()
+
+      await runAgendaReminders({ db: asClient(makeFakeDb(baseSeed())), now: NOW, send: rec.send })
+
+      expect(rec.deliveries[0].clinic).toBeUndefined()
+      expect('clinic' in rec.deliveries[0]).toBe(false)
+      expect(rec.deliveries[0].serviceName).toBe('Corte clásico')
     })
-    expect(deliveries[0].clinic).toBeUndefined()
+
+    it('no tocan las tablas ni las columnas de la clínica', async () => {
+      const seed = baseSeed()
+      // Aunque la cita tuviera esos datos, una cuenta sin clínica no los lee.
+      seed.booking_appointments[0].patient_id = 'pat-1'
+      seed.booking_appointments[0].location_id = 'loc-1'
+      const spy = instrument(makeFakeDb(seed))
+
+      await runAgendaReminders({ db: asClient(spy.db), now: NOW, send: makeRecorder().send })
+
+      expect(spy.reads.filter((r) => r.table.startsWith('clinic_'))).toEqual([])
+      for (const read of spy.reads.filter((r) => r.table === 'booking_appointments')) {
+        expect(read.columns).not.toMatch(/patient_id|location_id/)
+      }
+    })
+
+    it('una cuenta con clínica y otra sin ella conviven en la misma corrida', async () => {
+      const seed = baseSeed()
+      seed.accounts.push({
+        id: 'acc-clinic',
+        name: 'Clínica Sonrisa',
+        owner_user_id: 'u-clinic',
+        vertical_key: 'agenda',
+        modules: ['agenda', 'clinica'],
+      })
+      seed.booking_appointments.push({
+        id: 'ap-clinic',
+        account_id: 'acc-clinic',
+        contact_id: CONTACT_2,
+        conversation_id: 'cv-2',
+        service_id: null,
+        staff_id: null,
+        starts_at: STARTS_IN_23H,
+        status: 'confirmed',
+        reminder_sent_at: null,
+        reminder_2h_sent_at: null,
+        patient_id: 'pat-2',
+        location_id: null,
+      })
+      seed.conversations.push({
+        id: 'cv-2',
+        account_id: 'acc-clinic',
+        contact_id: CONTACT_2,
+        created_at: '2026-10-18T00:00:00.000Z',
+      })
+      seed.clinic_patients = [
+        { id: 'pat-2', account_id: 'acc-clinic', contact_id: CONTACT_2, full_name: 'Ana Ruiz' },
+      ]
+      const rec = makeRecorder()
+
+      await runAgendaReminders({ db: asClient(makeFakeDb(seed)), now: NOW, send: rec.send })
+
+      const byId = new Map(rec.deliveries.map((d) => [d.appointmentId, d]))
+      expect(byId.get(APPT)?.clinic).toBeUndefined()
+      expect(byId.get('ap-clinic')?.clinic?.patientName).toBe('Ana Ruiz')
+    })
   })
+```
+
+En `src/verticals/agenda/agent/reminders-send.test.ts` cambia el import de tipos por
+`import { isReminderTemplateName, type ReminderDelivery } from './reminders'` y agrega al final:
+
+```ts
+// ------------------------------------------------------------
+// Clínica: paciente y sede en el mensaje, nunca el procedimiento, y botones
+// amarrados a la cita. Las cuentas sin clínica envían lo mismo que antes.
+// ------------------------------------------------------------
+
+function clinicDelivery(
+  channel: 'text' | 'template',
+  over: Partial<ReminderDelivery> = {},
+): ReminderDelivery {
+  return {
+    ...delivery(channel),
+    serviceName: 'Endodoncia',
+    staffName: 'Dra. Ana',
+    clinic: { patientName: 'Tomás Gil', locationName: 'Centro' },
+    ...over,
+  }
+}
+
+const CLINIC_PAYLOADS = ['rem:confirm:ap-1', 'rem:reschedule:ap-1', 'rem:cancel:ap-1']
+
+describe('sendAgendaReminder — clínica, plantilla', () => {
+  beforeEach(() => {
+    sendTemplateMessage.mockResolvedValue({ messageId: 'wamid-tpl' })
+  })
+
+  it('usa la plantilla clínica con seis variables y los payloads de la cita', async () => {
+    await sendAgendaReminder(clinicDelivery('template'))
+
+    expect(sendTemplateMessage).toHaveBeenCalledTimes(1)
+    expect(sendTemplateMessage.mock.calls[0][0]).toStrictEqual({
+      phoneNumberId: 'pn-1',
+      accessToken: 'token',
+      to: '573001112233',
+      templateName: 'recordatorio_cita_clinica',
+      language: 'es',
+      params: [
+        'Tomás Gil',
+        'Barbería El Parche',
+        'Centro',
+        'Dra. Ana',
+        'martes 20 de octubre de 2026',
+        '7:00 a. m.',
+      ],
+      quickReplyPayloads: CLINIC_PAYLOADS,
+    })
+  })
+
+  it('con reprogramar apagado los payloads siguen el orden de los tres botones aprobados', async () => {
+    await sendAgendaReminder(clinicDelivery('template', { allowReschedule: false }))
+
+    const args = sendTemplateMessage.mock.calls[0][0] as { quickReplyPayloads: string[] }
+    // La plantilla de Meta tiene siempre Confirmar / Reprogramar / Cancelar:
+    // quitar uno correría "cancelar" al índice del botón de reprogramar.
+    expect(args.quickReplyPayloads).toEqual(CLINIC_PAYLOADS)
+  })
+
+  it('guarda la plantilla clínica y un texto sin el procedimiento', async () => {
+    await sendAgendaReminder(clinicDelivery('template'))
+
+    expect(state.inserted[0]).toMatchObject({
+      conversation_id: 'cv-1',
+      content_type: 'template',
+      template_name: 'recordatorio_cita_clinica',
+      message_id: 'wamid-tpl',
+    })
+    // El controlador solo acepta la etiqueta "Confirmar" si responde a una plantilla suya.
+    expect(isReminderTemplateName(state.inserted[0].template_name as string)).toBe(true)
+    expect(state.inserted[0].content_text).toContain('Tomás Gil')
+    expect(state.inserted[0].content_text).toContain('Centro')
+    expect(state.inserted[0].content_text).not.toContain('Endodoncia')
+  })
+
+  it('el procedimiento no viaja a Meta ni a la base', async () => {
+    await sendAgendaReminder(clinicDelivery('template'))
+
+    expect(JSON.stringify(sendTemplateMessage.mock.calls)).not.toContain('Endodoncia')
+    expect(JSON.stringify(state.inserted)).not.toContain('Endodoncia')
+  })
+
+  it('si Meta rechaza la plantilla, lanza para que el runner reintente', async () => {
+    sendTemplateMessage.mockRejectedValue(new Error('(#132001) Template does not exist'))
+
+    await expect(sendAgendaReminder(clinicDelivery('template'))).rejects.toThrow('132001')
+  })
+})
+
+describe('sendAgendaReminder — clínica, mensaje libre', () => {
+  beforeEach(() => {
+    sendButtons.mockResolvedValue(undefined)
+  })
+
+  it('nombra al paciente y la sede, y los botones llevan el id de la cita', async () => {
+    await sendAgendaReminder(clinicDelivery('text'))
+
+    const args = sendButtons.mock.calls[0][0] as {
+      bodyText: string
+      buttons: { id: string }[]
+    }
+    expect(args.bodyText).toContain('Tomás Gil')
+    expect(args.bodyText).toContain('sede Centro')
+    expect(args.bodyText).not.toContain('Endodoncia')
+    expect(args.buttons.map((b) => b.id)).toEqual(CLINIC_PAYLOADS)
+  })
+
+  it('con reprogramar apagado solo queda Confirmar, con el id de la cita', async () => {
+    await sendAgendaReminder(clinicDelivery('text', { allowReschedule: false }))
+
+    const args = sendButtons.mock.calls[0][0] as { buttons: { id: string }[] }
+    expect(args.buttons.map((b) => b.id)).toEqual(['rem:confirm:ap-1'])
+  })
+})
+
+describe('sendAgendaReminder — sin clínica no cambia nada', () => {
+  it('plantilla: recordatorio_cita, las mismas cinco variables y sin botones nuevos', async () => {
+    sendTemplateMessage.mockResolvedValue({ messageId: 'wamid-tpl' })
+
+    await sendAgendaReminder(delivery('template'))
+
+    // toStrictEqual: ni siquiera una clave quickReplyPayloads con undefined.
+    expect(sendTemplateMessage.mock.calls[0][0]).toStrictEqual({
+      phoneNumberId: 'pn-1',
+      accessToken: 'token',
+      to: '573001112233',
+      templateName: 'recordatorio_cita',
+      language: 'es',
+      params: [
+        'Barbería El Parche',
+        'Corte clásico',
+        'Andrés',
+        'martes 20 de octubre de 2026',
+        '7:00 a. m.',
+      ],
+    })
+    expect(state.inserted[0]).toMatchObject({ template_name: 'recordatorio_cita' })
+    expect(state.inserted[0].content_text).toContain('Corte clásico')
+  })
+
+  it('mensaje libre: los botones de siempre, sin id de cita, y el servicio en el texto', async () => {
+    sendButtons.mockResolvedValue(undefined)
+
+    await sendAgendaReminder(delivery('text'))
+
+    const args = sendButtons.mock.calls[0][0] as {
+      bodyText: string
+      buttons: { id: string }[]
+    }
+    expect(args.buttons.map((b) => b.id)).toEqual(['rem:confirm', 'rem:reschedule', 'rem:cancel'])
+    expect(args.bodyText).toContain('Corte clásico')
+  })
+})
 ```
 
 - [ ] **Step 2: Córrelas y verifica que fallan**
 
-Run: `npx vitest run src/lib/whatsapp/template-quick-reply.test.ts src/verticals/agenda/agent/reminders.test.ts`
-Expected: FAIL, no hay componentes de botón y `CLINIC_REMINDER_TEMPLATE` no existe.
+Run: `npx vitest run src/lib/whatsapp/template-quick-reply.test.ts src/verticals/agenda/agent/reminders.test.ts src/verticals/agenda/agent/reminders-send.test.ts`
+Expected: FAIL, no hay componentes de botón, `CLINIC_REMINDER_TEMPLATE` no existe y la entrega no trae `clinic`.
 
 - [ ] **Step 3: Soporta los payloads**
 
@@ -14248,8 +14730,9 @@ En `src/lib/whatsapp/meta-api.ts`, en `SendTemplateMessageArgs`, antes de `conte
 ```ts
   /**
    * Payload de cada quick reply, en el orden de los botones de la
-   * plantilla. Meta lo devuelve en `button.payload` al tocar. Solo aplica
-   * a la ruta legacy (`params`).
+   * plantilla. Meta lo devuelve en `button.payload` al tocar (sin él
+   * devuelve la etiqueta del botón). Solo aplica a la ruta legacy
+   * (`params`).
    */
   quickReplyPayloads?: string[]
 ```
@@ -14258,7 +14741,8 @@ Agrégalo a la desestructuración de `sendTemplateMessage`, y reemplaza la rama 
 
 ```ts
   } else if ((params && params.length > 0) || quickReplyPayloads?.length) {
-    // Legacy body-only path — no template row available.
+    // Legacy path — no template row available: body variables and, when
+    // asked, one quick-reply payload per button, in the template's order.
     const components: Record<string, unknown>[] = []
     if (params && params.length > 0) {
       components.push({
@@ -14280,19 +14764,28 @@ Agrégalo a la desestructuración de `sendTemplateMessage`, y reemplaza la rama 
 
 - [ ] **Step 4: Lee paciente y sede**
 
-Crea `src/modules/clinica/reminder-info.ts`:
+Crea `src/modules/clinica/reminder-info.ts`. Reutiliza `loadAppointmentClinicLinks` (Tarea 8) y `loadContact`, y
+**lanza** si una lectura falla:
 
 ```ts
 // ============================================================
-// Datos del recordatorio de una clínica: a nombre de quién va la cita y
-// en qué sede. El procedimiento NO viaja: el teléfono puede ser
-// compartido y el texto pasa por Meta.
+// Datos del recordatorio de una clínica: a nombre de quién va la cita y en
+// qué sede. El procedimiento NO viaja: el teléfono puede ser compartido y el
+// texto pasa por Meta.
 //
-// Va en una consulta aparte para que los demás negocios no lean columnas
-// de la migración 055.
+// Va en consultas aparte para que los demás negocios no lean columnas de la
+// migración 055.
+//
+// El nombre del paciente es un dato personal: no va a logs, avisos ni notas.
+// Los errores de este archivo solo llevan el mensaje de la base. Un fallo
+// LANZA: un error de lectura no es "la cita no tiene paciente", y mandar un
+// recordatorio con otro nombre u otra sede es peor que mandarlo en la próxima
+// corrida.
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+
+import { loadAppointmentClinicLinks, loadContact } from '@/verticals/agenda/agent/db'
 
 export interface ClinicReminderInfo {
   patientName: string
@@ -14302,48 +14795,68 @@ export interface ClinicReminderInfo {
 const FALLBACK_PATIENT = 'tu familiar'
 const FALLBACK_LOCATION = 'principal'
 
+const HAS_LETTER = /\p{L}/u
+
+/**
+ * Una sola línea y sin espacios de más: Meta rechaza una variable de la
+ * plantilla con saltos de línea o tabulaciones. null si no queda nada.
+ */
+function tidy(value: string | null | undefined): string | null {
+  const text = (value ?? '').replace(/\s+/gu, ' ').trim()
+  return text === '' ? null : text
+}
+
+async function readName(
+  db: SupabaseClient,
+  args: {
+    table: 'clinic_patients' | 'clinic_locations'
+    column: 'full_name' | 'name'
+    what: string
+    accountId: string
+    id: string
+  },
+): Promise<string | null> {
+  const { data, error } = await db
+    .from(args.table)
+    .select(args.column)
+    .eq('id', args.id)
+    .eq('account_id', args.accountId)
+    .maybeSingle()
+  if (error) throw new Error(`No se pudo leer ${args.what} del recordatorio: ${error.message}`)
+  return tidy((data as Record<string, string | null> | null)?.[args.column])
+}
+
 export async function loadClinicReminderInfo(
   db: SupabaseClient,
   args: { accountId: string; appointmentId: string; contactId: string },
 ): Promise<ClinicReminderInfo> {
-  const { data: appt } = await db
-    .from('booking_appointments')
-    .select('patient_id, location_id')
-    .eq('id', args.appointmentId)
-    .eq('account_id', args.accountId)
-    .maybeSingle()
-  const row = (appt as { patient_id?: string | null; location_id?: string | null } | null) ?? null
+  const links = await loadAppointmentClinicLinks(db, args.accountId, args.appointmentId)
 
-  let patientName: string | null = null
-  if (row?.patient_id) {
-    const { data } = await db
-      .from('clinic_patients')
-      .select('full_name')
-      .eq('id', row.patient_id)
-      .eq('account_id', args.accountId)
-      .maybeSingle()
-    patientName = (data as { full_name?: string } | null)?.full_name ?? null
-  }
+  let patientName = links.patientId
+    ? await readName(db, {
+        table: 'clinic_patients',
+        column: 'full_name',
+        what: 'el paciente',
+        accountId: args.accountId,
+        id: links.patientId,
+      })
+    : null
   if (!patientName) {
-    const { data } = await db
-      .from('contacts')
-      .select('name')
-      .eq('id', args.contactId)
-      .eq('account_id', args.accountId)
-      .maybeSingle()
-    patientName = (data as { name?: string | null } | null)?.name?.trim() || null
+    // Una cita de antes del módulo: el nombre del contacto, si es un nombre
+    // (no un número ni un símbolo).
+    const contactName = tidy((await loadContact(db, args.accountId, args.contactId))?.name)
+    patientName = contactName && HAS_LETTER.test(contactName) ? contactName : null
   }
 
-  let locationName: string | null = null
-  if (row?.location_id) {
-    const { data } = await db
-      .from('clinic_locations')
-      .select('name')
-      .eq('id', row.location_id)
-      .eq('account_id', args.accountId)
-      .maybeSingle()
-    locationName = (data as { name?: string } | null)?.name ?? null
-  }
+  const locationName = links.locationId
+    ? await readName(db, {
+        table: 'clinic_locations',
+        column: 'name',
+        what: 'la sede',
+        accountId: args.accountId,
+        id: links.locationId,
+      })
+    : null
 
   return {
     patientName: patientName ?? FALLBACK_PATIENT,
@@ -14363,15 +14876,16 @@ import { loadClinicReminderInfo, type ClinicReminderInfo } from '@/modules/clini
 import { buildClinicTexts } from '@/modules/clinica/texts'
 ```
 
-2. Después de `AGENDA_REMINDER_TEMPLATE`:
+2. Después de `CLINIC_REMINDER_TEMPLATE_NAME` (que ya existe), sin repetir el texto:
 
 ```ts
 /**
  * Plantilla de las clínicas: nombra al paciente y la sede, nunca el
- * procedimiento (docs/clinica-montaje.md).
+ * procedimiento (el teléfono puede ser compartido). Seis variables, en el
+ * orden de `buildReminderTemplateParams`.
  */
 export const CLINIC_REMINDER_TEMPLATE = {
-  name: 'recordatorio_cita_clinica',
+  name: CLINIC_REMINDER_TEMPLATE_NAME,
   language: 'es',
 } as const
 ```
@@ -14379,17 +14893,22 @@ export const CLINIC_REMINDER_TEMPLATE = {
 3. En `ReminderDelivery`, al final:
 
 ```ts
-  /** Solo cuentas con el módulo clínica. */
+  /**
+   * Solo cuentas con el módulo clínica: a nombre de quién va la cita y en qué
+   * sede. Con esto el mensaje y la plantilla son los de la clínica, que nunca
+   * nombran el procedimiento.
+   */
   clinic?: ClinicReminderInfo
 ```
 
-4. Reemplaza `reminderButtons`:
+4. Reemplaza `reminderButtons` (`remId` ya acepta la cita):
 
 ```ts
 /**
  * Botones Confirmar / Reprogramar / Cancelar (ids rem:*). Con la pieza de
- * reprogramar apagada solo queda Confirmar. `appointmentId` amarra el
- * botón a una cita cuando el número puede tener varias.
+ * reprogramar apagada solo queda Confirmar. `appointmentId` amarra cada botón
+ * a una cita (`rem:<acción>:<cita>`) cuando el número puede tener varias; sin
+ * él los ids son los estáticos de siempre.
  */
 export function reminderButtons(
   allowReschedule = true,
@@ -14408,7 +14927,7 @@ export function reminderButtons(
 }
 ```
 
-5. Al inicio de `buildReminderBody`:
+5. Al inicio de `buildReminderBody` (el texto es el de `reminderBody` de `buildClinicTexts`, ya neutral):
 
 ```ts
   if (d.clinic) {
@@ -14424,7 +14943,7 @@ export function reminderButtons(
   }
 ```
 
-6. Al inicio de `buildReminderTemplateParams`:
+6. Al inicio de `buildReminderTemplateParams` (y documenta las seis variables en su comentario):
 
 ```ts
   if (d.clinic) {
@@ -14457,16 +14976,40 @@ interface AccountRow extends AccountModulesSource {
   )
 ```
 
-9. Antes de `const delivery: ReminderDelivery = {`:
+9. Reemplaza la carga de `serviceName` (una clínica no lo carga) y, antes de `const delivery: ReminderDelivery = {`,
+   lee el paciente y la sede. Si falla, cuenta el fallo y sigue con la siguiente cita, **antes** de reclamar:
 
 ```ts
-    const clinic = clinicAccounts.has(appt.account_id)
-      ? await loadClinicReminderInfo(args.db, {
+    const isClinic = clinicAccounts.has(appt.account_id)
+    // El recordatorio de una clínica nunca nombra el procedimiento: ni
+    // siquiera se carga, para que no haya por dónde se cuele.
+    const serviceName =
+      !isClinic && appt.service_id
+        ? await loadServiceName(args.db, appt.account_id, appt.service_id)
+        : null
+```
+
+```ts
+    // Paciente y sede, en consultas aparte (solo las cuentas con clínica leen
+    // las columnas de la 055). Si no se pueden leer, no se envía ni se
+    // reclama la señal: la próxima corrida lo reintenta. El error lleva la
+    // cita y el mensaje de la base, nunca el nombre del paciente.
+    let clinic: ClinicReminderInfo | undefined
+    if (isClinic) {
+      try {
+        clinic = await loadClinicReminderInfo(args.db, {
           accountId: appt.account_id,
           appointmentId: appt.id,
           contactId: appt.contact_id,
         })
-      : undefined
+      } catch (err) {
+        summary.failed++
+        summary.errors.push(
+          `cita ${appt.id}: ${err instanceof Error ? err.message : String(err)}`,
+        )
+        continue
+      }
+    }
 ```
 
 10. Al final del objeto `delivery`:
@@ -14477,15 +15020,13 @@ interface AccountRow extends AccountModulesSource {
 
 En `src/verticals/agenda/agent/reminders-send.ts`:
 
-1. Agrega `CLINIC_REMINDER_TEMPLATE` al import de `./reminders`, y:
-
-```ts
-import { REMINDER_ACTIONS, remId } from './state'
-```
+1. Agrega `CLINIC_REMINDER_TEMPLATE` al import de `./reminders`. (No hace falta importar `REMINDER_ACTIONS` ni
+   `remId`: los payloads salen de `reminderButtons`.)
 
 2. En el envío de texto:
 
 ```ts
+        // Una clínica amarra los botones a la cita: el número puede tener varias.
         buttons: reminderButtons(
           delivery.allowReschedule,
           delivery.clinic ? delivery.appointmentId : undefined,
@@ -14496,18 +15037,21 @@ import { REMINDER_ACTIONS, remId } from './state'
 
 ```ts
   const template = delivery.clinic ? CLINIC_REMINDER_TEMPLATE : AGENDA_REMINDER_TEMPLATE
+  // Mismo orden que los botones del mensaje libre (y los de la plantilla
+  // aprobada): una sola fuente, para que no se separen.
   const quickReplyPayloads = delivery.clinic
-    ? REMINDER_ACTIONS.map((action) => remId(action, delivery.appointmentId))
+    ? reminderButtons(true, delivery.appointmentId).map((button) => button.id)
     : undefined
 ```
 
-4. En `sendTo`:
+4. En `sendTo`, sin la clave para las demás cuentas (su envío no cambia ni un byte):
 
 ```ts
       templateName: template.name,
       language: template.language,
       params,
-      quickReplyPayloads,
+      // Sin la clave para las demás cuentas: su envío no cambia ni un byte.
+      ...(quickReplyPayloads ? { quickReplyPayloads } : {}),
 ```
 
 5. En el `insert` de `messages`:
