@@ -197,9 +197,11 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
         const rows = Array.isArray(payload) ? payload : [payload ?? {}]
         const out = rows.flatMap((row) => {
           const incoming = row as Row
-          const key = conflictKey
-          const existing = key
-            ? ensure(table).find((r) => r[key] === incoming[key])
+          // `onConflict` puede ser una lista ("account_id,kind"): choca la fila
+          // que coincide en TODAS las columnas.
+          const keys = conflictKey ? conflictKey.split(',').map((c) => c.trim()) : null
+          const existing = keys
+            ? ensure(table).find((r) => keys.every((c) => r[c] === incoming[c]))
             : undefined
           if (existing) {
             // ON CONFLICT DO NOTHING: la fila que ya estaba no se toca ni se devuelve.
