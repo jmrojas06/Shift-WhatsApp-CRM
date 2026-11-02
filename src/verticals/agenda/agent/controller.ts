@@ -32,27 +32,19 @@ import { mergeBotTexts, type AgendaAgentTextsMerged } from '../bot-texts'
 import { listQuestions } from '../config-repo'
 import { capitalize } from '../labels'
 import { readAnswerMap, validateAnswer, type AgendaQuestion, type AnswerMap } from '../questions'
-import {
-  computeDaySlots,
-  mergeSlotsByStart,
-  type MergedSlot,
-} from './availability'
+import type { MergedSlot } from './availability'
+import type { ClinicBackend } from './backend'
 import {
   applyContactTag,
-  cancelAppointment,
   claimSession,
   closeSession,
   createSession,
   expireStaleSessions,
   findNextAppointment,
-  insertAppointment,
   insertBookingEvent,
   insertNotification,
-  isStaffFree,
-  listBusy,
   listEligibleStaff,
   listServices,
-  listWorkBlocks,
   loadAccount,
   loadAppointment,
   loadBotSettings,
@@ -63,7 +55,6 @@ import {
   loadHandoffAgentId,
   loadInboundMessage,
   loadStaffName,
-  markAppointmentConfirmed,
   markConversationHandoff,
   releaseSession,
   updateSession,
@@ -71,12 +62,11 @@ import {
   type AccountInfo,
   type AppointmentInfo,
   type BotSettings,
-  type BusyRow,
   type ServiceInfo,
   type StaffInfo,
-  type WorkBlockRow,
 } from './db'
 import { formatDayLabel, formatLongDate, formatPrice, formatTimeLabel, truncate } from './format'
+import { createInternalBackend } from './internal-backend'
 import {
   actId,
   ansId,
@@ -100,7 +90,7 @@ import {
   type OfferedOption,
   type ReminderAction,
 } from './state'
-import { addDaysToKey, startOfZonedDay, zonedDateKey, zonedParts } from './time'
+import { addDaysToKey, zonedDateKey, zonedParts } from './time'
 
 /** La sesión muere a los 15 minutos sin actividad. */
 export const SESSION_TTL_MS = 15 * 60_000
@@ -156,6 +146,8 @@ export interface HandleAgendaInboundArgs {
   humanOwned?: boolean
   /** Módulos de la cuenta. Con 'clinica' se prenden los pasos clínicos. */
   modules?: readonly ModuleKey[]
+  /** Dónde viven las citas. Por defecto, la Agenda de Shift. */
+  backend?: ClinicBackend
 }
 
 // ------------------------------------------------------------
@@ -205,6 +197,7 @@ export async function handleAgendaInbound(
     account,
     settings,
     texts: mergeBotTexts(settings.botTexts, settings.labels),
+    backend: args.backend ?? createInternalBackend({ db: args.db, accountId: args.accountId }),
   }
 
   // 0) Tap de un recordatorio (Confirmar / Reprogramar / Cancelar).
@@ -353,11 +346,7 @@ async function handleReminderTap(
 
   if (action === 'confirm') {
     try {
-      await markAppointmentConfirmed(dialog.db, {
-        accountId: dialog.accountId,
-        id: appt.id,
-        confirmedAtIso: dialog.nowIso,
-      })
+      await dialog.backend.confirm({ id: appt.id, confirmedAtIso: dialog.nowIso })
     } catch (err) {
       console.error('[agenda] confirmar desde el recordatorio falló:', err)
       await dialog.sender.sendText({ text: dialog.texts.confirmError })
@@ -428,6 +417,8 @@ async function handleReminderTap(
 
 interface Dialog {
   db: SupabaseClient
+  /** Citas y disponibilidad: lo que cambia según dónde viva la agenda. */
+  backend: ClinicBackend
   sender: AgendaSender
   now: Date
   nowIso: string
@@ -971,8 +962,7 @@ async function handleChoice(
           return
         }
         try {
-          await cancelAppointment(dialog.db, {
-            accountId: dialog.accountId,
+          await dialog.backend.cancel({
             id: appt.id,
             reason: 'cliente',
             cancelledAtIso: dialog.nowIso,
@@ -1076,13 +1066,11 @@ async function confirmAppointment(
   }
   let assigned: string | null = null
   for (const candidate of candidates) {
-    const free = await isStaffFree(
-      dialog.db,
-      dialog.accountId,
-      candidate,
-      start.toISOString(),
-      end.toISOString(),
-    )
+    const free = await dialog.backend.isStaffFree({
+      staffId: candidate,
+      startIso: start.toISOString(),
+      endIso: end.toISOString(),
+    })
     if (free) {
       assigned = candidate
       break
@@ -1106,23 +1094,20 @@ async function confirmAppointment(
   if (!claimed) return
 
   const appointmentId = crypto.randomUUID()
-  const { error } = await insertAppointment(dialog.db, {
+  const booked = await dialog.backend.book({
     id: appointmentId,
-    accountId: dialog.accountId,
     contactId: dialog.contactId,
     conversationId: dialog.conversationId,
     serviceId: service.id,
     staffId: assigned,
     startsAtIso: start.toISOString(),
     endsAtIso: end.toISOString(),
-    status: 'confirmed',
-    createdVia: 'bot',
     confirmedAtIso: dialog.nowIso,
     rescheduledFrom: oldAppt?.id ?? null,
     answers,
   })
 
-  if (error) {
+  if (booked.kind !== 'ok') {
     // La cita no existe: la sesión vuelve a estar activa para que el
     // cliente pueda elegir otra hora o reintentar.
     await releaseSession(dialog.db, {
@@ -1130,7 +1115,7 @@ async function confirmAppointment(
       accountId: dialog.accountId,
       updatedAtIso: dialog.nowIso,
     })
-    if (error.code === '23P01') {
+    if (booked.kind === 'slot_taken') {
       // Choque con el EXCLUDE anti-doble-reserva: alguien ganó la carrera.
       await offerAlternatives(dialog, sessionId, state)
       return
@@ -1148,8 +1133,7 @@ async function confirmAppointment(
     // Crítica: si la cita anterior no se cancela, el cliente quedaría
     // con dos citas. Se deshace la nueva y se re-ofrece el resumen.
     try {
-      await cancelAppointment(dialog.db, {
-        accountId: dialog.accountId,
+      await dialog.backend.cancel({
         id: oldAppt.id,
         reason: 'reprogramada',
         cancelledAtIso: dialog.nowIso,
@@ -1158,8 +1142,7 @@ async function confirmAppointment(
       console.error('[agenda] cancelar la cita anterior falló:', err)
       let undone = false
       try {
-        await cancelAppointment(dialog.db, {
-          accountId: dialog.accountId,
+        await dialog.backend.cancel({
           id: appointmentId,
           reason: 'error_reprogramacion',
           cancelledAtIso: dialog.nowIso,
@@ -1560,54 +1543,18 @@ async function conclude(
 // Disponibilidad
 // ------------------------------------------------------------
 
-interface AvailabilityCtx {
-  service: ServiceInfo | null
-  staffIds: string[]
-  blocks: WorkBlockRow[]
-  busy: BusyRow[]
-  now: Date
-}
-
-async function loadAvailabilityContext(
+/** Servicio y candidatos de la sesión; null si ya no hay a quién ofrecer. */
+async function slotScope(
   dialog: Dialog,
   state: BookingState,
-  fromKey: string,
-  days: number,
-): Promise<AvailabilityCtx> {
+): Promise<{ service: ServiceInfo; staffIds: string[] } | null> {
   const service = await findService(dialog, state.serviceId)
-  if (!service) {
-    return { service: null, staffIds: [], blocks: [], busy: [], now: dialog.now }
-  }
+  if (!service) return null
   const staff: Pick<StaffInfo, 'id'>[] =
     state.staffId && state.staffId !== 'any'
       ? [{ id: state.staffId }]
       : await listEligibleStaff(dialog.db, dialog.accountId, service.id)
-  const staffIds = staff.map((s) => s.id)
-  if (!staffIds.length) {
-    return { service, staffIds: [], blocks: [], busy: [], now: dialog.now }
-  }
-  const fromIso = startOfZonedDay(fromKey).toISOString()
-  const toIso = startOfZonedDay(addDaysToKey(fromKey, days)).toISOString()
-  const [blocks, busy] = await Promise.all([
-    listWorkBlocks(dialog.db, dialog.accountId, staffIds),
-    listBusy(dialog.db, dialog.accountId, staffIds, fromIso, toIso),
-  ])
-  return { service, staffIds, blocks, busy, now: dialog.now }
-}
-
-function slotsForDay(ctx: AvailabilityCtx, dateKey: string): MergedSlot[] {
-  if (!ctx.service || !ctx.staffIds.length) return []
-  const sets = ctx.staffIds.map((sid) => ({
-    staffId: sid,
-    slots: computeDaySlots({
-      dateKey,
-      durationMinutes: ctx.service!.durationMinutes,
-      workBlocks: ctx.blocks.filter((b) => b.staffId === sid),
-      busy: ctx.busy.filter((b) => b.staffId === sid),
-      now: ctx.now,
-    }),
-  }))
-  return mergeSlotsByStart(sets)
+  return staff.length ? { service, staffIds: staff.map((s) => s.id) } : null
 }
 
 async function mergedSlotsForDay(
@@ -1615,8 +1562,9 @@ async function mergedSlotsForDay(
   state: BookingState,
   dateKey: string,
 ): Promise<MergedSlot[]> {
-  const ctx = await loadAvailabilityContext(dialog, state, dateKey, 1)
-  return slotsForDay(ctx, dateKey)
+  const scope = await slotScope(dialog, state)
+  if (!scope) return []
+  return dialog.backend.getDaySlots({ ...scope, dateKey, now: dialog.now })
 }
 
 /** Próximos días (hasta 7) que tienen al menos una hora ofrecible. */
@@ -1624,23 +1572,25 @@ async function dayOptions(
   dialog: Dialog,
   state: BookingState,
 ): Promise<{ key: string; label: string }[]> {
+  const scope = await slotScope(dialog, state)
+  if (!scope) return []
   const todayKey = zonedDateKey(dialog.now)
-  const keys: string[] = []
-  for (let i = 0; i < OFFER_DAYS; i += 1) keys.push(addDaysToKey(todayKey, i))
-
-  const ctx = await loadAvailabilityContext(dialog, state, keys[0], OFFER_DAYS)
-  const out: { key: string; label: string }[] = []
-  for (let i = 0; i < keys.length; i += 1) {
-    if (!slotsForDay(ctx, keys[i]).length) continue
-    const label =
-      i === 0
+  const tomorrowKey = addDaysToKey(todayKey, 1)
+  const keys = await dialog.backend.getDaysWithSlots({
+    ...scope,
+    fromKey: todayKey,
+    days: OFFER_DAYS,
+    now: dialog.now,
+  })
+  return keys.map((key) => ({
+    key,
+    label:
+      key === todayKey
         ? dialog.texts.dayToday
-        : i === 1
+        : key === tomorrowKey
           ? dialog.texts.dayTomorrow
-          : formatDayLabel(keys[i])
-    out.push({ key: keys[i], label })
-  }
-  return out
+          : formatDayLabel(key),
+  }))
 }
 
 // ------------------------------------------------------------
