@@ -628,6 +628,14 @@ async function advanceSession(
   input: { text: string; replyId: string | null },
 ): Promise<void> {
   const state = coerceState(session.state)
+  // Doble toque: la autorización ya se respondió y el menú está abierto. El
+  // segundo toque no es un error del paciente: se ignora, sin mensaje ni fallo.
+  if (
+    state.step === 'clinic_menu' &&
+    (input.replyId === actId('consent_yes') || input.replyId === actId('consent_no'))
+  ) {
+    return
+  }
   // Las preguntas extra se responden escribiendo (o con la opción tocada): no
   // pasan por el emparejamiento general del menú.
   if (state.step === 'ask_question') {
@@ -643,7 +651,16 @@ async function advanceSession(
     await registerFail(dialog, session.id, state)
     return
   }
-  await handleChoice(dialog, session.id, { ...state, fails: 0 }, choice)
+  // Un paso normal olvida los fallos al acertar. Los pasos clínicos no: su
+  // "fallo" también es que la base no guardó la respuesta, y si se reiniciara
+  // el paciente repetiría el toque para siempre sin llegar a una persona. Lo
+  // que avanza a otro paso nace con 0.
+  await handleChoice(
+    dialog,
+    session.id,
+    isClinicStep(state.step) ? state : { ...state, fails: 0 },
+    choice,
+  )
 }
 
 /**
@@ -659,7 +676,12 @@ async function registerFail(
 ): Promise<void> {
   const fails = state.fails + 1
   if (fails >= 2) {
-    await performHandoff(dialog, sessionId)
+    // Una autorización sin responder no es un pedido de hablar con una persona.
+    await performHandoff(
+      dialog,
+      sessionId,
+      state.step === 'consent' ? { note: dialog.clinicTexts.consentUnansweredNote } : {},
+    )
     return
   }
   const next = { ...state, fails }

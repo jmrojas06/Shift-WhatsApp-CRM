@@ -190,6 +190,94 @@ describe('autorización de datos', () => {
     expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
   })
 
+  it('la nota de ese pase dice que la autorización quedó sin responder, no que pidió una persona', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { text: 'acepto' })
+    await send(db, rec, { text: 'sí, acepto' })
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.consentUnansweredNote)
+    expect(db._tables.conversations[0].ai_handoff_summary).not.toBe(AGENDA_AGENT_TEXTS.handoffNote)
+  })
+
+  it('un texto raro y luego el toque sí autoriza', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { text: 'acepto' })
+    await send(db, rec, { replyId: 'act:consent_yes' })
+    expect(db._tables.clinic_consents).toMatchObject([{ granted: true }])
+    expect(last(rec).ids).toEqual(MENU_IDS)
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+  })
+
+  it('si la base rechaza el registro dos veces seguidas, pasa a una persona (no repite "intenta de nuevo")', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    db._failNext('insert', 'clinic_consents', { message: 'boom' })
+    db._failNext('insert', 'clinic_consents', { message: 'boom' })
+    await send(db, rec, { replyId: 'act:consent_yes' })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
+    await send(db, rec, { replyId: 'act:consent_yes' })
+    expect(db._tables.clinic_consents).toHaveLength(0)
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.consentUnansweredNote)
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
+  })
+
+  it('un fallo al guardar y luego un texto raro también pasa a una persona', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    db._failNext('insert', 'clinic_consents', { message: 'boom' })
+    await send(db, rec, { replyId: 'act:consent_yes' })
+    await send(db, rec, { text: 'acepto' })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+  })
+
+  it('un fallo al guardar que se arregla en el segundo toque deja la autorización', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    db._failNext('insert', 'clinic_consents', { message: 'boom' })
+    await send(db, rec, { replyId: 'act:consent_yes' })
+    await send(db, rec, { replyId: 'act:consent_yes' })
+    expect(db._tables.clinic_consents).toMatchObject([{ granted: true }])
+    expect(last(rec).ids).toEqual(MENU_IDS)
+  })
+
+  it.each(['act:consent_yes', 'act:consent_no'])(
+    'un segundo toque (%s) con el menú ya abierto se ignora en silencio',
+    async (replyId) => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:consent_yes' })
+      const sent = rec.calls.length
+      const result = await send(db, rec, { replyId })
+      expect(result).toEqual({ consumed: true })
+      // Ni mensaje, ni fallo, ni otro registro, ni pase a una persona.
+      expect(rec.calls).toHaveLength(sent)
+      expect(db._tables.clinic_consents).toHaveLength(1)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+      const open = db._tables.booking_sessions.filter((s) => s.status === 'active')
+      expect(open.map((s) => (s.state as { step: string; fails: number }).step)).toEqual(['clinic_menu'])
+      expect((open[0].state as { fails: number }).fails).toBe(0)
+    },
+  )
+
+  it('el toque del menú sigue valiendo después de un doble toque', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { replyId: 'act:consent_yes' })
+    await send(db, rec, { replyId: 'act:consent_yes' })
+    await send(db, rec, { replyId: 'act:book' })
+    expect(last(rec).ids[0]).toMatch(/^svc:/)
+  })
+
   it.each(['1', '2', '2.'])(
     'escribir el número "%s" no registra nada: ni acepta ni rechaza',
     async (typed) => {

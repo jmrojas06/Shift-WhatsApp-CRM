@@ -103,6 +103,9 @@ export function buildClinicTexts(l: AgendaLabels) {
     consentDeclined: 'Entendido. Una persona de la clínica te atiende por este chat. 🙌',
     consentDeclinedNote: 'Paciente: no aceptó la autorización de datos (bot en pausa).',
     consentError: 'No pude guardar tu respuesta en este momento 😅. Intenta de nuevo, por favor.',
+    /** Pase a una persona porque la autorización no se respondió con los botones, o no se pudo guardar. */
+    consentUnansweredNote:
+      'Paciente: la autorización de datos quedó sin responder (bot en pausa).',
 
     /** La configuración de la clínica falta o no se pudo leer: el bot no atiende y pasa a una persona. */
     humanTopicNote:
