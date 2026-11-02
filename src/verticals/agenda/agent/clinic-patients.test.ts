@@ -11,6 +11,7 @@ import {
   LOCATION,
   SERVICE_LIMPIEZA,
   STAFF_ANA,
+  answeredMarketing,
   clinicDb,
   grantedConsent,
   last,
@@ -622,7 +623,9 @@ describe('el resumen y la confirmación dicen para quién es la cita', () => {
     return rec
   }
 
-  const open = () => clinicDb({ clinic_consents: [grantedConsent()], clinic_patients: family() })
+  // Con la pregunta de avisos de control ya respondida, la confirmación es lo último que se manda.
+  const open = () =>
+    clinicDb({ clinic_consents: [grantedConsent(), answeredMarketing()], clinic_patients: family() })
 
   it('el resumen trae al paciente', async () => {
     const rec = await atSummary(open())

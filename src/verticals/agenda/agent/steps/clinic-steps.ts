@@ -648,6 +648,19 @@ export async function renderClinicStep(
       return { state: { ...state, options }, closed: false }
     }
 
+    case 'marketing_consent': {
+      const options: OfferedOption[] = [
+        { id: actId('mkt_yes'), title: texts.marketingYes },
+        { id: actId('mkt_no'), title: texts.marketingNo },
+      ]
+      await ctx.sendOptions({
+        bodyText: texts.marketingBody,
+        buttonLabel: texts.menuButton,
+        options,
+      })
+      return { state: { ...state, options }, closed: false }
+    }
+
     default:
       return { state, closed: true }
   }
@@ -778,6 +791,39 @@ export async function handleClinicChoice(
         return { kind: 'next', state: newBookingState('consent', { afterConsent: 'urgency_book' }) }
       }
       return opening
+    }
+
+    case 'marketing_consent': {
+      // El permiso para escribirle cuando le toque control es aparte del de los
+      // datos y solo se da con el toque: el emparejamiento nunca lee un "sí" escrito
+      // como `mkt_yes`, y un toque viejo no llega aquí sin la pregunta abierta.
+      if (parsed?.kind !== 'act') return { kind: 'fail' }
+      if (parsed.value !== 'mkt_yes' && parsed.value !== 'mkt_no') return { kind: 'fail' }
+      const granted = parsed.value === 'mkt_yes'
+      try {
+        await recordConsent(ctx.db, {
+          accountId: ctx.accountId,
+          contactId: ctx.contactId,
+          kind: 'mercadeo',
+          granted,
+          textVersion: ctx.clinic.consentVersion,
+          // El texto exacto que vio la persona: el de la pregunta.
+          textSnapshot: texts.marketingBody,
+          source: 'whatsapp',
+          messageId: ctx.inboundMessageId,
+          createdAtIso: ctx.nowIso,
+        })
+      } catch (err) {
+        console.error('[clinica] no se pudo guardar el permiso de control:', err)
+        // Un "sí" sin registro no puede prometer avisos: se vuelve a pedir. Un "no"
+        // sin registro no cambia nada (sin permiso no se le escribe), y no se le
+        // hace repetirlo.
+        if (granted) return { kind: 'fail', message: texts.consentError }
+      }
+      await ctx.sender.sendText({
+        text: granted ? texts.marketingThanksYes : texts.marketingThanksNo,
+      })
+      return { kind: 'done' }
     }
 
     default:

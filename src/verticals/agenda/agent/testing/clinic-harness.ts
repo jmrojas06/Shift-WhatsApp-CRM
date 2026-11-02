@@ -144,6 +144,20 @@ export const grantedConsent = (): Row => ({
   created_at: '2026-10-01T00:00:00.000Z',
 })
 
+/**
+ * Respuesta ya dada a la pregunta de avisos de control (por defecto, un "no").
+ * Con ella el bot no vuelve a preguntar después de agendar: sirve para las
+ * pruebas que miran el último mensaje de la reserva.
+ */
+export const answeredMarketing = (granted = false): Row => ({
+  ...grantedConsent(),
+  id: 'cons-mkt',
+  kind: 'mercadeo',
+  granted,
+  text_snapshot: '¿Quieres que te avisemos cuando te toque tu próximo control o limpieza?',
+  created_at: '2026-10-02T00:00:00.000Z',
+})
+
 export interface SentCall {
   kind: 'text' | 'buttons' | 'list'
   bodyText: string

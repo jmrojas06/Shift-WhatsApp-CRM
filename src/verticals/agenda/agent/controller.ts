@@ -1986,6 +1986,39 @@ async function confirmAppointment(
       ? dialog.texts.rescheduleDone(summary)
       : dialog.texts.confirmed(summary),
   })
+
+  // Clínica: después de agendar se pregunta, una sola vez, si quiere que le avisen
+  // cuando le toque control. No tras reprogramar (ya la hizo), y no en una reserva
+  // de urgencia: primero la urgencia. La cita ya está hecha: si la pregunta falla,
+  // no pasa nada.
+  if (!oldAppt && dialog.clinic && !state.urgent) {
+    await bestEffort('pregunta de avisos de control', () => askMarketingConsent(dialog))
+  }
+}
+
+/** Permiso aparte para escribirle cuando le toque control (Fase 5). Solo si nunca respondió. */
+async function askMarketingConsent(dialog: Dialog): Promise<void> {
+  const answered = await latestConsent(dialog.db, {
+    accountId: dialog.accountId,
+    contactId: dialog.contactId,
+    kind: 'mercadeo',
+  })
+  if (answered) return
+  const state = newBookingState('marketing_consent')
+  const sessionId = await openSession(dialog, state)
+  try {
+    await conclude(dialog, sessionId, state)
+  } catch (err) {
+    // La pregunta no salió: una sesión abierta sin menú contestaría con "no
+    // entendí" a lo siguiente que escriba el paciente.
+    await closeSession(dialog.db, {
+      id: sessionId,
+      accountId: dialog.accountId,
+      status: 'completed',
+      updatedAtIso: dialog.nowIso,
+    })
+    throw err
+  }
 }
 
 /** Hora perdida: avisa y re-renderiza el menú de horas. */
