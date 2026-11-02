@@ -281,6 +281,26 @@ export async function handleAgendaInbound(
     return { consumed: true }
   }
 
+  // Clínica: una duda escrita con el menú abierto, o lo que se escribe después de
+  // "Precios y dudas", es para la IA. Se cierra la sesión y se suelta el mensaje
+  // con `released`: con `consumed: false` a secas el despachador lo reclamaría
+  // por haber una sesión abierta cuando llegó.
+  if (args.session && dialog.clinic && replyId === null && asking) {
+    const { labels } = dialog.settings
+    const toAi =
+      asking.step === 'faq_open' ||
+      (asking.step === 'clinic_menu' && looksLikeQuestion(text, [labels.cita, labels.citas]))
+    if (toAi) {
+      await closeSession(args.db, {
+        id: args.session.id,
+        accountId: args.accountId,
+        status: 'completed',
+        updatedAtIso: dialog.nowIso,
+      })
+      return { consumed: false, released: true }
+    }
+  }
+
   // 2) Con sesión activa, el flujo es dueño del mensaje.
   if (args.session) {
     await advanceSession(dialog, args.session, { text, replyId })
@@ -1634,6 +1654,7 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
     case 'new_patient_name':
     case 'pick_appointment':
     case 'marketing_consent':
+    case 'faq_open':
       if (!dialog.clinic) return { state, closed: true }
       return renderClinicStep(clinicCtx(dialog), state)
   }

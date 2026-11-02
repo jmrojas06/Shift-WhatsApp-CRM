@@ -79,6 +79,7 @@ const CLINIC_STEPS: readonly BookingStep[] = [
   'new_patient_name',
   'pick_appointment',
   'marketing_consent',
+  'faq_open',
 ]
 
 export const isClinicStep = (step: BookingStep): boolean => CLINIC_STEPS.includes(step)
@@ -174,6 +175,12 @@ export async function renderClinicStep(
       return { state: { ...state, options }, closed: false }
     }
 
+    case 'faq_open':
+      // El paso existe para que el siguiente texto salga hacia la IA: no hay
+      // menú, solo se invita a preguntar.
+      await ctx.sender.sendText({ text: texts.faqPrompt })
+      return { state: { ...state, options: [] }, closed: false }
+
     default:
       return { state, closed: true }
   }
@@ -224,8 +231,7 @@ export async function handleClinicChoice(
         case 'book':
           return { kind: 'next', state: newBookingState('pick_service') }
         case 'faq':
-          await ctx.sender.sendText({ text: texts.faqPrompt })
-          return { kind: 'done' }
+          return { kind: 'next', state: newBookingState('faq_open') }
         case 'human':
           return { kind: 'handoff' }
         default:

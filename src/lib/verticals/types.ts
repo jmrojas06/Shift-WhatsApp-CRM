@@ -87,6 +87,14 @@ export interface VerticalInboundContext {
 export interface VerticalDispatchResult {
   /** True when the vertical took ownership of this inbound message. */
   consumed: boolean
+  /**
+   * The vertical closed the session this message arrived on and hands the
+   * message to the rest of the pipeline (the AI). Without it, the dispatcher
+   * keeps claiming every message that arrived while a session was open, and
+   * a question typed inside a menu would never reach the AI. Only meaningful
+   * with `consumed: false`.
+   */
+  released?: boolean
 }
 
 export type VerticalInboundHandler = (

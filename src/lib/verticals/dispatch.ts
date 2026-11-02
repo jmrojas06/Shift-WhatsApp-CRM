@@ -110,6 +110,9 @@ export async function dispatchInboundToVertical(
         modules,
       })
       if (result.consumed) return { consumed: true }
+      // The handler closed the session on purpose and gives the message
+      // away: the open-session claim below must not take it back.
+      if (result.released) return { consumed: false }
     }
 
     // A human owns the thread: only what the handler explicitly took

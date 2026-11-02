@@ -321,13 +321,103 @@ describe('autorización de datos', () => {
     expect(rec.calls).toHaveLength(0)
   })
 
-  it('"Precios y dudas" invita a preguntar y suelta la sesión', async () => {
-    const db = clinicDb({ clinic_consents: [grantedConsent()] })
-    const rec = makeRecorder()
-    await send(db, rec, { text: 'Hola' })
-    await send(db, rec, { replyId: 'act:faq' })
-    expect(last(rec).bodyText).toBe(texts.faqPrompt)
-    expect(db._tables.booking_sessions.every((s) => s.status !== 'active')).toBe(true)
+  describe('dudas con el menú abierto', () => {
+    const activeSteps = (db: ReturnType<typeof clinicDb>) =>
+      db._tables.booking_sessions
+        .filter((s) => s.status === 'active')
+        .map((s) => (s.state as { step: string }).step)
+
+    it('una duda escrita con el menú abierto suelta la sesión y se la deja a la IA', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      const before = rec.calls.length
+      const result = await send(db, rec, { text: '¿Cuánto vale una limpieza?' })
+      // `released` le dice al despachador que no la reclame por tener sesión.
+      expect(result).toEqual({ consumed: false, released: true })
+      expect(rec.calls).toHaveLength(before)
+      expect(activeSteps(db)).toEqual([])
+      expect(db._tables.booking_sessions[0].status).toBe('completed')
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    })
+
+    it('"qué precio tiene" sin signos también es una duda', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      const result = await send(db, rec, { text: 'qué precio tiene la limpieza' })
+      expect(result).toEqual({ consumed: false, released: true })
+    })
+
+    it('lo que no parece una duda sigue el camino de siempre: se vuelve a preguntar', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      const result = await send(db, rec, { text: 'mmm' })
+      expect(result).toEqual({ consumed: true })
+      expect(activeSteps(db)).toEqual(['clinic_menu'])
+    })
+
+    it('un toque del menú sigue su camino', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      const result = await send(db, rec, { replyId: 'act:book' })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).ids[0]).toMatch(/^svc:/)
+    })
+
+    it('"Precios y dudas" invita a preguntar y deja la sesión esperando la duda', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:faq' })
+      expect(last(rec).bodyText).toBe(texts.faqPrompt)
+      expect(activeSteps(db)).toEqual(['faq_open'])
+    })
+
+    it('el siguiente texto, aunque diga "cita", va a la IA y cierra la sesión', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:faq' })
+      const before = rec.calls.length
+      const result = await send(db, rec, { text: 'quiero saber cuánto vale la cita de valoración' })
+      expect(result).toEqual({ consumed: false, released: true })
+      expect(rec.calls).toHaveLength(before)
+      expect(activeSteps(db)).toEqual([])
+    })
+
+    it('después de la duda, "cita" vuelve a abrir el menú', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:faq' })
+      await send(db, rec, { text: 'cuánto vale' })
+      const result = await send(db, rec, { text: 'quiero una cita' })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).ids).toEqual(MENU_IDS)
+    })
+
+    it('un toque viejo mientras espera la duda sigue el camino normal, no la suelta', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:faq' })
+      const result = await send(db, rec, { replyId: 'act:book' })
+      expect(result).toEqual({ consumed: true })
+      expect(activeSteps(db)).toEqual(['faq_open'])
+    })
+
+    it('pedir una persona mientras espera la duda sigue ganando', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:faq' })
+      const result = await send(db, rec, { text: 'mejor quiero hablar con una persona' })
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    })
   })
 
   it('"Hablar con una persona" pasa el hilo a un asesor', async () => {

@@ -32,6 +32,8 @@ export type BookingStep =
   | 'new_patient_name'
   | 'pick_appointment'
   | 'marketing_consent'
+  /** Esperando la duda del paciente: el siguiente texto es para la IA. */
+  | 'faq_open'
 
 /** 'book' = cita nueva · 'reschedule' = reprogramación de una existente. */
 export type BookingMode = 'book' | 'reschedule'
