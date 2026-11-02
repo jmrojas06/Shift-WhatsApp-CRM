@@ -1302,15 +1302,16 @@ git commit -m "refactor(agenda): route availability and bookings through ClinicB
 **Files:**
 - Create: `src/modules/clinica/texts.ts`, `src/modules/clinica/texts.test.ts`, `src/modules/clinica/settings.ts`, `src/modules/clinica/settings.test.ts`
 - Modify: `src/verticals/agenda/install.ts`, `src/verticals/agenda/install.test.ts`, `src/verticals/agenda/agent/testing/fake-db.ts`
+- Create: `src/verticals/agenda/agent/testing/fake-db.test.ts`
 
 Dos reglas de esta tarea, ya corregidas tras la revisión:
 
 - **Fallar cerrado.** `loadClinicContext` devuelve `{ status: 'ok' | 'missing' | 'error' }` y no un `null`. Si solo devolviera `null`, una lectura caída se confundiría con "esta cuenta no tiene configuración" y el bot seguiría como una agenda normal: no pediría la autorización de datos y la IA vería el chat de un paciente. Quien la llame (Task 7) decide qué hace en cada caso, y ante `error` no puede tratar la conversación como una agenda normal.
 - **Sin carreras.** La fila de `clinic_settings` se crea con `upsert` + `ignoreDuplicates` (`ON CONFLICT DO NOTHING`): si otro montaje la creó justo antes, esa gana y no se pisa.
 
-- [ ] **Step 1: Enseña `ignoreDuplicates` al fake**
+- [ ] **Step 1: Enseña `ignoreDuplicates` y el `onConflict` compuesto al fake**
 
-En `src/verticals/agenda/agent/testing/fake-db.ts`, la prueba de la carrera lo necesita. Declara la bandera junto a `conflictKey`:
+En `src/verticals/agenda/agent/testing/fake-db.ts`, la prueba de la carrera necesita `ignoreDuplicates`, y un `onConflict: 'a,b'` debe comparar cada columna (comparar `r['a,b']` daba `undefined === undefined` y cualquier fila contaba como conflicto). Declara la bandera junto a `conflictKey`:
 
 ```ts
     let conflictKey: string | null = null
@@ -1325,9 +1326,11 @@ Reemplaza el bloque `if (op === 'upsert')` por:
         const rows = Array.isArray(payload) ? payload : [payload ?? {}]
         const out = rows.flatMap((row) => {
           const incoming = row as Row
-          const key = conflictKey
-          const existing = key
-            ? ensure(table).find((r) => r[key] === incoming[key])
+          // `onConflict` puede ser una lista ("account_id,kind"): choca la fila
+          // que coincide en TODAS las columnas.
+          const keys = conflictKey ? conflictKey.split(',').map((c) => c.trim()) : null
+          const existing = keys
+            ? ensure(table).find((r) => keys.every((c) => r[c] === incoming[c]))
             : undefined
           if (existing) {
             // ON CONFLICT DO NOTHING: la fila que ya estaba no se toca ni se devuelve.
@@ -1351,6 +1354,67 @@ Y el método `upsert` del objeto `api` por:
         ignoreDuplicates = options?.ignoreDuplicates === true
         return api
       },
+```
+
+Y crea `src/verticals/agenda/agent/testing/fake-db.test.ts`, que fija ese comportamiento del fake:
+
+```ts
+import { describe, expect, it } from 'vitest'
+
+import { asClient, makeFakeDb } from './fake-db'
+
+describe('fake-db: upsert con onConflict', () => {
+  it('una columna: choca con la fila que tiene el mismo valor', async () => {
+    const db = makeFakeDb({ t: [{ id: 'a', v: 'viejo' }] })
+
+    await asClient(db).from('t').upsert({ id: 'a', v: 'nuevo' }, { onConflict: 'id' })
+    await asClient(db).from('t').upsert({ id: 'b', v: 'otra' }, { onConflict: 'id' })
+
+    expect(db._tables.t).toEqual([
+      { id: 'a', v: 'nuevo' },
+      { id: 'b', v: 'otra' },
+    ])
+  })
+
+  it('varias columnas ("a,b"): solo choca cuando coinciden TODAS', async () => {
+    const db = makeFakeDb({
+      t: [
+        { a: 1, b: 'x', v: 'primera' },
+        { a: 2, b: 'y', v: 'segunda' },
+      ],
+    })
+
+    // Misma "a", distinta "b": no es un conflicto, es una fila nueva.
+    await asClient(db).from('t').upsert({ a: 1, b: 'y', v: 'nueva' }, { onConflict: 'a,b' })
+    expect(db._tables.t).toHaveLength(3)
+
+    // Mismas dos columnas: ahora sí pisa la fila que ya estaba.
+    await asClient(db).from('t').upsert({ a: 2, b: 'y', v: 'pisada' }, { onConflict: 'a,b' })
+    expect(db._tables.t).toHaveLength(3)
+    expect(db._tables.t.find((r) => r.a === 2 && r.b === 'y')?.v).toBe('pisada')
+    expect(db._tables.t.find((r) => r.a === 1 && r.b === 'x')?.v).toBe('primera')
+  })
+
+  it('varias columnas con ignoreDuplicates: la fila que choca no se toca', async () => {
+    const db = makeFakeDb({ t: [{ a: 1, b: 'x', v: 'primera' }] })
+
+    await asClient(db).from('t').upsert({ a: 1, b: 'x', v: 'nueva' }, { onConflict: 'a,b', ignoreDuplicates: true })
+    await asClient(db).from('t').upsert({ a: 1, b: 'z', v: 'otra' }, { onConflict: 'a,b', ignoreDuplicates: true })
+
+    expect(db._tables.t).toEqual([
+      { a: 1, b: 'x', v: 'primera' },
+      { a: 1, b: 'z', v: 'otra' },
+    ])
+  })
+
+  it('tolera espacios alrededor de las columnas ("a, b")', async () => {
+    const db = makeFakeDb({ t: [{ a: 1, b: 'x', v: 'primera' }] })
+
+    await asClient(db).from('t').upsert({ a: 1, b: 'x', v: 'pisada' }, { onConflict: 'a, b' })
+
+    expect(db._tables.t).toEqual([{ a: 1, b: 'x', v: 'pisada' }])
+  })
+})
 ```
 
 - [ ] **Step 2: Escribe las pruebas que fallan**
@@ -1584,6 +1648,11 @@ describe('palabras de urgencia por defecto', () => {
     expect(new Set(words).size).toBe(words.length)
   })
 
+  it('"dolores" no es una palabra de urgencia: es un nombre', () => {
+    expect(words).not.toContain('dolores')
+    expect(containsUrgencyWord('Dolores Pérez pide una cita', words)).toBe(false)
+  })
+
   it.each([
     'me duelen las muelas',
     'me sangran las encías',
@@ -1600,6 +1669,12 @@ describe('palabras de urgencia por defecto', () => {
     'no puedo tragar',
     'tengo mucho dolor',
     'se me cayó una corona',
+    'no paro de sangrar',
+    'yo sangro mucho',
+    'se me hinchó la cara',
+    'se me inflamó la encía',
+    'me fracturé un diente',
+    'me falta el aire',
   ])('reconoce una urgencia: %s', (message) => {
     expect(containsUrgencyWord(message, words)).toBe(true)
   })
@@ -1675,17 +1750,22 @@ export const DEFAULT_URGENCY_WORDS: readonly string[] = [
   'sangra',
   'sangran',
   'sangrando',
+  'sangrar',
+  'sangro',
   'sangre',
   'hinchazon',
   'hinchado',
   'hinchada',
+  'hincho',
   'inflamado',
   'inflamada',
+  'inflamo',
   'absceso',
   'pus',
   'fiebre',
   'golpe',
   'fractura',
+  'fracture',
   'se partio',
   'se me partio',
   'se quebro',
@@ -1695,6 +1775,7 @@ export const DEFAULT_URGENCY_WORDS: readonly string[] = [
   'se me cayo',
   'respirar',
   'tragar',
+  'me falta el aire',
 ]
 
 /** Nota: una lista admite títulos de hasta 24 caracteres y un botón, 20. */
@@ -2002,7 +2083,7 @@ git commit -m "feat(clinica): add clinic settings and bot copy"
 
 ### Task 6: Estado del bot y toques del recordatorio
 
-Esta tarea también corrige el hallazgo de producción: las etiquetas de la plantilla cuentan como toques, **pero solo si el mensaje responde a un recordatorio**. Y fija una regla que no admite atajos: en los menús de decisión (autorización, aviso de marketing y signos de alarma) **aceptar exige decir el mensaje completo**.
+Esta tarea también corrige el hallazgo de producción: las etiquetas de la plantilla cuentan como toques, **pero solo si el mensaje responde a un recordatorio**. Y fija una regla que no admite atajos: la autorización de datos y el aviso de marketing **solo se aceptan tocando el botón**.
 
 **Files:**
 - Modify: `src/verticals/agenda/agent/state.ts`, `src/verticals/agenda/agent/state.test.ts`, `src/verticals/agenda/agent/controller.ts`, `src/verticals/agenda/agent/controller.test.ts`, `src/verticals/agenda/agent/db.ts`, `src/verticals/agenda/agent/reminders.ts`, `src/verticals/agenda/agent/reminders.test.ts`
@@ -2010,9 +2091,9 @@ Esta tarea también corrige el hallazgo de producción: las etiquetas de la plan
 Las reglas, tal como quedaron tras la revisión:
 
 1. **Una etiqueta no basta.** Cualquier otra plantilla o difusión puede traer un botón "Confirmar" o "Cancelar", y Meta devuelve solo la etiqueta. Leerla sin más confirmaba citas, escribía encima de un humano o respondía "ya no está activo" y consumía el mensaje. `parseReminderTap` marca el toque `viaLabel: true`, y `handleAgendaInbound` lo acepta solo si el mensaje responde a una plantilla `recordatorio_cita` o `recordatorio_cita_clinica` de esa conversación. Sin referencia o con otra plantilla, el mensaje sigue el camino normal (`consumed: false`). Los ids `rem:*` no necesitan la comprobación.
-2. **Aceptar exige el mensaje entero.** Una lista de negaciones nunca alcanza ("noo autorizo", "para nada autorizo", "no sé si acepto"). Lo que acepta (`consent_yes`, `mkt_yes`) o descarta los signos (`alarm_no`) es una lista cerrada de mensajes completos. Un número, una pregunta (`?`) o una palabra a medias ("acep", "si a") nunca aceptan; un toque de botón siempre vale.
-3. **Una negación es un rechazo.** En autorización y aviso de marketing, una negación en cualquier parte del mensaje es `*_no` (incluso "acepto, no hay problema": es el lado seguro).
-4. **Ante la duda en los signos de alarma, va a una persona.** Una negación dentro de una frase ("no puedo respirar", "la fiebre no baja", "no sé") da `alarm_yes`, nunca `alarm_no`.
+2. **Aceptar solo por toque.** Ningún texto acepta la autorización (`consent_yes`) ni el aviso de marketing (`mkt_yes`): ni "acepto", ni "sí", ni "autorizo". Un texto se lee mal (`squash` borra emojis, símbolos y tildes: "❌ acepto", "acepto 🤔" y "autorizó" parecían un sí) y una autorización tiene que ser explícita. Tampoco acepta un número. Un toque de botón (`replyId`) siempre vale.
+3. **Una negación es un rechazo; lo demás, `null`.** En autorización y aviso de marketing, un texto con una negación en cualquier parte es `*_no` (incluso "acepto, no hay problema": es el lado seguro) y cualquier otro texto da `null`: el bot vuelve a mostrar los botones y a la segunda pasa a una persona. "2" sigue siendo el rechazo.
+4. **Signos de alarma: ante la duda, va a una persona.** Descartarlos (`alarm_no`) exige el toque o un mensaje completo de una lista cerrada, escrito solo con letras, números y puntuación simple ("ninguno 🤔" no descarta nada; con `?` tampoco). Dan `alarm_yes` el toque, otra lista cerrada, una negación dentro de una frase ("no puedo respirar", "la fiebre no baja", "no sé") y un signo dicho con palabras ("fiebre alta", "estoy sangrando mucho", "se me hinchó la cara"). Lo demás, incluido "tengo mucho dolor" (el dolor no es un signo de alarma), da `null`.
 
 - [ ] **Step 1: Escribe las pruebas que fallan**
 
@@ -2070,10 +2151,11 @@ describe('palabras de urgencia', () => {
 // ------------------------------------------------------------
 // Menús de decisión (autorización, marketing, signos de alarma).
 //
-// Aceptar exige decir el mensaje ENTERO. Una negación, una duda o una
-// pregunta nunca cuentan como aceptación: una lista de negaciones no
-// alcanza ("noo autorizo", "para nada autorizo"), así que lo que acepta
-// es una lista cerrada de mensajes completos.
+// La autorización y el aviso de marketing solo se ACEPTAN TOCANDO el botón:
+// ningún texto acepta ("acepto", "sí", "autorizo"). Un texto se puede leer
+// mal (emojis, tildes, dudas, "autorizó") y una autorización tiene que ser
+// explícita. Un texto con negación es un rechazo; cualquier otro, null: el
+// bot vuelve a mostrar los botones y a la segunda pasa a una persona.
 // ------------------------------------------------------------
 
 const consentOptions: OfferedOption[] = [
@@ -2100,18 +2182,39 @@ describe('autorización escrita', () => {
     expect(choice('no')).toBe('act:consent_no')
   })
 
-  it('aceptar exige decirlo', () => {
-    expect(choice('sí, acepto')).toBe('act:consent_yes')
-    expect(choice('acepto')).toBe('act:consent_yes')
+  it('aceptar exige tocar el botón: ningún texto acepta', () => {
+    expect(choice('sí, acepto')).toBeNull()
+    expect(choice('acepto')).toBeNull()
+    expect(choice('autorizo')).toBeNull()
     expect(choice('ok')).toBeNull()
   })
 
-  it.each(['Sí acepto', 'sí, acepto.', ' ACEPTO ', 'sí autorizo', 'Autorizo', 'Acepto 👍'])(
-    'acepta el mensaje completo %j',
-    (text) => {
-      expect(choice(text)).toBe('act:consent_yes')
-    },
-  )
+  it('el toque del botón sí acepta (y el del rechazo, rechaza)', () => {
+    expect(matchChoice({ text: '', replyId: 'act:consent_yes', options })).toBe('act:consent_yes')
+    expect(matchChoice({ text: '', replyId: 'act:consent_no', options })).toBe('act:consent_no')
+    expect(matchChoice({ text: 'sí, acepto', replyId: 'act:consent_yes', options })).toBe('act:consent_yes')
+  })
+
+  it.each([
+    'Sí acepto',
+    'sí, acepto.',
+    ' ACEPTO ',
+    'sí autorizo',
+    'Autorizo',
+    'autorizó',
+    '❌ acepto',
+    '✅ acepto',
+    'acepto 🤔',
+    'acepto :(',
+    'Acepto 👍',
+    'acepto 😡',
+    'sí',
+    'dale',
+    'claro que sí',
+    'ok',
+  ])('ningún texto acepta: %j', (text) => {
+    expect(choice(text)).toBeNull()
+  })
 
   it.each([
     'noo autorizo',
@@ -2123,6 +2226,8 @@ describe('autorización escrita', () => {
     'no sé si acepto',
     'acepto, no hay problema',
     '¿qué pasa si no acepto?',
+    '❌ no acepto',
+    'no 🤔',
   ])('lo que trae una negación es rechazo: %j', (text) => {
     expect(choice(text)).toBe('act:consent_no')
   })
@@ -2136,15 +2241,12 @@ describe('autorización escrita', () => {
     'acepto?',
     'si a',
     'acep',
-    'sí',
-    'dale',
-    'claro que sí',
-    'ok',
     '1',
     '01',
     '3',
     '',
-  ])('una duda, una pregunta o un mensaje a medias no acepta: %j', (text) => {
+    '😀',
+  ])('una duda, una pregunta o un mensaje a medias tampoco acepta: %j', (text) => {
     expect(choice(text)).toBeNull()
   })
 
@@ -2153,22 +2255,20 @@ describe('autorización escrita', () => {
     expect(choice('2.')).toBe('act:consent_no')
     expect(choice('1')).toBeNull()
   })
-
-  it('un toque de botón siempre vale', () => {
-    expect(matchChoice({ text: '', replyId: 'act:consent_yes', options })).toBe('act:consent_yes')
-    expect(matchChoice({ text: '', replyId: 'act:consent_no', options })).toBe('act:consent_no')
-  })
 })
 
 describe('aviso de marketing escrito', () => {
   const options = marketingOptions
   const choice = (text: string) => matchChoice({ text, options })
 
-  it.each(['sí', 'Sí.', 'sí, avísame', 'avísame', 'avisame!'])('acepta el mensaje completo %j', (text) => {
-    expect(choice(text)).toBe('act:mkt_yes')
-  })
+  it.each(['sí', 'Sí.', 'sí, avísame', 'avísame', 'avisame!', '✅ sí', 'avísame 🤔'])(
+    'ningún texto acepta: %j',
+    (text) => {
+      expect(choice(text)).toBeNull()
+    },
+  )
 
-  it.each(['no', 'no, gracias', 'no avísame', 'noo', 'nunca', 'tampoco', '2'])(
+  it.each(['no', 'no, gracias', 'no avísame', 'noo', 'nunca', 'tampoco', '2', '❌ no'])(
     'un no nunca se lee como aceptación: %j',
     (text) => {
       expect(choice(text)).toBe('act:mkt_no')
@@ -2182,8 +2282,9 @@ describe('aviso de marketing escrito', () => {
     },
   )
 
-  it('un toque de botón siempre vale', () => {
+  it('el toque del botón sí acepta', () => {
     expect(matchChoice({ text: '', replyId: 'act:mkt_yes', options })).toBe('act:mkt_yes')
+    expect(matchChoice({ text: '', replyId: 'act:mkt_no', options })).toBe('act:mkt_no')
   })
 })
 
@@ -2203,6 +2304,24 @@ describe('signos de alarma escritos', () => {
     'no tengo nada',
     'nada',
     'Nada.',
+    'no ninguna',
+    'ninguno de esos',
+    'Ninguna de esas',
+    'ninguno de los anteriores',
+    'no ninguno de esos',
+    'no ninguna de esas',
+    'no tengo ninguno de esos',
+    'no tengo ninguna de esas',
+    'no no',
+    'no, no tengo',
+    'nop',
+    'nope',
+    'noo',
+    'no gracias',
+    'no señor',
+    'no señora',
+    'nada de eso',
+    'no, nada de eso',
   ])('solo el mensaje completo de la lista dice que no hay signos: %j', (text) => {
     expect(choice(text)).toBe('act:alarm_no')
   })
@@ -2213,6 +2332,21 @@ describe('signos de alarma escritos', () => {
       expect(choice(text)).toBe('act:alarm_yes')
     },
   )
+
+  it.each([
+    'tengo dificultad para respirar',
+    'respiro mal',
+    'sí, tengo fiebre',
+    'fiebre alta',
+    'estoy sangrando mucho',
+    'se me hinchó la cara',
+    'tengo la encía inflamada',
+    'me cuesta tragar',
+    'me dieron un golpe fuerte en la cara',
+    'siento que me ahogo',
+  ])('un signo dicho con palabras va a una persona: %j', (text) => {
+    expect(choice(text)).toBe('act:alarm_yes')
+  })
 
   it.each([
     'no puedo respirar',
@@ -2230,12 +2364,29 @@ describe('signos de alarma escritos', () => {
     expect(choice(text)).toBe('act:alarm_yes')
   })
 
-  it.each(['hola', '¿cuáles son los signos?', 'ninguno de esos', 'quiero agendar', '¿ninguno?', '3', ''])(
-    'lo demás no decide: %j',
+  it.each([
+    'tengo mucho dolor',
+    'hola',
+    '¿cuáles son los signos?',
+    'quiero agendar',
+    '¿ninguno?',
+    'ninguno?',
+    '3',
+    '',
+  ])('lo demás no decide (el dolor, por sí solo, no es un signo de alarma): %j', (text) => {
+    expect(choice(text)).toBeNull()
+  })
+
+  it.each(['ninguno 🤔', 'no 👍', 'nada :(', 'ninguno ❌', '✅ ninguno', 'no tengo ninguno 😀', 'nada de eso 🙏'])(
+    'con emojis o símbolos nunca descarta los signos: %j',
     (text) => {
-      expect(choice(text)).toBeNull()
+      expect(choice(text)).not.toBe('act:alarm_no')
     },
   )
+
+  it('"ninguno 🤔" no decide: el bot vuelve a preguntar', () => {
+    expect(choice('ninguno 🤔')).toBeNull()
+  })
 
   it('por número, "no hay signos" no vale y "sí hay" sí (lleva a una persona)', () => {
     expect(choice('2')).toBeNull()
@@ -2256,8 +2407,8 @@ describe('signos de alarma escritos', () => {
 })
 
 describe('menús de decisión: nunca se acepta por accidente', () => {
-  // Frases que no están en la lista de ningún menú: no pueden acertar la opción
-  // que acepta (consent_yes, mkt_yes, alarm_no).
+  // Frases que no son un toque: no pueden acertar la opción que acepta
+  // (consent_yes, mkt_yes) ni la que descarta los signos (alarm_no).
   const stray = [
     'tal vez',
     'no sé qué hacer',
@@ -2267,6 +2418,15 @@ describe('menús de decisión: nunca se acepta por accidente', () => {
     'dame un momento',
     '1 y 2',
     '😀',
+    'sí',
+    'acepto',
+    'autorizo',
+    'autorizó',
+    '❌ acepto',
+    'acepto 🤔',
+    'acepto :(',
+    'ninguno 🤔',
+    '¿ninguno?',
   ]
   it.each([
     ['autorización', consentOptions, 'act:consent_yes'],
@@ -2608,46 +2768,72 @@ Justo antes de `export interface MatchChoiceArgs`, agrega el bloque de los menú
 //
 // Aquí un malentendido cuesta caro: leer un "no" como "sí" registra una
 // autorización que nadie dio, y leer "no puedo respirar" como "ninguno"
-// manda a agendar a quien necesita urgencias. Una lista de negaciones
-// nunca alcanza ("noo autorizo", "para nada autorizo"), así que lo que
-// ACEPTA (consent_yes, mkt_yes) o descarta los signos (alarm_no) es una
-// lista cerrada de MENSAJES COMPLETOS (comparados sin tildes ni
-// puntuación), y todo lo demás cae del lado seguro:
-//   - autorización y marketing: una negación en cualquier parte del mensaje
-//     es un rechazo ("acepto, no hay problema" también); lo que no es ni
-//     una cosa ni la otra, null y el bot repite la pregunta.
-//   - signos de alarma: una negación dentro de una frase va a una persona
-//     (alarm_yes: ante la duda, no se agenda); lo demás, null.
-// Con "?" o "¿" en el mensaje nunca se acepta ni se descartan los signos: es
-// una pregunta, no una respuesta. Por número tampoco: estos botones no
-// muestran números. Un toque de botón (replyId) no pasa por aquí y siempre
-// vale.
+// manda a agendar a quien necesita urgencias.
+//   - Autorización (consent_*) y aviso de marketing (mkt_*): el SÍ solo llega
+//     por TOQUE de botón. Ningún texto acepta, ni "acepto" ni "sí": un texto
+//     se lee mal (emojis, tildes, "autorizó", dudas) y una autorización tiene
+//     que ser explícita. Un texto con una negación en cualquier parte es un
+//     rechazo ("acepto, no hay problema" también); cualquier otro, null: el
+//     bot vuelve a mostrar los botones y a la segunda pasa a una persona.
+//   - Signos de alarma (alarm_*): descartarlos (alarm_no) exige el toque o un
+//     mensaje completo de una lista cerrada y SIN emojis ni símbolos
+//     ("ninguno 🤔" no descarta nada). Va a una persona (alarm_yes) un toque,
+//     un mensaje de otra lista cerrada, una negación dentro de una frase
+//     ("no puedo respirar") o un signo dicho con palabras ("fiebre alta"):
+//     ante la duda, no se agenda. Lo demás ("tengo mucho dolor"), null.
+// Estos botones no muestran números, así que un número tampoco acepta ni
+// descarta nada. Un toque de botón (replyId) no pasa por aquí y siempre vale.
 // ------------------------------------------------------------
 
-/** Mensajes completos que aceptan o descartan, ya en forma `squash`. */
-const WHOLE_MESSAGE: Readonly<Record<string, readonly string[]>> = {
-  'act:consent_yes': ['si acepto', 'acepto', 'si autorizo', 'autorizo'],
-  'act:mkt_yes': ['si', 'si avisame', 'avisame'],
-  'act:alarm_no': [
-    'no',
-    'no ninguno',
-    'ninguno',
-    'ninguna',
-    'no tengo',
-    'no tengo ninguno',
-    'no tengo ninguna',
-    'no tengo nada',
-    'nada',
-  ],
-}
+/** Opciones que aceptan o descartan: no se eligen por número ni por texto suelto. */
+const ACCEPTING_IDS: ReadonlySet<string> = new Set(['act:consent_yes', 'act:mkt_yes', 'act:alarm_no'])
+
+/** Mensajes completos que descartan los signos de alarma, ya en forma `squash`. */
+const ALARM_NO_WHOLE: readonly string[] = [
+  'no',
+  'no ninguno',
+  'ninguno',
+  'ninguna',
+  'no ninguna',
+  'no tengo',
+  'no tengo ninguno',
+  'no tengo ninguna',
+  'no tengo nada',
+  'nada',
+  'ninguno de esos',
+  'ninguna de esas',
+  'ninguno de los anteriores',
+  'no ninguno de esos',
+  'no ninguna de esas',
+  'no tengo ninguno de esos',
+  'no tengo ninguna de esas',
+  'no no',
+  'no no tengo',
+  'nop',
+  'nope',
+  'noo',
+  'no gracias',
+  'no senor',
+  'no senora',
+  'nada de eso',
+  'no nada de eso',
+]
+
+/**
+ * El texto ORIGINAL solo trae letras, números, espacios y puntuación simple.
+ * `squash` borra emojis y símbolos, así que sin esta comprobación "ninguno 🤔"
+ * parecería un "ninguno" limpio.
+ */
+const PLAIN_TEXT = /^[\p{L}\p{N}\s.,;:!¡]+$/u
+
+/** Un signo de alarma dicho con palabras (texto ya normalizado). */
+const ALARM_SIGNS = /\b(si|respir\w*|trag\w*|sangr\w*|hinch\w*|inflam\w*|fiebre|golpe\w*|ahog\w*)\b/
 
 /** Mensajes completos que dicen que sí hay signos de alarma. */
 const ALARM_YES_WHOLE: readonly string[] = ['si', 'si tengo', 'si tengo alguno', 'tengo alguno']
 
 /** Negaciones en texto ya normalizado: "noo", "nop", "para nada", "nunca"… */
 const NEGATION = /\b(no+|nop|nope|ni|nunca|jamas|tampoco|nada)\b/
-
-const IS_QUESTION = /[?¿]/
 
 /**
  * Lee la respuesta escrita a un menú de decisión. `undefined` = el menú no
@@ -2658,23 +2844,23 @@ function matchDecision(
   squashed: string,
   offered: ReadonlySet<string>,
 ): string | null | undefined {
-  const isQuestion = IS_QUESTION.test(text)
-
   for (const [yes, no] of [
     ['act:consent_yes', 'act:consent_no'],
     ['act:mkt_yes', 'act:mkt_no'],
   ] as const) {
     if (!offered.has(yes) && !offered.has(no)) continue
-    if (NEGATION.test(squashed)) return offered.has(no) ? no : null
-    if (offered.has(yes) && !isQuestion && WHOLE_MESSAGE[yes].includes(squashed)) return yes
-    return null
+    return offered.has(no) && NEGATION.test(squashed) ? no : null
   }
 
   if (offered.has('act:alarm_yes') || offered.has('act:alarm_no')) {
-    if (offered.has('act:alarm_no') && !isQuestion && WHOLE_MESSAGE['act:alarm_no'].includes(squashed)) {
+    // Con "?" no hay respuesta: "¿ninguno?" es una pregunta (y "?" no pasa PLAIN_TEXT).
+    if (offered.has('act:alarm_no') && PLAIN_TEXT.test(text) && ALARM_NO_WHOLE.includes(squashed)) {
       return 'act:alarm_no'
     }
-    if (offered.has('act:alarm_yes') && (ALARM_YES_WHOLE.includes(squashed) || NEGATION.test(squashed))) {
+    if (
+      offered.has('act:alarm_yes') &&
+      (ALARM_YES_WHOLE.includes(squashed) || NEGATION.test(squashed) || ALARM_SIGNS.test(squashed))
+    ) {
       return 'act:alarm_yes'
     }
     return null
@@ -2692,8 +2878,9 @@ En `matchChoice`, la rama del número pasa a no dejar que un número acepte:
   if (num) {
     const idx = Number(num[1]) - 1
     const id = idx >= 0 && idx < options.length ? options[idx].id : null
-    // Los botones de decisión no muestran números: un número no puede aceptar.
-    return id && !Object.hasOwn(WHOLE_MESSAGE, id) ? id : null
+    // Los botones de decisión no muestran números: un número no puede aceptar
+    // (ni descartar los signos de alarma).
+    return id && !ACCEPTING_IDS.has(id) ? id : null
   }
 ```
 
