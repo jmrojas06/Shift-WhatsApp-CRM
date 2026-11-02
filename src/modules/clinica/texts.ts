@@ -251,6 +251,28 @@ export function buildClinicTexts(l: AgendaLabels) {
     }) =>
       `¡Hola! 👋 Te recordamos que ${a.patient} tiene ${l.cita} en ${a.business}, sede ${a.location}:\n\n👤 ${a.staff}\n📅 ${a.date}\n🕐 ${a.time}\n\n¿Nos confirmas?`,
     reminderStaffFallback: 'el equipo de la clínica',
+    /**
+     * La respuesta a tocar Confirmar en un recordatorio. El teléfono puede ser
+     * compartido: nombra al paciente, al profesional, la fecha y la hora, y nunca
+     * el procedimiento (por eso no recibe el servicio). Sin el nombre del
+     * paciente omite esa línea.
+     */
+    reminderConfirmed: (a: {
+      patient: string | null
+      staff: string
+      date: string
+      time: string
+    }) =>
+      [
+        '¡Listo! Queda confirmado:',
+        '',
+        ...(a.patient ? [`🙋 Paciente: ${a.patient}`] : []),
+        `👤 ${a.staff}`,
+        `📅 ${a.date}`,
+        `🕐 ${a.time}`,
+        '',
+        '¡Te esperamos! 🙌',
+      ].join('\n'),
 
     /** Mapa e instrucciones previas tras confirmar; null si no hay nada que decir. */
     prepInfo: (a: { prep: string | null; address: string | null; mapUrl: string | null }) => {

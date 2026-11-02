@@ -136,6 +136,28 @@ describe('palabras de urgencia por defecto', () => {
   )
 })
 
+describe('respuesta a tocar Confirmar', () => {
+  const when = { staff: 'Dra. Ana', date: 'martes 20 de octubre de 2026', time: '9:00 a. m.' }
+
+  it('nombra al paciente, al profesional, la fecha y la hora', () => {
+    expect(texts.reminderConfirmed({ patient: 'Tomás Gil', ...when })).toBe(
+      '¡Listo! Queda confirmado:\n\n🙋 Paciente: Tomás Gil\n👤 Dra. Ana\n📅 martes 20 de octubre de 2026\n🕐 9:00 a. m.\n\n¡Te esperamos! 🙌',
+    )
+  })
+
+  it('sin el nombre del paciente omite esa línea', () => {
+    const body = texts.reminderConfirmed({ patient: null, ...when })
+    expect(body).not.toContain('Paciente')
+    expect(body).toBe(
+      '¡Listo! Queda confirmado:\n\n👤 Dra. Ana\n📅 martes 20 de octubre de 2026\n🕐 9:00 a. m.\n\n¡Te esperamos! 🙌',
+    )
+  })
+
+  it('no tiene dónde poner el procedimiento', () => {
+    expect(texts.reminderConfirmed({ patient: 'Tomás Gil', ...when })).not.toContain('📌')
+  })
+})
+
 describe('sede por defecto', () => {
   it('no repite la palabra "sede" en el recordatorio', () => {
     expect(DEFAULT_LOCATION_NAME).toBe('Principal')

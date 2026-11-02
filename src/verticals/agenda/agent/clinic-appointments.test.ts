@@ -413,6 +413,97 @@ describe('varias citas en un número', () => {
     })
   })
 
+  // El teléfono puede ser compartido: lo que se le responde a un toque de Confirmar
+  // nombra al paciente, pero no el procedimiento.
+  describe('la respuesta a Confirmar no nombra el procedimiento', () => {
+    const confirmedFor = (patient: string | null) =>
+      texts.reminderConfirmed({
+        patient,
+        staff: 'Dra. Ana',
+        date: 'martes 20 de octubre de 2026',
+        time: '9:00 a. m.',
+      })
+
+    it('dice paciente, doctor, fecha y hora', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm', 'ap-1') })
+      expect(rec.calls.at(-2)?.bodyText).toBe(confirmedFor('Marta Ruiz'))
+      expect(rec.calls.some((c) => c.bodyText.includes('Limpieza'))).toBe(false)
+    })
+
+    it('es el paciente de esa cita, no el de la otra', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm', 'ap-2') })
+      expect(rec.calls.at(-2)?.bodyText).toContain('Tomás Gil')
+      expect(rec.calls.at(-2)?.bodyText).not.toContain('Marta Ruiz')
+      expect(rec.calls.at(-2)?.bodyText).toContain('10:00 a. m.')
+    })
+
+    it('al elegir la cita de la lista también', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm') })
+      await send(db, rec, { replyId: apptId('ap-2') })
+      expect(rec.calls.at(-2)?.bodyText).toContain('Queda confirmado')
+      expect(rec.calls.some((c) => c.bodyText.includes('Limpieza'))).toBe(false)
+    })
+
+    it('con la etiqueta de la plantilla clínica también', async () => {
+      const db = clinicDb({
+        clinic_consents: [grantedConsent()],
+        clinic_patients: family(),
+        booking_appointments: [appointment('ap-1', 'pat-1', FIRST)],
+      })
+      const rec = makeRecorder()
+      const replyTo = seedTemplateMessage(db, 'recordatorio_cita_clinica')
+      await send(db, rec, { replyId: 'Confirmar', replyTo })
+      expect(rec.calls.at(-2)?.bodyText).toBe(confirmedFor('Marta Ruiz'))
+    })
+
+    it('una cita sin paciente se confirma sin esa línea', async () => {
+      const db = twoAppointments({
+        booking_appointments: [appointment('ap-1', 'pat-borrado', FIRST, { patient_id: null })],
+      })
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm', 'ap-1') })
+      expect(rec.calls.at(-2)?.bodyText).toBe(confirmedFor(null))
+    })
+
+    it('si no se pueden leer los pacientes, se confirma igual y sin el nombre', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      const failing = {
+        ...db,
+        from(table: string) {
+          if (table === 'clinic_patients') throw new Error('boom')
+          return db.from(table)
+        },
+      } as typeof db
+      await send(failing, rec, { replyId: remId('confirm', 'ap-1') })
+      expect(statuses(db)['ap-1']).toBe('confirmed')
+      expect(rec.calls.at(-2)?.bodyText).toBe(confirmedFor(null))
+    })
+
+    it('con el módulo activo pero sin su configuración tampoco', async () => {
+      const db = twoAppointments({ clinic_settings: [] })
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm', 'ap-1') })
+      expect(statuses(db)['ap-1']).toBe('confirmed')
+      expect(last(rec).bodyText).toContain('Queda confirmado')
+      expect(rec.calls.some((c) => c.bodyText.includes('Limpieza'))).toBe(false)
+    })
+
+    it('una cuenta sin clínica sigue con el servicio en la respuesta', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm') }, { modules: ['agenda'] })
+      expect(last(rec).bodyText).toContain('📌 Limpieza')
+      expect(last(rec).bodyText).not.toContain('Paciente')
+    })
+  })
+
   describe('una cuenta sin clínica', () => {
     it('sigue con la próxima cita activa y no pregunta cuál', async () => {
       const db = twoAppointments()

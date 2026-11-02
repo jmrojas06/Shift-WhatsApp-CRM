@@ -934,21 +934,35 @@ async function applyReminderAction(
       }),
     )
 
-    const service = appt.serviceId
-      ? await findService(dialog, appt.serviceId)
-      : null
     const staffName = appt.staffId
       ? await loadStaffName(dialog.db, dialog.accountId, appt.staffId)
       : null
     const parts = zonedParts(appt.startsAt)
-    await dialog.sender.sendText({
-      text: dialog.texts.reminderConfirmed({
-        service: service?.name ?? dialog.texts.serviceFallback,
-        staff: staffName ?? dialog.texts.staffAnyTitle,
-        date: formatLongDate(parts.dateKey),
-        time: formatTimeLabel(parts),
-      }),
-    })
+    const date = formatLongDate(parts.dateKey)
+    const time = formatTimeLabel(parts)
+    // Una clínica (incluida la que tiene el módulo sin configurar) no nombra el
+    // procedimiento: el teléfono puede ser compartido. Dice quién va, con quién,
+    // y cuándo. Las demás cuentas siguen igual.
+    if (dialog.clinic || dialog.clinicUnavailable) {
+      await dialog.sender.sendText({
+        text: dialog.clinicTexts.reminderConfirmed({
+          patient: await appointmentPatientName(dialog, appt),
+          staff: staffName ?? dialog.clinicTexts.reminderStaffFallback,
+          date,
+          time,
+        }),
+      })
+    } else {
+      const service = appt.serviceId ? await findService(dialog, appt.serviceId) : null
+      await dialog.sender.sendText({
+        text: dialog.texts.reminderConfirmed({
+          service: service?.name ?? dialog.texts.serviceFallback,
+          staff: staffName ?? dialog.texts.staffAnyTitle,
+          date,
+          time,
+        }),
+      })
+    }
     if (dialog.clinic) await bestEffort('instrucciones previas', () => sendPrepInfo(dialog, appt))
     return
   }
@@ -2423,6 +2437,22 @@ function buildSummary(
 async function patientName(dialog: Dialog, patientId: string | null): Promise<string | null> {
   if (!dialog.clinic || !patientId) return null
   try {
+    const patients = await dialog.backend.findPatients({ contactId: dialog.contactId })
+    return patients.find((p) => p.id === patientId)?.fullName ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * El paciente de una cita que ya existe, para la respuesta a Confirmar. Es un dato
+ * personal: se le muestra a quien recibió el recordatorio y no va a logs. Si no se
+ * puede leer, la cita ya quedó confirmada y solo falta la línea.
+ */
+async function appointmentPatientName(dialog: Dialog, appt: AppointmentInfo): Promise<string | null> {
+  try {
+    const { patientId } = await loadAppointmentClinicLinks(dialog.db, dialog.accountId, appt.id)
+    if (!patientId) return null
     const patients = await dialog.backend.findPatients({ contactId: dialog.contactId })
     return patients.find((p) => p.id === patientId)?.fullName ?? null
   } catch {
