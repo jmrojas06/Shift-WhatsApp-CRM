@@ -67,16 +67,21 @@ async function releaseBotLock(db: SupabaseClient, args: LockArgs, held: string):
 
 /**
  * Corre `work` con el candado. Espera hasta `waitMs` a que se libere. Si sigue
- * ocupado, el mensaje se consume sin responder (se registra), salvo que
- * `runWithoutLockWhen` diga que no puede perderse (una urgencia): entonces el
- * trabajo corre igual, sin candado y sin soltar el de otro. Si esa pregunta
- * lanza, el error sube.
+ * ocupado, el mensaje se consume sin responder (se registra y se llama a
+ * `onDropped`), salvo que `runWithoutLockWhen` diga que no puede perderse (una
+ * urgencia): entonces el trabajo corre igual, sin candado y sin soltar el de
+ * otro. Si esa pregunta o el aviso lanzan, el error sube.
  */
 export async function withBotLock(
   db: SupabaseClient,
   args: LockArgs,
   work: () => Promise<VerticalDispatchResult>,
-  opts: { waitMs?: number; runWithoutLockWhen?: () => Promise<boolean> } = {},
+  opts: {
+    waitMs?: number
+    runWithoutLockWhen?: () => Promise<boolean>
+    /** Se llama cuando el mensaje se descarta por no tener el candado: que alguien se entere. */
+    onDropped?: () => Promise<void>
+  } = {},
 ): Promise<VerticalDispatchResult> {
   const deadline = Date.now() + (opts.waitMs ?? DEFAULT_WAIT_MS)
   let held = await acquireBotLock(db, { ...args, now: new Date() })
@@ -92,6 +97,7 @@ export async function withBotLock(
       return work()
     }
     console.warn(`[agenda] mensaje sin candado en la conversación ${args.conversationId}`)
+    await opts.onDropped?.()
     return { consumed: true }
   }
   try {

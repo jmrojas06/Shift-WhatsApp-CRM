@@ -29,7 +29,7 @@ import { DEFAULT_URGENCY_WORDS } from '@/modules/clinica/texts'
 import { withBotLock } from './bot-lock'
 import { handleAgendaInbound, type AgendaSender } from './controller'
 import { loadActiveSession, loadHumanOwned, loadInboundMessage } from './db'
-import { actId, detectsUrgency } from './state'
+import { actId, detectsUrgency, parseReminderTap } from './state'
 
 /** Sender real: cada método delega en el sender del motor de flujos. */
 export function createAgendaSender(
@@ -112,21 +112,30 @@ async function failClosed(
 }
 
 /**
- * ¿Este mensaje no puede perderse aunque el candado esté ocupado? Un toque de
- * urgencia ("Tengo una urgencia", "Sí, tengo alguno") o un texto con una palabra
- * de urgencia de la clínica o del piso fijo (`detectsUrgency`). Si la
- * configuración de la clínica no se puede leer valen las palabras de siempre:
- * un fallo de lectura nunca esconde una urgencia. Un mensaje que no se
- * encuentra no se da por urgente; uno que no se puede leer lanza.
+ * ¿Este mensaje no puede esperar ni perderse aunque el candado esté ocupado?
+ *   - Una urgencia: el toque de "Tengo una urgencia" o "Sí, tengo alguno", o un
+ *     texto con una palabra de la clínica o del piso fijo (`detectsUrgency`). Si
+ *     la configuración no se puede leer valen las palabras de siempre: un fallo
+ *     de lectura nunca esconde una urgencia.
+ *   - "No acepto": retirar la autorización es una decisión de la persona y queda
+ *     en un registro; no puede descartarse.
+ *   - El toque de un recordatorio (`rem:*`): es la respuesta a un mensaje que mandó
+ *     el sistema, con la hora de una cita de por medio.
+ * Un mensaje que no se encuentra no cuenta; uno que no se puede leer lanza.
  */
-async function isUrgentInbound(ctx: VerticalInboundContext): Promise<boolean> {
+async function mustNotBeDropped(ctx: VerticalInboundContext): Promise<boolean> {
   if (!ctx.inboundMessageId) return false
   const inbound = await loadInboundMessage(ctx.db, ctx.conversationId, ctx.inboundMessageId, {
     strict: true,
   })
   if (!inbound) return false
   if (inbound.replyId !== null) {
-    return inbound.replyId === actId('urgent') || inbound.replyId === actId('alarm_yes')
+    return (
+      inbound.replyId === actId('urgent') ||
+      inbound.replyId === actId('alarm_yes') ||
+      inbound.replyId === actId('consent_no') ||
+      parseReminderTap(inbound.replyId) !== null
+    )
   }
   const clinic = await loadClinicContext(ctx.db, ctx.accountId).catch(() => null)
   const words = clinic?.status === 'ok' ? clinic.clinic.urgencyWords : DEFAULT_URGENCY_WORDS
@@ -142,8 +151,9 @@ async function isUrgentInbound(ctx: VerticalInboundContext): Promise<boolean> {
  * Con el módulo clínica, el mensaje se atiende con el candado de la
  * conversación (ver `withBotLock`), y lo que pudo cambiar mientras se esperaba
  * se lee de nuevo: la sesión y quién lleva el hilo. Si el candado no se
- * consigue, el mensaje se consume sin responder, salvo una urgencia, que se
- * procesa igual. Las demás cuentas siguen igual que siempre.
+ * consigue, el mensaje se consume sin responder y se avisa al equipo técnico,
+ * salvo una urgencia, un "No acepto" o el toque de un recordatorio, que se
+ * procesan igual. Las demás cuentas siguen igual que siempre.
  */
 export const agendaInboundHandler: VerticalInboundHandler = async (ctx) => {
   const run = (session: VerticalInboundContext['session'], humanOwned: boolean) =>
@@ -184,7 +194,16 @@ export const agendaInboundHandler: VerticalInboundHandler = async (ctx) => {
         // el dispatcher lo reclamaría por la sesión vieja y nadie lo contestaría.
         return !result.consumed && ctx.session && !session ? { ...result, released: true } : result
       },
-      { runWithoutLockWhen: () => isUrgentInbound(ctx) },
+      {
+        runWithoutLockWhen: () => mustNotBeDropped(ctx),
+        // Cualquier otro mensaje que se descarta: que alguien mire ese chat. Sin el
+        // texto del paciente, solo dónde mirar.
+        onDropped: () =>
+          notifyAlert(
+            `Clínica: un mensaje de un paciente se descartó porque la conversación estaba ocupada y no se lo pasó a la IA (cuenta ${ctx.accountId}, conversación ${ctx.conversationId}). ` +
+              'El paciente puede haberse quedado sin respuesta; hay que revisar el chat.',
+          ),
+      },
     )
   } catch (err) {
     return failClosed(ctx, err)

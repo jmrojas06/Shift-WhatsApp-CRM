@@ -168,6 +168,35 @@ describe('withBotLock', () => {
       expect(work).not.toHaveBeenCalled()
     })
 
+    it('avisa cuando descarta un mensaje, y solo entonces', async () => {
+      const dropped = vi.fn(async () => {})
+      const work = async () => ({ consumed: false })
+
+      // Descartado: avisa una vez.
+      await withBotLock(asClient(seed(FAR_FUTURE)), args, work, { waitMs: 0, onDropped: dropped })
+      expect(dropped).toHaveBeenCalledTimes(1)
+
+      // Procesado sin candado, o con candado: no avisa.
+      await withBotLock(asClient(seed(FAR_FUTURE)), args, work, {
+        waitMs: 0,
+        runWithoutLockWhen: async () => true,
+        onDropped: dropped,
+      })
+      await withBotLock(asClient(seed()), args, work, { onDropped: dropped })
+      expect(dropped).toHaveBeenCalledTimes(1)
+    })
+
+    it('si el aviso del descarte falla, el error sube (quien llama falla cerrado)', async () => {
+      await expect(
+        withBotLock(asClient(seed(FAR_FUTURE)), args, async () => ({ consumed: false }), {
+          waitMs: 0,
+          onDropped: async () => {
+            throw new Error('el aviso falló')
+          },
+        }),
+      ).rejects.toThrow('el aviso falló')
+    })
+
     it('solo pregunta si es urgente cuando no consiguió el candado', async () => {
       const urgent = vi.fn(async () => true)
       await withBotLock(asClient(seed()), args, async () => ({ consumed: false }), {

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ModuleKey, VerticalInboundContext } from '@/lib/verticals/types'
 
-import { ACCOUNT, CONTACT, CONVERSATION, OWNER, clinicDb } from './testing/clinic-harness'
+import { ACCOUNT, CONTACT, CONVERSATION, OWNER, clinicDb, grantedConsent } from './testing/clinic-harness'
 import { asClient } from './testing/fake-db'
 
 const mocks = vi.hoisted(() => ({
@@ -300,6 +300,94 @@ describe('agendaInboundHandler — candado por conversación', () => {
       // Los signos de alarma salen aunque el candado sea de otro.
       expect(sentBodies().some((body) => body.includes('Signos de alarma'))).toBe(true)
       expect(lockOf(db)).toBe(BUSY)
+    })
+
+    it('descartar un mensaje avisa al equipo técnico, sin el texto del paciente', async () => {
+      const db = withInbound(clinicDb(), 'quiero una cita para mi hijo Tomás')
+      db._tables.conversations[0].bot_lock_until = BUSY
+
+      await runWaiting(ctx(db))
+
+      expect(mocks.notifyAlert).toHaveBeenCalledTimes(1)
+      const text = mocks.notifyAlert.mock.calls[0][0]
+      expect(text).toContain(ACCOUNT)
+      expect(text).toContain(CONVERSATION)
+      expect(text).not.toContain('Tomás')
+      expect(text).not.toContain('quiero una cita')
+    })
+
+    it('lo que sí se procesa no avisa de ningún descarte', async () => {
+      const db = withInbound(clinicDb(), 'tengo mucho dolor')
+      db._tables.conversations[0].bot_lock_until = BUSY
+
+      await runWaiting(ctx(db))
+
+      expect(mocks.notifyAlert).not.toHaveBeenCalled()
+    })
+
+    it('"No acepto" retira la autorización aunque el candado esté ocupado', async () => {
+      const db = withInbound(clinicDb({ clinic_consents: [grantedConsent()] }), '', 'act:consent_no')
+      db._tables.conversations[0].bot_lock_until = BUSY
+
+      const result = await runWaiting(ctx(db))
+
+      expect(result).toEqual({ consumed: true })
+      // El retiro queda en el registro, y el candado sigue siendo del otro.
+      expect(db._tables.clinic_consents.at(-1)).toMatchObject({
+        kind: 'datos_sensibles',
+        granted: false,
+      })
+      expect(lockOf(db)).toBe(BUSY)
+      expect(mocks.notifyAlert).not.toHaveBeenCalled()
+    })
+
+    it.each(['rem:confirm:ap-1', 'rem:cancel:ap-1', 'rem:reschedule'])(
+      'el toque de un recordatorio (%s) se atiende aunque el candado esté ocupado',
+      async (replyId) => {
+        const db = withInbound(
+          clinicDb({
+            clinic_consents: [grantedConsent()],
+            booking_appointments: [
+              {
+                id: 'ap-1',
+                account_id: ACCOUNT,
+                contact_id: CONTACT,
+                service_id: 'svc-limpieza',
+                staff_id: 'st-ana',
+                starts_at: '2026-10-20T14:00:00.000Z',
+                ends_at: '2026-10-20T14:30:00.000Z',
+                status: 'pending',
+                answers: {},
+              },
+            ],
+          }),
+          '',
+          replyId,
+        )
+        db._tables.conversations[0].bot_lock_until = BUSY
+
+        const result = await runWaiting(ctx(db))
+
+        expect(result).toEqual({ consumed: true })
+        // El bot contestó el toque (no se descartó) y no soltó el candado de otro.
+        expect(
+          mocks.sendText.mock.calls.length +
+            mocks.sendButtons.mock.calls.length +
+            mocks.sendList.mock.calls.length,
+        ).toBeGreaterThan(0)
+        expect(lockOf(db)).toBe(BUSY)
+        expect(mocks.notifyAlert).not.toHaveBeenCalled()
+      },
+    )
+
+    it('un toque de otro menú, con el candado ocupado, se descarta y avisa', async () => {
+      const db = withInbound(clinicDb(), '', 'act:book')
+      db._tables.conversations[0].bot_lock_until = BUSY
+
+      await runWaiting(ctx(db))
+
+      expect(mocks.sendButtons).not.toHaveBeenCalled()
+      expect(mocks.notifyAlert).toHaveBeenCalledTimes(1)
     })
 
     it('el toque de "Tengo una urgencia" también', async () => {
