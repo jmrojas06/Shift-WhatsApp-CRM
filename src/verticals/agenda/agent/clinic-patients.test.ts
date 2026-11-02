@@ -351,6 +351,22 @@ describe('pacientes por número', () => {
       },
     )
 
+    it('una frase de pedido no se guarda como paciente: se vuelve a pedir el nombre', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:book' })
+      await send(db, rec, { text: 'quiero pagar mi factura' })
+      expect(db._tables.clinic_patients).toHaveLength(0)
+      expect(rec.calls.at(-2)?.bodyText).toBe(texts.patientNameRetry)
+      expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
+      expect(sessionState(db)).toMatchObject({ step: 'new_patient_name', fails: 1 })
+
+      await send(db, rec, { text: 'Necesito una cita' })
+      expect(db._tables.clinic_patients).toHaveLength(0)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    })
+
     it('un toque viejo de un botón no se toma como nombre', async () => {
       const db = clinicDb({ clinic_consents: [grantedConsent()] })
       const rec = makeRecorder()

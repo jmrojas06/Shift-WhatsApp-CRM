@@ -52,6 +52,36 @@ describe('validatePatientName', () => {
     }
   })
 
+  it('rechaza una frase: quien pide algo no está escribiendo un nombre', () => {
+    for (const text of [
+      'quiero pagar mi factura',
+      'Quisiera agendar una consulta',
+      'necesito una radiografía',
+      'tengo mucho dolor',
+      'Hola buenas tardes',
+      'Hola Marta Ruiz',
+      'Cita para mañana',
+      'Muchas gracias doctora',
+      'Gracias Ana',
+      'Por favor ayúdame',
+      'Me hace un favor',
+    ]) {
+      expect(validatePatientName(text)).toEqual({ ok: false })
+    }
+  })
+
+  it('lo rechaza sin importar mayúsculas, tildes ni espacios de más', () => {
+    for (const text of ['QUIERO PAGAR', 'Quisiéra  una  cita', '  tengo   un problema', 'HOLA   Mundo', 'Por   FAVOR   ya']) {
+      expect(validatePatientName(text)).toEqual({ ok: false })
+    }
+  })
+
+  it('solo cuenta la palabra entera: los nombres que la contienen siguen valiendo', () => {
+    for (const name of ['Graciela Gómez', 'Holanda Pérez', 'Favorita Gil', 'Citlali Ramos', 'Carmen Quiroga']) {
+      expect(validatePatientName(name)).toEqual({ ok: true, value: name })
+    }
+  })
+
   it('admite el largo máximo de la base y ni un carácter más', () => {
     const exact = `${'a'.repeat(59)} ${'b'.repeat(60)}`
     expect([...exact]).toHaveLength(120)

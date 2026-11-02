@@ -9,6 +9,8 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { containsAnyWord } from '@/verticals/agenda/agent/state'
+
 export interface ClinicPatient {
   id: string
   fullName: string
@@ -27,11 +29,32 @@ export const PATIENT_NAME_MAX = 120
 const NAME_CHARS = /^[\p{L}\p{M}' ’.-]+$/u
 const HAS_LETTER = /\p{L}/u
 
-/** Nombre y apellidos: dos palabras o más, solo letras y signos de nombre. */
+/**
+ * Palabras de una frase y no de un nombre: quien pide algo ("quiero pagar mi
+ * factura"), saluda o agradece no está escribiendo el de quien va a asistir.
+ * Se comparan enteras, sin mayúsculas ni tildes, con la misma normalización del
+ * resto del bot: "Graciela" o "Holanda" siguen siendo nombres.
+ */
+const NOT_A_NAME_WORDS: readonly string[] = [
+  'quiero',
+  'quisiera',
+  'necesito',
+  'tengo',
+  'hola',
+  'cita',
+  'gracias',
+  'favor',
+]
+
+/**
+ * Nombre y apellidos: dos palabras o más, solo letras y signos de nombre, y que
+ * no sea una frase de pedido, saludo o agradecimiento.
+ */
 export function validatePatientName(raw: string): { ok: true; value: string } | { ok: false } {
   const value = raw.replace(/\s+/gu, ' ').trim()
   if ([...value].length > PATIENT_NAME_MAX) return { ok: false }
   if (!NAME_CHARS.test(value)) return { ok: false }
+  if (containsAnyWord(value, NOT_A_NAME_WORDS)) return { ok: false }
   const words = value.split(' ')
   if (words.length < 2) return { ok: false }
   // Un guion o un punto solos no son una palabra.
