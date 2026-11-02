@@ -42,6 +42,8 @@ export function clinicDb(extra: Record<string, Row[]> = {}): FakeDb {
         ai_autoreply_disabled: false,
         ai_handoff_summary: null,
         assigned_agent_id: null,
+        // Migración 055: el candado por conversación (null = libre).
+        bot_lock_until: null,
       },
     ],
     booking_services: [

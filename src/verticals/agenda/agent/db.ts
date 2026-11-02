@@ -13,6 +13,8 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import type { VerticalSession } from '@/lib/verticals/types'
+
 import { sanitizeBotTexts, type BotTextOverrides } from '../bot-texts'
 import { readLabels, type AgendaLabels } from '../labels'
 import { clampAnswers, readAnswerMap, type AnswerMap } from '../questions'
@@ -95,13 +97,16 @@ export async function loadInboundMessage(
   db: SupabaseClient,
   conversationId: string,
   messageId: string,
+  /** Con `strict`, un error de la base lanza en vez de leerse como "no hay mensaje". */
+  opts: { strict?: boolean } = {},
 ): Promise<InboundMessage | null> {
-  const { data } = await db
+  const { data, error } = await db
     .from('messages')
     .select('content_text, interactive_reply_id, reply_to_message_id')
     .eq('conversation_id', conversationId)
     .eq('message_id', messageId)
     .maybeSingle()
+  if (error && opts.strict) throw new Error(`No se pudo leer el mensaje: ${error.message}`)
   if (!data) return null
   const row = data as Record<string, unknown>
 
@@ -286,6 +291,33 @@ export async function closeSession(
     .eq('id', args.id)
     .eq('account_id', args.accountId)
   if (error) logWriteError('cerrar la sesión', error)
+}
+
+/**
+ * Sesión activa y vigente del contacto. Tras esperar el candado hay que volver
+ * a leerla: la que trajo el dispatcher pudo quedar vieja. Lanza si la lectura
+ * falla: sin saber si hay una sesión, el mensaje no se puede atender.
+ */
+export async function loadActiveSession(
+  db: SupabaseClient,
+  args: { accountId: string; contactId: string; nowIso: string },
+): Promise<VerticalSession | null> {
+  const { data, error } = await db
+    .from('booking_sessions')
+    .select('id, state, expires_at')
+    .eq('account_id', args.accountId)
+    .eq('contact_id', args.contactId)
+    .eq('status', 'active')
+    .gt('expires_at', args.nowIso)
+    .maybeSingle()
+  if (error) throw new Error(`No se pudo leer la sesión: ${error.message}`)
+  if (!data) return null
+  const row = data as Record<string, unknown>
+  return {
+    id: row.id as string,
+    state: (row.state ?? {}) as Record<string, unknown>,
+    expiresAt: row.expires_at as string,
+  }
 }
 
 // ------------------------------------------------------------
@@ -865,6 +897,27 @@ export async function loadConversationAssignee(
   return ((data as Record<string, unknown> | null)?.assigned_agent_id as
     | string
     | null) ?? null
+}
+
+/**
+ * ¿Una persona lleva el hilo, o el bot está en pausa? Es lo que el dispatcher
+ * llama `humanOwned`. Tras esperar el candado se vuelve a leer: el mensaje de
+ * antes pudo pasar el hilo a una persona. Lanza si la lectura falla.
+ */
+export async function loadHumanOwned(
+  db: SupabaseClient,
+  accountId: string,
+  conversationId: string,
+): Promise<boolean> {
+  const { data, error } = await db
+    .from('conversations')
+    .select('assigned_agent_id, ai_autoreply_disabled')
+    .eq('id', conversationId)
+    .eq('account_id', accountId)
+    .maybeSingle()
+  if (error) throw new Error(`No se pudo leer el hilo: ${error.message}`)
+  const row = data as { assigned_agent_id: string | null; ai_autoreply_disabled: boolean | null } | null
+  return Boolean(row?.assigned_agent_id || row?.ai_autoreply_disabled)
 }
 
 export async function loadHandoffAgentId(

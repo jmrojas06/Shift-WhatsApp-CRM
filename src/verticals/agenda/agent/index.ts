@@ -23,8 +23,13 @@ import type {
   VerticalInboundContext,
   VerticalInboundHandler,
 } from '@/lib/verticals/types'
+import { loadClinicContext } from '@/modules/clinica/settings'
+import { DEFAULT_URGENCY_WORDS } from '@/modules/clinica/texts'
 
+import { withBotLock } from './bot-lock'
 import { handleAgendaInbound, type AgendaSender } from './controller'
+import { loadActiveSession, loadHumanOwned, loadInboundMessage } from './db'
+import { actId, detectsUrgency } from './state'
 
 /** Sender real: cada método delega en el sender del motor de flujos. */
 export function createAgendaSender(
@@ -107,14 +112,42 @@ async function failClosed(
 }
 
 /**
+ * ¿Este mensaje no puede perderse aunque el candado esté ocupado? Un toque de
+ * urgencia ("Tengo una urgencia", "Sí, tengo alguno") o un texto con una palabra
+ * de urgencia de la clínica o del piso fijo (`detectsUrgency`). Si la
+ * configuración de la clínica no se puede leer valen las palabras de siempre:
+ * un fallo de lectura nunca esconde una urgencia. Un mensaje que no se
+ * encuentra no se da por urgente; uno que no se puede leer lanza.
+ */
+async function isUrgentInbound(ctx: VerticalInboundContext): Promise<boolean> {
+  if (!ctx.inboundMessageId) return false
+  const inbound = await loadInboundMessage(ctx.db, ctx.conversationId, ctx.inboundMessageId, {
+    strict: true,
+  })
+  if (!inbound) return false
+  if (inbound.replyId !== null) {
+    return inbound.replyId === actId('urgent') || inbound.replyId === actId('alarm_yes')
+  }
+  const clinic = await loadClinicContext(ctx.db, ctx.accountId).catch(() => null)
+  const words = clinic?.status === 'ok' ? clinic.clinic.urgencyWords : DEFAULT_URGENCY_WORDS
+  return detectsUrgency(inbound.text, words)
+}
+
+/**
  * Punto de entrada del seam: el webhook ya validó la firma, guardó
  * el mensaje entrante y resolvió cuenta/contacto/conversación. Aquí
  * solo se construye el sender y se delega en el controlador. Todo lo que
- * pueda lanzar va dentro del `try` (ver `failClosed`).
+ * pueda lanzar va dentro del `try` (ver `failClosed`), también el candado.
+ *
+ * Con el módulo clínica, el mensaje se atiende con el candado de la
+ * conversación (ver `withBotLock`), y lo que pudo cambiar mientras se esperaba
+ * se lee de nuevo: la sesión y quién lleva el hilo. Si el candado no se
+ * consigue, el mensaje se consume sin responder, salvo una urgencia, que se
+ * procesa igual. Las demás cuentas siguen igual que siempre.
  */
 export const agendaInboundHandler: VerticalInboundHandler = async (ctx) => {
-  try {
-    return await handleAgendaInbound({
+  const run = (session: VerticalInboundContext['session'], humanOwned: boolean) =>
+    handleAgendaInbound({
       db: ctx.db,
       sender: createAgendaSender(ctx),
       accountId: ctx.accountId,
@@ -122,10 +155,33 @@ export const agendaInboundHandler: VerticalInboundHandler = async (ctx) => {
       contactId: ctx.contactId,
       configOwnerUserId: ctx.configOwnerUserId,
       inboundMessageId: ctx.inboundMessageId,
-      session: ctx.session,
-      humanOwned: ctx.humanOwned ?? false,
+      session,
+      humanOwned,
       modules: ctx.modules,
     })
+
+  try {
+    if (ctx.modules?.includes('clinica') !== true) return await run(ctx.session, ctx.humanOwned ?? false)
+    return await withBotLock(
+      ctx.db,
+      { accountId: ctx.accountId, conversationId: ctx.conversationId },
+      async () => {
+        // La sesión y el dueño del hilo que trajo el dispatcher pudieron quedar
+        // viejos mientras se esperaba: el mensaje de antes pudo cerrar la sesión o
+        // pasar el hilo a una persona. Si el dispatcher ya lo veía de una persona,
+        // se respeta.
+        const [session, humanNow] = await Promise.all([
+          loadActiveSession(ctx.db, {
+            accountId: ctx.accountId,
+            contactId: ctx.contactId,
+            nowIso: new Date().toISOString(),
+          }),
+          loadHumanOwned(ctx.db, ctx.accountId, ctx.conversationId).catch(() => false),
+        ])
+        return run(session, (ctx.humanOwned ?? false) || humanNow)
+      },
+      { runWithoutLockWhen: () => isUrgentInbound(ctx) },
+    )
   } catch (err) {
     return failClosed(ctx, err)
   }

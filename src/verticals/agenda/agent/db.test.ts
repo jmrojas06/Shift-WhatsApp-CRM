@@ -9,8 +9,10 @@ import {
   insertAppointment,
   insertNotification,
   loadAppointment,
+  loadActiveSession,
   loadAppointmentClinicLinks,
   loadBotSettings,
+  loadHumanOwned,
 } from './db'
 import { asClient, makeFakeDb } from './testing/fake-db'
 
@@ -349,5 +351,81 @@ describe('loadAppointment: respuestas', () => {
     expect(
       (await loadAppointment(clientWith({ ...row, answers: { a: 1, b: 'ok', c: '' } }), 'acc', 'ct-1', 'a1'))?.answers,
     ).toEqual({ b: { label: '', value: 'ok' } })
+  })
+})
+
+describe('loadActiveSession', () => {
+  const NOW_ISO = '2026-10-19T13:00:00.000Z'
+  const session = (over: Record<string, unknown> = {}) => ({
+    id: 'se-1',
+    account_id: 'acc',
+    contact_id: 'ct-1',
+    status: 'active',
+    expires_at: '2026-10-19T13:30:00.000Z',
+    state: { step: 'clinic_menu' },
+    ...over,
+  })
+  const read = (rows: Record<string, unknown>[]) =>
+    loadActiveSession(asClient(makeFakeDb({ booking_sessions: rows })), {
+      accountId: 'acc',
+      contactId: 'ct-1',
+      nowIso: NOW_ISO,
+    })
+
+  it('devuelve la sesión activa y vigente del contacto', async () => {
+    expect(await read([session()])).toEqual({
+      id: 'se-1',
+      state: { step: 'clinic_menu' },
+      expiresAt: '2026-10-19T13:30:00.000Z',
+    })
+  })
+
+  it('ignora la vencida, la cerrada, la de otro contacto y la de otra cuenta', async () => {
+    expect(
+      await read([
+        session({ id: 'vencida', expires_at: '2026-10-19T12:59:00.000Z' }),
+        session({ id: 'cerrada', status: 'completed' }),
+        session({ id: 'otro', contact_id: 'ct-2' }),
+        session({ id: 'otra-cuenta', account_id: 'acc-2' }),
+      ]),
+    ).toBeNull()
+  })
+
+  it('sin estado guardado devuelve uno vacío', async () => {
+    expect((await read([session({ state: null })]))?.state).toEqual({})
+  })
+
+  it('si la lectura falla lanza: no se confunde con "no hay sesión"', async () => {
+    const fake = makeFakeDb({ booking_sessions: [] })
+    fake._failNext('select', 'booking_sessions', { message: 'la base se cayó' })
+    await expect(
+      loadActiveSession(asClient(fake), { accountId: 'acc', contactId: 'ct-1', nowIso: NOW_ISO }),
+    ).rejects.toThrow('la base se cayó')
+  })
+})
+
+describe('loadHumanOwned', () => {
+  const read = (row: Record<string, unknown> | null) =>
+    loadHumanOwned(
+      asClient(makeFakeDb({ conversations: row ? [{ id: 'cv-1', account_id: 'acc', ...row }] : [] })),
+      'acc',
+      'cv-1',
+    )
+
+  it('es verdad con una persona asignada o con el bot en pausa', async () => {
+    expect(await read({ assigned_agent_id: 'u-1', ai_autoreply_disabled: false })).toBe(true)
+    expect(await read({ assigned_agent_id: null, ai_autoreply_disabled: true })).toBe(true)
+  })
+
+  it('es falso sin persona y sin pausa, o sin la conversación', async () => {
+    expect(await read({ assigned_agent_id: null, ai_autoreply_disabled: false })).toBe(false)
+    expect(await read({ assigned_agent_id: null, ai_autoreply_disabled: null })).toBe(false)
+    expect(await read(null)).toBe(false)
+  })
+
+  it('si la lectura falla lanza', async () => {
+    const fake = makeFakeDb({ conversations: [] })
+    fake._failNext('select', 'conversations', { message: 'la base se cayó' })
+    await expect(loadHumanOwned(asClient(fake), 'acc', 'cv-1')).rejects.toThrow('la base se cayó')
   })
 })
