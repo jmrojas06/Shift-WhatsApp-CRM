@@ -1300,15 +1300,66 @@ git commit -m "refactor(agenda): route availability and bookings through ClinicB
 ### Task 5: Textos y configuración de la clínica
 
 **Files:**
-- Create: `src/modules/clinica/texts.ts`, `src/modules/clinica/settings.ts`, `src/modules/clinica/settings.test.ts`
-- Modify: `src/verticals/agenda/install.ts`, `src/verticals/agenda/install.test.ts`
+- Create: `src/modules/clinica/texts.ts`, `src/modules/clinica/texts.test.ts`, `src/modules/clinica/settings.ts`, `src/modules/clinica/settings.test.ts`
+- Modify: `src/verticals/agenda/install.ts`, `src/verticals/agenda/install.test.ts`, `src/verticals/agenda/agent/testing/fake-db.ts`
 
-- [ ] **Step 1: Escribe las pruebas que fallan**
+Dos reglas de esta tarea, ya corregidas tras la revisión:
+
+- **Fallar cerrado.** `loadClinicContext` devuelve `{ status: 'ok' | 'missing' | 'error' }` y no un `null`. Si solo devolviera `null`, una lectura caída se confundiría con "esta cuenta no tiene configuración" y el bot seguiría como una agenda normal: no pediría la autorización de datos y la IA vería el chat de un paciente. Quien la llame (Task 7) decide qué hace en cada caso, y ante `error` no puede tratar la conversación como una agenda normal.
+- **Sin carreras.** La fila de `clinic_settings` se crea con `upsert` + `ignoreDuplicates` (`ON CONFLICT DO NOTHING`): si otro montaje la creó justo antes, esa gana y no se pisa.
+
+- [ ] **Step 1: Enseña `ignoreDuplicates` al fake**
+
+En `src/verticals/agenda/agent/testing/fake-db.ts`, la prueba de la carrera lo necesita. Declara la bandera junto a `conflictKey`:
+
+```ts
+    let conflictKey: string | null = null
+    let ignoreDuplicates = false
+    let limitN: number | null = null
+```
+
+Reemplaza el bloque `if (op === 'upsert')` por:
+
+```ts
+      if (op === 'upsert') {
+        const rows = Array.isArray(payload) ? payload : [payload ?? {}]
+        const out = rows.flatMap((row) => {
+          const incoming = row as Row
+          const key = conflictKey
+          const existing = key
+            ? ensure(table).find((r) => r[key] === incoming[key])
+            : undefined
+          if (existing) {
+            // ON CONFLICT DO NOTHING: la fila que ya estaba no se toca ni se devuelve.
+            if (ignoreDuplicates) return []
+            Object.assign(existing, incoming)
+            return [{ ...existing }]
+          }
+          return [insertRow(incoming)]
+        })
+        return { data: wantRows ? out : null, error: null }
+      }
+```
+
+Y el método `upsert` del objeto `api` por:
+
+```ts
+      upsert: (p: Row | Row[], options?: { onConflict?: string; ignoreDuplicates?: boolean }) => {
+        op = 'upsert'
+        payload = p
+        conflictKey = options?.onConflict ?? null
+        ignoreDuplicates = options?.ignoreDuplicates === true
+        return api
+      },
+```
+
+- [ ] **Step 2: Escribe las pruebas que fallan**
 
 Crea `src/modules/clinica/settings.test.ts`:
 
 ```ts
-import { describe, expect, it } from 'vitest'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { asClient, makeFakeDb } from '@/verticals/agenda/agent/testing/fake-db'
 
@@ -1316,33 +1367,62 @@ import { ensureClinicSetup, loadClinicContext } from './settings'
 
 const ACCOUNT = 'acc-1'
 
+const SETTINGS_ROW = {
+  account_id: ACCOUNT,
+  consent_text: 'Autorizo',
+  consent_version: 3,
+  urgency_words: ['dolor'],
+  urgency_alarm_text: 'Signos',
+  urgency_service_id: 'svc-u',
+  offer_days: 45,
+}
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
 describe('configuración de la clínica', () => {
-  it('sin fila de configuración devuelve null', async () => {
+  it('sin fila de configuración dice que falta, no que falló', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const db = makeFakeDb({ clinic_settings: [], clinic_locations: [] })
-    await expect(loadClinicContext(asClient(db), ACCOUNT)).resolves.toBeNull()
+
+    await expect(loadClinicContext(asClient(db), ACCOUNT)).resolves.toEqual({ status: 'missing' })
+    expect(spy).toHaveBeenCalled()
+  })
+
+  it('si la lectura falla devuelve error, que no es lo mismo que faltar', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const db = makeFakeDb({ clinic_settings: [SETTINGS_ROW], clinic_locations: [] })
+    db._failNext('select', 'clinic_settings', { message: 'conexión caída' })
+
+    await expect(loadClinicContext(asClient(db), ACCOUNT)).resolves.toEqual({ status: 'error' })
+    expect(spy).toHaveBeenCalled()
+  })
+
+  it.each([
+    ['sin texto de autorización', { consent_text: '   ' }],
+    ['con el texto de autorización nulo', { consent_text: null }],
+    ['sin signos de alarma', { urgency_alarm_text: '' }],
+  ])('una fila %s es un error: no se puede pedir una autorización vacía', async (_name, patch) => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const db = makeFakeDb({ clinic_settings: [{ ...SETTINGS_ROW, ...patch }], clinic_locations: [] })
+
+    await expect(loadClinicContext(asClient(db), ACCOUNT)).resolves.toEqual({ status: 'error' })
   })
 
   it('lee la configuración y la primera sede activa de la cuenta', async () => {
     const db = makeFakeDb({
-      clinic_settings: [
-        {
-          account_id: ACCOUNT,
-          consent_text: 'Autorizo',
-          consent_version: 3,
-          urgency_words: ['dolor'],
-          urgency_alarm_text: 'Signos',
-          urgency_service_id: 'svc-u',
-          offer_days: 45,
-        },
-      ],
+      clinic_settings: [SETTINGS_ROW],
       clinic_locations: [
         { id: 'otra', account_id: 'acc-2', name: 'Ajena', is_active: true },
         { id: 'inactiva', account_id: ACCOUNT, name: 'Vieja', is_active: false },
         { id: 'loc-1', account_id: ACCOUNT, name: 'Centro', address: 'Calle 1', is_active: true },
       ],
     })
-    const clinic = await loadClinicContext(asClient(db), ACCOUNT)
-    expect(clinic).toMatchObject({
+    const result = await loadClinicContext(asClient(db), ACCOUNT)
+    expect(result.status).toBe('ok')
+    if (result.status !== 'ok') return
+    expect(result.clinic).toMatchObject({
       consentText: 'Autorizo',
       consentVersion: 3,
       urgencyWords: ['dolor'],
@@ -1350,6 +1430,15 @@ describe('configuración de la clínica', () => {
       offerDays: 45,
       location: { id: 'loc-1', name: 'Centro', address: 'Calle 1' },
     })
+  })
+
+  it('sin sede activa sigue siendo válida: la autorización y las urgencias no dependen de ella', async () => {
+    const db = makeFakeDb({ clinic_settings: [SETTINGS_ROW], clinic_locations: [] })
+
+    const result = await loadClinicContext(asClient(db), ACCOUNT)
+
+    expect(result.status).toBe('ok')
+    if (result.status === 'ok') expect(result.clinic.location).toBeNull()
   })
 
   it('el montaje crea lo que falta una sola vez y enlaza la atención de urgencia', async () => {
@@ -1370,6 +1459,157 @@ describe('configuración de la clínica', () => {
     expect(db._tables.clinic_locations).toHaveLength(1)
     expect(db._tables.clinic_locations[0].name).toBe('Sede principal')
   })
+
+  it('si otro montaje creó la configuración justo antes, no falla ni la pisa', async () => {
+    const db = makeFakeDb({
+      clinic_settings: [{ ...SETTINGS_ROW, consent_text: 'Texto ajustado por Shift' }],
+      clinic_locations: [{ id: 'loc-1', account_id: ACCOUNT, name: 'Centro', is_active: true }],
+    })
+    // El montaje lee ANTES de que la otra fila aparezca: la primera lectura no ve nada.
+    let firstRead = true
+    const racing = {
+      ...db,
+      from(table: string) {
+        if (table === 'clinic_settings' && firstRead) {
+          firstRead = false
+          return {
+            select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }),
+          }
+        }
+        return db.from(table)
+      },
+    }
+
+    await expect(ensureClinicSetup(racing as unknown as SupabaseClient, ACCOUNT)).resolves.toBeUndefined()
+
+    expect(db._tables.clinic_settings).toHaveLength(1)
+    expect(db._tables.clinic_settings[0].consent_text).toBe('Texto ajustado por Shift')
+  })
+})
+```
+
+Crea `src/modules/clinica/texts.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+
+import { containsUrgencyWord } from '@/verticals/agenda/agent/state'
+import { DEFAULT_LABELS } from '@/verticals/agenda/labels'
+
+import {
+  buildClinicTexts,
+  DEFAULT_CONSENT_TEXT,
+  DEFAULT_URGENCY_ALARM_TEXT,
+  DEFAULT_URGENCY_WORDS,
+} from './texts'
+
+const texts = buildClinicTexts(DEFAULT_LABELS)
+
+describe('textos de la clínica', () => {
+  it('quien no acepta no recibe una promesa falsa de que no se guardan sus datos', () => {
+    expect(texts.consentDeclined).toBe(
+      'Entendido. Una persona de la clínica te atiende por este chat. 🙌',
+    )
+    expect(texts.consentDeclined).not.toMatch(/guardaremos/i)
+  })
+
+  it('las notas internas empiezan por "Paciente:"', () => {
+    expect(texts.consentDeclinedNote).toBe(
+      'Paciente: no aceptó la autorización de datos (bot en pausa).',
+    )
+    expect(texts.urgencyNote).toBe('Paciente: reportó signos de alarma (bot en pausa).')
+    expect(texts.urgencyOffHoursNote).toBe(
+      'Paciente: urgencia sin cupo en la agenda de hoy (bot en pausa).',
+    )
+  })
+
+  it('el texto de autorización por defecto no promete menos de lo que se hace', () => {
+    expect(DEFAULT_CONSENT_TEXT).toContain(
+      'No tienes la obligación de autorizarlos y te atendemos igual si no aceptas.',
+    )
+    expect(DEFAULT_CONSENT_TEXT).toContain(
+      'Los usamos para atenderte: tus citas, tus recordatorios y el seguimiento después de cada visita.',
+    )
+    expect(DEFAULT_CONSENT_TEXT).not.toContain('No estás obligado')
+    expect(DEFAULT_CONSENT_TEXT).not.toContain('solo para gestionar')
+  })
+
+  it('los textos por defecto caben en lo que admite la base (900) y WhatsApp (1024)', () => {
+    expect([...DEFAULT_CONSENT_TEXT].length).toBeLessThanOrEqual(900)
+    expect([...DEFAULT_URGENCY_ALARM_TEXT].length).toBeLessThanOrEqual(900)
+  })
+
+  it.each([
+    ['cita', 'citas'],
+    ['turno', 'turnos'],
+    ['sesión', 'sesiones'],
+  ])('no depende del género de la palabra del dueño (%s)', (cita, citas) => {
+    const t = buildClinicTexts({ ...DEFAULT_LABELS, cita, citas })
+
+    expect(t.noUpcoming).toBe(`Por ahora no hay ${citas} a tu nombre. ¿Quieres agendar?`)
+    expect(t.patientMenuBody).toBe('¿Quién va a asistir?')
+    expect(t.patientNamePrompt).toBe(
+      'Escríbeme el nombre y los apellidos de quien va a asistir.',
+    )
+    expect(
+      t.reminderBody({
+        patient: 'Ana Pérez',
+        business: 'Clínica Sonrisa',
+        location: 'Centro',
+        staff: 'Dra. Gómez',
+        date: 'lunes 4',
+        time: '3:00 p. m.',
+      }),
+    ).toBe(
+      `¡Hola! 👋 Te recordamos que Ana Pérez tiene ${cita} en Clínica Sonrisa, sede Centro:\n\n👤 Dra. Gómez\n📅 lunes 4\n🕐 3:00 p. m.\n\n¿Nos confirmas?`,
+    )
+  })
+})
+
+describe('palabras de urgencia por defecto', () => {
+  const words = DEFAULT_URGENCY_WORDS
+
+  it('van en minúsculas y sin tildes, como se comparan', () => {
+    for (const word of words) {
+      expect(word).toBe(
+        word
+          .normalize('NFD')
+          .replace(/[̀-ͯ]/g, '')
+          .toLowerCase(),
+      )
+    }
+  })
+
+  it('no repite ninguna', () => {
+    expect(new Set(words).size).toBe(words.length)
+  })
+
+  it.each([
+    'me duelen las muelas',
+    'me sangran las encías',
+    'hay mucha sangre',
+    'se me partió una muela',
+    'se me quebró un diente',
+    'se quebró la corona',
+    'se me rompió el puente',
+    'se rompió el diente',
+    'tengo la cara inflamada',
+    'tengo la encía inflamada',
+    'el cachete está inflamado',
+    'me cuesta respirar',
+    'no puedo tragar',
+    'tengo mucho dolor',
+    'se me cayó una corona',
+  ])('reconoce una urgencia: %s', (message) => {
+    expect(containsUrgencyWord(message, words)).toBe(true)
+  })
+
+  it.each(['quiero agendar una limpieza', 'Soy Dolores Pérez', 'cuánto cuesta una consulta'])(
+    'no confunde un mensaje normal: %s',
+    (message) => {
+      expect(containsUrgencyWord(message, words)).toBe(false)
+    },
+  )
 })
 ```
 
@@ -1390,12 +1630,14 @@ describe('configuración de la clínica', () => {
 })
 ```
 
-- [ ] **Step 2: Córrelas y verifica que fallan**
+- [ ] **Step 3: Córrelas y verifica que fallan**
 
-Run: `npx vitest run src/modules/clinica/settings.test.ts src/verticals/agenda/install.test.ts`
-Expected: FAIL, no existe `./settings`.
+Run: `npx vitest run src/modules/clinica src/verticals/agenda/install.test.ts`
+Expected: FAIL, no existen `./settings` ni `./texts`.
 
-- [ ] **Step 3: Crea los textos**
+- [ ] **Step 4: Crea los textos**
+
+El texto de autorización dice para qué se usan los datos (citas, recordatorios y seguimiento tras cada visita), y el rechazo no promete borrar nada: el mensaje del paciente ya quedó guardado. Los textos que mencionan la cita no dependen del género de la palabra del dueño ("cita", "turno", "sesión").
 
 Crea `src/modules/clinica/texts.ts`:
 
@@ -1413,8 +1655,8 @@ import type { AgendaLabels } from '@/verticals/agenda/labels'
 
 export const DEFAULT_CONSENT_TEXT = [
   'Antes de seguir: para atenderte guardamos tu nombre, tu número y los datos de tus citas.',
-  'Algunos pueden ser datos de salud, que son sensibles. No estás obligado a autorizarlos y te atendemos igual si no aceptas.',
-  'Los usamos solo para gestionar tus citas y recordatorios.',
+  'Algunos pueden ser datos de salud, que son sensibles. No tienes la obligación de autorizarlos y te atendemos igual si no aceptas.',
+  'Los usamos para atenderte: tus citas, tus recordatorios y el seguimiento después de cada visita.',
   '¿Autorizas el tratamiento de tus datos?',
 ].join('\n\n')
 
@@ -1428,19 +1670,31 @@ export const DEFAULT_URGENCY_WORDS: readonly string[] = [
   'emergencia',
   'dolor',
   'duele',
+  'duelen',
   'sangrado',
   'sangra',
+  'sangran',
   'sangrando',
+  'sangre',
   'hinchazon',
   'hinchado',
   'hinchada',
+  'inflamado',
+  'inflamada',
   'absceso',
   'pus',
   'fiebre',
   'golpe',
   'fractura',
   'se partio',
+  'se me partio',
+  'se quebro',
+  'se me quebro',
+  'se rompio',
+  'se me rompio',
   'se me cayo',
+  'respirar',
+  'tragar',
 ]
 
 /** Nota: una lista admite títulos de hasta 24 caracteres y un botón, 20. */
@@ -1448,9 +1702,8 @@ export function buildClinicTexts(l: AgendaLabels) {
   return {
     consentAccept: 'Sí, acepto',
     consentDecline: 'No acepto',
-    consentDeclined:
-      'Entendido, no guardaremos tus datos de salud. Una persona de la clínica te atiende por este chat. 🙌',
-    consentDeclinedNote: 'El paciente no aceptó la autorización de datos (bot en pausa).',
+    consentDeclined: 'Entendido. Una persona de la clínica te atiende por este chat. 🙌',
+    consentDeclinedNote: 'Paciente: no aceptó la autorización de datos (bot en pausa).',
     consentError: 'No pude guardar tu respuesta en este momento 😅. Intenta de nuevo, por favor.',
 
     menuBody: '¡Hola! 👋 Soy el asistente de la clínica. ¿En qué te ayudo?',
@@ -1462,14 +1715,14 @@ export function buildClinicTexts(l: AgendaLabels) {
     menuHuman: 'Hablar con una persona',
     faqPrompt: 'Cuéntame tu duda y te respondo. 🙌',
 
-    noUpcoming: `No tienes ${l.citas} próximas. ¿Quieres agendar?`,
+    noUpcoming: `Por ahora no hay ${l.citas} a tu nombre. ¿Quieres agendar?`,
     pickAppointmentBody: `¿Sobre cuál ${l.cita}?`,
     pickAppointmentButton: `Ver ${l.citas}`,
 
-    patientMenuBody: `¿Para quién es la ${l.cita}?`,
+    patientMenuBody: '¿Quién va a asistir?',
     patientMenuButton: 'Ver personas',
     patientOther: 'Otra persona',
-    patientNamePrompt: `Escríbeme el nombre y los apellidos de quien va a la ${l.cita}.`,
+    patientNamePrompt: 'Escríbeme el nombre y los apellidos de quien va a asistir.',
     patientNameRetry: 'Necesito nombre y apellidos, sin números. Escríbelos de nuevo, por favor.',
     patientSaveError: `No pude registrar a esa persona en este momento 😅. Intenta de nuevo o escríbeme "asesor".`,
 
@@ -1481,8 +1734,8 @@ export function buildClinicTexts(l: AgendaLabels) {
       onCallPhone
         ? `Hoy no tengo cupo en la agenda. Llama al ${onCallPhone}, que es el teléfono de turno. Si aparece alguno de los signos de alarma, ve a urgencias.`
         : 'Hoy no tengo cupo en la agenda. Ya avisé a la clínica para que te escriban a primera hora. Si aparece alguno de los signos de alarma, ve a urgencias.',
-    urgencyNote: 'El paciente reportó signos de alarma (bot en pausa).',
-    urgencyOffHoursNote: 'Urgencia sin cupo en la agenda de hoy (bot en pausa).',
+    urgencyNote: 'Paciente: reportó signos de alarma (bot en pausa).',
+    urgencyOffHoursNote: 'Paciente: urgencia sin cupo en la agenda de hoy (bot en pausa).',
     urgencyNotificationTitle: '🚨 Posible urgencia',
     urgencyNotificationBody: (who: string) =>
       `${who} reportó una posible urgencia por WhatsApp. Comunícate con esa persona ya.`,
@@ -1503,7 +1756,7 @@ export function buildClinicTexts(l: AgendaLabels) {
       date: string
       time: string
     }) =>
-      `¡Hola! 👋 Te recordamos la ${l.cita} de ${a.patient} en ${a.business}, sede ${a.location}:\n\n👤 ${a.staff}\n📅 ${a.date}\n🕐 ${a.time}\n\n¿Nos confirmas?`,
+      `¡Hola! 👋 Te recordamos que ${a.patient} tiene ${l.cita} en ${a.business}, sede ${a.location}:\n\n👤 ${a.staff}\n📅 ${a.date}\n🕐 ${a.time}\n\n¿Nos confirmas?`,
     reminderStaffFallback: 'el equipo de la clínica',
 
     /** Mapa e instrucciones previas tras confirmar; null si no hay nada que decir. */
@@ -1520,7 +1773,7 @@ export function buildClinicTexts(l: AgendaLabels) {
 export type ClinicTexts = ReturnType<typeof buildClinicTexts>
 ```
 
-- [ ] **Step 4: Crea la configuración**
+- [ ] **Step 5: Crea la configuración**
 
 Crea `src/modules/clinica/settings.ts`:
 
@@ -1529,9 +1782,12 @@ Crea `src/modules/clinica/settings.ts`:
 // Configuración de la clínica (clinic_settings + clinic_locations).
 //
 // Los llamadores le pasan el cliente: el bot usa el service role y el
-// instalador también. Sin fila de configuración, el bot sigue como una
-// agenda normal y deja el error en el log: un montaje incompleto nunca
-// puede tumbar la conversación.
+// instalador también.
+//
+// `loadClinicContext` distingue "falta la configuración" de "no se pudo
+// leer": quien la llama decide qué hace en cada caso, y ante un error NO
+// puede tratar la conversación como una agenda normal (se saltaría la
+// autorización de datos y la IA vería el chat de un paciente).
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -1562,6 +1818,18 @@ export interface ClinicContext {
   location: ClinicLocation | null
 }
 
+/**
+ * Resultado de leer la configuración de la clínica.
+ *   - ok: lista para usar.
+ *   - missing: la cuenta tiene el módulo pero nadie la configuró.
+ *   - error: la lectura falló o la fila no es usable. NO equivale a "no hay
+ *     clínica": hay que fallar cerrado.
+ */
+export type ClinicContextResult =
+  | { status: 'ok'; clinic: ClinicContext }
+  | { status: 'missing' }
+  | { status: 'error' }
+
 function mapLocation(row: Record<string, unknown>): ClinicLocation {
   return {
     id: row.id as string,
@@ -1576,7 +1844,7 @@ function mapLocation(row: Record<string, unknown>): ClinicLocation {
 export async function loadClinicContext(
   db: SupabaseClient,
   accountId: string,
-): Promise<ClinicContext | null> {
+): Promise<ClinicContextResult> {
   const { data, error } = await db
     .from('clinic_settings')
     .select(
@@ -1584,10 +1852,21 @@ export async function loadClinicContext(
     )
     .eq('account_id', accountId)
     .maybeSingle()
-  if (error) console.error('[clinica] no se pudo leer la configuración:', error.message)
+  if (error) {
+    console.error('[clinica] no se pudo leer la configuración:', error.message)
+    return { status: 'error' }
+  }
   if (!data) {
     console.error(`[clinica] la cuenta ${accountId} tiene el módulo sin configurar`)
-    return null
+    return { status: 'missing' }
+  }
+
+  // La base lo exige, pero una autorización o unos signos de alarma vacíos
+  // nunca se le muestran a un paciente.
+  const row = data as Record<string, unknown>
+  if (!isFilled(row.consent_text) || !isFilled(row.urgency_alarm_text)) {
+    console.error(`[clinica] la configuración de la cuenta ${accountId} no tiene los textos`)
+    return { status: 'error' }
   }
 
   const { data: locations, error: locationError } = await db
@@ -1600,17 +1879,21 @@ export async function loadClinicContext(
   if (locationError) console.error('[clinica] no se pudo leer la sede:', locationError.message)
   const location = ((locations ?? []) as Record<string, unknown>[])[0]
 
-  const row = data as Record<string, unknown>
   return {
-    consentText: row.consent_text as string,
-    consentVersion: Number(row.consent_version),
-    urgencyWords: Array.isArray(row.urgency_words) ? (row.urgency_words as string[]) : [],
-    urgencyAlarmText: row.urgency_alarm_text as string,
-    urgencyServiceId: (row.urgency_service_id as string | null) ?? null,
-    offerDays: Number(row.offer_days) || 30,
-    location: location ? mapLocation(location) : null,
+    status: 'ok',
+    clinic: {
+      consentText: row.consent_text as string,
+      consentVersion: Number(row.consent_version),
+      urgencyWords: Array.isArray(row.urgency_words) ? (row.urgency_words as string[]) : [],
+      urgencyAlarmText: row.urgency_alarm_text as string,
+      urgencyServiceId: (row.urgency_service_id as string | null) ?? null,
+      offerDays: Number(row.offer_days) || 30,
+      location: location ? mapLocation(location) : null,
+    },
   }
 }
+
+const isFilled = (value: unknown): boolean => typeof value === 'string' && value.trim() !== ''
 
 /** Instrucciones previas de un servicio; null si no tiene o el catálogo cambió. */
 export async function loadServicePrep(
@@ -1648,15 +1931,20 @@ export async function ensureClinicSetup(db: SupabaseClient, accountId: string): 
     const urgency = ((services ?? []) as { id: string; name: string }[]).find(
       (s) => s.name.trim().toLowerCase() === 'urgencia',
     )
-    const { error } = await db.from('clinic_settings').insert({
-      account_id: accountId,
-      consent_text: DEFAULT_CONSENT_TEXT,
-      consent_version: 1,
-      urgency_words: [...DEFAULT_URGENCY_WORDS],
-      urgency_alarm_text: DEFAULT_URGENCY_ALARM_TEXT,
-      urgency_service_id: urgency?.id ?? null,
-      offer_days: 30,
-    })
+    // upsert + ignoreDuplicates (ON CONFLICT DO NOTHING): si otro montaje
+    // creó la fila entre la lectura y la escritura, esa gana y no se pisa.
+    const { error } = await db.from('clinic_settings').upsert(
+      {
+        account_id: accountId,
+        consent_text: DEFAULT_CONSENT_TEXT,
+        consent_version: 1,
+        urgency_words: [...DEFAULT_URGENCY_WORDS],
+        urgency_alarm_text: DEFAULT_URGENCY_ALARM_TEXT,
+        urgency_service_id: urgency?.id ?? null,
+        offer_days: 30,
+      },
+      { onConflict: 'account_id', ignoreDuplicates: true },
+    )
     if (error) throw error
   }
 
@@ -1677,7 +1965,7 @@ export async function ensureClinicSetup(db: SupabaseClient, accountId: string): 
 }
 ```
 
-- [ ] **Step 5: Llama al montaje desde el instalador**
+- [ ] **Step 6: Llama al montaje desde el instalador**
 
 En `src/verticals/agenda/install.ts`:
 
@@ -1698,15 +1986,15 @@ Y justo antes de `return report`:
 
 ```
 
-- [ ] **Step 6: Corre las pruebas**
+- [ ] **Step 7: Corre las pruebas**
 
-Run: `npx vitest run src/modules/clinica src/verticals/agenda/install.test.ts && npx tsc --noEmit`
+Run: `npx vitest run src/modules/clinica src/verticals/agenda && npx tsc --noEmit`
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/modules/clinica src/verticals/agenda/install.ts src/verticals/agenda/install.test.ts
+git add src/modules/clinica src/verticals/agenda/install.ts src/verticals/agenda/install.test.ts src/verticals/agenda/agent/testing/fake-db.ts
 git commit -m "feat(clinica): add clinic settings and bot copy"
 ```
 
@@ -1714,16 +2002,23 @@ git commit -m "feat(clinica): add clinic settings and bot copy"
 
 ### Task 6: Estado del bot y toques del recordatorio
 
-Esta tarea también corrige el hallazgo de producción: las etiquetas de la plantilla cuentan como toques.
+Esta tarea también corrige el hallazgo de producción: las etiquetas de la plantilla cuentan como toques, **pero solo si el mensaje responde a un recordatorio**. Y fija una regla que no admite atajos: en los menús de decisión (autorización, aviso de marketing y signos de alarma) **aceptar exige decir el mensaje completo**.
 
 **Files:**
-- Modify: `src/verticals/agenda/agent/state.ts`, `src/verticals/agenda/agent/state.test.ts`, `src/verticals/agenda/agent/controller.ts`
+- Modify: `src/verticals/agenda/agent/state.ts`, `src/verticals/agenda/agent/state.test.ts`, `src/verticals/agenda/agent/controller.ts`, `src/verticals/agenda/agent/controller.test.ts`, `src/verticals/agenda/agent/db.ts`, `src/verticals/agenda/agent/reminders.ts`, `src/verticals/agenda/agent/reminders.test.ts`
+
+Las reglas, tal como quedaron tras la revisión:
+
+1. **Una etiqueta no basta.** Cualquier otra plantilla o difusión puede traer un botón "Confirmar" o "Cancelar", y Meta devuelve solo la etiqueta. Leerla sin más confirmaba citas, escribía encima de un humano o respondía "ya no está activo" y consumía el mensaje. `parseReminderTap` marca el toque `viaLabel: true`, y `handleAgendaInbound` lo acepta solo si el mensaje responde a una plantilla `recordatorio_cita` o `recordatorio_cita_clinica` de esa conversación. Sin referencia o con otra plantilla, el mensaje sigue el camino normal (`consumed: false`). Los ids `rem:*` no necesitan la comprobación.
+2. **Aceptar exige el mensaje entero.** Una lista de negaciones nunca alcanza ("noo autorizo", "para nada autorizo", "no sé si acepto"). Lo que acepta (`consent_yes`, `mkt_yes`) o descarta los signos (`alarm_no`) es una lista cerrada de mensajes completos. Un número, una pregunta (`?`) o una palabra a medias ("acep", "si a") nunca aceptan; un toque de botón siempre vale.
+3. **Una negación es un rechazo.** En autorización y aviso de marketing, una negación en cualquier parte del mensaje es `*_no` (incluso "acepto, no hay problema": es el lado seguro).
+4. **Ante la duda en los signos de alarma, va a una persona.** Una negación dentro de una frase ("no puedo respirar", "la fiebre no baja", "no sé") da `alarm_yes`, nunca `alarm_no`.
 
 - [ ] **Step 1: Escribe las pruebas que fallan**
 
 En `src/verticals/agenda/agent/state.test.ts`:
 
-1. En el import, cambia `parseReminderId` por `parseReminderTap` y agrega `containsUrgencyWord`, `matchChoice`, `apptId` y `patId` si no están.
+1. En el import, cambia `parseReminderId` por `parseReminderTap` y agrega `apptId`, `containsUrgencyWord` y `patId`.
 2. Reemplaza las aserciones de las líneas 224 a 235 por:
 
 ```ts
@@ -1751,9 +2046,15 @@ describe('toques del recordatorio', () => {
   })
 
   it('entiende la etiqueta que Meta devuelve cuando la plantilla no trae payload', () => {
-    expect(parseReminderTap('Confirmar')).toEqual({ action: 'confirm', appointmentId: null })
-    expect(parseReminderTap('Reprogramar')).toEqual({ action: 'reschedule', appointmentId: null })
-    expect(parseReminderTap('Cancelar')).toEqual({ action: 'cancel', appointmentId: null })
+    expect(parseReminderTap('Confirmar')).toEqual({ action: 'confirm', appointmentId: null, viaLabel: true })
+    expect(parseReminderTap('Reprogramar')).toEqual({ action: 'reschedule', appointmentId: null, viaLabel: true })
+    expect(parseReminderTap('Cancelar')).toEqual({ action: 'cancel', appointmentId: null, viaLabel: true })
+  })
+
+  it('marca las etiquetas, que cualquier otra plantilla también puede traer, y los ids no', () => {
+    expect(parseReminderTap('Confirmar')?.viaLabel).toBe(true)
+    expect(parseReminderTap('rem:confirm')?.viaLabel).toBeUndefined()
+    expect(parseReminderTap('rem:cancel:ap-1')?.viaLabel).toBeUndefined()
   })
 })
 
@@ -1766,11 +2067,30 @@ describe('palabras de urgencia', () => {
   })
 })
 
+// ------------------------------------------------------------
+// Menús de decisión (autorización, marketing, signos de alarma).
+//
+// Aceptar exige decir el mensaje ENTERO. Una negación, una duda o una
+// pregunta nunca cuentan como aceptación: una lista de negaciones no
+// alcanza ("noo autorizo", "para nada autorizo"), así que lo que acepta
+// es una lista cerrada de mensajes completos.
+// ------------------------------------------------------------
+
+const consentOptions: OfferedOption[] = [
+  { id: 'act:consent_yes', title: 'Sí, acepto' },
+  { id: 'act:consent_no', title: 'No acepto' },
+]
+const marketingOptions: OfferedOption[] = [
+  { id: 'act:mkt_yes', title: 'Sí, avísame' },
+  { id: 'act:mkt_no', title: 'No, gracias' },
+]
+const alarmOptions: OfferedOption[] = [
+  { id: 'act:alarm_yes', title: 'Sí, tengo alguno' },
+  { id: 'act:alarm_no', title: 'No, ninguno' },
+]
+
 describe('autorización escrita', () => {
-  const options = [
-    { id: 'act:consent_yes', title: 'Sí, acepto' },
-    { id: 'act:consent_no', title: 'No acepto' },
-  ]
+  const options = consentOptions
   const choice = (text: string) => matchChoice({ text, options })
 
   it('un no nunca se lee como aceptación', () => {
@@ -1785,6 +2105,184 @@ describe('autorización escrita', () => {
     expect(choice('acepto')).toBe('act:consent_yes')
     expect(choice('ok')).toBeNull()
   })
+
+  it.each(['Sí acepto', 'sí, acepto.', ' ACEPTO ', 'sí autorizo', 'Autorizo', 'Acepto 👍'])(
+    'acepta el mensaje completo %j',
+    (text) => {
+      expect(choice(text)).toBe('act:consent_yes')
+    },
+  )
+
+  it.each([
+    'noo autorizo',
+    'nop autorizo',
+    'para nada autorizo',
+    'nunca autorizo',
+    'tampoco autorizo',
+    'ni autorizo ni nada',
+    'no sé si acepto',
+    'acepto, no hay problema',
+    '¿qué pasa si no acepto?',
+  ])('lo que trae una negación es rechazo: %j', (text) => {
+    expect(choice(text)).toBe('act:consent_no')
+  })
+
+  it.each([
+    '¿qué autorizo?',
+    '¿qué pasa si acepto?',
+    '¿si acepto me cobran?',
+    'mi mamá autorizó',
+    '¿acepto?',
+    'acepto?',
+    'si a',
+    'acep',
+    'sí',
+    'dale',
+    'claro que sí',
+    'ok',
+    '1',
+    '01',
+    '3',
+    '',
+  ])('una duda, una pregunta o un mensaje a medias no acepta: %j', (text) => {
+    expect(choice(text)).toBeNull()
+  })
+
+  it('por número, el rechazo sigue valiendo y la aceptación no', () => {
+    expect(choice('2')).toBe('act:consent_no')
+    expect(choice('2.')).toBe('act:consent_no')
+    expect(choice('1')).toBeNull()
+  })
+
+  it('un toque de botón siempre vale', () => {
+    expect(matchChoice({ text: '', replyId: 'act:consent_yes', options })).toBe('act:consent_yes')
+    expect(matchChoice({ text: '', replyId: 'act:consent_no', options })).toBe('act:consent_no')
+  })
+})
+
+describe('aviso de marketing escrito', () => {
+  const options = marketingOptions
+  const choice = (text: string) => matchChoice({ text, options })
+
+  it.each(['sí', 'Sí.', 'sí, avísame', 'avísame', 'avisame!'])('acepta el mensaje completo %j', (text) => {
+    expect(choice(text)).toBe('act:mkt_yes')
+  })
+
+  it.each(['no', 'no, gracias', 'no avísame', 'noo', 'nunca', 'tampoco', '2'])(
+    'un no nunca se lee como aceptación: %j',
+    (text) => {
+      expect(choice(text)).toBe('act:mkt_no')
+    },
+  )
+
+  it.each(['¿avísame?', '¿qué es eso?', 'ok', 'dale', 'quizás', 'sí, gracias', '1', '3', ''])(
+    'una duda, una pregunta o un mensaje a medias no acepta: %j',
+    (text) => {
+      expect(choice(text)).toBeNull()
+    },
+  )
+
+  it('un toque de botón siempre vale', () => {
+    expect(matchChoice({ text: '', replyId: 'act:mkt_yes', options })).toBe('act:mkt_yes')
+  })
+})
+
+describe('signos de alarma escritos', () => {
+  const options = alarmOptions
+  const choice = (text: string) => matchChoice({ text, options })
+
+  it.each([
+    'no',
+    'No.',
+    'no, ninguno',
+    'ninguno',
+    'ninguna',
+    'no tengo',
+    'no tengo ninguno',
+    'no tengo ninguna',
+    'no tengo nada',
+    'nada',
+    'Nada.',
+  ])('solo el mensaje completo de la lista dice que no hay signos: %j', (text) => {
+    expect(choice(text)).toBe('act:alarm_no')
+  })
+
+  it.each(['sí', 'Sí.', 'si tengo', 'sí, tengo alguno', 'tengo alguno'])(
+    'el mensaje completo de la lista dice que sí hay signos: %j',
+    (text) => {
+      expect(choice(text)).toBe('act:alarm_yes')
+    },
+  )
+
+  it.each([
+    'no puedo respirar',
+    'no puedo tragar',
+    'no para de sangrar',
+    'la fiebre no baja',
+    'no sé',
+    'no se',
+    'no estoy seguro',
+    'no tengo ni idea',
+    'no siento nada',
+    '¿no?',
+    '¿no tengo ninguno?',
+  ])('una negación dentro de una frase va a una persona: %j', (text) => {
+    expect(choice(text)).toBe('act:alarm_yes')
+  })
+
+  it.each(['hola', '¿cuáles son los signos?', 'ninguno de esos', 'quiero agendar', '¿ninguno?', '3', ''])(
+    'lo demás no decide: %j',
+    (text) => {
+      expect(choice(text)).toBeNull()
+    },
+  )
+
+  it('por número, "no hay signos" no vale y "sí hay" sí (lleva a una persona)', () => {
+    expect(choice('2')).toBeNull()
+    expect(choice('02')).toBeNull()
+    expect(choice('1')).toBe('act:alarm_yes')
+  })
+
+  it('con una pregunta nunca dice que no hay signos', () => {
+    expect(choice('¿ninguno?')).not.toBe('act:alarm_no')
+    expect(choice('¿no tengo ninguno?')).not.toBe('act:alarm_no')
+    expect(choice('ninguno?')).not.toBe('act:alarm_no')
+  })
+
+  it('un toque de botón siempre vale', () => {
+    expect(matchChoice({ text: '', replyId: 'act:alarm_no', options })).toBe('act:alarm_no')
+    expect(matchChoice({ text: '', replyId: 'act:alarm_yes', options })).toBe('act:alarm_yes')
+  })
+})
+
+describe('menús de decisión: nunca se acepta por accidente', () => {
+  // Frases que no están en la lista de ningún menú: no pueden acertar la opción
+  // que acepta (consent_yes, mkt_yes, alarm_no).
+  const stray = [
+    'tal vez',
+    'no sé qué hacer',
+    'lo que sea',
+    'sí, pero antes explícame',
+    'acepto, ¿y si no?',
+    'dame un momento',
+    '1 y 2',
+    '😀',
+  ]
+  it.each([
+    ['autorización', consentOptions, 'act:consent_yes'],
+    ['marketing', marketingOptions, 'act:mkt_yes'],
+    ['signos de alarma', alarmOptions, 'act:alarm_no'],
+  ] as const)('%s', (_name, options, acceptingId) => {
+    for (const text of stray) {
+      expect(matchChoice({ text, options: [...options] }), text).not.toBe(acceptingId)
+    }
+  })
+
+  it('el resto de los menús sigue emparejando como antes', () => {
+    expect(matchChoice({ text: 'sí', options: [{ id: 'act:confirm', title: 'Confirmar' }] })).toBe(
+      'act:confirm',
+    )
+  })
 })
 
 describe('ids nuevos', () => {
@@ -1793,12 +2291,212 @@ describe('ids nuevos', () => {
     expect(parseOptionId(apptId('ap-1'))).toEqual({ kind: 'appt', value: 'ap-1' })
   })
 })
+
+describe('palabras de intención en una clínica', () => {
+  it('"gracias por la atención" no abre el flujo de agendar', () => {
+    // La clínica llama "atención" a su servicio: sale de las palabras propias.
+    const clinicWords = ['cita', 'citas', 'atención', 'atenciones']
+    expect(containsIntentWord('muchas gracias por la atención', clinicWords)).toBe(false)
+    expect(containsIntentWord('gracias por las atenciones', clinicWords)).toBe(false)
+    expect(containsIntentWord('quiero una cita', clinicWords)).toBe(true)
+  })
+})
+```
+
+En `src/verticals/agenda/agent/controller.test.ts`:
+
+1. Reemplaza `seedInbound` y agrega, justo después, `seedTemplateMessage`:
+
+```ts
+function seedInbound(
+  db: FakeDb,
+  input: { text?: string; replyId?: string | null; replyTo?: string | null },
+): string {
+  msgCounter += 1
+  const messageId = `wamid-${msgCounter}`
+  db._tables.messages.push({
+    id: `msg-${msgCounter}`,
+    account_id: ACCOUNT,
+    conversation_id: CONVERSATION,
+    message_id: messageId,
+    content_text: input.text ?? '',
+    content_type: input.replyId ? 'interactive' : 'text',
+    interactive_reply_id: input.replyId ?? null,
+    // Como el webhook: el id interno del mensaje al que responde el cliente.
+    reply_to_message_id: input.replyTo ?? null,
+  })
+  return messageId
+}
+
+/**
+ * Un saliente de plantilla que el cliente puede citar (el toque de un botón
+ * llega como respuesta a él). Devuelve su id interno.
+ */
+function seedTemplateMessage(
+  db: FakeDb,
+  templateName: string,
+  conversationId: string = CONVERSATION,
+): string {
+  msgCounter += 1
+  const id = `msg-tpl-${msgCounter}`
+  db._tables.messages.push({
+    id,
+    account_id: ACCOUNT,
+    conversation_id: conversationId,
+    message_id: `wamid-tpl-${msgCounter}`,
+    sender_type: 'bot',
+    content_type: 'template',
+    content_text: 'Texto de la plantilla',
+    template_name: templateName,
+    interactive_reply_id: null,
+    reply_to_message_id: null,
+  })
+  return id
+}
+```
+
+2. En el tipo de `input` de `send` y de `sendHuman`, agrega `replyTo?: string | null` (`{ text?: string; replyId?: string | null; replyTo?: string | null }`).
+
+3. Agrega, justo antes de `describe('recordatorio con un humano a cargo del chat (D1)'`:
+
+```ts
+describe('etiquetas de botón de plantilla (Confirmar / Reprogramar / Cancelar)', () => {
+  function pendingSeed() {
+    const seed = baseSeed()
+    seed.booking_appointments = [
+      appointmentRow({ status: 'pending', confirmed_at: null }),
+    ]
+    return seed
+  }
+
+  it.each(['recordatorio_cita', 'recordatorio_cita_clinica'])(
+    'la etiqueta que responde a la plantilla %s confirma la cita',
+    async (templateName) => {
+      const db = makeFakeDb(pendingSeed())
+      const rec = makeRecorder()
+      const replyTo = seedTemplateMessage(db, templateName)
+
+      const res = await send(db, rec, { replyId: 'Confirmar', replyTo })
+
+      expect(res.consumed).toBe(true)
+      expect(db._tables.booking_appointments[0].status).toBe('confirmed')
+      expect(last(rec).bodyText).toContain('Queda confirmado')
+      expect(sessionRow(db)).toBeUndefined()
+    },
+  )
+
+  it('la etiqueta de un hilo con humano también vale si responde al recordatorio', async () => {
+    const db = makeFakeDb(pendingSeed())
+    const rec = makeRecorder()
+    const replyTo = seedTemplateMessage(db, 'recordatorio_cita')
+
+    const res = await sendHuman(db, rec, { replyId: 'Confirmar', replyTo })
+
+    expect(res.consumed).toBe(true)
+    expect(db._tables.booking_appointments[0].status).toBe('confirmed')
+  })
+
+  it.each(['Confirmar', 'Reprogramar', 'Cancelar'])(
+    'la etiqueta %s de OTRA plantilla no toca nada y no se consume',
+    async (label) => {
+      const db = makeFakeDb(pendingSeed())
+      const rec = makeRecorder()
+      const replyTo = seedTemplateMessage(db, 'promo_noviembre')
+
+      const res = await send(db, rec, { replyId: label, replyTo })
+
+      expect(res.consumed).toBe(false)
+      expect(rec.calls).toHaveLength(0)
+      expect(db._tables.booking_appointments[0].status).toBe('pending')
+      expect(db._tables.booking_events ?? []).toHaveLength(0)
+      expect(sessionRow(db)).toBeUndefined()
+    },
+  )
+
+  it('la etiqueta sin referencia al mensaje al que responde no toca nada', async () => {
+    const db = makeFakeDb(pendingSeed())
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, { replyId: 'Confirmar' })
+
+    expect(res.consumed).toBe(false)
+    expect(rec.calls).toHaveLength(0)
+    expect(db._tables.booking_appointments[0].status).toBe('pending')
+    expect(sessionRow(db)).toBeUndefined()
+  })
+
+  it('la etiqueta cuyo mensaje citado no existe en esta conversación no toca nada', async () => {
+    const db = makeFakeDb(pendingSeed())
+    const rec = makeRecorder()
+    const elsewhere = seedTemplateMessage(db, 'recordatorio_cita', 'cv-otra')
+
+    const unknown = await send(db, rec, { replyId: 'Confirmar', replyTo: 'msg-no-existe' })
+    const foreign = await send(db, rec, { replyId: 'Confirmar', replyTo: elsewhere })
+
+    expect(unknown.consumed).toBe(false)
+    expect(foreign.consumed).toBe(false)
+    expect(rec.calls).toHaveLength(0)
+    expect(db._tables.booking_appointments[0].status).toBe('pending')
+  })
+
+  it('en un hilo con humano, la etiqueta de otra plantilla ni se atiende ni se consume', async () => {
+    const db = makeFakeDb(pendingSeed())
+    const rec = makeRecorder()
+    const replyTo = seedTemplateMessage(db, 'promo_noviembre')
+
+    const withReference = await sendHuman(db, rec, { replyId: 'Cancelar', replyTo })
+    const withoutReference = await sendHuman(db, rec, { replyId: 'Cancelar' })
+
+    expect(withReference.consumed).toBe(false)
+    expect(withoutReference.consumed).toBe(false)
+    expect(rec.calls).toHaveLength(0)
+    expect(db._tables.booking_appointments[0].status).toBe('pending')
+    expect(sessionRow(db)).toBeUndefined()
+  })
+
+  it('con una cita ya cancelada, la etiqueta de otra plantilla no responde "ya no está activo"', async () => {
+    const seed = baseSeed()
+    seed.booking_appointments = [appointmentRow({ status: 'cancelled' })]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+    const replyTo = seedTemplateMessage(db, 'promo_noviembre')
+
+    const res = await send(db, rec, { replyId: 'Confirmar', replyTo })
+
+    expect(res.consumed).toBe(false)
+    expect(rec.calls).toHaveLength(0)
+  })
+
+  it('un id rem:* no necesita citar nada', async () => {
+    const db = makeFakeDb(pendingSeed())
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, { replyId: 'rem:confirm' })
+
+    expect(res.consumed).toBe(true)
+    expect(db._tables.booking_appointments[0].status).toBe('confirmed')
+  })
+})
+```
+
+En `src/verticals/agenda/agent/reminders.test.ts`: agrega `isReminderTemplateName` al import de `./reminders` y esta prueba dentro de `describe('builders del recordatorio')`, después de "la plantilla documentada usa el idioma es":
+
+```ts
+  it('reconoce solo las plantillas de recordatorio de cita', () => {
+    expect(isReminderTemplateName('recordatorio_cita')).toBe(true)
+    expect(isReminderTemplateName('recordatorio_cita_clinica')).toBe(true)
+    expect(isReminderTemplateName('promo_noviembre')).toBe(false)
+    expect(isReminderTemplateName('Recordatorio_Cita')).toBe(false)
+    expect(isReminderTemplateName('')).toBe(false)
+    expect(isReminderTemplateName(null)).toBe(false)
+    expect(isReminderTemplateName(undefined)).toBe(false)
+  })
 ```
 
 - [ ] **Step 2: Córrelas y verifica que fallan**
 
-Run: `npx vitest run src/verticals/agenda/agent/state.test.ts`
-Expected: FAIL, `parseReminderTap` no existe.
+Run: `npx vitest run src/verticals/agenda/agent`
+Expected: FAIL, `parseReminderTap` y `isReminderTemplateName` no existen.
 
 - [ ] **Step 3: Implementa en `state.ts`**
 
@@ -1837,7 +2535,7 @@ export const patId = (id: string): string => `pat:${id}`
 export const apptId = (id: string): string => `appt:${id}`
 ```
 
-Reemplaza el bloque de comentario y las funciones de ids del recordatorio, desde `// Ids del recordatorio (Fase 3)` hasta el final de `parseReminderId`, por:
+Reemplaza el bloque de comentario y las funciones de ids del recordatorio, desde `// Ids del recordatorio (Fase 3)` hasta el final de `OPTION_KINDS`, por:
 
 ```ts
 // Ids del recordatorio (Fase 3)
@@ -1859,6 +2557,13 @@ export const remId = (action: ReminderAction, appointmentId?: string): string =>
 export interface ReminderTap {
   action: ReminderAction
   appointmentId: string | null
+  /**
+   * El toque llegó como ETIQUETA ("Confirmar"), no como id `rem:*`. Cualquier
+   * otra plantilla o difusión puede traer un botón con esa misma etiqueta,
+   * así que el controlador solo la acepta si el mensaje responde a un
+   * recordatorio.
+   */
+  viaLabel?: true
 }
 
 const REMINDER_LABELS: Readonly<Record<string, ReminderAction>> = {
@@ -1870,18 +2575,14 @@ const REMINDER_LABELS: Readonly<Record<string, ReminderAction>> = {
 /** 'rem:confirm', 'rem:confirm:<id>' o la etiqueta 'Confirmar'; lo demás → null. */
 export function parseReminderTap(id: string): ReminderTap | null {
   if (Object.hasOwn(REMINDER_LABELS, id)) {
-    return { action: REMINDER_LABELS[id], appointmentId: null }
+    return { action: REMINDER_LABELS[id], appointmentId: null, viaLabel: true }
   }
   const [prefix, action, appointmentId] = id.split(':')
   if (prefix !== 'rem') return null
   if (!(REMINDER_ACTIONS as readonly string[]).includes(action)) return null
   return { action: action as ReminderAction, appointmentId: appointmentId || null }
 }
-```
 
-Cambia los tipos de opción:
-
-```ts
 export type OptionKind = 'svc' | 'staff' | 'day' | 'slot' | 'act' | 'ans' | 'pat' | 'appt'
 
 const OPTION_KINDS: readonly OptionKind[] = ['svc', 'staff', 'day', 'slot', 'act', 'ans', 'pat', 'appt']
@@ -1896,34 +2597,223 @@ export function containsUrgencyWord(text: string, words: readonly string[]): boo
 }
 ```
 
-En `ACTION_SYNONYMS`, antes de `'staff:any'`. Las de autorización no incluyen un "sí" suelto, a propósito:
+En `ACTION_SYNONYMS` **no** van sinónimos de autorización, alarma ni marketing: esos menús los lee `matchDecision`, que no usa sinónimos.
+
+Justo antes de `export interface MatchChoiceArgs`, agrega el bloque de los menús de decisión:
 
 ```ts
-  'act:consent_yes': ['si acepto', 'si autorizo', 'autorizo'],
-  'act:consent_no': ['no', 'no autorizo'],
-  'act:alarm_yes': ['si', 'tengo'],
-  'act:alarm_no': ['no', 'ninguno', 'ninguna'],
-  'act:mkt_yes': ['si', 'avisame'],
-  'act:mkt_no': ['no'],
+// ------------------------------------------------------------
+// Menús de decisión: autorización de datos, aviso de marketing y signos
+// de alarma.
+//
+// Aquí un malentendido cuesta caro: leer un "no" como "sí" registra una
+// autorización que nadie dio, y leer "no puedo respirar" como "ninguno"
+// manda a agendar a quien necesita urgencias. Una lista de negaciones
+// nunca alcanza ("noo autorizo", "para nada autorizo"), así que lo que
+// ACEPTA (consent_yes, mkt_yes) o descarta los signos (alarm_no) es una
+// lista cerrada de MENSAJES COMPLETOS (comparados sin tildes ni
+// puntuación), y todo lo demás cae del lado seguro:
+//   - autorización y marketing: una negación en cualquier parte del mensaje
+//     es un rechazo ("acepto, no hay problema" también); lo que no es ni
+//     una cosa ni la otra, null y el bot repite la pregunta.
+//   - signos de alarma: una negación dentro de una frase va a una persona
+//     (alarm_yes: ante la duda, no se agenda); lo demás, null.
+// Con "?" o "¿" en el mensaje nunca se acepta ni se descartan los signos: es
+// una pregunta, no una respuesta. Por número tampoco: estos botones no
+// muestran números. Un toque de botón (replyId) no pasa por aquí y siempre
+// vale.
+// ------------------------------------------------------------
+
+/** Mensajes completos que aceptan o descartan, ya en forma `squash`. */
+const WHOLE_MESSAGE: Readonly<Record<string, readonly string[]>> = {
+  'act:consent_yes': ['si acepto', 'acepto', 'si autorizo', 'autorizo'],
+  'act:mkt_yes': ['si', 'si avisame', 'avisame'],
+  'act:alarm_no': [
+    'no',
+    'no ninguno',
+    'ninguno',
+    'ninguna',
+    'no tengo',
+    'no tengo ninguno',
+    'no tengo ninguna',
+    'no tengo nada',
+    'nada',
+  ],
+}
+
+/** Mensajes completos que dicen que sí hay signos de alarma. */
+const ALARM_YES_WHOLE: readonly string[] = ['si', 'si tengo', 'si tengo alguno', 'tengo alguno']
+
+/** Negaciones en texto ya normalizado: "noo", "nop", "para nada", "nunca"… */
+const NEGATION = /\b(no+|nop|nope|ni|nunca|jamas|tampoco|nada)\b/
+
+const IS_QUESTION = /[?¿]/
+
+/**
+ * Lee la respuesta escrita a un menú de decisión. `undefined` = el menú no
+ * es de decisión y sigue el emparejamiento normal; `null` = no se entendió.
+ */
+function matchDecision(
+  text: string,
+  squashed: string,
+  offered: ReadonlySet<string>,
+): string | null | undefined {
+  const isQuestion = IS_QUESTION.test(text)
+
+  for (const [yes, no] of [
+    ['act:consent_yes', 'act:consent_no'],
+    ['act:mkt_yes', 'act:mkt_no'],
+  ] as const) {
+    if (!offered.has(yes) && !offered.has(no)) continue
+    if (NEGATION.test(squashed)) return offered.has(no) ? no : null
+    if (offered.has(yes) && !isQuestion && WHOLE_MESSAGE[yes].includes(squashed)) return yes
+    return null
+  }
+
+  if (offered.has('act:alarm_yes') || offered.has('act:alarm_no')) {
+    if (offered.has('act:alarm_no') && !isQuestion && WHOLE_MESSAGE['act:alarm_no'].includes(squashed)) {
+      return 'act:alarm_no'
+    }
+    if (offered.has('act:alarm_yes') && (ALARM_YES_WHOLE.includes(squashed) || NEGATION.test(squashed))) {
+      return 'act:alarm_yes'
+    }
+    return null
+  }
+
+  return undefined
+}
 ```
 
-`'no autorizo'` contiene `'autorizo'`, así que un no tiene que ganar antes de revisar sinónimos. En `matchChoice`, justo después de `const offered = new Set(options.map((o) => o.id))`:
+En `matchChoice`, la rama del número pasa a no dejar que un número acepte:
 
 ```ts
-  // Un no explícito nunca se lee como aceptación.
-  if (offered.has('act:consent_no') && /\bno\b/.test(squashed)) return 'act:consent_no'
+  // Número del menú ('2', '2.', '2)').
+  const num = t.match(/^(\d+)[.)]?$/)
+  if (num) {
+    const idx = Number(num[1]) - 1
+    const id = idx >= 0 && idx < options.length ? options[idx].id : null
+    // Los botones de decisión no muestran números: un número no puede aceptar.
+    return id && !Object.hasOwn(WHOLE_MESSAGE, id) ? id : null
+  }
 ```
 
-- [ ] **Step 4: Ajusta el controlador**
+Y justo después de `const squashed = squash(text)` / `if (!squashed) return null`, antes de "Título exacto…":
+
+```ts
+  const offered = new Set(options.map((o) => o.id))
+
+  // Autorización, marketing y signos de alarma: ver `matchDecision`. Su
+  // respuesta es final, así que NO caen a la coincidencia suelta por título
+  // ("acep" estaría dentro de "sí acepto").
+  const decision = matchDecision(text, squashed, offered)
+  if (decision !== undefined) return decision
+```
+
+(la línea `const offered = ...` que había más abajo, antes de los sinónimos, se elimina).
+
+En `EXTRA_INTENT_STOPLIST`, al final, para que "gracias por la atención" no abra el flujo en una clínica que llama "atención" a su servicio:
+
+```ts
+  // Una clínica llama "atención" a su servicio, y "gracias por la atención"
+  // no es un pedido de cita.
+  'atencion',
+  'atenciones',
+```
+
+- [ ] **Step 4: Recordatorios y lectura del mensaje**
+
+En `src/verticals/agenda/agent/reminders.ts`, después de `AGENDA_REMINDER_TEMPLATE`:
+
+```ts
+/** Plantilla del recordatorio de las clínicas (módulo clínica). */
+export const CLINIC_REMINDER_TEMPLATE_NAME = 'recordatorio_cita_clinica'
+
+const REMINDER_TEMPLATE_NAMES: ReadonlySet<string> = new Set([
+  AGENDA_REMINDER_TEMPLATE.name,
+  CLINIC_REMINDER_TEMPLATE_NAME,
+])
+
+/** ¿Es el nombre de una plantilla de recordatorio de cita? */
+export function isReminderTemplateName(name: string | null | undefined): boolean {
+  return typeof name === 'string' && REMINDER_TEMPLATE_NAMES.has(name)
+}
+```
+
+En `src/verticals/agenda/agent/db.ts`, reemplaza `loadInboundMessage` por (el webhook guarda en `reply_to_message_id` el id **interno** del mensaje citado, no el wamid):
+
+```ts
+export interface InboundMessage {
+  text: string
+  replyId: string | null
+  /**
+   * `template_name` del mensaje al que responde el cliente (un toque en el
+   * botón de una plantilla llega como respuesta a ella). null si no responde
+   * a ninguno, si ese mensaje no está en ESTA conversación o si no es una
+   * plantilla.
+   */
+  repliedTemplateName: string | null
+}
+
+export async function loadInboundMessage(
+  db: SupabaseClient,
+  conversationId: string,
+  messageId: string,
+): Promise<InboundMessage | null> {
+  const { data } = await db
+    .from('messages')
+    .select('content_text, interactive_reply_id, reply_to_message_id')
+    .eq('conversation_id', conversationId)
+    .eq('message_id', messageId)
+    .maybeSingle()
+  if (!data) return null
+  const row = data as Record<string, unknown>
+
+  // El webhook guarda en `reply_to_message_id` el id INTERNO (messages.id) del
+  // mensaje citado, no el wamid.
+  const repliedToId = (row.reply_to_message_id as string | null) ?? null
+  let repliedTemplateName: string | null = null
+  if (repliedToId) {
+    const { data: parent } = await db
+      .from('messages')
+      .select('template_name')
+      .eq('id', repliedToId)
+      .eq('conversation_id', conversationId)
+      .maybeSingle()
+    repliedTemplateName =
+      ((parent as Record<string, unknown> | null)?.template_name as string | null) ?? null
+  }
+
+  return {
+    text: (row.content_text as string | null) ?? '',
+    replyId: (row.interactive_reply_id as string | null) ?? null,
+    repliedTemplateName,
+  }
+}
+```
+
+- [ ] **Step 5: Ajusta el controlador**
 
 En `src/verticals/agenda/agent/controller.ts`:
 
-1. Cambia `parseReminderId` por `parseReminderTap` y `type ReminderAction` por `type ReminderAction, type ReminderTap` en el import de `./state`.
+1. Cambia `parseReminderId` por `parseReminderTap` y `type ReminderAction` por `type ReminderAction, type ReminderTap` en el import de `./state`. Agrega:
+
+```ts
+import { isReminderTemplateName } from './reminders'
+```
 
 2. En `handleAgendaInbound`:
 
 ```ts
-  const reminderTap = replyId ? parseReminderTap(replyId) : null
+  // Una ETIQUETA ("Confirmar") la puede traer el botón de cualquier otra
+  // plantilla o difusión: solo es un toque de recordatorio si el mensaje
+  // responde a una plantilla de recordatorio. Los ids `rem:*` los pone este
+  // módulo, no necesitan esa comprobación. Sin referencia o con otra
+  // plantilla, el mensaje sigue el camino normal.
+  const parsedTap = replyId ? parseReminderTap(replyId) : null
+  const reminderTap =
+    parsedTap && (!parsedTap.viaLabel || isReminderTemplateName(inbound?.repliedTemplateName))
+      ? parsedTap
+      : null
 ```
 
 3. Usa `reminderTap` donde decía `reminderAction`:
@@ -1972,12 +2862,12 @@ En `src/verticals/agenda/agent/controller.ts`:
       return { state, closed: true }
 ```
 
-- [ ] **Step 5: Corre las pruebas**
+- [ ] **Step 6: Corre las pruebas**
 
 Run: `npx vitest run src/verticals/agenda && npx tsc --noEmit`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add src/verticals/agenda/agent
