@@ -288,10 +288,12 @@ BEGIN
   -- 050 (D2): configuration writes are owner/admin only. Every write
   -- policy on the six config tables must exist AND gate on 'admin' —
   -- a policy left at 'agent' (or dropped and not recreated) re-opens
-  -- direct PostgREST edits for agents.
+  -- direct PostgREST edits for agents. 055 adds clinic_settings and
+  -- clinic_locations to the same rule.
   FOR v_table IN SELECT unnest(ARRAY[
     'booking_services', 'booking_staff', 'booking_staff_services',
-    'booking_working_hours', 'booking_time_off', 'booking_settings'
+    'booking_working_hours', 'booking_time_off', 'booking_settings',
+    'clinic_settings', 'clinic_locations'
   ]) LOOP
     FOR v_cmd IN SELECT unnest(ARRAY['INSERT', 'UPDATE', 'DELETE']) LOOP
       IF NOT EXISTS (
@@ -886,13 +888,102 @@ BEGIN
     RAISE EXCEPTION 'conversations.bot_lock_until is missing — migration 055 did not apply';
   END IF;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
+  IF (
+    SELECT COUNT(*) FROM information_schema.columns
     WHERE table_schema = 'public'
       AND table_name = 'booking_appointments'
-      AND column_name = 'patient_id'
+      AND column_name IN ('patient_id', 'location_id')
+  ) <> 2 THEN
+    RAISE EXCEPTION 'booking_appointments.patient_id / location_id are missing — migration 055 did not apply';
+  END IF;
+
+  -- Consent rows outlive the contact: contact_id is the only nullable one,
+  -- and the holder (contact_ref) and the accepted text (text_snapshot)
+  -- travel with the row.
+  IF (
+    SELECT COUNT(*) FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'clinic_consents'
+      AND (
+        (column_name = 'contact_id' AND is_nullable = 'YES')
+        OR (column_name IN ('contact_ref', 'text_snapshot') AND is_nullable = 'NO')
+      )
+  ) <> 3 THEN
+    RAISE EXCEPTION
+      'clinic_consents.contact_id must be nullable and contact_ref / text_snapshot NOT NULL — migration 055 did not apply';
+  END IF;
+
+  -- All four tables: RLS on, and exactly ONE policy that applies to SELECT
+  -- (a second permissive one, or a FOR ALL, would be OR-ed in and widen it)
+  -- which is the plain "any member" check. pg_policies deparses the call
+  -- with its default role, so only the shape is matched.
+  FOR v_table IN SELECT unnest(ARRAY[
+    'clinic_settings', 'clinic_locations', 'clinic_patients', 'clinic_consents'
+  ]) LOOP
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_class
+      WHERE oid = to_regclass('public.' || v_table)
+        AND relrowsecurity
+    ) THEN
+      RAISE EXCEPTION '% RLS is not enabled — migration 055 did not apply', v_table;
+    END IF;
+
+    IF (
+      SELECT COUNT(*) FROM pg_policies
+      WHERE schemaname = 'public'
+        AND tablename = v_table
+        AND cmd IN ('SELECT', 'ALL')
+    ) <> 1
+    OR NOT EXISTS (
+      SELECT 1 FROM pg_policies
+      WHERE schemaname = 'public'
+        AND tablename = v_table
+        AND cmd = 'SELECT'
+        AND qual ~ '^\(?is_account_member\(account_id[^)]*\)\)?$'
+        AND qual NOT LIKE '%''admin''%'
+        AND qual NOT LIKE '%''agent''%'
+    ) THEN
+      RAISE EXCEPTION
+        '% must have exactly one SELECT policy, open to every member — migration 055 did not apply',
+        v_table;
+    END IF;
+  END LOOP;
+
+  -- clinic_settings / clinic_locations: owner/admin write — checked by the
+  -- 050 loop above. The settings write policies must also pin the urgency
+  -- service to the same account (the FK alone does not).
+  IF (
+    SELECT COUNT(*) FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'clinic_settings'
+      AND cmd IN ('INSERT', 'UPDATE')
+      AND with_check LIKE '%booking_services%'
+  ) <> 2 THEN
+    RAISE EXCEPTION
+      'clinic_settings write policies do not pin urgency_service_id to the account — migration 055 did not apply';
+  END IF;
+
+  -- Patients: agents write, the contact must belong to the same account,
+  -- and nobody deletes (a patient with appointments is a business record).
+  IF (
+    SELECT COUNT(*) FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'clinic_patients'
+      AND cmd IN ('INSERT', 'UPDATE')
+      AND with_check LIKE '%''agent''%'
+      AND with_check LIKE '%contacts%'
+  ) <> 2 THEN
+    RAISE EXCEPTION
+      'clinic_patients write policies are missing or do not pin the contact to the account — migration 055 did not apply';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'clinic_patients'
+      AND cmd IN ('DELETE', 'ALL')
   ) THEN
-    RAISE EXCEPTION 'booking_appointments.patient_id is missing — migration 055 did not apply';
+    RAISE EXCEPTION 'clinic_patients must have no DELETE policy — migration 055 did not apply';
   END IF;
 
   IF EXISTS (
@@ -902,6 +993,83 @@ BEGIN
       AND cmd <> 'SELECT'
   ) THEN
     RAISE EXCEPTION 'clinic_consents must be read-only for clients — migration 055 did not apply';
+  END IF;
+
+  -- A contact with a patient cannot be deleted (NO ACTION: confdeltype 'a');
+  -- a contact with consents can, and the consents keep living (SET NULL: 'n').
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.clinic_patients'::regclass
+      AND contype = 'f'
+      AND confrelid = 'public.contacts'::regclass
+      AND confdeltype = 'a'
+  ) THEN
+    RAISE EXCEPTION
+      'clinic_patients.contact_id must reference contacts with NO ACTION — migration 055 did not apply';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.clinic_consents'::regclass
+      AND contype = 'f'
+      AND confrelid = 'public.contacts'::regclass
+      AND confdeltype = 'n'
+  ) THEN
+    RAISE EXCEPTION
+      'clinic_consents.contact_id must reference contacts ON DELETE SET NULL — migration 055 did not apply';
+  END IF;
+
+  -- The appointment's patient and location are tied to its own account by
+  -- composite FKs that null only their own column (ON DELETE SET NULL (col),
+  -- Postgres 15+: confdelsetcols).
+  IF (
+    SELECT COUNT(*) FROM pg_constraint
+    WHERE conrelid = 'public.booking_appointments'::regclass
+      AND contype = 'f'
+      AND conname IN ('booking_appointments_patient_fk', 'booking_appointments_location_fk')
+      AND array_length(conkey, 1) = 2
+      AND confdeltype = 'n'
+      AND confdelsetcols IS NOT NULL
+  ) <> 2 THEN
+    RAISE EXCEPTION
+      'booking_appointments patient/location must use composite (account_id, id) FKs — migration 055 did not apply';
+  END IF;
+
+  -- clinic_consents is append-only: a BEFORE UPDATE OR DELETE row trigger
+  -- (tgtype bits: row 1, before 2, insert 4, delete 8, update 16) running a
+  -- hardened SECURITY DEFINER function, and no TRUNCATE for the API roles.
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_trigger t
+    JOIN pg_proc p ON p.oid = t.tgfoid
+    WHERE t.tgrelid = 'public.clinic_consents'::regclass
+      AND t.tgname = 'clinic_consents_append_only'
+      AND NOT t.tgisinternal
+      AND t.tgenabled IN ('O', 'A')
+      AND (t.tgtype & 27) = 27
+      AND (t.tgtype & 4) = 0
+      AND p.prosecdef
+      AND p.proconfig IS NOT NULL
+      AND 'search_path=public' = ANY(p.proconfig)
+  ) THEN
+    RAISE EXCEPTION
+      'clinic_consents_append_only trigger is missing, disabled or not hardened — migration 055 did not apply';
+  END IF;
+
+  IF has_function_privilege('anon', 'public.clinic_consents_append_only()', 'EXECUTE')
+     OR has_function_privilege('authenticated', 'public.clinic_consents_append_only()', 'EXECUTE')
+     OR NOT has_function_privilege('service_role', 'public.clinic_consents_append_only()', 'EXECUTE')
+  THEN
+    RAISE EXCEPTION
+      'clinic_consents_append_only is executable by anon/authenticated or not by service_role — migration 055 did not apply';
+  END IF;
+
+  IF has_table_privilege('anon', 'public.clinic_consents', 'TRUNCATE')
+     OR has_table_privilege('authenticated', 'public.clinic_consents', 'TRUNCATE')
+     OR has_table_privilege('service_role', 'public.clinic_consents', 'TRUNCATE')
+  THEN
+    RAISE EXCEPTION
+      'clinic_consents can still be truncated by an API role — migration 055 did not apply';
   END IF;
 
   RAISE NOTICE 'schema verification passed';
