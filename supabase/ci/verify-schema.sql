@@ -869,6 +869,41 @@ BEGIN
       'create_order does not check account ownership / take the numbering lock — migration 054 did not apply';
   END IF;
 
+  -- 055 instala el módulo clínica.
+  IF to_regclass('public.clinic_settings') IS NULL
+     OR to_regclass('public.clinic_locations') IS NULL
+     OR to_regclass('public.clinic_patients') IS NULL
+     OR to_regclass('public.clinic_consents') IS NULL THEN
+    RAISE EXCEPTION 'clinic_* tables are missing — migration 055 did not apply';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'conversations'
+      AND column_name = 'bot_lock_until'
+  ) THEN
+    RAISE EXCEPTION 'conversations.bot_lock_until is missing — migration 055 did not apply';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'booking_appointments'
+      AND column_name = 'patient_id'
+  ) THEN
+    RAISE EXCEPTION 'booking_appointments.patient_id is missing — migration 055 did not apply';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'clinic_consents'
+      AND cmd <> 'SELECT'
+  ) THEN
+    RAISE EXCEPTION 'clinic_consents must be read-only for clients — migration 055 did not apply';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

@@ -243,3 +243,54 @@ describe('preguntas extra del bot (051 / booking_questions)', () => {
     })
   })
 })
+
+describe('módulo clínica (055)', () => {
+  for (const table of ['clinic_settings', 'clinic_locations']) {
+    for (const cmd of ['INSERT', 'UPDATE', 'DELETE']) {
+      it(`${table} ${cmd}: solo owner/admin`, () => {
+        const found = policiesFor(table, cmd)
+        expect(found).toHaveLength(1)
+        expect(found[0].body).toContain("'admin'")
+        expect(found[0].body).not.toContain("'agent'")
+      })
+    }
+
+    it(`${table} SELECT: cualquier miembro`, () => {
+      const found = policiesFor(table, 'SELECT')
+      expect(found.some((p) => /is_account_member\(account_id\)/.test(p.body))).toBe(true)
+    })
+  }
+
+  it('clinic_patients: agent escribe y nadie borra', () => {
+    for (const cmd of ['INSERT', 'UPDATE']) {
+      expect(policiesFor('clinic_patients', cmd).some((p) => p.body.includes("'agent'"))).toBe(true)
+    }
+    expect(policiesFor('clinic_patients', 'DELETE')).toHaveLength(0)
+  })
+
+  it('clinic_consents: desde el navegador solo se lee', () => {
+    expect(policiesFor('clinic_consents', 'SELECT')).toHaveLength(1)
+    for (const cmd of ['INSERT', 'UPDATE', 'DELETE']) {
+      expect(policiesFor('clinic_consents', cmd)).toHaveLength(0)
+    }
+  })
+
+  const code = readFileSync(join(MIGRATIONS_DIR, '055_clinica_base.sql'), 'utf8').replace(
+    /--[^\r\n]*/g,
+    '',
+  )
+
+  it('activa RLS en las cuatro tablas', () => {
+    for (const table of ['clinic_settings', 'clinic_locations', 'clinic_patients', 'clinic_consents']) {
+      expect(code).toMatch(new RegExp(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`))
+    }
+  })
+
+  it('no es destructiva y lleva lock_timeout', () => {
+    expect(code).not.toMatch(/DROP\s+TABLE/i)
+    expect(code).not.toMatch(/DROP\s+COLUMN/i)
+    expect(code).not.toMatch(/\bDELETE\s+FROM\b/i)
+    expect(code).not.toMatch(/\bTRUNCATE\b/i)
+    expect(code).toMatch(/SET\s+LOCAL\s+lock_timeout/i)
+  })
+})
