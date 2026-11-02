@@ -401,7 +401,9 @@ const ACTION_SYNONYMS: Record<string, string[]> = {
 //     se lee mal (emojis, tildes, "autorizó", dudas) y una autorización tiene
 //     que ser explícita. Un texto con una negación en cualquier parte es un
 //     rechazo ("acepto, no hay problema" también); cualquier otro, null: el
-//     bot vuelve a mostrar los botones y a la segunda pasa a una persona.
+//     bot vuelve a mostrar los botones y a la segunda pasa a una persona. (El
+//     aviso de marketing es opcional: el controlador cierra la pregunta con un
+//     null, en vez de repetirla.)
 //   - Signos de alarma (alarm_*): descartarlos (alarm_no) exige el toque o un
 //     mensaje completo de una lista cerrada y SIN emojis ni símbolos
 //     ("ninguno 🤔" no descarta nada). Va a una persona (alarm_yes) un toque,

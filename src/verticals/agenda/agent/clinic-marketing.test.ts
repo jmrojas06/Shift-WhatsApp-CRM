@@ -147,6 +147,109 @@ describe('permiso para avisos de control', () => {
     })
   })
 
+  // La pregunta es opcional: quien escribe otra cosa ("gracias", una duda) no recibe un
+  // "no entendí", y dos mensajes así no pasan la conversación a una persona.
+  describe('si no la contesta', () => {
+    async function afterQuestion() {
+      const db = newPatientDb()
+      const rec = makeRecorder()
+      await bookOnce(db, rec)
+      return { db, rec, callsBefore: rec.calls.length }
+    }
+
+    it.each(['gracias', 'ok', 'sí', 'perfecto, muchas gracias'])(
+      'escribir %j la deja sin responder, sin registrar nada y sigue su camino',
+      async (text) => {
+        const { db, rec, callsBefore } = await afterQuestion()
+
+        const result = await send(db, rec, { text })
+
+        expect(marketingRows(db)).toHaveLength(0)
+        expect(activeSteps(db)).toEqual([])
+        expect(rec.calls).toHaveLength(callsBefore)
+        // No lo contesta el bot: el mensaje sigue su camino (a la IA).
+        expect(result).toEqual({ consumed: false })
+      },
+    )
+
+    it('dos mensajes seguidos no pasan la conversación a una persona', async () => {
+      const { db, rec } = await afterQuestion()
+
+      await send(db, rec, { text: 'gracias' })
+      await send(db, rec, { text: 'ok' })
+
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+      expect(rec.calls.some((c) => c.bodyText.includes('asesor humano'))).toBe(false)
+      expect(rec.calls.some((c) => c.bodyText.includes('No entendí'))).toBe(false)
+    })
+
+    it('una duda va a la IA, como si no hubiera pregunta', async () => {
+      const { db, rec, callsBefore } = await afterQuestion()
+
+      const result = await send(db, rec, { text: '¿a qué hora debo llegar?' })
+
+      expect(result.consumed).toBe(false)
+      expect(rec.calls).toHaveLength(callsBefore)
+      expect(activeSteps(db)).toEqual([])
+    })
+
+    it('un saludo vuelve al menú', async () => {
+      const { db, rec } = await afterQuestion()
+
+      await send(db, rec, { text: 'Hola' })
+
+      expect(last(rec).ids).toContain('act:book')
+      expect(activeSteps(db)).toEqual(['clinic_menu'])
+      expect(marketingRows(db)).toHaveLength(0)
+    })
+
+    it('una foto o un audio reciben el aviso de siempre y el menú', async () => {
+      const { db, rec } = await afterQuestion()
+
+      await send(db, rec, { text: '[Unsupported message type: image]' })
+
+      expect(rec.calls.at(-2)?.bodyText).toBe(texts.nonTextNotice)
+      expect(last(rec).ids).toContain('act:book')
+    })
+
+    it('el toque de un menú que ya no está activo se dice, no se confunde con la pregunta', async () => {
+      const { db, rec } = await afterQuestion()
+
+      await send(db, rec, { replyId: svcId(SERVICE_LIMPIEZA) })
+
+      expect(rec.calls.at(-2)?.bodyText).toBe(texts.optionExpired)
+      expect(marketingRows(db)).toHaveLength(0)
+    })
+
+    it('una urgencia gana sobre la pregunta', async () => {
+      const { db, rec } = await afterQuestion()
+
+      await send(db, rec, { text: 'tengo mucho dolor' })
+
+      expect(last(rec).bodyText).toContain('Signos de alarma')
+      expect(activeSteps(db)).toEqual(['urgency'])
+      expect(marketingRows(db)).toHaveLength(0)
+    })
+
+    it('pedir una persona sigue pasando la conversación a una persona', async () => {
+      const { db, rec } = await afterQuestion()
+
+      await send(db, rec, { text: 'quiero hablar con un asesor' })
+
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    })
+
+    it('contestar con el botón después de otro mensaje ya no cuenta: la pregunta se cerró', async () => {
+      const { db, rec } = await afterQuestion()
+      await send(db, rec, { text: 'gracias' })
+
+      await send(db, rec, { replyId: 'act:mkt_yes' })
+
+      expect(marketingRows(db)).toHaveLength(0)
+      expect(rec.calls.at(-2)?.bodyText).toBe(texts.optionExpired)
+    })
+  })
+
   describe('solo se pregunta una vez', () => {
     it.each([
       ['dijo que sí', true],

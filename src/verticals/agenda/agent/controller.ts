@@ -677,6 +677,19 @@ async function handleClinicInbound(
         return { consumed: true }
       }
     }
+    // La pregunta de avisos de control es opcional. Quien escribe otra cosa ("gracias",
+    // una duda, un "sí" escrito) no recibe un "no entendí" ni, a la segunda, pasa a una
+    // persona: la pregunta se cierra sin registrar nada y el mensaje sigue su camino,
+    // como si no hubiera sesión. Solo el toque de sus botones o un "no" la contestan.
+    if (step === 'marketing_consent' && !matchChoice({ text, replyId, options: state.options })) {
+      await closeSession(dialog.db, {
+        id: session.id,
+        accountId: dialog.accountId,
+        status: 'completed',
+        updatedAtIso: dialog.nowIso,
+      })
+      return handleClinicInbound(dialog, null, null, input)
+    }
     await advanceSession(dialog, session, input)
     return { consumed: true }
   }
