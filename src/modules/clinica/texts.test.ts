@@ -118,6 +118,11 @@ describe('palabras de urgencia por defecto', () => {
     'se me inflamó la encía',
     'me fracturé un diente',
     'me falta el aire',
+    'me fracturo un diente jugando',
+    'me está doliendo muchísimo la muela',
+    'me dolió toda la noche',
+    'me golpeé la boca con la puerta',
+    'tiene calentura desde ayer',
   ])('reconoce una urgencia: %s', (message) => {
     expect(containsUrgencyWord(message, words)).toBe(true)
   })
