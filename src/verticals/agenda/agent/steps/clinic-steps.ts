@@ -9,6 +9,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { recordConsent } from '@/modules/clinica/consent'
+import { validatePatientName } from '@/modules/clinica/patients'
 import type { ClinicContext } from '@/modules/clinica/settings'
 import type { ClinicTexts } from '@/modules/clinica/texts'
 
@@ -19,6 +20,7 @@ import {
   containsAnyWord,
   newBookingState,
   normalizeText,
+  patId,
   type BookingState,
   type BookingStep,
   type OfferedOption,
@@ -131,6 +133,37 @@ export function looksLikeQuestion(
   return QUESTION_STARTS.includes(plain.split(/\s+/)[0] ?? '')
 }
 
+/** Con paciente elegido sigue la reserva; una urgencia salta al menú de horas. */
+function afterPatient(state: BookingState, patientId: string): BookingState {
+  return { ...state, patientId, step: state.urgent ? 'pick_slot' : 'pick_service' }
+}
+
+/**
+ * Lo que escribe el cliente en el paso del nombre. Un toque de un botón viejo
+ * no es un nombre. El nombre es un dato personal: no va a logs ni a avisos.
+ */
+export async function handlePatientName(
+  ctx: ClinicStepCtx,
+  state: BookingState,
+  input: { text: string; replyId: string | null },
+): Promise<ClinicOutcome> {
+  const name = input.replyId === null ? validatePatientName(input.text) : ({ ok: false } as const)
+  if (!name.ok) return { kind: 'fail', message: ctx.texts.patientNameRetry }
+  try {
+    const patient = await ctx.backend.createPatient({
+      contactId: ctx.contactId,
+      fullName: name.value,
+    })
+    return { kind: 'next', state: afterPatient(state, patient.id) }
+  } catch (err) {
+    console.error(
+      '[clinica] no se pudo registrar al paciente:',
+      err instanceof Error ? err.message : 'error desconocido',
+    )
+    return { kind: 'fail', message: ctx.texts.patientSaveError }
+  }
+}
+
 export async function renderClinicStep(
   ctx: ClinicStepCtx,
   state: BookingState,
@@ -181,6 +214,32 @@ export async function renderClinicStep(
       await ctx.sender.sendText({ text: texts.faqPrompt })
       return { state: { ...state, options: [] }, closed: false }
 
+    case 'pick_patient': {
+      const patients = await ctx.backend.findPatients({ contactId: ctx.contactId })
+      // Sin pacientes registrados no hay a quién elegir: se pide el nombre.
+      if (!patients.length) {
+        return renderClinicStep(ctx, { ...state, step: 'new_patient_name', fails: 0 })
+      }
+      // Una lista admite 10 filas: 9 pacientes y "Otra persona".
+      const options: OfferedOption[] = [
+        ...patients.slice(0, 9).map((p) => ({ id: patId(p.id), title: p.fullName })),
+        { id: patId('new'), title: texts.patientOther },
+      ]
+      await ctx.sendOptions({
+        bodyText: texts.patientMenuBody,
+        buttonLabel: texts.patientMenuButton,
+        options,
+      })
+      return { state: { ...state, options }, closed: false }
+    }
+
+    case 'new_patient_name': {
+      // Se espera un texto, no un toque: sin opciones, lo que llegue lo lee
+      // `handlePatientName`.
+      await ctx.sender.sendText({ text: texts.patientNamePrompt })
+      return { state: { ...state, options: [] }, closed: false }
+    }
+
     default:
       return { state, closed: true }
   }
@@ -229,7 +288,7 @@ export async function handleClinicChoice(
       if (parsed?.kind !== 'act') return { kind: 'fail' }
       switch (parsed.value) {
         case 'book':
-          return { kind: 'next', state: newBookingState('pick_service') }
+          return { kind: 'next', state: newBookingState('pick_patient') }
         case 'faq':
           return { kind: 'next', state: newBookingState('faq_open') }
         case 'human':
@@ -237,6 +296,18 @@ export async function handleClinicChoice(
         default:
           return { kind: 'fail' }
       }
+    }
+
+    case 'pick_patient': {
+      if (parsed?.kind !== 'pat') return { kind: 'fail' }
+      if (parsed.value === 'new') {
+        return { kind: 'next', state: { ...state, step: 'new_patient_name' } }
+      }
+      // El menú guardado puede ser viejo: manda la base. Solo vale un paciente
+      // de este contacto en esta cuenta (el backend lee con las dos).
+      const patients = await ctx.backend.findPatients({ contactId: ctx.contactId })
+      if (!patients.some((p) => p.id === parsed.value)) return { kind: 'fail' }
+      return { kind: 'next', state: afterPatient(state, parsed.value) }
     }
 
     default:

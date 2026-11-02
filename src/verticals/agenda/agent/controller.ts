@@ -56,6 +56,7 @@ import {
   listServices,
   loadAccount,
   loadAppointment,
+  loadAppointmentPatientId,
   loadBotSettings,
   loadContact,
   hasRecentBookingEvent,
@@ -105,6 +106,7 @@ import {
 } from './state'
 import {
   handleClinicChoice,
+  handlePatientName,
   isClinicStep,
   looksLikeQuestion,
   renderClinicStep,
@@ -271,10 +273,13 @@ export async function handleAgendaInbound(
   }
 
   // 1) Pedir un humano gana sobre cualquier paso del flujo. Excepción: mientras
-  //    el cliente escribe la respuesta a una pregunta extra de texto, solo cuenta
-  //    el mensaje que ES la palabra ("es para una persona mayor" es la respuesta).
+  //    el cliente escribe la respuesta a una pregunta extra de texto, o el nombre
+  //    de quien va a asistir, solo cuenta el mensaje que ES la palabra ("es para
+  //    una persona mayor" es la respuesta; "Ana Persona" es un nombre).
   const asking = args.session ? coerceState(args.session.state) : null
-  const writingAnswer = asking?.step === 'ask_question' && asking.options.length === 0
+  const writingAnswer =
+    (asking?.step === 'ask_question' && asking.options.length === 0) ||
+    asking?.step === 'new_patient_name'
   if (
     replyId === null &&
     (writingAnswer ? isHandoffOnly(text) : containsHandoffWord(text))
@@ -286,13 +291,12 @@ export async function handleAgendaInbound(
   // Clínica: quejas, pagos y documentos los atiende una persona (spec §5,
   // etapa 2). Va al nivel del pase a una persona, así que no espera la
   // autorización, pero no se aplica mientras la persona escribe un nombre o la
-  // respuesta a una pregunta, ni a una duda ("¿cuánto cuesta el certificado?"
-  // va a la IA).
+  // respuesta a una pregunta (`writingAnswer`: "Paz Documento" es un nombre), ni
+  // a una duda ("¿cuánto cuesta el certificado?" va a la IA).
   if (
     dialog.clinic &&
     replyId === null &&
     !writingAnswer &&
-    asking?.step !== 'new_patient_name' &&
     containsAnyWord(text, CLINIC_HUMAN_WORDS) &&
     !looksLikeQuestion(text, [dialog.settings.labels.cita, dialog.settings.labels.citas])
   ) {
@@ -640,6 +644,12 @@ async function advanceSession(
   // pasan por el emparejamiento general del menú.
   if (state.step === 'ask_question') {
     await handleAnswer(dialog, session.id, state, input)
+    return
+  }
+  // El nombre de quien va a asistir se escribe: tampoco tiene menú que emparejar.
+  if (state.step === 'new_patient_name' && dialog.clinic) {
+    const outcome = await handlePatientName(clinicCtx(dialog), state, input)
+    await applyClinicOutcome(dialog, session.id, state, outcome)
     return
   }
   const choice = matchChoice({
@@ -1256,6 +1266,21 @@ async function confirmAppointment(
 
   const answers = await answersForNewAppointment(dialog, state, oldAppt)
 
+  // Clínica: la cita es del paciente. Al reprogramar se conserva el de la cita
+  // anterior. Se lee antes de reclamar la sesión: si la lectura falla, la sesión
+  // sigue viva y se puede reintentar, y la cita nueva no pierde al paciente.
+  let patientId = state.patientId ?? null
+  if (!patientId && dialog.clinic && oldAppt) {
+    try {
+      patientId = await loadAppointmentPatientId(dialog.db, dialog.accountId, oldAppt.id)
+    } catch (err) {
+      console.error('[clinica] no se pudo leer el paciente de la cita anterior:', err)
+      await dialog.sender.sendText({ text: dialog.texts.confirmError })
+      await conclude(dialog, sessionId, state)
+      return
+    }
+  }
+
   // Un solo ganador por sesión: si otro proceso (un doble tap de
   // "Confirmar") ya la reclamó, ese es el que agenda y responde.
   // Aquí no se inserta nada ni se manda un mensaje que contradiga.
@@ -1273,6 +1298,8 @@ async function confirmAppointment(
     conversationId: dialog.conversationId,
     serviceId: service.id,
     staffId: assigned,
+    patientId,
+    locationId: dialog.clinic?.location?.id ?? null,
     startsAtIso: start.toISOString(),
     endsAtIso: end.toISOString(),
     confirmedAtIso: dialog.nowIso,
@@ -2365,7 +2392,14 @@ async function applyClinicOutcome(
 ): Promise<void> {
   switch (outcome.kind) {
     case 'next':
-      await conclude(dialog, sessionId, outcome.state)
+      // `advanceSession` no reinicia los fallos en los pasos clínicos, así que
+      // aquí un paso nuevo nace con 0: un error en el menú anterior no puede
+      // adelantar el pase a una persona del paso que sigue.
+      await conclude(
+        dialog,
+        sessionId,
+        outcome.state.step === state.step ? outcome.state : { ...outcome.state, fails: 0 },
+      )
       return
     case 'handoff':
       await performHandoff(dialog, sessionId, outcome)

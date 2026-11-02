@@ -547,6 +547,9 @@ export async function insertAppointment(
     createdVia: 'bot'
     confirmedAtIso: string
     rescheduledFrom?: string | null
+    /** Módulo clínica. Solo se envían si vienen: las demás cuentas no tienen estas columnas. */
+    patientId?: string | null
+    locationId?: string | null
     /** Por id de pregunta. Solo se guarda si queda algo; se acota al tope de la base. */
     answers?: AnswerMap
   },
@@ -567,9 +570,32 @@ export async function insertAppointment(
     ...(args.rescheduledFrom
       ? { rescheduled_from: args.rescheduledFrom }
       : {}),
+    ...(args.patientId ? { patient_id: args.patientId } : {}),
+    ...(args.locationId ? { location_id: args.locationId } : {}),
     ...(Object.keys(answers).length ? { answers } : {}),
   })
   return { error }
+}
+
+/**
+ * Paciente de una cita (módulo clínica). Lectura aparte: `APPOINTMENT_COLS` no
+ * cambia porque otros negocios lo leen y la columna puede no existir aún.
+ * Lanza si no pudo leer: un fallo no es "la cita no tiene paciente", y
+ * reprogramar con ese error le quitaría el paciente a la cita nueva.
+ */
+export async function loadAppointmentPatientId(
+  db: SupabaseClient,
+  accountId: string,
+  appointmentId: string,
+): Promise<string | null> {
+  const { data, error } = await db
+    .from('booking_appointments')
+    .select('patient_id')
+    .eq('id', appointmentId)
+    .eq('account_id', accountId)
+    .maybeSingle()
+  if (error) throw new Error(`No se pudo leer el paciente de la cita: ${error.message}`)
+  return ((data as Record<string, unknown> | null)?.patient_id as string | null | undefined) ?? null
 }
 
 export async function cancelAppointment(

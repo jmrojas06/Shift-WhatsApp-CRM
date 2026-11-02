@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_LABELS } from '../labels'
 import { DEFAULT_TOGGLES } from '../toggles'
 import { ANSWERS_MAX_BYTES } from '../questions'
-import { insertAppointment, loadAppointment, loadBotSettings } from './db'
+import { insertAppointment, loadAppointment, loadAppointmentPatientId, loadBotSettings } from './db'
+import { asClient, makeFakeDb } from './testing/fake-db'
 
 /** Cliente mínimo: solo la cadena que usa loadBotSettings. */
 function stubClient(result: { data: unknown; error: unknown }): SupabaseClient {
@@ -130,6 +131,98 @@ describe('insertAppointment: respuestas', () => {
     expect(new TextEncoder().encode(JSON.stringify(sent)).length).toBeLessThanOrEqual(ANSWERS_MAX_BYTES)
     expect(sent.q3).toEqual({ label: 'C', value: 'corta' })
     expect(sent.q1.value.length).toBeGreaterThan(0)
+  })
+})
+
+describe('insertAppointment: paciente y sede', () => {
+  const base = {
+    id: 'a1',
+    accountId: 'acc-1',
+    contactId: 'ct-1',
+    conversationId: 'cv-1',
+    serviceId: 'svc-1',
+    staffId: 'st-1',
+    startsAtIso: '2026-10-19T14:00:00.000Z',
+    endsAtIso: '2026-10-19T14:30:00.000Z',
+    status: 'confirmed' as const,
+    createdVia: 'bot' as const,
+    confirmedAtIso: '2026-10-19T13:00:00.000Z',
+  }
+
+  function recordingClient() {
+    const inserted: Record<string, unknown>[] = []
+    const client = {
+      from: () => ({
+        insert: async (row: Record<string, unknown>) => {
+          inserted.push(row)
+          return { error: null }
+        },
+      }),
+    } as unknown as SupabaseClient
+    return { client, inserted }
+  }
+
+  it('manda el paciente y la sede cuando vienen', async () => {
+    const { client, inserted } = recordingClient()
+    await insertAppointment(client, { ...base, patientId: 'pat-1', locationId: 'loc-1' })
+    expect(inserted[0]).toMatchObject({ patient_id: 'pat-1', location_id: 'loc-1' })
+  })
+
+  it('no manda las columnas cuando no vienen (ni nulas): los demás negocios no las tienen', async () => {
+    const { client, inserted } = recordingClient()
+    await insertAppointment(client, base)
+    await insertAppointment(client, { ...base, patientId: null, locationId: null })
+    await insertAppointment(client, { ...base, patientId: undefined, locationId: undefined })
+    expect(inserted).toHaveLength(3)
+    for (const row of inserted) {
+      expect('patient_id' in row).toBe(false)
+      expect('location_id' in row).toBe(false)
+    }
+  })
+
+  it('cada una va por su lado', async () => {
+    const { client, inserted } = recordingClient()
+    await insertAppointment(client, { ...base, patientId: 'pat-1' })
+    await insertAppointment(client, { ...base, locationId: 'loc-1' })
+    expect(inserted[0]).toMatchObject({ patient_id: 'pat-1' })
+    expect('location_id' in inserted[0]).toBe(false)
+    expect(inserted[1]).toMatchObject({ location_id: 'loc-1' })
+    expect('patient_id' in inserted[1]).toBe(false)
+  })
+})
+
+describe('loadAppointmentPatientId', () => {
+  const seed = () =>
+    makeFakeDb({
+      booking_appointments: [
+        { id: 'ap-1', account_id: 'acc-1', patient_id: 'pat-1' },
+        { id: 'ap-2', account_id: 'acc-2', patient_id: 'pat-9' },
+        { id: 'ap-3', account_id: 'acc-1', patient_id: null },
+        { id: 'ap-4', account_id: 'acc-1' },
+      ],
+    })
+
+  it('devuelve el paciente de la cita', async () => {
+    expect(await loadAppointmentPatientId(asClient(seed()), 'acc-1', 'ap-1')).toBe('pat-1')
+  })
+
+  it('una cita sin paciente, o que no existe, da null', async () => {
+    const db = asClient(seed())
+    expect(await loadAppointmentPatientId(db, 'acc-1', 'ap-3')).toBeNull()
+    expect(await loadAppointmentPatientId(db, 'acc-1', 'ap-4')).toBeNull()
+    expect(await loadAppointmentPatientId(db, 'acc-1', 'ap-no')).toBeNull()
+  })
+
+  it('no lee la cita de otra cuenta', async () => {
+    expect(await loadAppointmentPatientId(asClient(seed()), 'acc-1', 'ap-2')).toBeNull()
+  })
+
+  it('si la lectura falla lanza: no se confunde con una cita sin paciente', async () => {
+    const db = seed()
+    db._failNext('select', 'booking_appointments', { message: 'timeout' })
+    await expect(loadAppointmentPatientId(asClient(db), 'acc-1', 'ap-1')).rejects.toThrow(
+      'No se pudo leer el paciente de la cita: timeout',
+    )
   })
 })
 

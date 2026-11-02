@@ -9,13 +9,20 @@
 // Contrato de fallas (todo conector debe cumplirlo):
 //   - `book` NO lanza por un fallo esperado: devuelve `slot_taken` si
 //     alguien ganó la hora y `failed` si la cita no quedó creada.
-//   - Las lecturas (`getDaySlots`, `getDaysWithSlots`, `isStaffFree`)
-//     lanzan si no pueden responder. Un conector nunca debe contestar
-//     "libre" ni devolver horas cuando no pudo leer la agenda: ofrecer
-//     una hora que no se sabe libre es peor que no ofrecer ninguna.
-//   - `cancel` y `confirm` lanzan si no se pudo: el bot no dice
-//     "cancelada" ni "confirmada" sobre una cita que sigue como estaba.
+//   - Las lecturas (`getDaySlots`, `getDaysWithSlots`, `isStaffFree`,
+//     `findPatients`) lanzan si no pueden responder. Un conector nunca
+//     debe contestar "libre" ni devolver horas cuando no pudo leer la
+//     agenda: ofrecer una hora que no se sabe libre es peor que no
+//     ofrecer ninguna. Tampoco "no hay pacientes" si no pudo leerlos:
+//     el bot pediría el nombre y duplicaría a alguien que ya existe.
+//   - `cancel`, `confirm` y `createPatient` lanzan si no se pudo: el bot
+//     no dice "cancelada" ni "confirmada" sobre una cita que sigue como
+//     estaba, ni sigue con un paciente que no quedó registrado.
+//   - Un paciente es dato personal: ningún conector pone su nombre en un
+//     mensaje de error ni en un log.
 // ============================================================
+
+import type { ClinicPatient } from '@/modules/clinica/patients'
 
 import type { AnswerMap } from '../questions'
 import type { MergedSlot } from './availability'
@@ -44,6 +51,9 @@ export interface BookArgs {
   conversationId: string
   serviceId: string
   staffId: string
+  /** Paciente y sede de la cita (módulo clínica). Sin ellos no se guardan. */
+  patientId?: string | null
+  locationId?: string | null
   startsAtIso: string
   endsAtIso: string
   confirmedAtIso: string
@@ -63,6 +73,10 @@ export interface ClinicBackend {
   /** Días del rango con al menos una hora ofrecible, en orden. */
   getDaysWithSlots(query: DayRangeQuery): Promise<string[]>
   isStaffFree(args: { staffId: string; startIso: string; endIso: string }): Promise<boolean>
+  /** Pacientes de ese contacto (un número puede tener varios). Lanza si no pudo leer. */
+  findPatients(args: { contactId: string }): Promise<ClinicPatient[]>
+  /** Registra a un paciente del contacto. Lanza si no se pudo guardar. */
+  createPatient(args: { contactId: string; fullName: string }): Promise<ClinicPatient>
   book(args: BookArgs): Promise<BookResult>
   /** Lanza si no se pudo: el bot no puede decir "cancelada" si sigue viva. */
   cancel(args: { id: string; reason: string; cancelledAtIso: string }): Promise<void>

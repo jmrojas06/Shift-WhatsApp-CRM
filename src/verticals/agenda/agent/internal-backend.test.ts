@@ -127,4 +127,45 @@ describe('InternalBackend', () => {
     await expect(backend.book(bookArgs)).resolves.toEqual({ kind: 'ok' })
     expect(db._tables.booking_appointments).toHaveLength(1)
   })
+
+  it('book guarda el paciente y la sede solo si vienen', async () => {
+    const db = seed()
+    const backend = createInternalBackend({ db: asClient(db), accountId: ACCOUNT })
+
+    await backend.book({ ...bookArgs, id: 'ap-1' })
+    await backend.book({ ...bookArgs, id: 'ap-2', patientId: 'pat-1', locationId: 'loc-1' })
+
+    const [plain, withPatient] = db._tables.booking_appointments
+    expect('patient_id' in plain).toBe(false)
+    expect('location_id' in plain).toBe(false)
+    expect(withPatient).toMatchObject({ patient_id: 'pat-1', location_id: 'loc-1' })
+  })
+
+  describe('pacientes', () => {
+    const patientRows = () => [
+      { id: 'pat-2', account_id: ACCOUNT, contact_id: 'ct-1', full_name: 'Tomás Gil' },
+      { id: 'pat-1', account_id: ACCOUNT, contact_id: 'ct-1', full_name: 'Marta Ruiz' },
+      { id: 'pat-3', account_id: ACCOUNT, contact_id: 'ct-2', full_name: 'Ajeno Gil' },
+      { id: 'pat-4', account_id: 'acc-2', contact_id: 'ct-1', full_name: 'Otra Cuenta' },
+    ]
+
+    it('findPatients trae solo los de ese contacto en la cuenta del backend', async () => {
+      const db = makeFakeDb({ clinic_patients: patientRows() })
+      const backend = createInternalBackend({ db: asClient(db), accountId: ACCOUNT })
+      expect(await backend.findPatients({ contactId: 'ct-1' })).toEqual([
+        { id: 'pat-1', fullName: 'Marta Ruiz' },
+        { id: 'pat-2', fullName: 'Tomás Gil' },
+      ])
+    })
+
+    it('createPatient lo guarda en la cuenta del backend, no en otra', async () => {
+      const db = makeFakeDb({ clinic_patients: [] })
+      const backend = createInternalBackend({ db: asClient(db), accountId: ACCOUNT })
+      const created = await backend.createPatient({ contactId: 'ct-1', fullName: 'Lucía Gil Ruiz' })
+      expect(created.fullName).toBe('Lucía Gil Ruiz')
+      expect(db._tables.clinic_patients).toMatchObject([
+        { id: created.id, account_id: ACCOUNT, contact_id: 'ct-1', full_name: 'Lucía Gil Ruiz' },
+      ])
+    })
+  })
 })

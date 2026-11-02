@@ -8,6 +8,8 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { insertPatient, listPatients } from '@/modules/clinica/patients'
+
 import { computeDaySlots, mergeSlotsByStart, type MergedSlot } from './availability'
 import type { ClinicBackend, DayRangeQuery, SlotQuery } from './backend'
 import {
@@ -79,6 +81,11 @@ export function createInternalBackend(args: {
 
     isStaffFree: ({ staffId, startIso, endIso }) =>
       isStaffFree(db, accountId, staffId, startIso, endIso),
+
+    findPatients: ({ contactId }) => listPatients(db, { accountId, contactId }),
+
+    createPatient: ({ contactId, fullName }) =>
+      insertPatient(db, { accountId, contactId, fullName }),
 
     async book(book) {
       const { error } = await insertAppointment(db, {

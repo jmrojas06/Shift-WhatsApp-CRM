@@ -275,7 +275,8 @@ describe('autorización de datos', () => {
     await send(db, rec, { replyId: 'act:consent_yes' })
     await send(db, rec, { replyId: 'act:consent_yes' })
     await send(db, rec, { replyId: 'act:book' })
-    expect(last(rec).ids[0]).toMatch(/^svc:/)
+    // Sin pacientes registrados, "Agendar" pide primero el nombre.
+    expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
   })
 
   it.each(['1', '2', '2.'])(
@@ -452,7 +453,7 @@ describe('autorización de datos', () => {
       await send(db, rec, { text: 'Hola' })
       const result = await send(db, rec, { replyId: 'act:book' })
       expect(result).toEqual({ consumed: true })
-      expect(last(rec).ids[0]).toMatch(/^svc:/)
+      expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
     })
 
     it('"Precios y dudas" invita a preguntar y deja la sesión esperando la duda', async () => {
