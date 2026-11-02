@@ -11,6 +11,7 @@ export type TemplateSlug =
   | 'out_of_office'
   | 'lead_qualifier'
   | 'follow_up_reminder'
+  | 'real_estate_qualified'
 
 export interface TemplateStepSeed {
   step_type: AutomationStepType
@@ -37,6 +38,40 @@ function keywords(key: string): string[] {
     .split(',')
     .map((k) => k.trim())
     .filter(Boolean)
+}
+
+/**
+ * The automation half of the `real_estate` flow template. It's a function
+ * because the tag and the stage have per-account ids: the flow install
+ * passes the real ones, and the gallery entry below leaves them blank for
+ * the owner to pick in the builder.
+ */
+export function realEstateQualifiedTemplate(ids: {
+  tagId: string
+  pipelineId: string
+  stageId: string
+}): AutomationTemplateDefinition {
+  return {
+    slug: 'real_estate_qualified',
+    name: t('real_estate_qualified.name'),
+    description: t('real_estate_qualified.description'),
+    trigger_type: 'tag_added',
+    trigger_config: { tag_id: ids.tagId },
+    steps: [
+      {
+        step_type: 'create_deal',
+        step_config: {
+          pipeline_id: ids.pipelineId,
+          stage_id: ids.stageId,
+          title: t('real_estate_qualified.dealTitle'),
+        },
+      },
+      {
+        step_type: 'assign_conversation',
+        step_config: { mode: 'round_robin' },
+      },
+    ],
+  }
 }
 
 export const AUTOMATION_TEMPLATES: Record<TemplateSlug, AutomationTemplateDefinition> = {
@@ -133,6 +168,7 @@ export const AUTOMATION_TEMPLATES: Record<TemplateSlug, AutomationTemplateDefini
       },
     ],
   },
+  real_estate_qualified: realEstateQualifiedTemplate({ tagId: '', pipelineId: '', stageId: '' }),
 }
 
 export function getTemplate(slug: string): AutomationTemplateDefinition | null {

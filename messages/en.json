@@ -2567,6 +2567,11 @@
       "name": "Follow-up Reminder",
       "description": "Send a nudge if a contact has not replied within 24 hours.",
       "text": "Just circling back — did you have any other questions for us? Happy to help!"
+    },
+    "real_estate_qualified": {
+      "name": "Real estate: qualified to pipeline",
+      "description": "When a lead gets the qualified tag, creates their deal in the Qualified stage and assigns an agent in turn.",
+      "dealTitle": "Qualified lead"
     }
   },
   "StarterFlows": {
@@ -2606,6 +2611,64 @@
       "askEmail": "Thanks {name}! What's your work email?",
       "askCompany": "Almost done — what's your company name?",
       "handoffNote": "New lead — name={name}, email={email}, company={company}."
+    },
+    "real_estate": {
+      "name": "Real estate: qualify and hand off",
+      "description": "Before activating, replace the sample listings with real properties. Qualifies each lead, shows them a listing and hands them to an agent. Sets up the tags, the pipeline and the automation.",
+      "pipeline": "Real estate",
+      "stages": {
+        "newLead": "New lead",
+        "contacted": "Contacted",
+        "qualified": "Qualified",
+        "visitScheduled": "Visit scheduled",
+        "negotiation": "Negotiation",
+        "won": "Closed won",
+        "lost": "Closed lost"
+      },
+      "tags": {
+        "buy": "buy",
+        "rent": "rent",
+        "qualified": "qualified"
+      },
+      "greeting": "Hi! 👋 I am the real estate assistant. What are you looking for?",
+      "buyButton": "Buy",
+      "rentButton": "Rent",
+      "agentButton": "Talk to an agent",
+      "zonesText": "Which area would you like to live in?",
+      "zonesLabel": "See areas",
+      "zones": {
+        "chapinero": "Chapinero",
+        "usaquen": "Usaquén",
+        "cedritos": "Cedritos",
+        "teusaquillo": "Teusaquillo",
+        "other": "Other area"
+      },
+      "budgetLabel": "See options",
+      "rentBudgetText": "What is your monthly budget?",
+      "rentBudgets": {
+        "range1": "Up to $1,500,000",
+        "range2": "$1,500,000 to $2,500,000",
+        "range3": "$2,500,000 to $4,000,000",
+        "range4": "Over $4,000,000"
+      },
+      "buyBudgetText": "What is your purchase budget?",
+      "buyBudgets": {
+        "range1": "Up to $250 million",
+        "range2": "$250 to $400 million",
+        "range3": "$400 to $700 million",
+        "range4": "Over $700 million"
+      },
+      "rentListing": "Take a look at this apartment in Chapinero:\n\n2 bedrooms, 2 bathrooms\n68 m², parking\n$2,300,000 per month",
+      "rentListing2": "Take a look at this apartment in Usaquén:\n\n3 bedrooms, 2 bathrooms\n82 m², parking\n$2,450,000 per month",
+      "buyListing": "Take a look at this apartment in Chapinero:\n\n2 bedrooms, 2 bathrooms\n68 m², parking\n$380,000,000",
+      "buyListing2": "Take a look at this apartment in Usaquén:\n\n3 bedrooms, 2 bathrooms\n82 m², parking\n$520,000,000",
+      "actionsText": "What would you like to do?",
+      "visitButton": "I want to visit",
+      "otherButton": "See another",
+      "visitMessage": "Great! I am handing you over to an agent to arrange the visit in this same chat. 🙌",
+      "visitNote": "Qualified lead: wants to visit the property. Arrange the visit in this chat.",
+      "agentMessage": "Sure! I am handing you over to an agent in this same chat. 🙌",
+      "agentNote": "The lead asked to talk to an agent."
     }
   },
   "LibErrors": {
