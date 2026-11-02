@@ -434,9 +434,83 @@ describe('urgencias', () => {
       expect(rec.calls.length).toBe(before + 2)
       expect(activeStates(db)).toMatchObject([{ step: 'urgency', fails: 1 }])
     })
+
+    describe('un botón de un menú viejo', () => {
+      const open = () => clinicDb({ booking_sessions: [session({ step: 'urgency' })] })
+
+      it.each(['act:book', 'act:faq'])('%s no se salta la pregunta: se repite', async (replyId) => {
+        const db = open()
+        const rec = makeRecorder()
+        await send(db, rec, { replyId })
+        expect(last(rec).bodyText).toBe(texts.urgencyBody(ALARM_TEXT))
+        expect(last(rec).ids).toEqual(ALARM_BUTTONS)
+        expect(activeSteps(db)).toEqual(['urgency'])
+        expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+      })
+
+      it('"Hablar con una persona" avisa con prioridad y repite los signos de alarma', async () => {
+        const db = open()
+        const rec = makeRecorder()
+        await send(db, rec, { replyId: 'act:human' })
+        expect(last(rec).bodyText).toBe(texts.urgencyPending(ALARM_TEXT))
+        expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+        expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.urgencyPendingNote)
+        expect(priorityNotifications(db)).toMatchObject([{ user_id: OWNER }])
+      })
+    })
   })
 
   describe('el toque "Tengo una urgencia"', () => {
+    it('sin sesión y con autorización también', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:urgent' })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).bodyText).toBe(texts.urgencyBody(ALARM_TEXT))
+      expect(last(rec).ids).toEqual(ALARM_BUTTONS)
+      expect(activeSteps(db)).toEqual(['urgency'])
+    })
+
+    it('mientras escribe el nombre abre los signos, no responde "Necesito nombre y apellidos"', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:book' })
+      await send(db, rec, { replyId: 'act:urgent' })
+      expect(rec.calls.some((c) => c.bodyText === texts.patientNameRetry)).toBe(false)
+      expect(last(rec).bodyText).toBe(texts.urgencyBody(ALARM_TEXT))
+      expect(activeStates(db)).toMatchObject([{ step: 'urgency', fails: 0 }])
+    })
+
+    describe.each([
+      ['pick_patient', { step: 'pick_patient', options: [{ id: 'pat:pat-1', title: 'Marta Ruiz' }] }],
+      ['new_patient_name', { step: 'new_patient_name' }],
+      ['pick_service', { step: 'pick_service', options: [{ id: 'svc:svc-limpieza', title: 'Limpieza' }] }],
+      ['pick_staff', { step: 'pick_staff', serviceId: SERVICE_LIMPIEZA }],
+      ['pick_day', { step: 'pick_day', serviceId: SERVICE_LIMPIEZA, staffId: STAFF_ANA }],
+      ['pick_slot', { step: 'pick_slot', serviceId: SERVICE_LIMPIEZA, staffId: STAFF_ANA, dateKey: '2026-10-19' }],
+      ['ask_question', { step: 'ask_question', questionId: 'q-1' }],
+      ['summary', { step: 'summary', serviceId: SERVICE_LIMPIEZA, staffId: STAFF_ANA }],
+      ['clinic_menu', { step: 'clinic_menu' }],
+      ['faq_open', { step: 'faq_open' }],
+      ['consent', { step: 'consent', consentText: 'Texto de autorización', consentVersion: 2 }],
+    ])('en %s', (_step, state) => {
+      it('abre los signos de alarma, sin "No entendí" y sin registrar nada', async () => {
+        const db = clinicDb({
+          clinic_consents: [grantedConsent()],
+          booking_sessions: [session(state)],
+        })
+        const rec = makeRecorder()
+        const result = await send(db, rec, { replyId: 'act:urgent' })
+        expect(result).toEqual({ consumed: true })
+        expect(last(rec).bodyText).toBe(texts.urgencyBody(ALARM_TEXT))
+        expect(last(rec).ids).toEqual(ALARM_BUTTONS)
+        expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(false)
+        expect(activeSteps(db)).toEqual(['urgency'])
+        expect(db._tables.clinic_consents).toHaveLength(1)
+      })
+    })
+
     it('sin sesión y sin autorización muestra los signos de alarma', async () => {
       const db = clinicDb()
       const rec = makeRecorder()

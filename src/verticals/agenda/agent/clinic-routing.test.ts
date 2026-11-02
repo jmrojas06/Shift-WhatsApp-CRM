@@ -482,15 +482,8 @@ describe('el menú sigue vivo', () => {
     expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
   })
 
-  it('sin sesión, "Tengo una urgencia" muestra los signos de alarma', async () => {
-    const db = authorized()
-    const rec = makeRecorder()
-    const result = await send(db, rec, { replyId: 'act:urgent' })
-    expect(result).toEqual({ consumed: true })
-    expect(last(rec).bodyText).toBe(texts.urgencyBody('Signos de alarma'))
-    expect(last(rec).ids).toEqual(['act:alarm_yes', 'act:alarm_no'])
-    expect(activeSteps(db)).toEqual(['urgency'])
-  })
+  // "Tengo una urgencia" (act:urgent) no pasa por el menú: abre los signos de
+  // alarma antes que la autorización. Sus pruebas están en clinic-urgency.test.ts.
 
   // "Mis citas" todavía no existe: hoy el bot responde "No entendí" a ese botón.
   // Lo construye la Task 11; esta prueba no debe darlo por hecho.
@@ -560,9 +553,10 @@ describe('el menú sigue vivo', () => {
  * Los botones del menú principal valen en cualquier paso de una sesión: un
  * menú viejo sigue en el chat y tocarlo no puede dar "No entendí" ni, en el
  * nombre, "Necesito nombre y apellidos". Quedan fuera la autorización (se
- * contesta primero; "Tengo una urgencia" sí va antes), el propio menú (lo lee
- * el emparejamiento de siempre) y los signos de alarma (se contestan primero).
- * "Mis citas" (act:mine) no está aquí: es de la Task 11.
+ * contesta primero), el propio menú (lo lee el emparejamiento de siempre) y los
+ * signos de alarma (también se contestan primero). "Tengo una urgencia" y los
+ * signos de alarma se prueban en clinic-urgency.test.ts. "Mis citas"
+ * (act:mine) no está aquí: es de la Task 11.
  */
 describe('los toques del menú valen en cualquier paso', () => {
   const PATIENT = { id: 'pat-1', account_id: ACCOUNT, contact_id: CONTACT, full_name: 'Marta Ruiz' }
@@ -653,17 +647,6 @@ describe('los toques del menú valen en cualquier paso', () => {
       expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
       expect(db._tables.booking_sessions[0].status).toBe('cancelled')
     })
-
-    it('"Tengo una urgencia" muestra los signos de alarma', async () => {
-      const db = open(state)
-      const rec = makeRecorder()
-      const result = await send(db, rec, { replyId: 'act:urgent' })
-      expect(result).toEqual({ consumed: true })
-      expect(last(rec).bodyText).toBe(texts.urgencyBody('Signos de alarma'))
-      expect(last(rec).ids).toEqual(['act:alarm_yes', 'act:alarm_no'])
-      expect(saidRetry(rec)).toBe(false)
-      expect(activeSteps(db)).toEqual(['urgency'])
-    })
   })
 
   it('"Precios y dudas" sin IA pasa a una persona, no promete una respuesta', async () => {
@@ -708,36 +691,6 @@ describe('los toques del menú valen en cualquier paso', () => {
       expect(db._tables.clinic_consents).toHaveLength(0)
       expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
       expect(activeSteps(db)).toEqual(['consent'])
-    })
-
-    it('"Tengo una urgencia" va primero', async () => {
-      const db = consent()
-      const rec = makeRecorder()
-      await send(db, rec, { replyId: 'act:urgent' })
-      expect(last(rec).bodyText).toBe(texts.urgencyBody('Signos de alarma'))
-      expect(db._tables.clinic_consents).toHaveLength(0)
-    })
-  })
-
-  describe('en los signos de alarma', () => {
-    const urgency = () => clinicDb({ booking_sessions: [session({ step: 'urgency' })] })
-
-    it.each(['act:book', 'act:faq'])('%s no se salta la pregunta: se repite', async (replyId) => {
-      const db = urgency()
-      const rec = makeRecorder()
-      await send(db, rec, { replyId })
-      expect(last(rec).bodyText).toBe(texts.urgencyBody('Signos de alarma'))
-      expect(last(rec).ids).toEqual(['act:alarm_yes', 'act:alarm_no'])
-      expect(activeSteps(db)).toEqual(['urgency'])
-    })
-
-    it('"Hablar con una persona" avisa con prioridad y repite los signos', async () => {
-      const db = urgency()
-      const rec = makeRecorder()
-      await send(db, rec, { replyId: 'act:human' })
-      expect(last(rec).bodyText).toBe(texts.urgencyPending('Signos de alarma'))
-      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
-      expect(db._tables.notifications).toMatchObject([{ title: texts.urgencyNotificationTitle }])
     })
   })
 

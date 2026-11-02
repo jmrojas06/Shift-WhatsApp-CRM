@@ -389,17 +389,6 @@ describe('pacientes por número', () => {
       expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
       expect(sessionState(db)).toMatchObject({ step: 'new_patient_name', fails: 0 })
     })
-
-    it('"Tengo una urgencia" mientras escribe el nombre abre los signos, no pide el nombre otra vez', async () => {
-      const db = clinicDb({ clinic_consents: [grantedConsent()] })
-      const rec = makeRecorder()
-      await send(db, rec, { text: 'Hola' })
-      await send(db, rec, { replyId: 'act:book' })
-      await send(db, rec, { replyId: 'act:urgent' })
-      expect(rec.calls.some((c) => c.bodyText === texts.patientNameRetry)).toBe(false)
-      expect(last(rec).bodyText).toBe(texts.urgencyBody('Signos de alarma'))
-      expect(sessionState(db)).toMatchObject({ step: 'urgency' })
-    })
   })
 
   describe('si no se pudo guardar', () => {
