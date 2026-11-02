@@ -10,11 +10,12 @@
 //   - `book` NO lanza por un fallo esperado: devuelve `slot_taken` si
 //     alguien ganó la hora y `failed` si la cita no quedó creada.
 //   - Las lecturas (`getDaySlots`, `getDaysWithSlots`, `isStaffFree`,
-//     `findPatients`) lanzan si no pueden responder. Un conector nunca
+//     `findPatients`, `listUpcoming`) lanzan si no pueden responder. Un conector nunca
 //     debe contestar "libre" ni devolver horas cuando no pudo leer la
 //     agenda: ofrecer una hora que no se sabe libre es peor que no
 //     ofrecer ninguna. Tampoco "no hay pacientes" si no pudo leerlos:
-//     el bot pediría el nombre y duplicaría a alguien que ya existe.
+//     el bot pediría el nombre y duplicaría a alguien que ya existe, ni
+//     "no hay citas" (`listUpcoming`) si no pudo leerlas.
 //   - `cancel`, `confirm` y `createPatient` lanzan si no se pudo: el bot
 //     no dice "cancelada" ni "confirmada" sobre una cita que sigue como
 //     estaba, ni sigue con un paciente que no quedó registrado.
@@ -61,6 +62,14 @@ export interface BookArgs {
   answers?: AnswerMap
 }
 
+/** Cita activa próxima, con el nombre de su paciente. */
+export interface AppointmentSnapshot {
+  id: string
+  startsAt: Date
+  /** null si la cita no tiene paciente o el paciente ya no está. */
+  patientName: string | null
+}
+
 export type BookResult =
   | { kind: 'ok' }
   /** Alguien ganó la hora: se ofrecen otras. */
@@ -77,6 +86,11 @@ export interface ClinicBackend {
   findPatients(args: { contactId: string }): Promise<ClinicPatient[]>
   /** Registra a un paciente del contacto. Lanza si no se pudo guardar. */
   createPatient(args: { contactId: string; fullName: string }): Promise<ClinicPatient>
+  /**
+   * Citas activas (pendientes o confirmadas) y futuras del contacto, en orden.
+   * Consulta en vivo. Lanza si no pudo leer.
+   */
+  listUpcoming(args: { contactId: string; nowIso: string }): Promise<AppointmentSnapshot[]>
   book(args: BookArgs): Promise<BookResult>
   /** Lanza si no se pudo: el bot no puede decir "cancelada" si sigue viva. */
   cancel(args: { id: string; reason: string; cancelledAtIso: string }): Promise<void>

@@ -199,10 +199,36 @@ function activeSession(db: FakeDb, now: Date): VerticalSession | null {
 
 let counter = 0
 
+/**
+ * Un saliente de plantilla que el paciente puede citar: el toque de un botón de
+ * plantilla llega como respuesta a ella. Devuelve su id interno, para `replyTo`.
+ */
+export function seedTemplateMessage(db: FakeDb, templateName: string): string {
+  counter += 1
+  const id = `msg-tpl-${counter}`
+  db._tables.messages.push({
+    id,
+    conversation_id: CONVERSATION,
+    message_id: `wamid-tpl-${counter}`,
+    sender_type: 'bot',
+    content_type: 'template',
+    content_text: 'Texto de la plantilla',
+    template_name: templateName,
+    interactive_reply_id: null,
+    reply_to_message_id: null,
+  })
+  return id
+}
+
 export async function send(
   db: FakeDb,
   rec: Recorder,
-  input: { text?: string; replyId?: string },
+  input: {
+    text?: string
+    replyId?: string
+    /** Id interno del mensaje al que responde (ver `seedTemplateMessage`). */
+    replyTo?: string
+  },
   opts: {
     now?: Date
     modules?: ModuleKey[]
@@ -224,6 +250,7 @@ export async function send(
     message_id: messageId,
     content_text: input.text ?? '',
     interactive_reply_id: input.replyId ?? null,
+    reply_to_message_id: input.replyTo ?? null,
   })
   const now = opts.now ?? NOW
   const aiOn = opts.aiOn ?? true

@@ -33,6 +33,7 @@ import { aiWillAnswer } from '@/lib/ai/eligibility'
 import { latestConsent } from '@/modules/clinica/consent'
 import {
   loadClinicContext,
+  loadServicePrep,
   type ClinicContext,
   type ClinicContextResult,
 } from '@/modules/clinica/settings'
@@ -134,6 +135,13 @@ import { addDaysToKey, zonedDateKey, zonedParts } from './time'
 
 /** La sesión muere a los 15 minutos sin actividad. */
 export const SESSION_TTL_MS = 15 * 60_000
+
+/**
+ * Si un número tiene más de una cita activa que empieza en menos de esto, un
+ * toque de recordatorio sin id de cita no dice a cuál se refiere: se pregunta,
+ * no se adivina.
+ */
+const TAP_AMBIGUITY_MS = 72 * 60 * 60 * 1000
 
 /** Días hacia adelante que se exploran al ofrecer días. */
 export const OFFER_DAYS = 7
@@ -246,7 +254,7 @@ export async function handleAgendaInbound(
     humanOwned &&
     !reminderTap &&
     !revokesConsent &&
-    !isCancelConfirmTap(args.session ?? null, replyId)
+    !isSystemTap(args.session ?? null, replyId)
   ) {
     if (clinicActive) await warnHumanOfUrgency(args, { text, replyId })
     return { consumed: false }
@@ -569,9 +577,11 @@ async function revokeConsentInHumanThread(dialog: Dialog, sessionId: string | nu
  * otro paso (la autorización, el nombre, los servicios, las preguntas...) el
  * texto es la respuesta a ese paso y lo lee el paso.
  *
- *   sin sesión   book, greeting → menú · human → una persona · ai → la IA
- *   clinic_menu  el mismo orden en los dos: book → "Agendar" · human → una
- *   faq_open     persona · greeting → el menú, sin contar fallo · ai → la IA.
+ *   sin sesión   book, greeting → menú · mine → sus citas · human → una persona ·
+ *                ai → la IA
+ *   clinic_menu  el mismo orden en los dos: book → "Agendar" · mine → "Mis
+ *   faq_open     citas" · human → una persona · greeting → el menú, sin contar
+ *                fallo · ai → la IA.
  *                Una duda con palabra de pago ("¿cuánto cuesta el certificado?")
  *                es una pregunta y va a la IA; un pedido ("quiero pagar") a una
  *                persona, también con la duda abierta
@@ -620,11 +630,9 @@ async function handleClinicInbound(
     // autorización, que se contesta primero ("Tengo una urgencia" sí va antes: lo
     // atiende `opensUrgency`), el propio menú, que lee el emparejamiento de
     // siempre, y los signos de alarma, que también se contestan primero. "Mis
-    // citas" aún no existe (Task 11): no tira una reserva a medias por un botón
-    // que no sabe atender.
+    // citas" también: a media reserva deja la reserva y abre la cita.
     if (
       isClinicMenuTap(replyId) &&
-      replyId !== actId('mine') &&
       step !== 'consent' &&
       step !== 'clinic_menu' &&
       step !== 'urgency'
@@ -633,8 +641,9 @@ async function handleClinicInbound(
       return { consumed: true }
     }
     if (step === 'clinic_menu' || step === 'faq_open') {
-      if (route === 'book') {
-        await handleChoice(dialog, session.id, newBookingState('clinic_menu'), actId('book'))
+      if (route === 'book' || route === 'mine') {
+        const tap = route === 'book' ? actId('book') : actId('mine')
+        await handleChoice(dialog, session.id, newBookingState('clinic_menu'), tap)
         return { consumed: true }
       }
       if (route === 'human') {
@@ -731,6 +740,14 @@ async function handleClinicInbound(
     return { consumed: true }
   }
 
+  // Quiere cancelar o cambiar su cita (ya con autorización): se le muestran las suyas.
+  if (route === 'mine') {
+    const menu = newBookingState('clinic_menu')
+    const sessionId = await openSession(dialog, menu)
+    await handleChoice(dialog, sessionId, menu, actId('mine'))
+    return { consumed: true }
+  }
+
   // Lo demás es para la IA. Si la IA no va a contestar, nadie se queda sin respuesta.
   if (!(await aiAnswers(dialog))) {
     await performHandoff(dialog, null, { note: dialog.clinicTexts.aiOffNote })
@@ -796,9 +813,12 @@ async function openSession(dialog: Dialog, state: BookingState): Promise<string>
 /**
  * Acciones Confirmar / Reprogramar / Cancelar del recordatorio.
  *
- * La cita sobre la que se actúa es la PRÓXIMA cita activa del
- * contacto: los botones de la plantilla de Meta no admiten ids
- * dinámicos, así que no viaja el id de la cita en el tap.
+ * La cita sobre la que se actúa:
+ *   - Con el id de la cita en el botón (`rem:<acción>:<cita>`), esa cita, si es de
+ *     este contacto y de esta cuenta, está activa y es futura.
+ *   - Sin id (los botones de una plantilla de Meta pueden devolver solo la etiqueta),
+ *     la PRÓXIMA cita activa del contacto. En una clínica, con más de una cita
+ *     activa en las próximas 72 horas no se adivina: se pregunta cuál.
  *
  *   - Confirmar: marca la cita y responde; no toca la sesión.
  *   - Reprogramar: retoma el flujo existente (`pick_day` en modo
@@ -806,14 +826,71 @@ async function openSession(dialog: Dialog, state: BookingState): Promise<string>
  *   - Cancelar: entra a la confirmación de cancelación existente
  *     (`manage_cancel_confirm`), que ya cancela con etiqueta y evento.
  */
-/** ¿Es el tap "Sí, cancelar" / "No" de una confirmación de cancelación abierta? */
-function isCancelConfirmTap(
-  session: VerticalSession | null,
-  replyId: string | null,
-): boolean {
+
+/**
+ * ¿Es la respuesta a una pregunta que abrió el propio sistema? Se atiende aunque
+ * una persona sea dueña del hilo:
+ *   - el "Sí, cancelar" / "No" de una cancelación abierta, o
+ *   - elegir la cita cuando el toque de un recordatorio no decía cuál era.
+ * La lista de "Mis citas" no cuenta: si una persona tomó el hilo mientras tanto,
+ * lo que sigue es suyo.
+ */
+function isSystemTap(session: VerticalSession | null, replyId: string | null): boolean {
   if (!session || !replyId) return false
+  if (session.state.step === 'pick_appointment') {
+    return typeof session.state.reminderAction === 'string' && parseOptionId(replyId)?.kind === 'appt'
+  }
   if (session.state.step !== 'manage_cancel_confirm') return false
   return replyId === actId('cancel_yes') || replyId === actId('back')
+}
+
+/** La cita, solo si es de este contacto y de esta cuenta, está activa y es futura. */
+async function loadUpcomingAppointment(
+  dialog: Dialog,
+  appointmentId: string,
+): Promise<AppointmentInfo | null> {
+  const appt = await loadAppointment(dialog.db, dialog.accountId, dialog.contactId, appointmentId)
+  if (!appt) return null
+  if (appt.status !== 'pending' && appt.status !== 'confirmed') return null
+  return appt.startsAt > dialog.now ? appt : null
+}
+
+/**
+ * La cita del toque, o `null` si ya no hay una activa. Devuelve 'handled' cuando
+ * no se puede saber cuál es y el mensaje ya se atendió: se le preguntó al paciente
+ * o, sin la configuración de la clínica, pasó a una persona.
+ *
+ * Una cuenta sin el módulo clínica no cambia: siempre la próxima cita activa.
+ */
+async function resolveTapAppointment(
+  dialog: Dialog,
+  session: VerticalSession | null,
+  tap: ReminderTap,
+): Promise<AppointmentInfo | 'handled' | null> {
+  if (!dialog.clinic && !dialog.clinicUnavailable) {
+    return findNextAppointment(dialog.db, dialog.accountId, dialog.contactId, dialog.nowIso)
+  }
+  if (tap.appointmentId) return loadUpcomingAppointment(dialog, tap.appointmentId)
+
+  const upcoming = await dialog.backend.listUpcoming({
+    contactId: dialog.contactId,
+    nowIso: dialog.nowIso,
+  })
+  const limit = dialog.now.getTime() + TAP_AMBIGUITY_MS
+  const near = upcoming.filter((a) => a.startsAt.getTime() <= limit)
+  if (near.length > 1) {
+    // Sin la configuración de la clínica no hay lista que ofrecer, y adivinar
+    // podría confirmar o cancelar la cita de otro paciente: lo atiende una persona.
+    if (!dialog.clinic) {
+      await handoffClinicUnavailable(dialog, session?.id ?? null, { text: '', replyId: null })
+      return 'handled'
+    }
+    const state = newBookingState('pick_appointment', { reminderAction: tap.action })
+    const sessionId = session?.id ?? (await openSession(dialog, state))
+    await conclude(dialog, sessionId, state)
+    return 'handled'
+  }
+  return upcoming[0] ? loadUpcomingAppointment(dialog, upcoming[0].id) : null
 }
 
 async function handleReminderTap(
@@ -822,20 +899,24 @@ async function handleReminderTap(
   tap: ReminderTap,
   humanOwned = false,
 ): Promise<void> {
-  const action = tap.action
-  const appt = await findNextAppointment(
-    dialog.db,
-    dialog.accountId,
-    dialog.contactId,
-    dialog.nowIso,
-  )
+  const appt = await resolveTapAppointment(dialog, session, tap)
+  if (appt === 'handled') return
   if (!appt) {
     await dialog.sender.sendText({
       text: dialog.texts.managedAppointmentGone,
     })
     return
   }
+  await applyReminderAction(dialog, session?.id ?? null, tap.action, appt, humanOwned)
+}
 
+async function applyReminderAction(
+  dialog: Dialog,
+  sessionId: string | null,
+  action: ReminderAction,
+  appt: AppointmentInfo,
+  humanOwned: boolean,
+): Promise<void> {
   if (action === 'confirm') {
     try {
       await dialog.backend.confirm({ id: appt.id, confirmedAtIso: dialog.nowIso })
@@ -868,6 +949,7 @@ async function handleReminderTap(
         time: formatTimeLabel(parts),
       }),
     })
+    if (dialog.clinic) await bestEffort('instrucciones previas', () => sendPrepInfo(dialog, appt))
     return
   }
 
@@ -876,7 +958,7 @@ async function handleReminderTap(
   if (!dialog.settings.toggles.allowReschedule) {
     await handoffChangeRequest(dialog, appt, action, {
       via: 'recordatorio',
-      sessionId: session?.id ?? null,
+      sessionId,
     })
     return
   }
@@ -894,8 +976,25 @@ async function handleReminderTap(
       ? await rescheduleState(dialog, appt)
       : newBookingState('manage_cancel_confirm', { appointmentId: appt.id })
 
-  const sessionId = session?.id ?? (await openSession(dialog, state))
-  await conclude(dialog, sessionId, state)
+  await conclude(dialog, sessionId ?? (await openSession(dialog, state)), state)
+}
+
+/**
+ * Tras confirmar: lo que la clínica escribió para ese servicio, la dirección y el
+ * mapa de la sede. Solo texto de la clínica: ni procedimiento ni consejo médico.
+ * Sin nada que decir no manda nada.
+ */
+async function sendPrepInfo(dialog: Dialog, appt: AppointmentInfo): Promise<void> {
+  const location = dialog.clinic?.location ?? null
+  const prep = appt.serviceId
+    ? await loadServicePrep(dialog.db, dialog.accountId, appt.serviceId)
+    : null
+  const mapUrl =
+    location?.latitude != null && location.longitude != null
+      ? `https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}`
+      : null
+  const text = dialog.clinicTexts.prepInfo({ prep, address: location?.address ?? null, mapUrl })
+  if (text) await dialog.sender.sendText({ text })
 }
 
 // ------------------------------------------------------------
@@ -1503,10 +1602,12 @@ async function handleChoice(
     case 'manage_menu': {
       if (parsed?.kind !== 'act') break
       if (parsed.value === 'new') {
+        // En una clínica la cita nueva es de un paciente: sin elegirlo primero se
+        // crearía a nombre de nadie.
         await conclude(
           dialog,
           sessionId,
-          newBookingState('pick_service'),
+          newBookingState(dialog.clinic ? 'pick_patient' : 'pick_service'),
         )
         return
       }
@@ -2932,8 +3033,39 @@ async function applyClinicOutcome(
     case 'fail':
       await registerFail(dialog, sessionId, state, outcome.message)
       return
-    case 'reminder':
-      await registerFail(dialog, sessionId, state)
+    case 'reminder': {
+      const appt = await loadUpcomingAppointment(dialog, outcome.appointmentId)
+      if (!appt) {
+        await dialog.sender.sendText({ text: dialog.texts.managedAppointmentGone })
+        await closeSession(dialog.db, {
+          id: sessionId,
+          accountId: dialog.accountId,
+          status: 'completed',
+          updatedAtIso: dialog.nowIso,
+        })
+        return
+      }
+      // La pregunta "¿cuál?" ya cumplió. Confirmar termina aquí, y reprogramar con
+      // una persona a cargo también (solo le avisa). Cancelar y reprogramar siguen
+      // en la misma sesión, que cambia de paso, o la cierra quien las pasa a una persona.
+      const endsHere =
+        outcome.action === 'confirm' || (outcome.action === 'reschedule' && dialog.humanOwned)
+      if (endsHere) {
+        await closeSession(dialog.db, {
+          id: sessionId,
+          accountId: dialog.accountId,
+          status: 'completed',
+          updatedAtIso: dialog.nowIso,
+        })
+      }
+      await applyReminderAction(
+        dialog,
+        endsHere ? null : sessionId,
+        outcome.action,
+        appt,
+        dialog.humanOwned,
+      )
       return
+    }
   }
 }

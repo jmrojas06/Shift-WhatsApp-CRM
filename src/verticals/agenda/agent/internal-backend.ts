@@ -87,6 +87,27 @@ export function createInternalBackend(args: {
     createPatient: ({ contactId, fullName }) =>
       insertPatient(db, { accountId, contactId, fullName }),
 
+    async listUpcoming({ contactId, nowIso }) {
+      const { data, error } = await db
+        .from('booking_appointments')
+        .select('id, starts_at, patient_id')
+        .eq('account_id', accountId)
+        .eq('contact_id', contactId)
+        .in('status', ['pending', 'confirmed'])
+        .gt('starts_at', nowIso)
+        .order('starts_at')
+      if (error) throw new Error(`No se pudieron leer las citas: ${error.message}`)
+      const rows = (data ?? []) as { id: string; starts_at: string; patient_id: string | null }[]
+      if (!rows.length) return []
+      const patients = await listPatients(db, { accountId, contactId })
+      const names = new Map(patients.map((p) => [p.id, p.fullName]))
+      return rows.map((row) => ({
+        id: row.id,
+        startsAt: new Date(row.starts_at),
+        patientName: row.patient_id ? (names.get(row.patient_id) ?? null) : null,
+      }))
+    },
+
     async book(book) {
       const { error } = await insertAppointment(db, {
         ...book,

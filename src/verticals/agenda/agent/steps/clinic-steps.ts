@@ -16,8 +16,10 @@ import { CLINIC_HUMAN_WORDS, type ClinicTexts } from '@/modules/clinica/texts'
 import type { ClinicBackend } from '../backend'
 import type { AgendaSender } from '../controller'
 import type { ServiceInfo } from '../db'
+import { formatDayLabel, formatTimeLabel } from '../format'
 import {
   actId,
+  apptId,
   containsAnyWord,
   indexOfAnyWord,
   newBookingState,
@@ -29,7 +31,7 @@ import {
   type OptionKind,
   type ReminderAction,
 } from '../state'
-import { zonedDateKey } from '../time'
+import { zonedDateKey, zonedParts } from '../time'
 
 export interface ClinicStepCtx {
   db: SupabaseClient
@@ -161,7 +163,7 @@ export function isContentless(text: string): boolean {
 }
 
 /** Adónde va un texto libre en una clínica. */
-export type ClinicRoute = 'book' | 'greeting' | 'human' | 'ai'
+export type ClinicRoute = 'book' | 'mine' | 'greeting' | 'human' | 'ai'
 
 /** Dos palabras con las que arranca una pregunta: "tengo que llevar documentos". */
 const QUESTION_PHRASES = ['tengo que', 'hay que', 'se puede', 'se debe', 'es necesario']
@@ -181,32 +183,38 @@ const BOOK_WORDS = [
 ]
 
 /**
- * Quien las trae no pide una cita: la cambia o la cancela, o se queja de ella. Hasta
- * que la tarea 11 le dé una ruta a "Mis citas", va a la IA (que no cancela nada) o,
- * si es una queja, a una persona; lo que no puede es abrirle el menú de agendar.
+ * Quien las trae sin una palabra de cita ya habla de la suya: la cancela o la
+ * reprograma ("necesito reprogramar").
  */
-const NOT_A_BOOKING_WORDS = [
+const CHANGE_WORDS = [
   'cancelar',
   'cancelo',
   'cancela',
-  'cancelacion',
   'anular',
   'reprogramar',
   'reagendar',
-  'cambiar',
-  'mover',
   'aplazar',
   'posponer',
-  'queja',
-  'quejas',
-  'reclamo',
-  'reclamos',
-  'pqr',
-  'pqrs',
 ]
+
+/**
+ * Estas solas no hablan de una cita ("quiero cambiar mi número", "mover el
+ * carro"): solo cuentan junto a una palabra de cita.
+ */
+const CHANGE_WITH_APPOINTMENT_WORDS = ['cancelacion', 'cambiar', 'mover']
+
+/** Quejas: no piden una cita ni la cambian, y las atiende una persona. */
+const COMPLAINT_WORDS = ['queja', 'quejas', 'reclamo', 'reclamos', 'pqr', 'pqrs']
 
 /** "No puedo ir a la cita": avisar que no va, no pedir una. */
 const CANNOT_ATTEND = /\bno (puedo|podre|podemos|podria|voy a poder) (ir|asistir|llegar|venir|acudir)\b/
+
+/**
+ * Quien arranca así pide algo aunque lo escriba como pregunta: "¿puedo cancelar mi
+ * cita?", "¿cómo cambio mi cita?". Cualquier otra pregunta sobre cancelar ("¿cuánto
+ * cuesta cancelar?", "¿qué pasa si cancelo?") es una duda para la IA.
+ */
+const REQUEST_STARTS = ['puedo', 'puede', 'pueden', 'como']
 
 /** Quien las usa pide algo. */
 const ASKING_WORDS = [
@@ -249,8 +257,12 @@ const THANKS = ['gracias', 'agradezco', 'agradecido', 'agradecida']
  *   2. human: trae una palabra de queja, pago o documento sin una negación justo
  *      antes (dos palabras) ni un agradecimiento antes (tres), y no es una pregunta.
  *      El saludo del principio no cuenta para saber si es una pregunta.
- *   3. greeting: arranca con un saludo y no pasa de cuatro palabras.
- *   4. ai: todo lo demás.
+ *   3. mine: quiere cancelar, cambiar o mover SU cita, o dice que no puede ir
+ *      ("quiero cancelar mi cita", "necesito reprogramar"): se le muestran sus
+ *      citas. Una pregunta que no sea un pedido ("¿cuánto cuesta cancelar?") es
+ *      una duda y va a la IA.
+ *   4. greeting: arranca con un saludo y no pasa de cuatro palabras.
+ *   5. ai: todo lo demás.
  *
  * La urgencia y la palabra de pase a una persona se miran antes, fuera de aquí.
  * `appointmentWords` son las palabras que usa la clínica para sus citas.
@@ -268,8 +280,11 @@ export function routeClinicText(text: string, appointmentWords: readonly string[
 
   const bookWords = [...BOOK_WORDS, ...appointmentWords]
   const namesAppointment = containsAnyWord(normalized, bookWords)
-  const notABooking =
-    containsAnyWord(normalized, NOT_A_BOOKING_WORDS) || CANNOT_ATTEND.test(normalized)
+  const changesIt =
+    containsAnyWord(normalized, CHANGE_WORDS) ||
+    (namesAppointment &&
+      (containsAnyWord(normalized, CHANGE_WITH_APPOINTMENT_WORDS) || CANNOT_ATTEND.test(normalized)))
+  const notABooking = changesIt || containsAnyWord(normalized, COMPLAINT_WORDS)
   if (namesAppointment && !notABooking) {
     const asks = containsAnyWord(normalized, ASKING_WORDS)
     // "cita para mi hijo": arranca con la cita y no pregunta nada.
@@ -284,6 +299,11 @@ export function routeClinicText(text: string, appointmentWords: readonly string[
     const negated = containsAnyWord(before.slice(-2).join(' '), NEGATIONS)
     const thanked = containsAnyWord(before.slice(-3).join(' '), THANKS)
     if (!negated && !thanked) return 'human'
+  }
+
+  if (changesIt) {
+    const asksForIt = REQUEST_STARTS.includes(body[0] ?? '') || bodyPlain.startsWith('se puede ')
+    if (!isQuestion || asksForIt) return 'mine'
   }
 
   if (words.length <= 4 && greetingAt(words) !== null) return 'greeting'
@@ -480,6 +500,29 @@ async function urgencyBooking(ctx: ClinicStepCtx): Promise<ClinicOutcome> {
   }
 }
 
+/**
+ * "Mis citas": sin citas lo dice y vuelve al menú; con una sola va directo a
+ * gestionarla; con varias pregunta cuál. Se lee en vivo: una cita cancelada en
+ * recepción no aparece.
+ */
+async function myAppointments(ctx: ClinicStepCtx): Promise<ClinicOutcome> {
+  const upcoming = await ctx.backend.listUpcoming({
+    contactId: ctx.contactId,
+    nowIso: ctx.nowIso,
+  })
+  if (!upcoming.length) {
+    await ctx.sender.sendText({ text: ctx.texts.noUpcoming })
+    return { kind: 'next', state: newBookingState('clinic_menu') }
+  }
+  if (upcoming.length === 1) {
+    return {
+      kind: 'next',
+      state: newBookingState('manage_menu', { appointmentId: upcoming[0].id }),
+    }
+  }
+  return { kind: 'next', state: newBookingState('pick_appointment') }
+}
+
 export async function renderClinicStep(
   ctx: ClinicStepCtx,
   state: BookingState,
@@ -556,6 +599,38 @@ export async function renderClinicStep(
       return { state: { ...state, options: [] }, closed: false }
     }
 
+    case 'pick_appointment': {
+      const upcoming = await ctx.backend.listUpcoming({
+        contactId: ctx.contactId,
+        nowIso: ctx.nowIso,
+      })
+      if (!upcoming.length) {
+        await ctx.sender.sendText({ text: texts.noUpcoming })
+        return { state, closed: true }
+      }
+      // Una lista admite 10 filas. Con 3 o menos van botones, que no llevan
+      // descripción: el nombre del paciente tiene que caber en el título y estar
+      // también en el cuerpo, donde cabe completo.
+      const rows = upcoming.slice(0, 10).map((appt) => {
+        const parts = zonedParts(appt.startsAt)
+        const when = `${formatDayLabel(parts.dateKey)}, ${formatTimeLabel(parts)}`
+        const firstName = appt.patientName?.split(' ')[0]
+        return {
+          id: apptId(appt.id),
+          title: firstName ? `${formatTimeLabel(parts)} ${firstName}` : when,
+          description: when,
+          line: appt.patientName ? `• ${appt.patientName}: ${when}` : `• ${when}`,
+        }
+      })
+      await ctx.sendOptions({
+        bodyText: `${texts.pickAppointmentBody}\n\n${rows.map((r) => r.line).join('\n')}`,
+        buttonLabel: texts.pickAppointmentButton,
+        options: rows.map(({ id, title, description }) => ({ id, title, description })),
+      })
+      const options: OfferedOption[] = rows.map(({ id, title }) => ({ id, title }))
+      return { state: { ...state, options }, closed: false }
+    }
+
     case 'urgency': {
       const options: OfferedOption[] = [
         { id: actId('alarm_yes'), title: texts.urgencyYes },
@@ -630,6 +705,8 @@ export async function handleClinicChoice(
       switch (parsed.value) {
         case 'book':
           return { kind: 'next', state: newBookingState('pick_patient') }
+        case 'mine':
+          return myAppointments(ctx)
         case 'urgent':
           return { kind: 'next', state: newBookingState('urgency') }
         case 'faq':
@@ -653,6 +730,24 @@ export async function handleClinicChoice(
       const patients = await ctx.backend.findPatients({ contactId: ctx.contactId })
       if (!patients.some((p) => p.id === parsed.value)) return { kind: 'fail' }
       return { kind: 'next', state: afterPatient(state, parsed.value) }
+    }
+
+    case 'pick_appointment': {
+      if (parsed?.kind !== 'appt') return { kind: 'fail' }
+      // El menú guardado puede ser viejo: manda la base. Solo vale una cita activa
+      // y futura de este contacto en esta cuenta (el backend lee con las dos).
+      const upcoming = await ctx.backend.listUpcoming({
+        contactId: ctx.contactId,
+        nowIso: ctx.nowIso,
+      })
+      if (!upcoming.some((a) => a.id === parsed.value)) return { kind: 'fail' }
+      if (state.reminderAction) {
+        return { kind: 'reminder', action: state.reminderAction, appointmentId: parsed.value }
+      }
+      return {
+        kind: 'next',
+        state: newBookingState('manage_menu', { appointmentId: parsed.value }),
+      }
     }
 
     case 'urgency': {

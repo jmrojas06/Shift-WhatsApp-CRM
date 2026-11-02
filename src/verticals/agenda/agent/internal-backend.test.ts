@@ -168,4 +168,77 @@ describe('InternalBackend', () => {
       ])
     })
   })
+
+  describe('listUpcoming', () => {
+    const appointment = (id: string, startsAt: string, extra: Record<string, unknown> = {}) => ({
+      id,
+      account_id: ACCOUNT,
+      contact_id: 'ct-1',
+      status: 'pending',
+      patient_id: 'pat-1',
+      starts_at: startsAt,
+      ...extra,
+    })
+
+    const seedUpcoming = () =>
+      makeFakeDb({
+        clinic_patients: [
+          { id: 'pat-1', account_id: ACCOUNT, contact_id: 'ct-1', full_name: 'Marta Ruiz' },
+          { id: 'pat-2', account_id: ACCOUNT, contact_id: 'ct-1', full_name: 'Tomás Gil' },
+        ],
+        booking_appointments: [
+          appointment('ap-late', '2026-10-22T14:00:00.000Z', { patient_id: 'pat-2' }),
+          appointment('ap-soon', '2026-10-20T14:00:00.000Z', { status: 'confirmed' }),
+          appointment('ap-no-patient', '2026-10-21T14:00:00.000Z', { patient_id: null }),
+          appointment('ap-gone-patient', '2026-10-21T15:00:00.000Z', { patient_id: 'pat-borrado' }),
+          appointment('ap-cancelled', '2026-10-20T15:00:00.000Z', { status: 'cancelled' }),
+          appointment('ap-past', '2026-10-18T14:00:00.000Z'),
+          appointment('ap-other-contact', '2026-10-20T16:00:00.000Z', { contact_id: 'ct-2' }),
+          appointment('ap-other-account', '2026-10-20T17:00:00.000Z', { account_id: 'acc-2' }),
+        ],
+      })
+
+    it('trae las citas activas y futuras de ese contacto, en orden, con su paciente', async () => {
+      const backend = createInternalBackend({ db: asClient(seedUpcoming()), accountId: ACCOUNT })
+      const upcoming = await backend.listUpcoming({ contactId: 'ct-1', nowIso: NOW.toISOString() })
+      expect(upcoming).toEqual([
+        { id: 'ap-soon', startsAt: new Date('2026-10-20T14:00:00.000Z'), patientName: 'Marta Ruiz' },
+        { id: 'ap-no-patient', startsAt: new Date('2026-10-21T14:00:00.000Z'), patientName: null },
+        { id: 'ap-gone-patient', startsAt: new Date('2026-10-21T15:00:00.000Z'), patientName: null },
+        { id: 'ap-late', startsAt: new Date('2026-10-22T14:00:00.000Z'), patientName: 'Tomás Gil' },
+      ])
+    })
+
+    it('una cita que empieza justo ahora ya no es próxima', async () => {
+      const backend = createInternalBackend({ db: asClient(seedUpcoming()), accountId: ACCOUNT })
+      const upcoming = await backend.listUpcoming({
+        contactId: 'ct-1',
+        nowIso: '2026-10-20T14:00:00.000Z',
+      })
+      expect(upcoming.map((a) => a.id)).not.toContain('ap-soon')
+    })
+
+    it('sin citas devuelve una lista vacía', async () => {
+      const backend = createInternalBackend({ db: asClient(seedUpcoming()), accountId: ACCOUNT })
+      expect(await backend.listUpcoming({ contactId: 'ct-9', nowIso: NOW.toISOString() })).toEqual([])
+    })
+
+    it('si no puede leer las citas, lanza: nunca contesta "no hay"', async () => {
+      const db = seedUpcoming()
+      db._failNext('select', 'booking_appointments', { message: 'se cayó la base' })
+      const backend = createInternalBackend({ db: asClient(db), accountId: ACCOUNT })
+      await expect(
+        backend.listUpcoming({ contactId: 'ct-1', nowIso: NOW.toISOString() }),
+      ).rejects.toThrow('No se pudieron leer las citas')
+    })
+
+    it('si no puede leer los pacientes, lanza en vez de listar citas sin nombre', async () => {
+      const db = seedUpcoming()
+      db._failNext('select', 'clinic_patients', { message: 'se cayó la base' })
+      const backend = createInternalBackend({ db: asClient(db), accountId: ACCOUNT })
+      await expect(
+        backend.listUpcoming({ contactId: 'ct-1', nowIso: NOW.toISOString() }),
+      ).rejects.toThrow('No se pudieron leer los pacientes')
+    })
+  })
 })

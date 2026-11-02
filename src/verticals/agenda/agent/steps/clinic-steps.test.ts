@@ -87,23 +87,60 @@ describe('routeClinicText', () => {
     expect(routeClinicText(text)).toBe('ai')
   })
 
-  // La Task 11 agrega la ruta a "Mis citas": hasta entonces cancelar o no poder ir
-  // a una cita no es pedir una, y va a la IA (que no la cancela) en vez de abrir el menú.
-  describe('cancelar o no poder ir no es pedir una cita (hasta la Task 11)', () => {
+  // Cancelar, cambiar o no poder ir a una cita no es pedir una: lleva a "Mis citas".
+  describe('cancelar o cambiar su cita lleva a "Mis citas"', () => {
     it.each([
       'quiero cancelar mi cita',
+      'no puedo ir a la cita',
       '¿puedo cancelar mi cita?',
+      'quiero cambiar mi cita',
+      'necesito reprogramar',
+      'quiero mover mi cita',
       'necesito cambiar mi cita',
       'quiero reprogramar la cita',
-      'no puedo ir a la cita',
       'no voy a poder asistir a mi cita de mañana',
-    ])('ai: %j', (text) => {
-      expect(routeClinicText(text)).toBe('ai')
+      'Hola, quiero cancelar mi cita',
+      'hola buenas tardes, quisiera reagendar',
+      'necesito anular mi cita del martes',
+      'quiero aplazar mi cita',
+      '¿cómo cancelo mi cita?',
+      '¿se puede cambiar la cita?',
+      'cancelar cita',
+      'QUIERO CANCELAR MI CITA!!',
+    ])('mine: %j', (text) => {
+      expect(routeClinicText(text)).toBe('mine')
     })
 
-    it('una queja por la cita es una queja, no una cita', () => {
+    it('usa las palabras que la clínica le da a la cita', () => {
+      expect(routeClinicText('quiero cambiar mi sesión')).toBe('ai')
+      expect(routeClinicText('quiero cambiar mi sesión', ['sesión', 'sesiones'])).toBe('mine')
+      expect(routeClinicText('no puedo ir a la sesión', ['sesión'])).toBe('mine')
+    })
+
+    it('cambiar o mover solos no hablan de una cita', () => {
+      expect(routeClinicText('quiero cambiar mi número de teléfono')).toBe('ai')
+      expect(routeClinicText('necesito mover el carro')).toBe('ai')
+      expect(routeClinicText('cambiar')).toBe('ai')
+    })
+
+    it('una duda sobre cancelar no es un pedido: va a la IA', () => {
+      expect(routeClinicText('¿cuánto cuesta cancelar una cita?')).toBe('ai')
+      expect(routeClinicText('¿qué pasa si cancelo mi cita?')).toBe('ai')
+      expect(routeClinicText('¿cuál es la política de cancelación de la cita?')).toBe('ai')
+      expect(routeClinicText('¿cancelar mi cita tiene costo?')).toBe('ai')
+      expect(routeClinicText('quiero cancelar mi cita, ¿hay costo?')).toBe('ai')
+    })
+
+    it('una queja, un pago o un documento con la cita van a una persona', () => {
       expect(routeClinicText('quiero poner una queja por mi cita')).toBe('human')
       expect(routeClinicText('tengo un reclamo sobre mi cita')).toBe('human')
+      expect(routeClinicText('quiero cancelar mi cita y que me devuelvan el pago')).toBe('human')
+      expect(routeClinicText('necesito cancelar mi cita, ya pagué')).toBe('human')
+    })
+
+    it('pedir una cita nueva sigue siendo agendar', () => {
+      expect(routeClinicText('quiero una cita')).toBe('book')
+      expect(routeClinicText('necesito agendar')).toBe('book')
     })
   })
 

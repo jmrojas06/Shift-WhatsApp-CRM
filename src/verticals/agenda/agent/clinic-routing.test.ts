@@ -34,6 +34,20 @@ const session = (state: Record<string, unknown>) => ({
 
 const authorized = () => clinicDb({ clinic_consents: [grantedConsent()] })
 
+/** Una cita confirmada de Marta para el martes 20 a las 9:00 en Bogotá (la hora actual es el lunes 19). */
+const UPCOMING = {
+  id: 'ap-1',
+  account_id: ACCOUNT,
+  contact_id: CONTACT,
+  service_id: 'svc-limpieza',
+  staff_id: 'st-ana',
+  patient_id: 'pat-1',
+  starts_at: '2026-10-20T14:00:00.000Z',
+  ends_at: '2026-10-20T14:30:00.000Z',
+  status: 'confirmed',
+  answers: {},
+}
+
 /** Abre el menú como lo haría un paciente: con un saludo. */
 async function withMenuOpen() {
   const db = authorized()
@@ -514,9 +528,38 @@ describe('el menú sigue vivo', () => {
   // "Tengo una urgencia" (act:urgent) no pasa por el menú: abre los signos de
   // alarma antes que la autorización. Sus pruebas están en clinic-urgency.test.ts.
 
-  // "Mis citas" todavía no existe: hoy el bot responde "No entendí" a ese botón.
-  // Lo construye la Task 11; esta prueba no debe darlo por hecho.
-  it.todo('sin sesión, "Mis citas" (act:mine) lista las citas del paciente: Task 11')
+  it('sin sesión, "Mis citas" abre la gestión de la única cita del paciente', async () => {
+    const db = clinicDb({
+      clinic_consents: [grantedConsent()],
+      clinic_patients: [{ id: 'pat-1', account_id: ACCOUNT, contact_id: CONTACT, full_name: 'Marta Ruiz' }],
+      booking_appointments: [UPCOMING],
+    })
+    const rec = makeRecorder()
+    const result = await send(db, rec, { replyId: 'act:mine' })
+    expect(result).toEqual({ consumed: true })
+    expect(last(rec).ids).toEqual(['act:new', 'act:reschedule', 'act:cancel'])
+    expect(activeSteps(db)).toEqual(['manage_menu'])
+    expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(false)
+  })
+
+  it('sin sesión, "Mis citas" sin citas lo dice y muestra el menú', async () => {
+    const db = authorized()
+    const rec = makeRecorder()
+    const result = await send(db, rec, { replyId: 'act:mine' })
+    expect(result).toEqual({ consumed: true })
+    expect(rec.calls.at(-2)?.bodyText).toBe(texts.noUpcoming)
+    expect(last(rec).ids).toEqual(MENU_IDS)
+    expect(activeSteps(db)).toEqual(['clinic_menu'])
+  })
+
+  it('con el menú abierto, "Mis citas" abre la gestión de la cita', async () => {
+    const { db, rec } = await withMenuOpen()
+    db._tables.booking_appointments.push(UPCOMING)
+    const result = await send(db, rec, { replyId: 'act:mine' })
+    expect(result).toEqual({ consumed: true })
+    expect(last(rec).ids).toEqual(['act:new', 'act:reschedule', 'act:cancel'])
+    expect(activeSteps(db)).toEqual(['manage_menu'])
+  })
 
   it('sin sesión y sin IA, "Precios y dudas" pasa a una persona', async () => {
     const db = authorized()
@@ -526,7 +569,7 @@ describe('el menú sigue vivo', () => {
   })
 
   it('sin autorización, el toque muestra la autorización', async () => {
-    for (const replyId of ['act:book', 'act:faq', 'act:human']) {
+    for (const replyId of ['act:book', 'act:mine', 'act:faq', 'act:human']) {
       const db = clinicDb()
       const rec = makeRecorder()
       const result = await send(db, rec, { replyId })
@@ -575,7 +618,7 @@ describe('el menú sigue vivo', () => {
  * contesta primero), el propio menú (lo lee el emparejamiento de siempre) y los
  * signos de alarma (también se contestan primero). "Tengo una urgencia" y los
  * signos de alarma se prueban en clinic-urgency.test.ts. "Mis citas"
- * (act:mine) no está aquí: es de la Task 11.
+ * (act:mine) vale igual que los demás: a media reserva la deja y abre la cita.
  */
 describe('los toques del menú valen en cualquier paso', () => {
   const PATIENT = { id: 'pat-1', account_id: ACCOUNT, contact_id: CONTACT, full_name: 'Marta Ruiz' }
@@ -635,6 +678,29 @@ describe('los toques del menú valen en cualquier paso', () => {
     rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry || c.bodyText === texts.patientNameRetry)
 
   describe.each(STEPS)('en %s', (_step, state) => {
+    it('"Mis citas" deja la reserva y abre la gestión de la cita', async () => {
+      const db = open(state)
+      db._tables.booking_appointments.push(UPCOMING)
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:mine' })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).ids).toEqual(['act:new', 'act:reschedule', 'act:cancel'])
+      expect(saidRetry(rec)).toBe(false)
+      expect(activeSteps(db)).toEqual(['manage_menu'])
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    })
+
+    it('"Mis citas" sin citas lo dice y vuelve al menú', async () => {
+      const db = open(state)
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:mine' })
+      expect(result).toEqual({ consumed: true })
+      expect(rec.calls.at(-2)?.bodyText).toBe(texts.noUpcoming)
+      expect(last(rec).ids).toEqual(MENU_IDS)
+      expect(saidRetry(rec)).toBe(false)
+      expect(activeSteps(db)).toEqual(['clinic_menu'])
+    })
+
     it('"Agendar" empieza de nuevo por el paciente', async () => {
       const db = open(state)
       const rec = makeRecorder()
@@ -700,7 +766,7 @@ describe('los toques del menú valen en cualquier paso', () => {
         ],
       })
 
-    it.each(['act:book', 'act:faq', 'act:human'])('%s sigue pidiendo la autorización', async (replyId) => {
+    it.each(['act:book', 'act:mine', 'act:faq', 'act:human'])('%s sigue pidiendo la autorización', async (replyId) => {
       const db = consent()
       const rec = makeRecorder()
       const result = await send(db, rec, { replyId })
@@ -713,12 +779,19 @@ describe('los toques del menú valen en cualquier paso', () => {
     })
   })
 
-  it('"Mis citas" todavía no existe: un toque no tira la reserva a medias', async () => {
+  it('"Mis citas" con varias citas ofrece la lista, también a media reserva', async () => {
     const db = open({ step: 'pick_slot', ...booking, dateKey: '2026-10-19', options: [slot] })
+    db._tables.booking_appointments.push(UPCOMING, {
+      ...UPCOMING,
+      id: 'ap-2',
+      starts_at: '2026-10-21T14:00:00.000Z',
+      ends_at: '2026-10-21T14:30:00.000Z',
+    })
     const rec = makeRecorder()
     await send(db, rec, { replyId: 'act:mine' })
-    expect(activeSteps(db)).toEqual(['pick_slot'])
-    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    expect(last(rec).ids).toEqual(['appt:ap-1', 'appt:ap-2'])
+    expect(last(rec).bodyText).toContain('Marta Ruiz')
+    expect(activeSteps(db)).toEqual(['pick_appointment'])
   })
 
   it('en el menú principal el toque sigue su camino de siempre', async () => {
@@ -728,8 +801,6 @@ describe('los toques del menú valen en cualquier paso', () => {
     expect(last(rec).bodyText).toBe(texts.patientMenuBody)
   })
 
-  // "Mis citas" (act:mine) es de la Task 11: hoy responde "No entendí" en todos los pasos.
-  it.todo('"Mis citas" (act:mine) vale en cualquier paso: Task 11')
 })
 
 describe('si la IA está apagada', () => {
