@@ -6,6 +6,7 @@ import { DEFAULT_LABELS } from '@/verticals/agenda/labels'
 import {
   buildClinicTexts,
   DEFAULT_CONSENT_TEXT,
+  DEFAULT_LOCATION_NAME,
   DEFAULT_URGENCY_ALARM_TEXT,
   DEFAULT_URGENCY_WORDS,
 } from './texts'
@@ -133,4 +134,20 @@ describe('palabras de urgencia por defecto', () => {
       expect(containsUrgencyWord(message, words)).toBe(false)
     },
   )
+})
+
+describe('sede por defecto', () => {
+  it('no repite la palabra "sede" en el recordatorio', () => {
+    expect(DEFAULT_LOCATION_NAME).toBe('Principal')
+    const body = texts.reminderBody({
+      patient: 'Ana Pérez',
+      business: 'Clínica Sonrisa',
+      location: DEFAULT_LOCATION_NAME,
+      staff: 'Dra. Gómez',
+      date: 'lunes 4',
+      time: '3:00 p. m.',
+    })
+    expect(body).toContain('sede Principal:')
+    expect(body).not.toMatch(/sede sede/i)
+  })
 })

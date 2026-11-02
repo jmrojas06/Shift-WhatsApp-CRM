@@ -16,6 +16,13 @@ export const DEFAULT_CONSENT_TEXT = [
   '¿Autorizas el tratamiento de tus datos?',
 ].join('\n\n')
 
+/**
+ * Nombre de la sede que se crea sola, y el que se usa cuando una cita no tiene
+ * sede. Va sin la palabra "sede": el recordatorio ya dice "sede {nombre}", y
+ * "Sede principal" saldría como "sede Sede principal".
+ */
+export const DEFAULT_LOCATION_NAME = 'Principal'
+
 export const DEFAULT_URGENCY_ALARM_TEXT =
   'Ve a urgencias ahora si tienes dificultad para respirar o tragar, hinchazón que crece en la cara o el cuello, sangrado que no para, fiebre alta o un golpe fuerte en la cara.'
 

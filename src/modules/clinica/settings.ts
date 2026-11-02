@@ -14,6 +14,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import {
   DEFAULT_CONSENT_TEXT,
+  DEFAULT_LOCATION_NAME,
   DEFAULT_URGENCY_ALARM_TEXT,
   DEFAULT_URGENCY_WORDS,
 } from './texts'
@@ -177,7 +178,7 @@ export async function ensureClinicSetup(db: SupabaseClient, accountId: string): 
     const { error } = await db.from('clinic_locations').insert({
       id: crypto.randomUUID(),
       account_id: accountId,
-      name: 'Sede principal',
+      name: DEFAULT_LOCATION_NAME,
       is_active: true,
     })
     if (error) throw error

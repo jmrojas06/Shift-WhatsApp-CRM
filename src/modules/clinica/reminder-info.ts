@@ -17,13 +17,16 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { loadAppointmentClinicLinks, loadContact } from '@/verticals/agenda/agent/db'
 
+import { DEFAULT_LOCATION_NAME } from './texts'
+
 export interface ClinicReminderInfo {
   patientName: string
   locationName: string
 }
 
 const FALLBACK_PATIENT = 'tu familiar'
-const FALLBACK_LOCATION = 'principal'
+// Como la sede que se crea sola: el recordatorio dice "sede {nombre}".
+const FALLBACK_LOCATION = DEFAULT_LOCATION_NAME
 
 const HAS_LETTER = /\p{L}/u
 

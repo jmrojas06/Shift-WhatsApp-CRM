@@ -1337,14 +1337,14 @@ describe('runAgendaReminders', () => {
       expect(rec.deliveries[0].clinic?.patientName).toBe('tu familiar')
     })
 
-    it('una cita sin sede dice "principal"', async () => {
+    it('una cita sin sede dice "Principal", como la sede que se crea sola', async () => {
       const seed = clinicSeed()
       seed.booking_appointments[0].location_id = null
       const rec = makeRecorder()
 
       await runAgendaReminders({ db: asClient(makeFakeDb(seed)), now: NOW, send: rec.send })
 
-      expect(rec.deliveries[0].clinic?.locationName).toBe('principal')
+      expect(rec.deliveries[0].clinic?.locationName).toBe('Principal')
     })
 
     it('no lee pacientes ni sedes de otra cuenta', async () => {
@@ -1359,7 +1359,7 @@ describe('runAgendaReminders', () => {
 
       await runAgendaReminders({ db: asClient(makeFakeDb(seed)), now: NOW, send: rec.send })
 
-      expect(rec.deliveries[0].clinic).toEqual({ patientName: 'Laura Gil', locationName: 'principal' })
+      expect(rec.deliveries[0].clinic).toEqual({ patientName: 'Laura Gil', locationName: 'Principal' })
     })
 
     it('si no puede leer al paciente no envía ni reclama la señal, y sigue con las demás', async () => {

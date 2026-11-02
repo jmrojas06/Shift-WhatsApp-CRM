@@ -97,7 +97,7 @@ describe('configuración de la clínica', () => {
     expect(db._tables.clinic_settings[0].urgency_service_id).toBe('svc-u')
     expect(db._tables.clinic_settings[0].consent_version).toBe(1)
     expect(db._tables.clinic_locations).toHaveLength(1)
-    expect(db._tables.clinic_locations[0].name).toBe('Sede principal')
+    expect(db._tables.clinic_locations[0].name).toBe('Principal')
   })
 
   it('si otro montaje creó la configuración justo antes, no falla ni la pisa', async () => {
