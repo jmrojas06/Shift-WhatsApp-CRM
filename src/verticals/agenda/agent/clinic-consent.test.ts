@@ -628,6 +628,44 @@ describe('la clínica no está disponible', () => {
     })
   })
 
+  describe('quién recibe el aviso cuando el dueño también es el agente de pase', () => {
+    const AGENT = 'user-agent'
+    const withAgent = (agentId: string) =>
+      clinicDb({
+        clinic_settings: [],
+        ai_configs: [{ account_id: ACCOUNT, handoff_agent_id: agentId }],
+      })
+    const titlesFor = (db: ReturnType<typeof clinicDb>, userId: string) =>
+      db._tables.notifications.filter((n) => n.user_id === userId).map((n) => n.title)
+
+    it('el aviso de urgencia le llega al dueño aunque sea quien atiende', async () => {
+      const db = withAgent(OWNER)
+      await send(db, makeRecorder(), { text: 'Tengo mucho dolor de muela' })
+      expect(db._tables.conversations[0].assigned_agent_id).toBe(OWNER)
+      expect(titlesFor(db, OWNER)).toEqual([texts.urgencyNotificationTitle])
+    })
+
+    it('si el agente es otra persona, los dos reciben el aviso de urgencia', async () => {
+      const db = withAgent(AGENT)
+      await send(db, makeRecorder(), { text: 'Tengo mucho dolor de muela' })
+      expect(titlesFor(db, OWNER)).toEqual([texts.urgencyNotificationTitle])
+      expect(titlesFor(db, AGENT)).toEqual([texts.urgencyNotificationTitle])
+    })
+
+    it('un pase normal sigue como antes: si el dueño es el agente, lo avisa la asignación', async () => {
+      const db = withAgent(OWNER)
+      await send(db, makeRecorder(), { text: 'Hola' })
+      expect(db._tables.notifications).toHaveLength(0)
+    })
+
+    it('un pase normal con otro agente solo avisa al dueño', async () => {
+      const db = withAgent(AGENT)
+      await send(db, makeRecorder(), { text: 'Hola' })
+      expect(titlesFor(db, OWNER)).toEqual([AGENDA_AGENT_TEXTS.handoffNotificationTitle])
+      expect(titlesFor(db, AGENT)).toEqual([])
+    })
+  })
+
   it('las palabras de urgencia son las de siempre, no las de una configuración que no se pudo leer', async () => {
     const db = clinicDb()
     db._failNext('select', 'clinic_settings', { message: 'timeout' })

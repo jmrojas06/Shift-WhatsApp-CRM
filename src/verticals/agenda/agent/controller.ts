@@ -2024,26 +2024,34 @@ async function performHandoff(
   )
 
   // El trigger de asignación avisa al agente; el dueño recibe su
-  // aviso aquí para que el equipo lo vea aunque no haya agente.
+  // aviso aquí para que el equipo lo vea aunque no haya agente. Un aviso
+  // propio (el de urgencia) no se puede perder: sale siempre, también cuando
+  // el dueño es el agente y el trigger solo le dice que le asignaron un chat,
+  // y le llega además al agente.
   const agentId = await loadHandoffAgentId(dialog.db, dialog.accountId)
   const owner = dialog.account?.ownerUserId ?? null
-  if (owner && owner !== agentId) {
+  const recipients = new Set<string>()
+  if (owner && (owner !== agentId || opts.notification)) recipients.add(owner)
+  if (opts.notification && agentId) recipients.add(agentId)
+  if (recipients.size) {
     const contact = await loadContact(
       dialog.db,
       dialog.accountId,
       dialog.contactId,
     )
     const who = contact?.name?.trim() || contact?.phone || 'Un cliente'
-    await bestEffort('aviso de handoff al equipo', () =>
-      insertNotification(dialog.db, {
-        accountId: dialog.accountId,
-        userId: owner,
-        conversationId: dialog.conversationId,
-        contactId: dialog.contactId,
-        title: opts.notification?.title ?? dialog.texts.handoffNotificationTitle,
-        body: (opts.notification?.body ?? dialog.texts.handoffNotificationBody)(who),
-      }),
-    )
+    for (const userId of recipients) {
+      await bestEffort('aviso de handoff al equipo', () =>
+        insertNotification(dialog.db, {
+          accountId: dialog.accountId,
+          userId,
+          conversationId: dialog.conversationId,
+          contactId: dialog.contactId,
+          title: opts.notification?.title ?? dialog.texts.handoffNotificationTitle,
+          body: (opts.notification?.body ?? dialog.texts.handoffNotificationBody)(who),
+        }),
+      )
+    }
   }
 
   if (sessionId) {
