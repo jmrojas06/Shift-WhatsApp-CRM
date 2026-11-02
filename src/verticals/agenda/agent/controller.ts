@@ -31,6 +31,7 @@ import { loadClinicContext, type ClinicContext } from '@/modules/clinica/setting
 import {
   buildClinicTexts,
   CLINIC_GREETING_WORDS,
+  CLINIC_HUMAN_WORDS,
   DEFAULT_URGENCY_WORDS,
   type ClinicTexts,
 } from '@/modules/clinica/texts'
@@ -80,6 +81,7 @@ import {
   actId,
   ansId,
   ansSkipId,
+  containsAnyWord,
   containsHandoffWord,
   containsIntentWord,
   containsUrgencyWord,
@@ -278,6 +280,25 @@ export async function handleAgendaInbound(
     (writingAnswer ? isHandoffOnly(text) : containsHandoffWord(text))
   ) {
     await performHandoff(dialog, args.session?.id ?? null)
+    return { consumed: true }
+  }
+
+  // Clínica: quejas, pagos y documentos los atiende una persona (spec §5,
+  // etapa 2). Va al nivel del pase a una persona, así que no espera la
+  // autorización, pero no se aplica mientras la persona escribe un nombre o la
+  // respuesta a una pregunta, ni a una duda ("¿cuánto cuesta el certificado?"
+  // va a la IA).
+  if (
+    dialog.clinic &&
+    replyId === null &&
+    !writingAnswer &&
+    asking?.step !== 'new_patient_name' &&
+    containsAnyWord(text, CLINIC_HUMAN_WORDS) &&
+    !looksLikeQuestion(text, [dialog.settings.labels.cita, dialog.settings.labels.citas])
+  ) {
+    await performHandoff(dialog, args.session?.id ?? null, {
+      note: dialog.clinicTexts.humanTopicNote,
+    })
     return { consumed: true }
   }
 

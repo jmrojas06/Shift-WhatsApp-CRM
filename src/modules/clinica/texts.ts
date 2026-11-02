@@ -60,6 +60,31 @@ export const DEFAULT_URGENCY_WORDS: readonly string[] = [
 ]
 
 /**
+ * Temas que en esta versión atiende una persona (spec §5, etapa 2): quejas,
+ * pagos y documentos. Sin tildes: se comparan contra el texto normalizado. Un
+ * mensaje que trae una y no es una duda pasa a una persona, sin pedir antes la
+ * autorización.
+ */
+export const CLINIC_HUMAN_WORDS: readonly string[] = [
+  'queja',
+  'reclamo',
+  'pqr',
+  'pqrs',
+  'factura',
+  'pago',
+  'pagar',
+  'abono',
+  'saldo',
+  'certificado',
+  'incapacidad',
+  'historia clinica',
+  'radiografia',
+  'receta',
+  'documento',
+  'documentos',
+]
+
+/**
  * Saludos que abren el menú en una clínica ("buenas tardes" es lo primero que
  * escribe mucha gente). Solo en clínicas: en las demás agendas no cuentan.
  */
@@ -80,6 +105,8 @@ export function buildClinicTexts(l: AgendaLabels) {
     consentError: 'No pude guardar tu respuesta en este momento 😅. Intenta de nuevo, por favor.',
 
     /** La configuración de la clínica falta o no se pudo leer: el bot no atiende y pasa a una persona. */
+    humanTopicNote:
+      'Paciente: escribió sobre una queja, un pago o un documento, que atiende una persona (bot en pausa).',
     clinicUnavailableNote:
       'Paciente: el bot no lo atendió porque la configuración de la clínica no está disponible (bot en pausa). Revisa la configuración de la clínica.',
     clinicUnavailableUrgentNote:
