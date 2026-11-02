@@ -184,18 +184,18 @@ export function buildClinicTexts(l: AgendaLabels) {
     urgencyBody: (alarmText: string) => `${alarmText}\n\n¿Tienes alguno de estos signos?`,
     urgencyYes: 'Sí, tengo alguno',
     urgencyNo: 'No, ninguno',
-    urgencyGoEr: 'Por favor ve a urgencias ahora. Ya avisé a la clínica para que se comuniquen contigo.',
+    urgencyGoEr: 'Por favor ve a urgencias ahora, sin esperar respuesta. También avisé a la clínica.',
     urgencyOffHours: (onCallPhone: string | null) =>
       onCallPhone
-        ? `Hoy no tengo cupo en la agenda. Llama al ${onCallPhone}, que es el teléfono de turno. Si aparece alguno de los signos de alarma, ve a urgencias.`
-        : 'Hoy no tengo cupo en la agenda. Ya avisé a la clínica para que te escriban a primera hora. Si aparece alguno de los signos de alarma, ve a urgencias.',
+        ? `Hoy no tengo cupo en la agenda. Llama al ${onCallPhone}, que es el teléfono de turno. Si aparece alguno de los signos de alarma, ve a urgencias ahora, sin esperar respuesta.`
+        : 'Hoy no tengo cupo en la agenda. Ya avisé a la clínica para que te escriban a primera hora. Si aparece alguno de los signos de alarma, ve a urgencias ahora, sin esperar respuesta.',
     /**
      * Dos respuestas que no se entendieron (o pidió una persona) mientras se
      * preguntaban los signos: ya dijo que le duele y no se sabe si es grave.
      * Repite los signos, que son los de la clínica, y no dice nada más.
      */
     urgencyPending: (alarmText: string) =>
-      `${alarmText}\n\nYa avisé a la clínica para que se comuniquen contigo. Si tienes alguno de esos signos, ve a urgencias ahora.`,
+      `${alarmText}\n\nYa avisé a la clínica para que se comuniquen contigo. Si tienes alguno de esos signos, ve a urgencias ahora, sin esperar respuesta.`,
     urgencyNote: 'Paciente: reportó signos de alarma (bot en pausa).',
     urgencyOffHoursNote: 'Paciente: urgencia sin cupo en la agenda de hoy (bot en pausa).',
     urgencyPendingNote:

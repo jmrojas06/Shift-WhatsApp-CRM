@@ -4,7 +4,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_LABELS } from '../labels'
 import { DEFAULT_TOGGLES } from '../toggles'
 import { ANSWERS_MAX_BYTES } from '../questions'
-import { insertAppointment, loadAppointment, loadAppointmentPatientId, loadBotSettings } from './db'
+import {
+  hasRecentNotification,
+  insertAppointment,
+  insertNotification,
+  loadAppointment,
+  loadAppointmentPatientId,
+  loadBotSettings,
+} from './db'
 import { asClient, makeFakeDb } from './testing/fake-db'
 
 /** Cliente mínimo: solo la cadena que usa loadBotSettings. */
@@ -188,6 +195,71 @@ describe('insertAppointment: paciente y sede', () => {
     expect('location_id' in inserted[0]).toBe(false)
     expect(inserted[1]).toMatchObject({ location_id: 'loc-1' })
     expect('patient_id' in inserted[1]).toBe(false)
+  })
+})
+
+describe('insertNotification', () => {
+  const args = {
+    accountId: 'acc-1',
+    userId: 'u-1',
+    conversationId: 'cv-1',
+    contactId: 'ct-1',
+    title: 'Aviso',
+    body: 'Cuerpo',
+  }
+
+  it('guarda el aviso, con la hora que se le pase', async () => {
+    const db = makeFakeDb({ notifications: [] })
+    await insertNotification(asClient(db), { ...args, createdAtIso: '2026-10-19T13:00:00.000Z' })
+    expect(db._tables.notifications).toMatchObject([
+      { user_id: 'u-1', title: 'Aviso', created_at: '2026-10-19T13:00:00.000Z' },
+    ])
+  })
+
+  it('si la base lo rechaza, lanza: un aviso que no se guardó no puede darse por enviado', async () => {
+    const db = makeFakeDb({ notifications: [] })
+    db._failNext('insert', 'notifications', { message: 'boom' })
+    await expect(insertNotification(asClient(db), args)).rejects.toThrow('boom')
+    expect(db._tables.notifications).toHaveLength(0)
+  })
+})
+
+describe('hasRecentNotification', () => {
+  const row = (createdAt: string, overrides = {}) => ({
+    id: createdAt,
+    account_id: 'acc-1',
+    conversation_id: 'cv-1',
+    title: 'Aviso',
+    created_at: createdAt,
+    ...overrides,
+  })
+  const ask = (db: ReturnType<typeof makeFakeDb>) =>
+    hasRecentNotification(asClient(db), {
+      accountId: 'acc-1',
+      conversationId: 'cv-1',
+      title: 'Aviso',
+      sinceIso: '2026-10-19T12:50:00.000Z',
+    })
+
+  it('ve un aviso igual de esa conversación desde esa hora', async () => {
+    expect(await ask(makeFakeDb({ notifications: [row('2026-10-19T12:55:00.000Z')] }))).toBe(true)
+  })
+
+  it('no ve uno más viejo, de otro título ni de otra conversación', async () => {
+    const db = makeFakeDb({
+      notifications: [
+        row('2026-10-19T12:40:00.000Z'),
+        row('2026-10-19T12:55:00.000Z', { title: 'Otro' }),
+        row('2026-10-19T12:55:00.000Z', { conversation_id: 'cv-2' }),
+      ],
+    })
+    expect(await ask(db)).toBe(false)
+  })
+
+  it('si no se pudo leer, dice que no hay: ante la duda, se avisa', async () => {
+    const db = makeFakeDb({ notifications: [row('2026-10-19T12:55:00.000Z')] })
+    db._failNext('select', 'notifications', { message: 'boom' })
+    expect(await ask(db)).toBe(false)
   })
 })
 

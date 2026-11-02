@@ -67,6 +67,7 @@ import {
   loadBotSettings,
   loadContact,
   hasRecentBookingEvent,
+  hasRecentNotification,
   loadConversationAssignee,
   loadConversationOwnership,
   loadHandoffAgentId,
@@ -347,9 +348,7 @@ export async function handleAgendaInbound(
     await performHandoff(
       dialog,
       args.session?.id ?? null,
-      asking?.step === 'urgency'
-        ? urgencyUnconfirmedHandoff(dialog.clinicTexts, urgencyAlarmText(dialog))
-        : {},
+      asking?.step === 'urgency' ? pendingUrgencyHandoff(dialog) : {},
     )
     return { consumed: true }
   }
@@ -461,12 +460,21 @@ async function warnHumanOfUrgency(
       if (!detectsUrgency(text, words)) return
     }
 
-    await notifyThreadHuman(args, (texts, who) => ({
-      title: texts.urgencyNotificationTitle,
-      body: texts.urgencyNotificationBody(who),
-    }))
+    // Un aviso de urgencia por conversación cada 10 minutos: quien escribe "me
+    // duele" tres veces seguidas no llena la bandeja de quien lo lleva.
+    await notifyThreadHuman(
+      args,
+      (texts, who) => ({
+        title: texts.urgencyNotificationTitle,
+        body: texts.urgencyNotificationBody(who),
+      }),
+      { onceInMinutes: URGENCY_NOTICE_EVERY_MINUTES, now: args.now ?? new Date() },
+    )
   })
 }
+
+/** Cada cuánto se repite el aviso de urgencia de un mismo chat. */
+export const URGENCY_NOTICE_EVERY_MINUTES = 10
 
 /**
  * Avisa a quien lleva un hilo de una persona (el agente asignado o, si nadie lo
@@ -476,23 +484,39 @@ async function warnHumanOfUrgency(
 async function notifyThreadHuman(
   args: Pick<HandleAgendaInboundArgs, 'db' | 'accountId' | 'conversationId' | 'contactId'>,
   build: (texts: ClinicTexts, who: string) => { title: string; body: string },
+  /** Con `onceInMinutes`, no repite un aviso igual de esta conversación en ese tiempo. */
+  repeat?: { onceInMinutes: number; now: Date },
 ): Promise<void> {
-  const [settings, account, assignee, contact] = await Promise.all([
+  const [settings, account, assignee, who] = await Promise.all([
     loadBotSettings(args.db, args.accountId).catch(() => null),
     loadAccount(args.db, args.accountId).catch(() => null),
     loadConversationAssignee(args.db, args.accountId, args.conversationId).catch(() => null),
-    loadContact(args.db, args.accountId, args.contactId).catch(() => null),
+    contactLabel(args.db, args.accountId, args.contactId, 'Un paciente'),
   ])
   const userId = assignee ?? account?.ownerUserId ?? null
   if (!userId) return
   const texts = buildClinicTexts(settings?.labels ?? DEFAULT_LABELS)
-  const who = contact?.name?.trim() || contact?.phone || 'Un paciente'
+  const notice = build(texts, who)
+  if (repeat) {
+    const since = new Date(repeat.now.getTime() - repeat.onceInMinutes * 60_000).toISOString()
+    if (
+      await hasRecentNotification(args.db, {
+        accountId: args.accountId,
+        conversationId: args.conversationId,
+        title: notice.title,
+        sinceIso: since,
+      })
+    ) {
+      return
+    }
+  }
   await insertNotification(args.db, {
     accountId: args.accountId,
     userId,
     conversationId: args.conversationId,
     contactId: args.contactId,
-    ...build(texts, who),
+    ...notice,
+    createdAtIso: (repeat?.now ?? new Date()).toISOString(),
   })
 }
 
@@ -588,11 +612,7 @@ async function handleClinicInbound(
     }
     // En los signos de alarma, pedir una persona avisa con prioridad, como escribirlo.
     if (step === 'urgency' && replyId === actId('human')) {
-      await performHandoff(
-        dialog,
-        session.id,
-        urgencyUnconfirmedHandoff(dialog.clinicTexts, urgencyAlarmText(dialog)),
-      )
+      await performHandoff(dialog, session.id, pendingUrgencyHandoff(dialog))
       return { consumed: true }
     }
     if (step === 'clinic_menu' || step === 'faq_open') {
@@ -991,11 +1011,7 @@ async function registerFail(
     // Ya dijo que le duele y no contestó los signos con claridad: no es un pase
     // cualquiera, el equipo recibe el aviso prioritario.
     if (state.step === 'urgency') {
-      await performHandoff(
-        dialog,
-        sessionId,
-        urgencyUnconfirmedHandoff(dialog.clinicTexts, urgencyAlarmText(dialog)),
-      )
+      await performHandoff(dialog, sessionId, pendingUrgencyHandoff(dialog))
       return
     }
     // Una autorización sin responder no es un pedido de hablar con una persona.
@@ -2369,12 +2385,32 @@ async function performHandoff(
   sessionId: string | null,
   opts: Omit<ClinicHandoff, 'kind'> = {},
 ): Promise<void> {
-  await markConversationHandoff(dialog.db, {
-    accountId: dialog.accountId,
-    conversationId: dialog.conversationId,
-    note: opts.note ?? dialog.texts.handoffNote,
-    agentId: await loadHandoffAgentId(dialog.db, dialog.accountId),
-  })
+  // Con un aviso propio (el de urgencia) la persona ya dijo que le duele: su
+  // mensaje sale aunque falle la pausa, el aviso o el cierre de la sesión. Lo
+  // que falle se registra y se alerta, para que alguien mire ese chat. Un pase
+  // normal sigue subiendo el error: no se le promete una persona al cliente si
+  // el bot no se pudo pausar.
+  const priority = opts.notification !== undefined
+  const failed: string[] = []
+  const critical = async (label: string, fn: () => Promise<unknown>) => {
+    try {
+      await fn()
+    } catch (err) {
+      if (!priority) throw err
+      console.error(`[agenda] ${label} falló en una urgencia:`, err)
+      failed.push(label)
+    }
+  }
+
+  const agentId = await loadHandoffAgentId(dialog.db, dialog.accountId)
+  await critical('pausar el bot', () =>
+    markConversationHandoff(dialog.db, {
+      accountId: dialog.accountId,
+      conversationId: dialog.conversationId,
+      note: opts.note ?? dialog.texts.handoffNote,
+      agentId,
+    }),
+  )
 
   await bestEffort('etiqueta quiere-humano', () =>
     applyContactTag(dialog.db, {
@@ -2390,39 +2426,50 @@ async function performHandoff(
   // propio (el de urgencia) no se puede perder: sale siempre, también cuando
   // el dueño es el agente y el trigger solo le dice que le asignaron un chat,
   // y le llega además al agente.
-  const agentId = await loadHandoffAgentId(dialog.db, dialog.accountId)
   const owner = dialog.account?.ownerUserId ?? null
   const recipients = new Set<string>()
   if (owner && (owner !== agentId || opts.notification)) recipients.add(owner)
   if (opts.notification && agentId) recipients.add(agentId)
   if (recipients.size) {
-    const contact = await loadContact(
-      dialog.db,
-      dialog.accountId,
-      dialog.contactId,
-    )
-    const who = contact?.name?.trim() || contact?.phone || 'Un cliente'
+    const who = await contactLabel(dialog.db, dialog.accountId, dialog.contactId)
     for (const userId of recipients) {
-      await bestEffort('aviso de handoff al equipo', () =>
-        insertNotification(dialog.db, {
+      try {
+        await insertNotification(dialog.db, {
           accountId: dialog.accountId,
           userId,
           conversationId: dialog.conversationId,
           contactId: dialog.contactId,
           title: opts.notification?.title ?? dialog.texts.handoffNotificationTitle,
           body: (opts.notification?.body ?? dialog.texts.handoffNotificationBody)(who),
-        }),
-      )
+          // La hora del bot: así el siguiente aviso de urgencia de este chat ve este.
+          createdAtIso: dialog.nowIso,
+        })
+      } catch (err) {
+        console.error('[agenda] aviso de handoff al equipo falló:', err)
+        if (priority) failed.push('avisar al equipo en la app')
+      }
     }
+  } else if (priority) {
+    failed.push('avisar al equipo en la app: no hay a quién')
   }
 
   if (sessionId) {
-    await closeSession(dialog.db, {
-      id: sessionId,
-      accountId: dialog.accountId,
-      status: 'cancelled',
-      updatedAtIso: dialog.nowIso,
-    })
+    await critical('cerrar la sesión', () =>
+      closeSession(dialog.db, {
+        id: sessionId,
+        accountId: dialog.accountId,
+        status: 'cancelled',
+        updatedAtIso: dialog.nowIso,
+      }),
+    )
+  }
+
+  // El respaldo del aviso: sin datos del paciente, solo dónde mirar.
+  if (failed.length) {
+    await notifyAlert(
+      `Urgencia: no se pudo ${[...new Set(failed)].join(', ')} ` +
+        `(cuenta ${dialog.accountId}, conversación ${dialog.conversationId}). Revisa ese chat ya.`,
+    )
   }
 
   await dialog.sender.sendText({ text: opts.message ?? dialog.texts.handoff })
@@ -2479,12 +2526,7 @@ async function handoffRescheduleRequest(
   const time = formatTimeLabel(parts)
 
   if (notifyUserId) {
-    const contact = await loadContact(
-      dialog.db,
-      dialog.accountId,
-      dialog.contactId,
-    )
-    const who = contact?.name?.trim() || contact?.phone || 'Un cliente'
+    const who = await contactLabel(dialog.db, dialog.accountId, dialog.contactId)
     await bestEffort('aviso de reprogramación al agente', () =>
       insertNotification(dialog.db, {
         accountId: dialog.accountId,
@@ -2600,12 +2642,7 @@ async function handoffChangeRequest(
   }
 
   if (notify.size) {
-    const contact = await loadContact(
-      dialog.db,
-      dialog.accountId,
-      dialog.contactId,
-    )
-    const who = contact?.name?.trim() || contact?.phone || 'Un cliente'
+    const who = await contactLabel(dialog.db, dialog.accountId, dialog.contactId)
     for (const userId of notify) {
       await bestEffort('aviso de cambio de cita al equipo', () =>
         insertNotification(dialog.db, {
@@ -2672,12 +2709,7 @@ async function escalateBrokenReschedule(
 
   const owner = dialog.account?.ownerUserId ?? null
   if (owner && owner !== agentId) {
-    const contact = await loadContact(
-      dialog.db,
-      dialog.accountId,
-      dialog.contactId,
-    )
-    const who = contact?.name?.trim() || contact?.phone || 'Un cliente'
+    const who = await contactLabel(dialog.db, dialog.accountId, dialog.contactId)
     await bestEffort('aviso de reprogramación rota al equipo', () =>
       insertNotification(dialog.db, {
         accountId: dialog.accountId,
@@ -2691,6 +2723,22 @@ async function escalateBrokenReschedule(
   }
 
   await dialog.sender.sendText({ text: dialog.texts.rescheduleBroken })
+}
+
+/** Cómo se llama el contacto en un aviso: su nombre, su teléfono o `fallback`. */
+async function contactLabel(
+  db: SupabaseClient,
+  accountId: string,
+  contactId: string,
+  fallback = 'Un cliente',
+): Promise<string> {
+  const contact = await loadContact(db, accountId, contactId).catch(() => null)
+  return contact?.name?.trim() || contact?.phone || fallback
+}
+
+/** El pase de quien dijo que le duele y no confirmó si tiene signos de alarma. */
+function pendingUrgencyHandoff(dialog: Dialog): ClinicHandoff {
+  return urgencyUnconfirmedHandoff(dialog.clinicTexts, urgencyAlarmText(dialog))
 }
 
 async function bestEffort(label: string, fn: () => Promise<unknown>) {

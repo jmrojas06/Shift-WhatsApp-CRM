@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { notifyAlert } from '@/lib/ops/alert'
 import { buildClinicTexts, DEFAULT_URGENCY_ALARM_TEXT, DEFAULT_URGENCY_WORDS } from '@/modules/clinica/texts'
 
 import { DEFAULT_LABELS } from '../labels'
@@ -24,6 +25,13 @@ import {
   send,
 } from './testing/clinic-harness'
 import { asClient, type FakeDb, type Row } from './testing/fake-db'
+
+// La alerta de respaldo no sale a ningún lado: solo se mira si se pidió.
+vi.mock('@/lib/ops/alert', () => ({ notifyAlert: vi.fn(async () => {}) }))
+
+beforeEach(() => {
+  vi.mocked(notifyAlert).mockClear()
+})
 
 const texts = buildClinicTexts(DEFAULT_LABELS)
 
@@ -480,6 +488,115 @@ describe('urgencias', () => {
         expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.urgencyPendingNote)
         expect(priorityNotifications(db)).toMatchObject([{ user_id: OWNER }])
       })
+    })
+  })
+
+  describe('un aviso no es una promesa falsa', () => {
+    it('el mensaje de urgencia dice que no espere respuesta', () => {
+      expect(texts.urgencyGoEr).toBe(
+        'Por favor ve a urgencias ahora, sin esperar respuesta. También avisé a la clínica.',
+      )
+      expect(texts.urgencyOffHours('3001234567')).toContain('sin esperar respuesta')
+      expect(texts.urgencyOffHours(null)).toContain('sin esperar respuesta')
+      expect(texts.urgencyPending('Signos')).toContain('sin esperar respuesta')
+    })
+
+    it('si falla la pausa del bot, el mensaje de urgencia sale igual y se alerta', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const { db, rec } = await withAlarmQuestion()
+      db._failNext('update', 'conversations', { message: 'boom' })
+      await send(db, rec, { replyId: 'act:alarm_yes' })
+      expect(last(rec).bodyText).toBe(texts.urgencyGoEr)
+      expect(priorityNotifications(db)).toHaveLength(1)
+      expect(notifyAlert).toHaveBeenCalledTimes(1)
+      expect(vi.mocked(notifyAlert).mock.calls[0][0]).toContain(CONVERSATION)
+    })
+
+    it('si falla el aviso en la app, el mensaje sale igual y se alerta, sin datos del paciente', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const { db, rec } = await withAlarmQuestion()
+      db._failNext('insert', 'notifications', { message: 'boom' })
+      await send(db, rec, { replyId: 'act:alarm_yes' })
+      expect(last(rec).bodyText).toBe(texts.urgencyGoEr)
+      expect(db._tables.notifications).toHaveLength(0)
+      expect(notifyAlert).toHaveBeenCalledTimes(1)
+      const alert = vi.mocked(notifyAlert).mock.calls[0][0]
+      expect(alert).toContain(CONVERSATION)
+      expect(alert).not.toContain('Marta')
+      expect(alert).not.toContain('573001112233')
+    })
+
+    it('si falla el cierre de la sesión, el mensaje de urgencia sale igual', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const { db, rec } = await withAlarmQuestion()
+      db._failNext('update', 'booking_sessions', { message: 'boom' })
+      await send(db, rec, { replyId: 'act:alarm_yes' })
+      expect(last(rec).bodyText).toBe(texts.urgencyGoEr)
+      expect(priorityNotifications(db)).toHaveLength(1)
+    })
+
+    it('con el aviso entregado no se alerta a nadie', async () => {
+      const { db, rec } = await withAlarmQuestion()
+      await send(db, rec, { replyId: 'act:alarm_yes' })
+      expect(notifyAlert).not.toHaveBeenCalled()
+    })
+
+    it('un pase normal sigue sin prometer una persona si no se pudo pausar', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      await send(db, makeRecorder(), { text: 'Hola' })
+      db._failNext('update', 'conversations', { message: 'boom' })
+      const rec = makeRecorder()
+      await expect(send(db, rec, { replyId: 'act:human' })).rejects.toThrow('No se pudo pausar el bot')
+      expect(rec.calls).toHaveLength(0)
+      expect(notifyAlert).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('avisos repetidos', () => {
+    const humanThread = () => {
+      const db = clinicDb()
+      db._tables.conversations[0].assigned_agent_id = AGENT
+      return db
+    }
+    const at = (minutes: number) => ({
+      humanOwned: true,
+      now: new Date(Date.UTC(2026, 9, 19, 13, minutes, 0)),
+    })
+
+    it('en un hilo de una persona, un aviso de urgencia cada 10 minutos por conversación', async () => {
+      const db = humanThread()
+      await send(db, makeRecorder(), { text: 'tengo dolor' }, at(0))
+      await send(db, makeRecorder(), { text: 'me sigue doliendo, dolor' }, at(3))
+      await send(db, makeRecorder(), { text: 'dolor otra vez' }, at(9))
+      expect(priorityNotifications(db)).toHaveLength(1)
+      await send(db, makeRecorder(), { text: 'dolor' }, at(11))
+      expect(priorityNotifications(db)).toHaveLength(2)
+    })
+
+    it('cuenta también el aviso con el que el bot pasó el hilo', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'urgencia' })
+      await send(db, rec, { replyId: 'act:alarm_yes' })
+      expect(priorityNotifications(db)).toHaveLength(1)
+      await send(db, makeRecorder(), { text: 'dolor, ayuda' }, at(4))
+      expect(priorityNotifications(db)).toHaveLength(1)
+      await send(db, makeRecorder(), { text: 'dolor, ayuda' }, at(12))
+      expect(priorityNotifications(db)).toHaveLength(2)
+    })
+
+    it('otra conversación no cuenta', async () => {
+      const db = humanThread()
+      db._tables.notifications.push({
+        id: 'n-0',
+        account_id: ACCOUNT,
+        user_id: AGENT,
+        conversation_id: 'cv-otra',
+        title: texts.urgencyNotificationTitle,
+        created_at: '2026-10-19T13:00:00.000Z',
+      })
+      await send(db, makeRecorder(), { text: 'dolor' }, at(1))
+      expect(priorityNotifications(db)).toHaveLength(2)
     })
   })
 

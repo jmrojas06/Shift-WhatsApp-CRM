@@ -905,6 +905,11 @@ export async function markConversationHandoff(
   if (error) throw new Error(`No se pudo pausar el bot: ${error.message}`)
 }
 
+/**
+ * Crea un aviso en la app. Lanza si la base lo rechaza: un aviso que no se
+ * guardó no puede darse por enviado (el mensaje a un paciente en urgencia dice
+ * "avisé a la clínica"). `createdAtIso` fija la hora; sin ella manda la base.
+ */
 export async function insertNotification(
   db: SupabaseClient,
   args: {
@@ -914,9 +919,10 @@ export async function insertNotification(
     contactId: string
     title: string
     body: string
+    createdAtIso?: string
   },
 ): Promise<void> {
-  await db.from('notifications').insert({
+  const { error } = await db.from('notifications').insert({
     id: crypto.randomUUID(),
     account_id: args.accountId,
     user_id: args.userId,
@@ -926,7 +932,30 @@ export async function insertNotification(
     actor_user_id: null,
     title: args.title,
     body: args.body,
+    ...(args.createdAtIso ? { created_at: args.createdAtIso } : {}),
   })
+  if (error) throw new Error(`No se pudo crear el aviso: ${error.message}`)
+}
+
+/**
+ * ¿Ya hay un aviso con ese título en esa conversación desde esa hora? Para no
+ * repetir un aviso de urgencia a cada mensaje. Si no se puede leer dice que no:
+ * ante la duda, se avisa.
+ */
+export async function hasRecentNotification(
+  db: SupabaseClient,
+  args: { accountId: string; conversationId: string; title: string; sinceIso: string },
+): Promise<boolean> {
+  const { data, error } = await db
+    .from('notifications')
+    .select('id')
+    .eq('account_id', args.accountId)
+    .eq('conversation_id', args.conversationId)
+    .eq('title', args.title)
+    .gte('created_at', args.sinceIso)
+    .limit(1)
+  if (error) return false
+  return ((data ?? []) as unknown[]).length > 0
 }
 
 /** Todo lo que el bot necesita de booking_settings, en una lectura. */
