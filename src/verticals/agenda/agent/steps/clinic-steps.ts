@@ -89,6 +89,13 @@ const CLINIC_STEPS: readonly BookingStep[] = [
 
 export const isClinicStep = (step: BookingStep): boolean => CLINIC_STEPS.includes(step)
 
+/** Los toques del menú principal (los mismos ids que `renderClinicStep` ofrece). */
+const MENU_TAPS: readonly string[] = ['book', 'mine', 'faq', 'urgent', 'human'].map(actId)
+
+/** ¿Es el toque de una opción del menú principal? Vale aunque el menú ya haya vencido. */
+export const isClinicMenuTap = (replyId: string | null): replyId is string =>
+  replyId !== null && MENU_TAPS.includes(replyId)
+
 const QUESTION_STARTS = [
   'cuanto',
   'cuantos',

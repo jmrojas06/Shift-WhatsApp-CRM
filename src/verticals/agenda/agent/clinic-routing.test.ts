@@ -412,6 +412,103 @@ describe('esperando la duda ("Precios y dudas")', () => {
   })
 })
 
+describe('el menú sigue vivo', () => {
+  it('sin sesión y con autorización, "Agendar" funciona', async () => {
+    const db = authorized()
+    const rec = makeRecorder()
+    const result = await send(db, rec, { replyId: 'act:book' })
+    expect(result).toEqual({ consumed: true })
+    expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
+    expect(activeSteps(db)).toEqual(['new_patient_name'])
+  })
+
+  it('sin sesión, "Precios y dudas" invita a preguntar', async () => {
+    const db = authorized()
+    const rec = makeRecorder()
+    const result = await send(db, rec, { replyId: 'act:faq' })
+    expect(result).toEqual({ consumed: true })
+    expect(last(rec).bodyText).toBe(texts.faqPrompt)
+    expect(activeSteps(db)).toEqual(['faq_open'])
+  })
+
+  it('sin sesión, "Hablar con una persona" pasa el hilo', async () => {
+    const db = authorized()
+    const rec = makeRecorder()
+    const result = await send(db, rec, { replyId: 'act:human' })
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
+  })
+
+  it.each(['act:mine', 'act:urgent'])('sin sesión, %s también lo atiende el bot', async (replyId) => {
+    const db = authorized()
+    const rec = makeRecorder()
+    const result = await send(db, rec, { replyId })
+    expect(result).toEqual({ consumed: true })
+    expect(rec.calls.length).toBeGreaterThan(0)
+  })
+
+  it('sin sesión y sin IA, "Precios y dudas" pasa a una persona', async () => {
+    const db = authorized()
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: 'act:faq' }, { aiOn: false })
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+  })
+
+  it('sin autorización, el toque muestra la autorización', async () => {
+    for (const replyId of ['act:book', 'act:faq', 'act:human']) {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    }
+  })
+
+  it('un toque que no es del menú sigue sin arrancar nada', async () => {
+    for (const replyId of ['svc:svc-limpieza', 'day:2026-10-20', 'act:confirm', 'pat:abc']) {
+      const db = authorized()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId })
+      expect(result).toEqual({ consumed: false })
+      expect(rec.calls).toHaveLength(0)
+    }
+  })
+
+  it('desde "Precios y dudas", "Agendar" funciona', async () => {
+    const { db, rec } = await withFaqOpen()
+    const result = await send(db, rec, { replyId: 'act:book' })
+    expect(result).toEqual({ consumed: true })
+    expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
+    expect(activeSteps(db)).toEqual(['new_patient_name'])
+    expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(false)
+  })
+
+  it('desde "Precios y dudas", "Hablar con una persona" pasa el hilo', async () => {
+    const { db, rec } = await withFaqOpen()
+    await send(db, rec, { replyId: 'act:human' })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(db._tables.booking_sessions[0].status).toBe('cancelled')
+  })
+
+  it('desde "Precios y dudas", tocar "Precios y dudas" otra vez vuelve a invitar', async () => {
+    const { db, rec, sent } = await withFaqOpen()
+    await send(db, rec, { replyId: 'act:faq' })
+    expect(rec.calls).toHaveLength(sent + 1)
+    expect(last(rec).bodyText).toBe(texts.faqPrompt)
+    expect(activeSteps(db)).toEqual(['faq_open'])
+  })
+
+  it('una cuenta sin clínica no cambia: un toque sin sesión no arranca nada', async () => {
+    const db = authorized()
+    const rec = makeRecorder()
+    const result = await send(db, rec, { replyId: 'act:book' }, { modules: ['agenda'] })
+    expect(result).toEqual({ consumed: false })
+    expect(rec.calls).toHaveLength(0)
+  })
+})
+
 describe('si la IA está apagada', () => {
   it('una duda con el menú abierto pasa a una persona, no queda en silencio', async () => {
     const { db, rec } = await withMenuOpen()

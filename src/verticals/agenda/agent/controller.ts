@@ -106,6 +106,7 @@ import {
   handleClinicChoice,
   handleConsentRevoked,
   handlePatientName,
+  isClinicMenuTap,
   isClinicStep,
   renderClinicStep,
   routeClinicText,
@@ -386,6 +387,11 @@ async function handleClinicInbound(
 
   if (session && state) {
     if (step === 'clinic_menu' || step === 'faq_open') {
+      // El menú sigue vivo mientras se espera la duda: sus botones valen igual.
+      if (step === 'faq_open' && isClinicMenuTap(replyId)) {
+        await handleChoice(dialog, session.id, newBookingState('clinic_menu'), replyId)
+        return { consumed: true }
+      }
       if (route === 'book') {
         await handleChoice(dialog, session.id, newBookingState('clinic_menu'), actId('book'))
         return { consumed: true }
@@ -432,8 +438,15 @@ async function handleClinicInbound(
     return { consumed: true }
   }
 
-  // Un tap de un menú viejo no arranca nada (y no se consume).
-  if (replyId !== null) return { consumed: false }
+  // Con autorización, los botones del menú valen aunque el menú ya haya vencido.
+  // Cualquier otro tap de un menú viejo no arranca nada (y no se consume).
+  if (replyId !== null) {
+    if (!isClinicMenuTap(replyId)) return { consumed: false }
+    const menu = newBookingState('clinic_menu')
+    const sessionId = await openSession(dialog, menu)
+    await handleChoice(dialog, sessionId, menu, replyId)
+    return { consumed: true }
+  }
 
   if (route === 'book' || route === 'greeting') {
     const menu = newBookingState('clinic_menu')
