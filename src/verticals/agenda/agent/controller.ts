@@ -296,7 +296,7 @@ export async function handleAgendaInbound(
 
   // Hilo de un humano: el "No acepto" solo se registra, sin tocar el hilo.
   if (humanOwned && revokesConsent) {
-    await revokeConsentInHumanThread(dialog)
+    await revokeConsentInHumanThread(dialog, args.session?.id ?? null)
     return { consumed: true }
   }
 
@@ -535,7 +535,16 @@ async function notifyThreadHuman(
  * se avisa a quien lo lleva para que lo registre a mano. Una revocación que ya
  * estaba registrada no se repite.
  */
-async function revokeConsentInHumanThread(dialog: Dialog): Promise<void> {
+async function revokeConsentInHumanThread(dialog: Dialog, sessionId: string | null): Promise<void> {
+  // Quien retiró su autorización no sigue agendando: la sesión abierta se cierra.
+  if (sessionId) {
+    await closeSession(dialog.db, {
+      id: sessionId,
+      accountId: dialog.accountId,
+      status: 'cancelled',
+      updatedAtIso: dialog.nowIso,
+    })
+  }
   const consent = await latestConsent(dialog.db, {
     accountId: dialog.accountId,
     contactId: dialog.contactId,

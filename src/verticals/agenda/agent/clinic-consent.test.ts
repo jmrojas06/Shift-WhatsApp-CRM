@@ -432,7 +432,7 @@ describe('autorización de datos', () => {
         expect(rec.calls).toHaveLength(0)
       })
 
-      it('no toca una cancelación abierta desde un recordatorio', async () => {
+      it('cierra la sesión que tuviera abierta: quien retiró su autorización no sigue agendando', async () => {
         const db = assigned({
           booking_sessions: [
             {
@@ -449,7 +449,7 @@ describe('autorización de datos', () => {
         const result = await tap(db, rec)
         expect(result).toEqual({ consumed: true })
         expect(await latest(db)).toEqual({ granted: false })
-        expect(db._tables.booking_sessions[0].status).toBe('active')
+        expect(db._tables.booking_sessions[0].status).toBe('cancelled')
         expect(rec.calls).toHaveLength(0)
       })
 
