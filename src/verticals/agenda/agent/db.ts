@@ -499,9 +499,9 @@ export async function loadAppointment(
 }
 
 /**
- * Inserta la cita. El error se devuelve tal cual: el controlador
+ * Inserta la cita. El error se devuelve tal cual: InternalBackend
  * distingue la violación del EXCLUDE anti-doble-reserva (23P01)
- * para reconducir al cliente al menú de horas.
+ * para que el controlador reconduzca al cliente al menú de horas.
  */
 export async function insertAppointment(
   db: SupabaseClient,

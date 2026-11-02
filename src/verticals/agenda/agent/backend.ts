@@ -5,6 +5,16 @@
 // implementación (internal-backend.ts) y el software de la clínica será
 // otra (Fase 4). El catálogo que ve el paciente sigue siendo local en
 // ambos casos, así que aquí solo está lo que cambia según quién manda.
+//
+// Contrato de fallas (todo conector debe cumplirlo):
+//   - `book` NO lanza por un fallo esperado: devuelve `slot_taken` si
+//     alguien ganó la hora y `failed` si la cita no quedó creada.
+//   - Las lecturas (`getDaySlots`, `getDaysWithSlots`, `isStaffFree`)
+//     lanzan si no pueden responder. Un conector nunca debe contestar
+//     "libre" ni devolver horas cuando no pudo leer la agenda: ofrecer
+//     una hora que no se sabe libre es peor que no ofrecer ninguna.
+//   - `cancel` y `confirm` lanzan si no se pudo: el bot no dice
+//     "cancelada" ni "confirmada" sobre una cita que sigue como estaba.
 // ============================================================
 
 import type { AnswerMap } from '../questions'

@@ -205,6 +205,7 @@ interface ClinicBackend {
   capabilities: { locations: boolean; chairs: boolean; intakeForm: boolean }
   getDaySlots(args: SlotQuery): Promise<ClinicSlot[]>
   getDaysWithSlots(args: SlotRangeQuery): Promise<string[]>
+  isStaffFree(args: StaffFreeQuery): Promise<boolean>
   findPatients(phone: string): Promise<ClinicPatient[]>
   createPatient(args: NewPatient): Promise<ClinicPatient>
   listUpcoming(patientIds: string[]): Promise<AppointmentSnapshot[]>
@@ -231,6 +232,7 @@ reprogramar sigue siendo crear y cancelar, como hoy.
 | --- | --- |
 | `getDaysWithSlots` | `GET /horariosdisponibles` (hasta 2 semanas) |
 | `getDaySlots` | `GET /agendas` (trae `id_recurso`, el sillón) |
+| `isStaffFree` | `GET /agendas`, la misma consulta del día, en vivo y sin caché (es la revisión final antes de crear la cita) |
 | `findPatients` | `GET /pacientes` con filtro por `celular`, probando variantes del número |
 | `createPatient` | `POST /pacientes` |
 | `listUpcoming` | `GET /pacientes/{id}/citas`, una consulta por paciente |

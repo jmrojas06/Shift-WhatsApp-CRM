@@ -1108,6 +1108,11 @@ async function confirmAppointment(
   })
 
   if (booked.kind !== 'ok') {
+    // Se deja constancia antes de nada: el cliente solo ve un mensaje
+    // genérico y sin esto el error real no queda en ningún log.
+    if (booked.kind === 'failed') {
+      console.error('[agenda] no se pudo crear la cita:', booked.message)
+    }
     // La cita no existe: la sesión vuelve a estar activa para que el
     // cliente pueda elegir otra hora o reintentar.
     await releaseSession(dialog.db, {
