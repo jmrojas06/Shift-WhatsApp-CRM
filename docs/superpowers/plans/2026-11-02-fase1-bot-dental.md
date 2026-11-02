@@ -10137,11 +10137,12 @@ git commit -m "feat(clinica): handle dental emergencies with a fixed flow"
 
 - [ ] **Step 1: Escribe la prueba que falla**
 
-Crea `src/verticals/agenda/agent/clinic-days.test.ts`:
+Crea `src/verticals/agenda/agent/clinic-days.test.ts`. Las tres primeras pruebas son el mínimo; las demás cubren las barreras: recorrer todas las páginas, la página que queda vacía, elegir un día de la segunda página, reprogramar desde el resumen y la cuenta sin clínica.
 
 ```ts
 import { describe, expect, it } from 'vitest'
 
+import { patId, svcId } from './state'
 import {
   ACCOUNT,
   CONTACT,
@@ -10152,7 +10153,7 @@ import {
   makeRecorder,
   send,
 } from './testing/clinic-harness'
-import { patId, svcId } from './state'
+import type { FakeDb } from './testing/fake-db'
 
 async function openDayMenu() {
   const db = clinicDb({
@@ -10166,6 +10167,14 @@ async function openDayMenu() {
   await send(db, rec, { replyId: svcId(SERVICE_LIMPIEZA) })
   return { db, rec }
 }
+
+/** Estado guardado de la sesión abierta (lo que se escribió en la base, no lo que hay en memoria). */
+const savedState = (db: FakeDb) =>
+  db._tables.booking_sessions.find((s) => s.status === 'active')?.state as
+    | Record<string, unknown>
+    | undefined
+
+const dayIds = (ids: string[]) => ids.filter((id) => id.startsWith('day:'))
 
 describe('citas lejanas', () => {
   it('muestra 9 días y "Ver más días" cuando hay más', async () => {
@@ -10189,19 +10198,97 @@ describe('citas lejanas', () => {
     await send(db, rec, { replyId: 'act:more_days' })
     expect(last(rec).ids).not.toContain('act:more_days')
   })
+
+  it('recorre todas las páginas sin repetir ni saltarse días, y la última no ofrece más', async () => {
+    const { db, rec } = await openDayMenu()
+    const seen = dayIds(last(rec).ids)
+    let pages = 1
+    while (last(rec).ids.includes('act:more_days') && pages < 10) {
+      await send(db, rec, { replyId: 'act:more_days' })
+      pages += 1
+      seen.push(...dayIds(last(rec).ids))
+    }
+    expect(pages).toBe(3)
+    expect(last(rec).ids).not.toContain('act:more_days')
+    expect(new Set(seen).size).toBe(seen.length)
+    expect([...seen].sort()).toEqual(seen)
+    // Lunes a viernes entre el 19 de octubre y el 17 de noviembre: 22 días con hora.
+    expect(seen).toHaveLength(22)
+  })
+
+  it('si la agenda se acorta y la página queda vacía, vuelve a la primera', async () => {
+    const { db, rec } = await openDayMenu()
+    await send(db, rec, { replyId: 'act:more_days' })
+    await send(db, rec, { replyId: 'act:more_days' })
+    expect(savedState(db)).toMatchObject({ step: 'pick_day', dayPage: 2 })
+    db._tables.clinic_settings[0].offer_days = 10
+    // Con 10 días solo caben 8 con hora: la página 3 no existe.
+    await send(db, rec, { replyId: 'act:more_days' })
+    expect(dayIds(last(rec).ids)).toHaveLength(8)
+    expect(last(rec).ids).not.toContain('act:more_days')
+    expect(savedState(db)).not.toHaveProperty('dayPage')
+  })
+
+  it('la primera página no guarda dayPage en la sesión', async () => {
+    const { db } = await openDayMenu()
+    expect(savedState(db)).toMatchObject({ step: 'pick_day' })
+    expect(savedState(db)).not.toHaveProperty('dayPage')
+  })
+
+  it('elegir un día de la segunda página sigue el flujo normal', async () => {
+    const { db, rec } = await openDayMenu()
+    await send(db, rec, { replyId: 'act:more_days' })
+    const chosen = dayIds(last(rec).ids)[0]
+    await send(db, rec, { replyId: chosen })
+    expect(savedState(db)).toMatchObject({ step: 'pick_slot', dateKey: chosen.slice('day:'.length) })
+    expect(last(rec).ids.every((id) => id.startsWith('slot:'))).toBe(true)
+  })
+
+  it('"Reprogramar" desde el resumen vuelve a la primera página de días', async () => {
+    const { db, rec } = await openDayMenu()
+    const first = last(rec).ids
+    await send(db, rec, { replyId: 'act:more_days' })
+    await send(db, rec, { replyId: dayIds(last(rec).ids)[0] }) // día de la página 2
+    await send(db, rec, { replyId: last(rec).ids[0] }) // hora
+    expect(last(rec).ids).toContain('act:reschedule')
+    await send(db, rec, { replyId: 'act:reschedule' })
+    expect(last(rec).ids).toEqual(first)
+    expect(savedState(db)).toMatchObject({ step: 'pick_day' })
+    expect(savedState(db)).not.toHaveProperty('dayPage')
+  })
+
+  it('una cuenta sin clínica ve el mismo menú de 7 días y no guarda dayPage', async () => {
+    const db = clinicDb()
+    db._tables.booking_sessions.push({
+      id: 'ses-1',
+      account_id: ACCOUNT,
+      contact_id: CONTACT,
+      status: 'active',
+      expires_at: '2026-10-19T13:10:00.000Z',
+      state: { step: 'pick_service', mode: 'book', options: [{ id: svcId(SERVICE_LIMPIEZA), title: 'Limpieza' }], fails: 0 },
+    })
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: svcId(SERVICE_LIMPIEZA) }, { modules: ['agenda'] })
+    // 7 días desde hoy (19 al 25 de octubre): de lunes a viernes hay hora, 5 días.
+    expect(dayIds(last(rec).ids)).toHaveLength(5)
+    expect(last(rec).ids).not.toContain('act:more_days')
+    expect(last(rec).ids.every((id) => id.startsWith('day:'))).toBe(true)
+    expect(savedState(db)).toMatchObject({ step: 'pick_day' })
+    expect(savedState(db)).not.toHaveProperty('dayPage')
+  })
 })
 ```
 
 - [ ] **Step 2: Córrela y verifica que falla**
 
 Run: `npx vitest run src/verticals/agenda/agent/clinic-days.test.ts`
-Expected: FAIL, el menú trae solo los días de la semana.
+Expected: FAIL en 4 pruebas (el menú trae solo los días de la semana y "Ver más días" no existe). Las otras 5 ya pasan: la de la cuenta sin clínica y la de reprogramar protegen que el cambio no las rompa, y "llega hasta offer_days" pasa a medias porque sin la opción cualquier respuesta cuenta como fallo y el menú no la trae.
 
 - [ ] **Step 3: Implementa**
 
 En `src/verticals/agenda/agent/controller.ts`:
 
-1. Después de `MAX_LIST_OPTIONS`:
+1. Después de `LIST_DESC_MAX`:
 
 ```ts
 /** Días por página: una fila de la lista queda para "Ver más días". */
@@ -10239,7 +10326,8 @@ Y el comentario de la función:
         id: dayId(day.key),
         title: day.label,
       }))
-      if (days.length > (page + 1) * DAY_PAGE_SIZE && dialog.clinicTexts) {
+      // "Ver más días" es de la clínica: una agenda normal ofrece 7 y cabe entera.
+      if (dialog.clinic && days.length > (page + 1) * DAY_PAGE_SIZE) {
         options.push({ id: actId('more_days'), title: dialog.clinicTexts.moreDays })
       }
       await sendOptions(dialog, {
@@ -10250,9 +10338,15 @@ Y el comentario de la función:
         buttonLabel: dialog.texts.dayMenuButton,
         options,
       })
-      return { state: { ...state, options, dayPage: page }, closed: false }
+      // La primera página no guarda `dayPage`: la sesión queda como siempre.
+      return {
+        state: { ...state, options, dayPage: page > 0 ? page : undefined },
+        closed: false,
+      }
     }
 ```
+
+   `dialog.clinicTexts` ya no es nulo: la clínica se decide con `dialog.clinic`. Poner `dayPage: undefined` (y no `...(page ? { dayPage: page } : {})`) también borra una página vieja cuando se vuelve a la primera; al guardar la sesión como JSON la clave no queda, así que una cuenta sin clínica no guarda `dayPage: 0`.
 
 4. En `handleChoice`, al inicio de `case 'pick_day'`:
 
@@ -10263,7 +10357,20 @@ Y el comentario de la función:
       }
 ```
 
-**Nota:** el estado de la sesión lleva `dayPage: 0` en todas las cuentas. No afecta a las pruebas existentes, porque comparan opciones y no el estado completo. Si alguna compara el estado completo, cambia `{ ...state, options, dayPage: page }` por `{ ...state, options, ...(page ? { dayPage: page } : {}) }`.
+5. En `handleChoice`, `case 'summary'`, dentro de `if (parsed.value === 'reschedule')`, agrega `dayPage: undefined` al estado. "Reprogramar" vuelve a `pick_day` y tiene que empezar en la primera página:
+
+```ts
+        await conclude(dialog, sessionId, {
+          ...state,
+          slotStartsAt: undefined,
+          questionId: undefined,
+          // Cambiar la hora es empezar a elegir otra vez: desde el primer día.
+          dayPage: undefined,
+          step: 'pick_day',
+        })
+```
+
+   Los otros dos sitios que abren `pick_day` en modo reprogramar (el menú de "Mis citas" y el botón del recordatorio) parten de `newBookingState`, que no trae `dayPage`.
 
 - [ ] **Step 4: Corre las pruebas**
 
