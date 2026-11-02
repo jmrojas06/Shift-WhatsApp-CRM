@@ -202,7 +202,13 @@ export async function send(
   db: FakeDb,
   rec: Recorder,
   input: { text?: string; replyId?: string },
-  opts: { now?: Date; modules?: ModuleKey[]; humanOwned?: boolean } = {},
+  opts: {
+    now?: Date
+    modules?: ModuleKey[]
+    humanOwned?: boolean
+    /** La respuesta automática con IA está activa. Por defecto, sí. */
+    aiOn?: boolean | (() => Promise<boolean>)
+  } = {},
 ) {
   counter += 1
   const messageId = `wamid-${counter}`
@@ -214,6 +220,7 @@ export async function send(
     interactive_reply_id: input.replyId ?? null,
   })
   const now = opts.now ?? NOW
+  const aiOn = opts.aiOn ?? true
   return handleAgendaInbound({
     db: asClient(db),
     sender: rec.sender,
@@ -226,5 +233,6 @@ export async function send(
     session: activeSession(db, now),
     humanOwned: opts.humanOwned,
     modules: opts.modules ?? ['agenda', 'clinica'],
+    aiAutoReplyOn: typeof aiOn === 'function' ? aiOn : async () => aiOn,
   })
 }

@@ -412,6 +412,79 @@ describe('esperando la duda ("Precios y dudas")', () => {
   })
 })
 
+describe('si la IA está apagada', () => {
+  it('una duda con el menú abierto pasa a una persona, no queda en silencio', async () => {
+    const { db, rec } = await withMenuOpen()
+    const result = await send(db, rec, { text: '¿Cuánto vale una limpieza?' }, { aiOn: false })
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+    expect(db._tables.booking_sessions[0].status).toBe('cancelled')
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
+  })
+
+  it('lo que se escribe esperando la duda también', async () => {
+    const { db, rec } = await withFaqOpen()
+    const result = await send(db, rec, { text: 'cuánto vale la limpieza' }, { aiOn: false })
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+    expect(db._tables.booking_sessions[0].status).toBe('cancelled')
+  })
+
+  it('"Precios y dudas" no promete una respuesta que nadie va a dar', async () => {
+    const { db, rec } = await withMenuOpen()
+    const result = await send(db, rec, { replyId: 'act:faq' }, { aiOn: false })
+    expect(result).toEqual({ consumed: true })
+    expect(rec.calls.some((c) => c.bodyText === texts.faqPrompt)).toBe(false)
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+    expect(activeSteps(db)).toEqual([])
+  })
+
+  it('si no se pudo leer la configuración de la IA, cuenta como apagada', async () => {
+    const { db, rec } = await withMenuOpen()
+    const result = await send(
+      db,
+      rec,
+      { text: '¿Cuánto vale una limpieza?' },
+      { aiOn: () => Promise.reject(new Error('no se pudo descifrar la llave')) },
+    )
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+  })
+
+  it('con la IA prendida nada cambia', async () => {
+    const { db, rec } = await withMenuOpen()
+    const result = await send(db, rec, { text: '¿Cuánto vale una limpieza?' }, { aiOn: true })
+    expect(result).toEqual({ consumed: false, released: true })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+  })
+
+  it('lo que no es para la IA no la consulta: pedir una cita, un saludo, una queja', async () => {
+    for (const text of ['necesito una cita', 'hola', 'quiero pagar']) {
+      let asked = 0
+      const { db, rec } = await withMenuOpen()
+      await send(db, rec, { text }, { aiOn: async () => (asked += 1) > 0 })
+      expect(asked).toBe(0)
+    }
+  })
+
+  it('se consulta una sola vez por mensaje', async () => {
+    let asked = 0
+    const { db, rec } = await withMenuOpen()
+    await send(db, rec, { text: '¿Cuánto vale?' }, { aiOn: async () => (asked += 1) > 0 })
+    expect(asked).toBe(1)
+  })
+
+  it('sin sesión no cambia: el mensaje queda en la bandeja para quien lo atienda', async () => {
+    const db = authorized()
+    const rec = makeRecorder()
+    const result = await send(db, rec, { text: '¿Cuánto vale una limpieza?' }, { aiOn: false })
+    expect(result).toEqual({ consumed: false })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+  })
+})
+
 describe('las palabras de quejas, pagos y documentos solo valen sin sesión y con el menú abierto', () => {
   it('no en la autorización: "no acepto dar mis documentos" es un rechazo registrado', async () => {
     const db = clinicDb()

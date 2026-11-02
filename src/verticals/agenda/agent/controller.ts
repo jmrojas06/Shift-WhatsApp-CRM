@@ -26,6 +26,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import type { ModuleKey, VerticalDispatchResult, VerticalSession } from '@/lib/verticals/types'
 import { notifyAlert } from '@/lib/ops/alert'
+import { autoReplyEnabled } from '@/modules/clinica/ai-gate'
 import { latestConsent } from '@/modules/clinica/consent'
 import { loadClinicContext, type ClinicContext } from '@/modules/clinica/settings'
 import {
@@ -169,6 +170,11 @@ export interface HandleAgendaInboundArgs {
   modules?: readonly ModuleKey[]
   /** Dónde viven las citas. Por defecto, la Agenda de Shift. */
   backend?: ClinicBackend
+  /**
+   * ¿La respuesta automática con IA está prendida? Solo la lee la clínica, al
+   * soltar una duda o invitar a escribirla. Por defecto, la configuración real.
+   */
+  aiAutoReplyOn?: () => Promise<boolean>
 }
 
 // ------------------------------------------------------------
@@ -237,6 +243,7 @@ export async function handleAgendaInbound(
     clinicTexts: buildClinicTexts(settings.labels),
     inboundMessageId: args.inboundMessageId ?? null,
     humanOwned,
+    aiProbe: args.aiAutoReplyOn ?? (() => autoReplyEnabled(args.db, args.accountId)),
   }
 
   // 0) Tap de un recordatorio (Confirmar / Reprogramar / Cancelar).
@@ -422,8 +429,24 @@ async function handleClinicInbound(
   return { consumed: false }
 }
 
-/** Cierra la sesión y le suelta el mensaje a la IA (ver `released`). */
+/** ¿La IA va a contestar? Se lee una vez por mensaje; si no se puede leer, no. */
+function aiAnswers(dialog: Dialog): Promise<boolean> {
+  dialog.aiOn ??= dialog.aiProbe().catch((err: unknown) => {
+    console.error('[clinica] no se pudo saber si la IA responde:', err)
+    return false
+  })
+  return dialog.aiOn
+}
+
+/**
+ * Le suelta el mensaje a la IA (ver `released`) y cierra la sesión. Si la IA no
+ * va a contestar, soltarlo sería silencio: pasa a una persona.
+ */
 async function releaseToAi(dialog: Dialog, sessionId: string): Promise<VerticalDispatchResult> {
+  if (!(await aiAnswers(dialog))) {
+    await performHandoff(dialog, sessionId, { note: dialog.clinicTexts.aiOffNote })
+    return { consumed: true }
+  }
   await closeSession(dialog.db, {
     id: sessionId,
     accountId: dialog.accountId,
@@ -605,6 +628,9 @@ interface Dialog {
   /** Id de Meta del mensaje que se está atendiendo; queda en la autorización. */
   inboundMessageId: string | null
   humanOwned: boolean
+  /** Cómo saber si la IA responde sola; el resultado se guarda en `aiOn`. */
+  aiProbe: () => Promise<boolean>
+  aiOn?: Promise<boolean>
   /**
    * Preguntas extra, leídas una sola vez por mensaje del cliente y compartidas
    * por todos los pasos (null = no se pudieron leer).
@@ -2420,6 +2446,7 @@ function clinicCtx(dialog: Dialog): ClinicStepCtx {
     now: dialog.now,
     nowIso: dialog.nowIso,
     inboundMessageId: dialog.inboundMessageId,
+    aiAutoReplyOn: () => aiAnswers(dialog),
     sendOptions: (args) => sendOptions(dialog, args),
   }
 }

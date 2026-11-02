@@ -41,6 +41,8 @@ export interface ClinicStepCtx {
   now: Date
   nowIso: string
   inboundMessageId: string | null
+  /** ¿La IA va a contestar las dudas? Se lee una vez por mensaje. */
+  aiAutoReplyOn(): Promise<boolean>
   sendOptions(args: {
     bodyText: string
     buttonLabel: string
@@ -341,6 +343,8 @@ export async function handleClinicChoice(
         case 'book':
           return { kind: 'next', state: newBookingState('pick_patient') }
         case 'faq':
+          // Invitar a escribir una duda que nadie va a contestar es peor que pasarla.
+          if (!(await ctx.aiAutoReplyOn())) return { kind: 'handoff', note: texts.aiOffNote }
           return { kind: 'next', state: newBookingState('faq_open') }
         case 'human':
           return { kind: 'handoff' }

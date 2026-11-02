@@ -13,6 +13,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { loadAiConfig } from '@/lib/ai/config'
 import { readAccountModules } from '@/lib/modules/read-account-modules'
 import { hasModule } from '@/lib/verticals/registry'
 
@@ -37,4 +38,21 @@ export async function canUseAi(
     kind: 'datos_sensibles',
   })
   return consent?.granted === true
+}
+
+/**
+ * ¿La cuenta tiene la respuesta automática con IA prendida? Es la misma
+ * condición con la que `auto-reply.ts` decide si contesta. El bot la mira antes
+ * de decirle a un paciente que escriba su duda: si nadie la va a contestar,
+ * mejor que lo atienda una persona. Una configuración que no se puede leer
+ * (llave que no descifra, base caída) cuenta como apagada.
+ */
+export async function autoReplyEnabled(db: SupabaseClient, accountId: string): Promise<boolean> {
+  try {
+    const config = await loadAiConfig(db, accountId)
+    return config?.autoReplyEnabled === true
+  } catch (err) {
+    console.error('[clinica] no se pudo leer la configuración de la IA:', err)
+    return false
+  }
 }

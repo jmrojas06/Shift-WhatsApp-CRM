@@ -102,6 +102,8 @@ export function buildClinicTexts(l: AgendaLabels) {
       'Paciente: la autorización de datos quedó sin responder (bot en pausa).',
 
     /** La configuración de la clínica falta o no se pudo leer: el bot no atiende y pasa a una persona. */
+    aiOffNote:
+      'Paciente: escribió una duda y la IA no está activa para responderla (bot en pausa).',
     humanTopicNote:
       'Paciente: escribió sobre una queja, un pago o un documento, que atiende una persona (bot en pausa).',
     clinicUnavailableNote:
