@@ -25,6 +25,13 @@ export type BookingStep =
   | 'summary'
   | 'manage_menu'
   | 'manage_cancel_confirm'
+  | 'consent'
+  | 'clinic_menu'
+  | 'urgency'
+  | 'pick_patient'
+  | 'new_patient_name'
+  | 'pick_appointment'
+  | 'marketing_consent'
 
 /** 'book' = cita nueva · 'reschedule' = reprogramación de una existente. */
 export type BookingMode = 'book' | 'reschedule'
@@ -63,6 +70,16 @@ export interface BookingState {
    * preguntar); esas no se muestran ni se guardan en la cita.
    */
   answers?: AnswerMap
+  /** Paciente de la cita (módulo clínica). */
+  patientId?: string
+  /** Página del menú de días, cuando hay más de los que caben en una lista. */
+  dayPage?: number
+  /** Qué sigue al aceptar la autorización; por defecto, el menú. */
+  afterConsent?: 'urgency_book'
+  /** Reserva abierta desde el flujo de urgencia: salta al menú de horas. */
+  urgent?: boolean
+  /** Acción del recordatorio que espera saber sobre cuál cita aplica. */
+  reminderAction?: ReminderAction
 }
 
 export function newBookingState(
@@ -81,6 +98,9 @@ export const staffId = (id: string): string => `staff:${id}`
 export const dayId = (key: string): string => `day:${key}`
 export const slotId = (iso: string): string => `slot:${iso}`
 export const actId = (action: string): string => `act:${action}`
+/** Paciente de la lista, o 'new' para registrar a otra persona. */
+export const patId = (id: string): string => `pat:${id}`
+export const apptId = (id: string): string => `appt:${id}`
 /**
  * Opción `index` (base 0) de una pregunta extra. Lleva el id de la pregunta: un
  * botón viejo de otra pregunta no puede contestar la que está abierta. Cabe en
@@ -107,32 +127,45 @@ export function parseAnswerId(
 // ------------------------------------------------------------
 // Ids del recordatorio (Fase 3)
 //
-// Los tres botones del recordatorio viajan con id estático
-// `rem:<acción>`: en el mensaje libre son los ids de botón y en la
-// plantilla de Meta son el payload de los quick replies, que NO
-// admite valores dinámicos. La cita sobre la que se actúa se
-// resuelve en el controlador (próxima cita activa del contacto).
+// Los tres botones del recordatorio viajan con id `rem:<acción>`, y con
+// `rem:<acción>:<cita>` cuando el negocio tiene varios pacientes por
+// número. Una plantilla enviada sin payload devuelve la ETIQUETA del
+// botón ("Confirmar"): por eso también se leen las etiquetas. Sin id de
+// cita, la cita se resuelve en el controlador.
 // ------------------------------------------------------------
 
 export const REMINDER_ACTIONS = ['confirm', 'reschedule', 'cancel'] as const
 
 export type ReminderAction = (typeof REMINDER_ACTIONS)[number]
 
-export const remId = (action: ReminderAction): string => `rem:${action}`
+export const remId = (action: ReminderAction, appointmentId?: string): string =>
+  appointmentId ? `rem:${action}:${appointmentId}` : `rem:${action}`
 
-/** 'rem:confirm' → 'confirm'; todo lo demás → null. */
-export function parseReminderId(id: string): ReminderAction | null {
-  const prefix = 'rem:'
-  if (!id.startsWith(prefix)) return null
-  const action = id.slice(prefix.length)
-  return (REMINDER_ACTIONS as readonly string[]).includes(action)
-    ? (action as ReminderAction)
-    : null
+export interface ReminderTap {
+  action: ReminderAction
+  appointmentId: string | null
 }
 
-export type OptionKind = 'svc' | 'staff' | 'day' | 'slot' | 'act' | 'ans'
+const REMINDER_LABELS: Readonly<Record<string, ReminderAction>> = {
+  Confirmar: 'confirm',
+  Reprogramar: 'reschedule',
+  Cancelar: 'cancel',
+}
 
-const OPTION_KINDS: readonly OptionKind[] = ['svc', 'staff', 'day', 'slot', 'act', 'ans']
+/** 'rem:confirm', 'rem:confirm:<id>' o la etiqueta 'Confirmar'; lo demás → null. */
+export function parseReminderTap(id: string): ReminderTap | null {
+  if (Object.hasOwn(REMINDER_LABELS, id)) {
+    return { action: REMINDER_LABELS[id], appointmentId: null }
+  }
+  const [prefix, action, appointmentId] = id.split(':')
+  if (prefix !== 'rem') return null
+  if (!(REMINDER_ACTIONS as readonly string[]).includes(action)) return null
+  return { action: action as ReminderAction, appointmentId: appointmentId || null }
+}
+
+export type OptionKind = 'svc' | 'staff' | 'day' | 'slot' | 'act' | 'ans' | 'pat' | 'appt'
+
+const OPTION_KINDS: readonly OptionKind[] = ['svc', 'staff', 'day', 'slot', 'act', 'ans', 'pat', 'appt']
 
 export function parseOptionId(
   id: string,
@@ -215,6 +248,10 @@ const EXTRA_INTENT_STOPLIST: ReadonlySet<string> = new Set([
   'pregunta',
   'precio',
   'precios',
+  // Una clínica llama "atención" a su servicio, y "gracias por la atención"
+  // no es un pedido de cita.
+  'atencion',
+  'atenciones',
 ])
 
 /** Mínimo de caracteres para que una palabra del dueño cuente como intención. */
@@ -253,6 +290,11 @@ export function containsHandoffWord(text: string): boolean {
   return containsWord(text, HANDOFF_WORDS)
 }
 
+/** ¿El mensaje trae una palabra de urgencia de la clínica? */
+export function containsUrgencyWord(text: string, words: readonly string[]): boolean {
+  return containsWord(text, words.map(normalizeText))
+}
+
 /**
  * ¿El cliente quiere agendar? (arranca el flujo cuando no hay sesión).
  * Acepta además las palabras propias del negocio ("consulta", "turno").
@@ -276,8 +318,25 @@ const ACTION_SYNONYMS: Record<string, string[]> = {
   'act:cancel': ['cancelar', 'cancela', 'anular'],
   'act:cancel_yes': ['si cancelar', 'confirmo cancelar'],
   'act:back': ['volver', 'atras', 'no', 'mejor no'],
+  // Las de autorización no incluyen un "sí" suelto, a propósito: aceptar
+  // el tratamiento de datos exige decirlo.
+  'act:consent_yes': ['si acepto', 'si autorizo', 'autorizo'],
+  'act:consent_no': ['no', 'no autorizo'],
+  'act:alarm_yes': ['si', 'tengo'],
+  'act:alarm_no': ['no', 'ninguno', 'ninguna'],
+  'act:mkt_yes': ['si', 'avisame'],
+  'act:mkt_no': ['no'],
   'staff:any': ['cualquiera', 'el que sea', 'alguno', 'me da igual', 'el primero', 'sin preferencia'],
 }
+
+/** Palabras de negación en texto ya normalizado (sin tildes ni puntuación). */
+const NEGATION = /\b(no|ni|nunca|jamas|tampoco)\b/
+
+/**
+ * Opciones de "sí / no" donde un rechazo gana siempre sobre cualquier
+ * lectura de aceptación (ver `matchChoice`).
+ */
+const NEGATIVE_FIRST_IDS: readonly string[] = ['act:consent_no', 'act:mkt_no']
 
 export interface MatchChoiceArgs {
   text: string
@@ -311,6 +370,21 @@ export function matchChoice({
   const squashed = squash(text)
   if (!squashed) return null
 
+  const offered = new Set(options.map((o) => o.id))
+
+  // Un no explícito nunca se lee como aceptación. Va ANTES de comparar
+  // títulos y sinónimos: "no sé si acepto" contiene el título "sí acepto"
+  // y "nunca autorizo" contiene el sinónimo "autorizo". Ante la duda se
+  // toma como rechazo, que es el lado seguro (el bot se pausa y una
+  // persona atiende). Solo para la autorización de datos y el aviso de
+  // marketing; en los signos de alarma un "no" suelto NO decide
+  // ("no puedo respirar").
+  if (NEGATION.test(squashed)) {
+    for (const declineId of NEGATIVE_FIRST_IDS) {
+      if (offered.has(declineId)) return declineId
+    }
+  }
+
   // Título exacto…
   for (const opt of options) {
     if (squash(opt.title) === squashed) return opt.id
@@ -331,7 +405,6 @@ export function matchChoice({
   }
 
   // Sinónimos, solo para opciones realmente ofrecidas.
-  const offered = new Set(options.map((o) => o.id))
   for (const [id, words] of Object.entries(ACTION_SYNONYMS)) {
     if (!offered.has(id)) continue
     if (words.some((w) => new RegExp(`\\b${squash(w)}\\b`).test(squashed))) {

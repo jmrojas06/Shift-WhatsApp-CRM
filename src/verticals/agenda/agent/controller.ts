@@ -81,7 +81,7 @@ import {
   newBookingState,
   parseAnswerId,
   parseOptionId,
-  parseReminderId,
+  parseReminderTap,
   slotId,
   staffId,
   svcId,
@@ -89,6 +89,7 @@ import {
   type BookingStep,
   type OfferedOption,
   type ReminderAction,
+  type ReminderTap,
 } from './state'
 import { addDaysToKey, zonedDateKey, zonedParts } from './time'
 
@@ -168,14 +169,14 @@ export async function handleAgendaInbound(
     : null
   const text = inbound?.text ?? ''
   const replyId = inbound?.replyId ?? null
-  const reminderAction = replyId ? parseReminderId(replyId) : null
+  const reminderTap = replyId ? parseReminderTap(replyId) : null
   const humanOwned = args.humanOwned === true
 
   // Hilo de un humano: antes de cargar nada más, soltar todo lo que no
   // sea respuesta a un mensaje del sistema.
   if (
     humanOwned &&
-    !reminderAction &&
+    !reminderTap &&
     !isCancelConfirmTap(args.session ?? null, replyId)
   ) {
     return { consumed: false }
@@ -201,18 +202,14 @@ export async function handleAgendaInbound(
   }
 
   // 0) Tap de un recordatorio (Confirmar / Reprogramar / Cancelar).
-  //    Los ids `rem:*` son estáticos — también viajan como quick
-  //    replies de la plantilla de Meta—, así que la cita se resuelve
+  //    Los ids `rem:*` son estáticos, y una plantilla enviada sin payload
+  //    devuelve la etiqueta del botón ("Confirmar"): `parseReminderTap`
+  //    lee las dos formas. Aquí la cita se resuelve
   //    como la próxima cita activa del contacto. Se atienden aunque
   //    haya una sesión a medias (y sin abrir una nueva para confirmar),
   //    y también cuando un humano es dueño del hilo (D1).
-  if (reminderAction) {
-    await handleReminderTap(
-      dialog,
-      args.session ?? null,
-      reminderAction,
-      humanOwned,
-    )
+  if (reminderTap) {
+    await handleReminderTap(dialog, args.session ?? null, reminderTap, humanOwned)
     return { consumed: true }
   }
 
@@ -328,9 +325,10 @@ function isCancelConfirmTap(
 async function handleReminderTap(
   dialog: Dialog,
   session: VerticalSession | null,
-  action: ReminderAction,
+  tap: ReminderTap,
   humanOwned = false,
 ): Promise<void> {
+  const action = tap.action
   const appt = await findNextAppointment(
     dialog.db,
     dialog.accountId,
@@ -478,6 +476,13 @@ function coerceState(raw: Record<string, unknown>): BookingState {
     ...(typeof raw.questionId === 'string' ? { questionId: raw.questionId } : {}),
     ...(raw.answers && typeof raw.answers === 'object' && !Array.isArray(raw.answers)
       ? { answers: readAnswerMap(raw.answers, { keepEmpty: true }) }
+      : {}),
+    ...(typeof raw.patientId === 'string' ? { patientId: raw.patientId } : {}),
+    ...(typeof raw.dayPage === 'number' ? { dayPage: raw.dayPage } : {}),
+    ...(raw.afterConsent === 'urgency_book' ? { afterConsent: 'urgency_book' as const } : {}),
+    ...(raw.urgent === true ? { urgent: true } : {}),
+    ...(typeof raw.reminderAction === 'string'
+      ? { reminderAction: raw.reminderAction as ReminderAction }
       : {}),
   })
 }
@@ -1516,6 +1521,15 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
       })
       return { state: { ...state, options }, closed: false }
     }
+
+    case 'consent':
+    case 'clinic_menu':
+    case 'urgency':
+    case 'pick_patient':
+    case 'new_patient_name':
+    case 'pick_appointment':
+    case 'marketing_consent':
+      return { state, closed: true }
   }
 }
 

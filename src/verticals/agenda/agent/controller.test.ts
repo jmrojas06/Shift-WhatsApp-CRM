@@ -1558,6 +1558,22 @@ describe('botones del recordatorio (rem:*)', () => {
     expect(rec.calls).toHaveLength(0)
     expect(sessionRow(db)).toBeUndefined()
   })
+
+  it('el toque de una plantilla sin payload llega con la etiqueta y también confirma', async () => {
+    const seed = baseSeed()
+    seed.booking_appointments = [
+      appointmentRow({ status: 'pending', confirmed_at: null }),
+    ]
+    const db = makeFakeDb(seed)
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, { replyId: 'Confirmar' })
+
+    expect(res.consumed).toBe(true)
+    expect(db._tables.booking_appointments[0].status).toBe('confirmed')
+    expect(last(rec).bodyText).toContain('Queda confirmado')
+    expect(sessionRow(db)).toBeUndefined()
+  })
 })
 
 describe('recordatorio con un humano a cargo del chat (D1)', () => {
