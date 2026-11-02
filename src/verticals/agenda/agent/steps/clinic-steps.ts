@@ -205,6 +205,18 @@ export function routeClinicText(text: string, appointmentWords: readonly string[
  */
 export async function handleConsentRevoked(ctx: ClinicStepCtx): Promise<ClinicHandoff> {
   const { texts } = ctx
+  // El paciente pidió parar: el hilo pasa a una persona de todos modos, y si no
+  // se pudo registrar, la nota le dice que el registro hay que hacerlo a mano.
+  const note = (await recordConsentRevoked(ctx)) ? texts.consentRevokedNote : texts.consentRevokedUnsavedNote
+  return { kind: 'handoff', message: texts.consentDeclined, note }
+}
+
+/**
+ * Registra el rechazo con el texto vigente. `false` si no se pudo guardar: quien
+ * llama decide qué hace, pero la persona ya pidió parar y eso no se pierde en
+ * silencio.
+ */
+export async function recordConsentRevoked(ctx: ClinicStepCtx): Promise<boolean> {
   try {
     await recordConsent(ctx.db, {
       accountId: ctx.accountId,
@@ -217,13 +229,11 @@ export async function handleConsentRevoked(ctx: ClinicStepCtx): Promise<ClinicHa
       messageId: ctx.inboundMessageId,
       createdAtIso: ctx.nowIso,
     })
+    return true
   } catch (err) {
-    // El paciente pidió parar: el hilo pasa a una persona de todos modos, y la
-    // nota le dice que el registro hay que hacerlo a mano.
     console.error('[clinica] no se pudo registrar la revocación:', err)
-    return { kind: 'handoff', message: texts.consentDeclined, note: texts.consentRevokedUnsavedNote }
+    return false
   }
-  return { kind: 'handoff', message: texts.consentDeclined, note: texts.consentRevokedNote }
 }
 
 /** Con paciente elegido sigue la reserva; una urgencia salta al menú de horas. */

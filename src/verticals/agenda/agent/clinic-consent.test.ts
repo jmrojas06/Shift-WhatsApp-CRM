@@ -18,7 +18,7 @@ import {
   makeRecorder,
   send,
 } from './testing/clinic-harness'
-import { asClient } from './testing/fake-db'
+import { asClient, type Row } from './testing/fake-db'
 
 const texts = buildClinicTexts(DEFAULT_LABELS)
 
@@ -357,12 +357,163 @@ describe('autorización de datos', () => {
       expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.consentDeclinedNote)
     })
 
-    it('un hilo que ya es de una persona no se toca', async () => {
-      const db = clinicDb({ clinic_consents: [grantedConsent()] })
-      const rec = makeRecorder()
-      const result = await send(db, rec, { replyId: 'act:consent_no' }, { humanOwned: true })
-      expect(result).toEqual({ consumed: false })
-      expect(db._tables.clinic_consents).toHaveLength(1)
+    describe('en un hilo de una persona', () => {
+      const AGENT = 'user-agent'
+
+      /** La persona lleva el hilo: está asignado a un agente. */
+      const assigned = (extra: Record<string, Row[]> = {}) => {
+        const db = clinicDb({ clinic_consents: [grantedConsent()], ...extra })
+        db._tables.conversations[0].assigned_agent_id = AGENT
+        return db
+      }
+
+      /** Nadie lo lleva, pero el bot está en pausa. */
+      const paused = () => {
+        const db = clinicDb({ clinic_consents: [grantedConsent()] })
+        db._tables.conversations[0].ai_autoreply_disabled = true
+        return db
+      }
+
+      const tap = (db: ReturnType<typeof clinicDb>, rec = makeRecorder()) =>
+        send(db, rec, { replyId: 'act:consent_no' }, { humanOwned: true, ...LATER })
+
+      it('registra la revocación sin reasignar el hilo ni escribirle al paciente', async () => {
+        const db = assigned()
+        const rec = makeRecorder()
+        const result = await tap(db, rec)
+        expect(result).toEqual({ consumed: true })
+        expect(db._tables.clinic_consents).toHaveLength(2)
+        expect(db._tables.clinic_consents[1]).toMatchObject({
+          granted: false,
+          kind: 'datos_sensibles',
+          contact_ref: '573001112233',
+          text_version: 2,
+          text_snapshot: 'Texto de autorización',
+          source: 'whatsapp',
+        })
+        expect(await latest(db)).toEqual({ granted: false })
+        // Ni un mensaje, ni una pausa, ni una nota, ni un agente nuevo, ni un aviso, ni una etiqueta.
+        expect(rec.calls).toHaveLength(0)
+        expect(db._tables.conversations[0]).toMatchObject({
+          assigned_agent_id: AGENT,
+          ai_autoreply_disabled: false,
+          ai_handoff_summary: null,
+        })
+        expect(db._tables.notifications).toHaveLength(0)
+        expect(db._tables.contact_tags).toHaveLength(0)
+      })
+
+      it('con el bot en pausa y sin agente tampoco asigna a nadie', async () => {
+        const db = paused()
+        const rec = makeRecorder()
+        const result = await tap(db, rec)
+        expect(result).toEqual({ consumed: true })
+        expect(await latest(db)).toEqual({ granted: false })
+        expect(rec.calls).toHaveLength(0)
+        expect(db._tables.conversations[0]).toMatchObject({
+          assigned_agent_id: null,
+          ai_autoreply_disabled: true,
+          ai_handoff_summary: null,
+        })
+        expect(db._tables.notifications).toHaveLength(0)
+      })
+
+      it('una revocación que ya estaba registrada no se repite', async () => {
+        const db = assigned({
+          clinic_consents: [
+            grantedConsent(),
+            { ...grantedConsent(), id: 'cons-2', granted: false, created_at: '2026-10-19T13:00:30.000Z' },
+          ],
+        })
+        const rec = makeRecorder()
+        const result = await tap(db, rec)
+        expect(result).toEqual({ consumed: true })
+        expect(db._tables.clinic_consents).toHaveLength(2)
+        expect(rec.calls).toHaveLength(0)
+      })
+
+      it('no toca una cancelación abierta desde un recordatorio', async () => {
+        const db = assigned({
+          booking_sessions: [
+            {
+              id: 'ses-1',
+              account_id: ACCOUNT,
+              contact_id: CONTACT,
+              status: 'active',
+              expires_at: '2026-10-19T13:10:00.000Z',
+              state: { step: 'manage_cancel_confirm', mode: 'book', options: [], fails: 0 },
+            },
+          ],
+        })
+        const rec = makeRecorder()
+        const result = await tap(db, rec)
+        expect(result).toEqual({ consumed: true })
+        expect(await latest(db)).toEqual({ granted: false })
+        expect(db._tables.booking_sessions[0].status).toBe('active')
+        expect(rec.calls).toHaveLength(0)
+      })
+
+      it('si no se pudo registrar, lo avisa a quien lleva el hilo, que lo registra a mano', async () => {
+        const db = assigned()
+        db._failNext('insert', 'clinic_consents', { message: 'boom' })
+        const rec = makeRecorder()
+        const result = await tap(db, rec)
+        expect(result).toEqual({ consumed: true })
+        expect(db._tables.clinic_consents).toHaveLength(1)
+        expect(rec.calls).toHaveLength(0)
+        expect(db._tables.notifications).toMatchObject([
+          {
+            user_id: AGENT,
+            conversation_id: CONVERSATION,
+            title: texts.consentRevokeFailedTitle,
+            body: texts.consentRevokeFailedBody('Marta Ruiz'),
+          },
+        ])
+        expect(db._tables.conversations[0]).toMatchObject({ assigned_agent_id: AGENT, ai_handoff_summary: null })
+      })
+
+      it('si nadie lo lleva, el aviso va al dueño', async () => {
+        const db = paused()
+        db._failNext('insert', 'clinic_consents', { message: 'boom' })
+        await tap(db)
+        expect(db._tables.notifications).toMatchObject([
+          { user_id: OWNER, title: texts.consentRevokeFailedTitle },
+        ])
+      })
+
+      it('sin la configuración de la clínica no hay qué registrar: también lo avisa', async () => {
+        const db = assigned({ clinic_settings: [] })
+        const rec = makeRecorder()
+        const result = await tap(db, rec)
+        expect(result).toEqual({ consumed: true })
+        expect(db._tables.clinic_consents).toHaveLength(1)
+        expect(rec.calls).toHaveLength(0)
+        expect(db._tables.notifications).toMatchObject([
+          { user_id: AGENT, title: texts.consentRevokeFailedTitle },
+        ])
+      })
+
+      it('una cuenta sin el módulo no cambia', async () => {
+        const db = assigned()
+        const result = await send(
+          db,
+          makeRecorder(),
+          { replyId: 'act:consent_no' },
+          { humanOwned: true, modules: ['agenda'] },
+        )
+        expect(result).toEqual({ consumed: false })
+        expect(db._tables.clinic_consents).toHaveLength(1)
+        expect(db._tables.notifications).toHaveLength(0)
+      })
+
+      it('los demás toques de un menú viejo siguen sin tocar el hilo', async () => {
+        const db = assigned()
+        const rec = makeRecorder()
+        const result = await send(db, rec, { replyId: 'act:consent_yes' }, { humanOwned: true })
+        expect(result).toEqual({ consumed: false })
+        expect(db._tables.clinic_consents).toHaveLength(1)
+        expect(rec.calls).toHaveLength(0)
+      })
     })
 
     it('en una cuenta sin clínica no hace nada', async () => {

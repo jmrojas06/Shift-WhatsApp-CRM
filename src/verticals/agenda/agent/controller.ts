@@ -116,6 +116,7 @@ import {
   handlePatientName,
   isClinicMenuTap,
   isClinicStep,
+  recordConsentRevoked,
   renderClinicStep,
   routeClinicText,
   urgencyUnconfirmedHandoff,
@@ -219,12 +220,17 @@ export async function handleAgendaInbound(
   const humanOwned = args.humanOwned === true
   const clinicActive = args.modules?.includes('clinica') === true
 
+  // "No acepto" es la respuesta al mensaje de la autorización, que es del
+  // sistema: retira el permiso aunque el hilo lo lleve una persona.
+  const revokesConsent = clinicActive && replyId === actId('consent_no')
+
   // Hilo de un humano: antes de cargar nada más, soltar todo lo que no
   // sea respuesta a un mensaje del sistema. El bot no contesta para no pisar a
   // la persona, pero una urgencia en un hilo suyo no puede pasar desapercibida.
   if (
     humanOwned &&
     !reminderTap &&
+    !revokesConsent &&
     !isCancelConfirmTap(args.session ?? null, replyId)
   ) {
     if (clinicActive) await warnHumanOfUrgency(args, { text, replyId })
@@ -268,6 +274,12 @@ export async function handleAgendaInbound(
   //    y también cuando un humano es dueño del hilo (D1).
   if (reminderTap) {
     await handleReminderTap(dialog, args.session ?? null, reminderTap, humanOwned)
+    return { consumed: true }
+  }
+
+  // Hilo de un humano: el "No acepto" solo se registra, sin tocar el hilo.
+  if (humanOwned && revokesConsent) {
+    await revokeConsentInHumanThread(dialog)
     return { consumed: true }
   }
 
@@ -421,25 +433,63 @@ async function warnHumanOfUrgency(
       if (!containsUrgencyWord(text, words)) return
     }
 
-    const [settings, account, assignee, contact] = await Promise.all([
-      loadBotSettings(args.db, args.accountId).catch(() => null),
-      loadAccount(args.db, args.accountId).catch(() => null),
-      loadConversationAssignee(args.db, args.accountId, args.conversationId).catch(() => null),
-      loadContact(args.db, args.accountId, args.contactId).catch(() => null),
-    ])
-    const userId = assignee ?? account?.ownerUserId ?? null
-    if (!userId) return
-    const texts = buildClinicTexts(settings?.labels ?? DEFAULT_LABELS)
-    const who = contact?.name?.trim() || contact?.phone || 'Un paciente'
-    await insertNotification(args.db, {
-      accountId: args.accountId,
-      userId,
-      conversationId: args.conversationId,
-      contactId: args.contactId,
+    await notifyThreadHuman(args, (texts, who) => ({
       title: texts.urgencyNotificationTitle,
       body: texts.urgencyNotificationBody(who),
-    })
+    }))
   })
+}
+
+/**
+ * Avisa a quien lleva un hilo de una persona (el agente asignado o, si nadie lo
+ * lleva, el dueño). Cada lectura es opcional: un fallo no impide el aviso.
+ * Lanza solo si no se pudo escribir.
+ */
+async function notifyThreadHuman(
+  args: Pick<HandleAgendaInboundArgs, 'db' | 'accountId' | 'conversationId' | 'contactId'>,
+  build: (texts: ClinicTexts, who: string) => { title: string; body: string },
+): Promise<void> {
+  const [settings, account, assignee, contact] = await Promise.all([
+    loadBotSettings(args.db, args.accountId).catch(() => null),
+    loadAccount(args.db, args.accountId).catch(() => null),
+    loadConversationAssignee(args.db, args.accountId, args.conversationId).catch(() => null),
+    loadContact(args.db, args.accountId, args.contactId).catch(() => null),
+  ])
+  const userId = assignee ?? account?.ownerUserId ?? null
+  if (!userId) return
+  const texts = buildClinicTexts(settings?.labels ?? DEFAULT_LABELS)
+  const who = contact?.name?.trim() || contact?.phone || 'Un paciente'
+  await insertNotification(args.db, {
+    accountId: args.accountId,
+    userId,
+    conversationId: args.conversationId,
+    contactId: args.contactId,
+    ...build(texts, who),
+  })
+}
+
+/**
+ * "No acepto" en un hilo de una persona: el paciente retira su autorización, y
+ * eso se registra aunque el bot no tenga el hilo. Solo se registra: no pausa,
+ * no reasigna, no etiqueta y no le escribe al paciente, porque el hilo ya es de
+ * una persona. Si no se pudo guardar (o la configuración de la clínica no está),
+ * se avisa a quien lo lleva para que lo registre a mano. Una revocación que ya
+ * estaba registrada no se repite.
+ */
+async function revokeConsentInHumanThread(dialog: Dialog): Promise<void> {
+  const consent = await latestConsent(dialog.db, {
+    accountId: dialog.accountId,
+    contactId: dialog.contactId,
+    kind: 'datos_sensibles',
+  })
+  if (consent && !consent.granted) return
+  if (dialog.clinic && (await recordConsentRevoked(clinicCtx(dialog)))) return
+  await bestEffort('aviso de revocación sin registrar', () =>
+    notifyThreadHuman(dialog, (texts, who) => ({
+      title: texts.consentRevokeFailedTitle,
+      body: texts.consentRevokeFailedBody(who),
+    })),
+  )
 }
 
 /**
