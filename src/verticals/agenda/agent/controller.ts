@@ -2521,19 +2521,18 @@ async function handoffClinicUnavailable(
   const urgent =
     (input.replyId !== null && URGENT_TAPS.includes(input.replyId)) ||
     detectsUrgency(input.text, DEFAULT_URGENCY_WORDS)
-  await performHandoff(
-    dialog,
-    sessionId,
-    urgent
-      ? {
-          note: texts.clinicUnavailableUrgentNote,
-          notification: {
-            title: texts.urgencyNotificationTitle,
-            body: texts.urgencyNotificationBody,
-          },
-        }
-      : { note: texts.clinicUnavailableNote },
-  )
+  if (!urgent) {
+    await performHandoff(dialog, sessionId, { note: texts.clinicUnavailableNote })
+    return
+  }
+  // Sin la configuración no se sabe qué signos de alarma mostrar: valen los de
+  // siempre. Quien tocó "Sí, tengo alguno" ya sabe que los tiene; los demás
+  // reciben los signos repetidos, no el pase genérico.
+  const answer =
+    input.replyId === actId('alarm_yes')
+      ? urgencyGoErHandoff(texts)
+      : urgencyUnconfirmedHandoff(texts, DEFAULT_URGENCY_ALARM_TEXT)
+  await performHandoff(dialog, sessionId, { ...answer, note: texts.clinicUnavailableUrgentNote })
 }
 
 /**

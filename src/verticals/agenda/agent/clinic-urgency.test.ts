@@ -788,7 +788,9 @@ describe('urgencias', () => {
 
     it('con la configuración de la clínica caída también es una urgencia', async () => {
       const db = clinicDb({ clinic_settings: [] })
-      await send(db, makeRecorder(), { replyId: 'act:alarm_yes' })
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: 'act:alarm_yes' })
+      expect(last(rec).bodyText).toBe(texts.urgencyGoEr)
       expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.clinicUnavailableUrgentNote)
       expect(priorityNotifications(db)).toHaveLength(1)
     })

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { latestConsent } from '@/modules/clinica/consent'
-import { buildClinicTexts } from '@/modules/clinica/texts'
+import { buildClinicTexts, DEFAULT_URGENCY_ALARM_TEXT } from '@/modules/clinica/texts'
 import { AGENDA_AGENT_TEXTS } from '../texts'
 import { DEFAULT_LABELS } from '../labels'
 
@@ -701,6 +701,24 @@ describe('la clínica no está disponible', () => {
       user_id: OWNER,
       body: texts.urgencyNotificationBody('Marta Ruiz'),
     })
+  })
+
+  it('el mensaje a quien escribe una urgencia repite los signos de alarma de siempre, no el pase genérico', async () => {
+    for (const input of [{ text: 'Tengo mucho dolor de muela' }, { replyId: 'act:urgent' }]) {
+      const db = clinicDb({ clinic_settings: [] })
+      const rec = makeRecorder()
+      await send(db, rec, input)
+      expect(last(rec).bodyText).toBe(texts.urgencyPending(DEFAULT_URGENCY_ALARM_TEXT))
+      expect(last(rec).bodyText).not.toBe(AGENDA_AGENT_TEXTS.handoff)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.clinicUnavailableUrgentNote)
+    }
+  })
+
+  it('un mensaje sin urgencia sigue con el pase genérico', async () => {
+    const db = clinicDb({ clinic_settings: [] })
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
   })
 
   describe('quién recibe el aviso cuando el dueño también es el agente de pase', () => {
