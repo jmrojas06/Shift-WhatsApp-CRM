@@ -2908,6 +2908,7 @@
       "storedKeyUndecryptable": "저장된 API 키를 복호화할 수 없습니다.",
       "notConfigured": "AI 어시스턴트가 설정되지 않았습니다. 설정 → AI 어시스턴트에서 활성화하세요.",
       "noMessages": "아직 초안을 작성할 메시지가 없습니다.",
+      "consentRequired": "이 사람은 데이터 사용에 동의하지 않아 AI가 이 대화를 읽을 수 없습니다. 직접 답변해 주세요.",
       "messagesRequired": "messages는 필수입니다",
       "sendMessageToTest": "에이전트를 테스트하려면 메시지를 보내세요.",
       "noAgentConfigured": "아직 설정된 에이전트가 없습니다. 설정에서 제공자 키를 추가하세요.",

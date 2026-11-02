@@ -10,6 +10,7 @@ import { latestUserMessage } from '@/lib/ai/query'
 import { logAiUsage } from '@/lib/ai/usage'
 import { supabaseAdmin } from '@/lib/ai/admin-client'
 import { AiError } from '@/lib/ai/types'
+import { canUseAi } from '@/modules/clinica/ai-gate'
 import { getT } from '@/lib/i18n/translate'
 
 const t = getT('Api')
@@ -50,7 +51,7 @@ export async function POST(request: Request) {
     // row means "not yours / not found" either way.
     const { data: conversation, error: convErr } = await supabase
       .from('conversations')
-      .select('id')
+      .select('id, contact_id')
       .eq('id', conversationId)
       .maybeSingle()
     if (convErr) {
@@ -59,6 +60,21 @@ export async function POST(request: Request) {
     }
     if (!conversation) {
       return NextResponse.json({ error: t('common.conversationNotFound') }, { status: 404 })
+    }
+
+    // Clinic accounts: nothing from a patient who has not authorized the use
+    // of their data goes to the AI provider, not even to draft for an agent.
+    // The service role reads the authorization: it does not depend on what
+    // the caller's session is allowed to see.
+    const allowed = await canUseAi(supabaseAdmin(), {
+      accountId,
+      contactId: conversation.contact_id as string,
+    })
+    if (!allowed) {
+      return NextResponse.json(
+        { error: t('ai.consentRequired'), code: 'consent_required' },
+        { status: 403 },
+      )
     }
 
     const config = await loadAiConfig(supabase, accountId).catch((err) => {

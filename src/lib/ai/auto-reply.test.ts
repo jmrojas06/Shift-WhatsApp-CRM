@@ -16,6 +16,14 @@ const h = vi.hoisted(() => ({
     claim: true as boolean,
     updatePayload: null as Record<string, unknown> | null,
     rpcCalls: [] as { name: string; args: unknown }[],
+    /** Fila de `accounts` que lee la comprobación de autorización (null = sin fila). */
+    account: null as Record<string, unknown> | null,
+    accountError: null as { message: string } | null,
+    /** Filas de `clinic_consents` del contacto, la más reciente primero. */
+    consents: [] as { granted: boolean }[],
+    consentError: null as { message: string } | null,
+    /** Tablas leídas, en orden. */
+    tablesRead: [] as string[],
   },
 }))
 
@@ -33,6 +41,31 @@ vi.mock('@/lib/whatsapp/meta-api', () => ({
 vi.mock('./admin-client', () => ({
   supabaseAdmin: () => ({
     from: (table: string) => {
+      h.state.tablesRead.push(table)
+      if (table === 'accounts') {
+        // .select().eq().maybeSingle() → módulos de la cuenta
+        const chain = {
+          select: () => chain,
+          eq: () => chain,
+          maybeSingle: () =>
+            Promise.resolve({ data: h.state.account, error: h.state.accountError }),
+        }
+        return chain
+      }
+      if (table === 'clinic_consents') {
+        // .select().eq().eq().eq().order().limit() → decisión más reciente
+        const chain = {
+          select: () => chain,
+          eq: () => chain,
+          order: () => chain,
+          limit: () =>
+            Promise.resolve({
+              data: h.state.consentError ? null : h.state.consents.slice(0, 1),
+              error: h.state.consentError,
+            }),
+        }
+        return chain
+      }
       if (table === 'automations') {
         // .select().eq().eq().in().limit() → active auto-responders
         const chain = {
@@ -101,6 +134,12 @@ beforeEach(() => {
   h.state.claim = true
   h.state.updatePayload = null
   h.state.rpcCalls = []
+  // Una cuenta de agenda común: sin el módulo clínica, la IA no pide autorización.
+  h.state.account = { modules: ['agenda'], vertical_key: 'agenda' }
+  h.state.accountError = null
+  h.state.consents = []
+  h.state.consentError = null
+  h.state.tablesRead = []
   h.loadAiConfig.mockResolvedValue(aiConfig())
   h.buildConversationContext.mockResolvedValue([{ role: 'user', content: 'hi' }])
   h.retrieveKnowledge.mockResolvedValue([])
@@ -201,6 +240,80 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     expect(h.generateReply).not.toHaveBeenCalled()
     expect(h.engineSendText).not.toHaveBeenCalled()
     expect(h.sendTypingIndicator).not.toHaveBeenCalled()
+  })
+})
+
+describe('dispatchInboundToAiReply — clinic data authorization', () => {
+  const clinic = { modules: ['agenda', 'clinica'], vertical_key: 'agenda' }
+
+  function expectSilent() {
+    expect(h.buildConversationContext).not.toHaveBeenCalled()
+    expect(h.retrieveKnowledge).not.toHaveBeenCalled()
+    expect(h.generateReply).not.toHaveBeenCalled()
+    expect(h.engineSendText).not.toHaveBeenCalled()
+    expect(h.sendTypingIndicator).not.toHaveBeenCalled()
+    expect(h.state.rpcCalls).toHaveLength(0)
+  }
+
+  it('does not send a clinic chat to the AI until the patient authorizes', async () => {
+    h.state.account = clinic
+    await dispatchInboundToAiReply(ARGS)
+    expectSilent()
+  })
+
+  it('does not send it either after the patient said no', async () => {
+    h.state.account = clinic
+    h.state.consents = [{ granted: false }]
+    await dispatchInboundToAiReply(ARGS)
+    expectSilent()
+  })
+
+  it('answers once the patient has authorized', async () => {
+    h.state.account = clinic
+    h.state.consents = [{ granted: true }]
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.generateReply).toHaveBeenCalledTimes(1)
+    expect(h.engineSendText).toHaveBeenCalledTimes(1)
+  })
+
+  it('fails closed when the account cannot be read, for any account', async () => {
+    h.state.accountError = { message: 'connection reset' }
+    await dispatchInboundToAiReply(ARGS)
+    expectSilent()
+  })
+
+  it('fails closed when the authorization cannot be read', async () => {
+    h.state.account = clinic
+    h.state.consents = [{ granted: true }]
+    h.state.consentError = { message: 'timeout' }
+    await dispatchInboundToAiReply(ARGS)
+    expectSilent()
+  })
+
+  it('also covers a clinic account that has no agenda module', async () => {
+    h.state.account = { modules: ['clinica'], vertical_key: null }
+    await dispatchInboundToAiReply(ARGS)
+    expectSilent()
+  })
+
+  it('asks after the AI config and before loading the chat', async () => {
+    h.state.account = clinic
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.loadAiConfig).toHaveBeenCalled()
+    expect(h.state.tablesRead).toContain('clinic_consents')
+    expect(h.buildConversationContext).not.toHaveBeenCalled()
+  })
+
+  it('does not look at consents in an account without the clinic module', async () => {
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.state.tablesRead).not.toContain('clinic_consents')
+    expect(h.engineSendText).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not even look at the account when the AI is off', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ autoReplyEnabled: false }))
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.state.tablesRead).not.toContain('accounts')
   })
 })
 

@@ -2908,6 +2908,7 @@
       "storedKeyUndecryptable": "Stored API key could not be decrypted.",
       "notConfigured": "AI assistant is not set up. Enable it in Settings → AI Assistant.",
       "noMessages": "No messages to draft from yet.",
+      "consentRequired": "This person has not authorized the use of their data, so the AI cannot read this chat. Reply to them yourself.",
       "messagesRequired": "messages is required",
       "sendMessageToTest": "Send a message to test the agent.",
       "noAgentConfigured": "No agent configured yet. Add your provider key in Setup.",

@@ -2908,6 +2908,7 @@
       "storedKeyUndecryptable": "No se pudo descifrar la clave de API guardada. Inténtalo de nuevo.",
       "notConfigured": "El asistente de IA no está configurado. Actívalo en Configuración → Asistente de IA.",
       "noMessages": "Aún no hay mensajes para generar un borrador.",
+      "consentRequired": "Esta persona no ha autorizado el uso de sus datos, así que la IA no puede leer este chat. Respóndele tú.",
       "messagesRequired": "messages es obligatorio",
       "sendMessageToTest": "Envía un mensaje para probar el agente.",
       "noAgentConfigured": "Aún no hay ningún agente configurado. Agrega la clave de tu proveedor en Configuración.",

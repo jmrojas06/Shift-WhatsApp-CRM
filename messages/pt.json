@@ -2908,6 +2908,7 @@
       "storedKeyUndecryptable": "Não foi possível descriptografar a chave de API salva.",
       "notConfigured": "O assistente de IA não está configurado. Ative-o em Configurações → Assistente de IA.",
       "noMessages": "Ainda não há mensagens para gerar um rascunho.",
+      "consentRequired": "Esta pessoa não autorizou o uso dos seus dados, então a IA não pode ler esta conversa. Responda você mesmo.",
       "messagesRequired": "messages é obrigatório",
       "sendMessageToTest": "Envie uma mensagem para testar o agente.",
       "noAgentConfigured": "Nenhum agente configurado ainda. Adicione a chave do seu provedor em Configuração.",
