@@ -9,7 +9,7 @@ import type { LucideIcon } from 'lucide-react'
  * `registry.ts` es el único lugar que decide cuáles tiene una cuenta.
  * Esta unión crece una entrada por módulo publicado.
  */
-export type ModuleKey = 'agenda' | 'ventas'
+export type ModuleKey = 'agenda' | 'ventas' | 'clinica'
 
 /**
  * Valores de `accounts.vertical_key` que cuentan como la agenda. 'barberia'
@@ -80,6 +80,8 @@ export interface VerticalInboundContext {
    * claims the message on its behalf.
    */
   humanOwned?: boolean
+  /** Módulos activos de la cuenta (`getAccountModules`). */
+  modules?: readonly ModuleKey[]
 }
 
 export interface VerticalDispatchResult {

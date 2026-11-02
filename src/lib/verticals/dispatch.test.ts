@@ -222,6 +222,15 @@ describe('dispatchInboundToVertical', () => {
     })
   })
 
+  it('le pasa al handler los módulos de la cuenta', async () => {
+    dbState.responses = {
+      accounts: { data: { modules: ['agenda', 'clinica'] }, error: null },
+      conversations: openConversation,
+    }
+    await dispatchInboundToVertical(baseArgs)
+    expect(dbState.handlerCalls[0].modules).toEqual(['agenda', 'clinica'])
+  })
+
   it('hands the fresh booking session to the handler', async () => {
     dbState.responses = {
       accounts: agendaAccount,

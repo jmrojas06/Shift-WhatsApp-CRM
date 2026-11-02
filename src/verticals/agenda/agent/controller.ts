@@ -24,7 +24,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-import type { VerticalDispatchResult, VerticalSession } from '@/lib/verticals/types'
+import type { ModuleKey, VerticalDispatchResult, VerticalSession } from '@/lib/verticals/types'
 import { notifyAlert } from '@/lib/ops/alert'
 
 import type { AgendaAppointmentSummary } from '../texts'
@@ -154,6 +154,8 @@ export interface HandleAgendaInboundArgs {
    * cancelación abierta desde él; todo lo demás es del humano.
    */
   humanOwned?: boolean
+  /** Módulos de la cuenta. Con 'clinica' se prenden los pasos clínicos. */
+  modules?: readonly ModuleKey[]
 }
 
 // ------------------------------------------------------------

@@ -86,4 +86,5 @@ export const agendaInboundHandler: VerticalInboundHandler = (ctx) =>
     inboundMessageId: ctx.inboundMessageId,
     session: ctx.session,
     humanOwned: ctx.humanOwned ?? false,
+    modules: ctx.modules,
   })
