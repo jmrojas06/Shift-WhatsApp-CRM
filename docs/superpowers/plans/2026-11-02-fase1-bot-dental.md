@@ -8166,35 +8166,129 @@ git commit -m "feat(clinica): book for several patients from one number"
 
 **Files:**
 - Create: `src/verticals/agenda/agent/clinic-urgency.test.ts`
-- Modify: `src/verticals/agenda/agent/steps/clinic-steps.ts`, `src/verticals/agenda/agent/controller.ts`
+- Modify: `src/verticals/agenda/agent/steps/clinic-steps.ts`, `src/verticals/agenda/agent/controller.ts`, `src/modules/clinica/texts.ts`
+- Modify (pruebas): `src/verticals/agenda/agent/testing/clinic-harness.ts`
+
+**Reglas de esta tarea** (lo que el código real obliga y el plan primero no decía):
+
+- **La urgencia va antes que todo lo demás:** antes de la autorización, de pedir una persona y de cualquier reserva abierta (la reemplaza: la misma fila de sesión, con el estado nuevo). Se mira en `handleAgendaInbound`, después de la clínica no disponible y antes de `handleClinicInbound`. Un texto con una palabra de la clínica la abre en cualquier paso, **salvo** mientras la persona responde los signos (`urgency`), escribe su nombre (`new_patient_name`) o escribe la respuesta de texto a una pregunta extra (`ask_question` sin opciones): "Dolor Pérez" es un nombre. Una foto, un audio o un sticker no la abren.
+- **El toque "Tengo una urgencia" (`act:urgent`) entra por el mismo camino**, haya o no sesión y autorización, y también mientras escribe un nombre: es una decisión, no un texto. Tocarlo otra vez vuelve a mostrar los signos sin contar fallo. El `case 'urgent'` de `clinic_menu` en `handleClinicChoice` queda como red de seguridad, porque el menú ofrece esa opción y no puede responder "No entendí" a su propio botón.
+- **El menú de signos ya está resuelto en `state.ts` (`matchDecision`)** y esta tarea no lo toca: `alarm_no` solo por toque o por un mensaje completo de una lista cerrada; una negación dentro de una frase ("no puedo respirar") o un signo dicho con palabras ("fiebre alta") es `alarm_yes`; lo demás ("tengo mucho dolor") no se entiende.
+- **Dos respuestas que no se entienden en `urgency` terminan con aviso prioritario**, no con el pase genérico de `registerFail`: la persona ya dijo que le duele. `urgencyUnconfirmedHandoff` repite los signos de alarma de la clínica (`urgencyPending`) y avisa con `urgencyNotificationTitle`. Lo mismo si en ese paso pide una persona ("asesor"): sin esta rama, un paciente que ya reportó dolor pasaría con un aviso común.
+- **Lo que se le dice al paciente nunca incluye consejo médico**: ni medicamentos ni diagnóstico. Solo salen los textos de `clinic_settings` (los signos de alarma, la autorización) y de `texts.ts`. Una prueba revisa que todo lo que dice el bot en estos flujos esté en esa lista cerrada, y otra que los textos no traigan medicamentos ni diagnóstico.
+- **Un fallo de lectura nunca silencia el aviso.** `loadClinicContext` devuelve un `ClinicContextResult`: en un hilo de una persona, si el estado no es `ok`, `warnHumanOfUrgency` vigila con `DEFAULT_URGENCY_WORDS`, y si no se puede leer a quién avisar cae al dueño. Si las horas de hoy no se pueden leer (el conector lanza), la urgencia pasa a una persona con el teléfono de turno en vez de quedarse en silencio. Y la clínica no disponible trata el toque `act:urgent` como urgencia aunque no traiga texto.
+- **Sin cupo hoy** es: sin servicio de urgencia configurado (o ya inactivo), sin personal que lo atienda, fuera de horario o con la agenda de hoy llena. Da el teléfono de turno si lo hay, avisa con prioridad y pasa a una persona.
+- **Un hilo de una persona**: el bot no responde (`consumed: false`) y avisa con el mismo aviso a quien lo lleva, o al dueño si nadie lo lleva. Vale una palabra de urgencia o el toque `act:urgent` de un menú viejo. Una cuenta sin `clinica` no cambia.
+- `performHandoff` ya acepta `{ message, note, notification }` y, con `notification`, avisa siempre (también al dueño que es el agente). `applyClinicOutcome` pone `fails` en 0 cuando el paso cambia.
 
 - [ ] **Step 1: Escribe las pruebas que fallan**
+
+En `src/verticals/agenda/agent/testing/clinic-harness.ts`, `send` acepta un `backend` (para probar que una lectura de horas que falla no deja a nadie en silencio). Agrega el import:
+
+```ts
+import type { ClinicBackend } from '../backend'
+```
+
+En las opciones de `send`, después de `aiOn`:
+
+```ts
+    /** Dónde viven las citas. Por defecto, la Agenda de Shift sobre `db`. */
+    backend?: ClinicBackend
+```
+
+Y en la llamada a `handleAgendaInbound`, después de `modules`:
+
+```ts
+    backend: opts.backend,
+```
 
 Crea `src/verticals/agenda/agent/clinic-urgency.test.ts`:
 
 ```ts
 import { describe, expect, it } from 'vitest'
 
+import { buildClinicTexts, DEFAULT_URGENCY_ALARM_TEXT, DEFAULT_URGENCY_WORDS } from '@/modules/clinica/texts'
+
+import { DEFAULT_LABELS } from '../labels'
+import { AGENDA_AGENT_TEXTS } from '../texts'
+import type { ClinicBackend } from './backend'
+import { formatLongDate } from './format'
+import { createInternalBackend } from './internal-backend'
+import { newBookingState } from './state'
+import { handleClinicChoice, type ClinicStepCtx } from './steps/clinic-steps'
 import {
+  ACCOUNT,
+  CONTACT,
   CONVERSATION,
   OWNER,
+  SERVICE_LIMPIEZA,
+  SERVICE_URGENCIA,
+  STAFF_ANA,
   clinicDb,
   grantedConsent,
   last,
   makeRecorder,
   send,
 } from './testing/clinic-harness'
+import { asClient, type FakeDb, type Row } from './testing/fake-db'
+
+const texts = buildClinicTexts(DEFAULT_LABELS)
+
+/** El texto de signos de alarma que trae la clínica de las pruebas. */
+const ALARM_TEXT = 'Signos de alarma'
 
 /** Sábado 24 de octubre: sin horario. */
 const SATURDAY = new Date('2026-10-24T13:00:00Z')
+
+/** Lunes 19, 13:00 en Bogotá: ya pasó el horario de la mañana (09:00 a 12:00). */
+const AFTER_HOURS = new Date('2026-10-19T18:00:00Z')
+
+const ALARM_BUTTONS = ['act:alarm_yes', 'act:alarm_no']
+const AGENT = 'user-agent'
+
+const session = (state: Record<string, unknown>): Row => ({
+  id: 'ses-1',
+  account_id: ACCOUNT,
+  contact_id: CONTACT,
+  status: 'active',
+  expires_at: '2026-10-19T13:10:00.000Z',
+  state: { mode: 'book', options: [], fails: 0, ...state },
+})
+
+const activeStates = (db: FakeDb) =>
+  db._tables.booking_sessions
+    .filter((s) => s.status === 'active')
+    .map((s) => s.state as { step: string; fails: number; urgent?: boolean })
+
+const activeSteps = (db: FakeDb) => activeStates(db).map((s) => s.step)
+
+const priorityNotifications = (db: FakeDb) =>
+  db._tables.notifications.filter((n) => n.title === texts.urgencyNotificationTitle)
+
+/** Todo lo que el bot dijo, sin repetir. */
+const said = (rec: ReturnType<typeof makeRecorder>) => [...new Set(rec.calls.map((c) => c.bodyText))]
+
+/** Abre los signos de alarma como lo haría un paciente. */
+async function withAlarmQuestion(db = clinicDb()) {
+  const rec = makeRecorder()
+  await send(db, rec, { text: 'urgencia' })
+  expect(last(rec).ids).toEqual(ALARM_BUTTONS)
+  return { db, rec }
+}
 
 describe('urgencias', () => {
   it('va antes de la autorización: nadie con dolor se queda en un aviso legal', async () => {
     const db = clinicDb()
     const rec = makeRecorder()
-    await send(db, rec, { text: 'Tengo mucho dolor' })
+    const result = await send(db, rec, { text: 'Tengo mucho dolor' })
+    expect(result).toEqual({ consumed: true })
+    expect(last(rec).bodyText).toBe(texts.urgencyBody(ALARM_TEXT))
     expect(last(rec).bodyText).toContain('Signos de alarma')
-    expect(last(rec).ids).toEqual(['act:alarm_yes', 'act:alarm_no'])
+    expect(last(rec).ids).toEqual(ALARM_BUTTONS)
+    expect(activeSteps(db)).toEqual(['urgency'])
+    // Ni se pidió la autorización ni se registró nada.
+    expect(db._tables.clinic_consents).toHaveLength(0)
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
   })
 
   it('con signos de alarma manda a urgencias, pausa el bot y avisa con prioridad', async () => {
@@ -8203,59 +8297,738 @@ describe('urgencias', () => {
     await send(db, rec, { text: 'urgencia' })
     await send(db, rec, { replyId: 'act:alarm_yes' })
     expect(last(rec).bodyText).toContain('ve a urgencias')
+    // Sin una palabra de más: ni medicamentos ni diagnóstico.
+    expect(last(rec).bodyText).toBe(texts.urgencyGoEr)
     expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.urgencyNote)
     expect(db._tables.notifications).toMatchObject([
-      { user_id: OWNER, conversation_id: CONVERSATION, title: '🚨 Posible urgencia' },
+      {
+        user_id: OWNER,
+        conversation_id: CONVERSATION,
+        title: '🚨 Posible urgencia',
+        body: texts.urgencyNotificationBody('Marta Ruiz'),
+      },
     ])
+    expect(activeSteps(db)).toEqual([])
+    expect(db._tables.booking_sessions[0].status).toBe('cancelled')
   })
 
-  it('sin signos y sin autorización, la pide y luego ofrece la hora de hoy', async () => {
-    const db = clinicDb()
+  it('el aviso prioritario le llega al agente de pase y al dueño', async () => {
+    const db = clinicDb({ ai_configs: [{ account_id: ACCOUNT, handoff_agent_id: AGENT }] })
     const rec = makeRecorder()
     await send(db, rec, { text: 'urgencia' })
-    await send(db, rec, { replyId: 'act:alarm_no' })
-    expect(last(rec).ids).toEqual(['act:consent_yes', 'act:consent_no'])
-    await send(db, rec, { replyId: 'act:consent_yes' })
-    expect(last(rec).bodyText).toContain('nombre y los apellidos')
-    await send(db, rec, { text: 'Marta Ruiz' })
-    expect(last(rec).ids.every((id) => id.startsWith('slot:'))).toBe(true)
+    await send(db, rec, { replyId: 'act:alarm_yes' })
+    expect(priorityNotifications(db).map((n) => n.user_id).sort()).toEqual([AGENT, OWNER].sort())
   })
 
-  it('sin cupo hoy da el teléfono de turno y pasa a una persona', async () => {
-    const db = clinicDb({ clinic_consents: [grantedConsent()] })
-    const rec = makeRecorder()
-    await send(db, rec, { text: 'urgencia' }, { now: SATURDAY })
-    await send(db, rec, { replyId: 'act:alarm_no' }, { now: SATURDAY })
-    expect(last(rec).bodyText).toContain('3001234567')
-    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+  describe('sin signos de alarma', () => {
+    it('sin autorización, la pide y luego ofrece la hora de hoy', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'urgencia' })
+      await send(db, rec, { replyId: 'act:alarm_no' })
+      expect(last(rec).ids).toEqual(['act:consent_yes', 'act:consent_no'])
+      await send(db, rec, { replyId: 'act:consent_yes' })
+      expect(last(rec).bodyText).toContain('nombre y los apellidos')
+      await send(db, rec, { text: 'Marta Ruiz' })
+      expect(last(rec).ids.length).toBeGreaterThan(0)
+      expect(last(rec).ids.every((id) => id.startsWith('slot:'))).toBe(true)
+      // Todas son de hoy (lunes 19 de octubre).
+      expect(last(rec).ids.every((id) => id.startsWith('slot:2026-10-19T'))).toBe(true)
+      expect(db._tables.clinic_consents).toMatchObject([{ granted: true }])
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    })
+
+    it('con autorización no la vuelve a pedir: sigue con el paciente', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'urgencia' })
+      await send(db, rec, { replyId: 'act:alarm_no' })
+      expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
+      expect(db._tables.clinic_consents).toHaveLength(1)
+      await send(db, rec, { text: 'Marta Ruiz' })
+      expect(last(rec).ids.every((id) => id.startsWith('slot:'))).toBe(true)
+    })
+
+    it('"ninguno" escrito descarta los signos, igual que el botón', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'urgencia' })
+      await send(db, rec, { text: 'ninguno' })
+      expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
+    })
+
+    it('rechazar la autorización pasa a una persona', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'urgencia' })
+      await send(db, rec, { replyId: 'act:alarm_no' })
+      await send(db, rec, { replyId: 'act:consent_no' })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(last(rec).bodyText).toBe(texts.consentDeclined)
+    })
+
+    it('con pacientes registrados los ofrece y, al elegir, salta a las horas de hoy', async () => {
+      const db = clinicDb({
+        clinic_consents: [grantedConsent()],
+        clinic_patients: [
+          { id: 'pat-1', account_id: ACCOUNT, contact_id: CONTACT, full_name: 'Marta Ruiz' },
+        ],
+      })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'urgencia' })
+      await send(db, rec, { replyId: 'act:alarm_no' })
+      expect(last(rec).ids).toEqual(['pat:pat-1', 'pat:new'])
+      await send(db, rec, { replyId: 'pat:pat-1' })
+      // Salta el menú de servicios y el de días: es la hora de hoy.
+      expect(last(rec).ids.every((id) => id.startsWith('slot:2026-10-19T'))).toBe(true)
+      expect(activeStates(db)).toMatchObject([{ step: 'pick_slot', urgent: true }])
+    })
+
+    it('la reserva de urgencia llega hasta la cita, con el servicio de urgencia', async () => {
+      const db = clinicDb({
+        clinic_consents: [grantedConsent()],
+        clinic_patients: [
+          { id: 'pat-1', account_id: ACCOUNT, contact_id: CONTACT, full_name: 'Marta Ruiz' },
+        ],
+      })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'urgencia' })
+      await send(db, rec, { replyId: 'act:alarm_no' })
+      await send(db, rec, { replyId: 'pat:pat-1' })
+      await send(db, rec, { replyId: last(rec).ids[0] })
+      await send(db, rec, { replyId: 'act:confirm' })
+      expect(db._tables.booking_appointments).toMatchObject([
+        { service_id: SERVICE_URGENCIA, staff_id: STAFF_ANA, patient_id: 'pat-1' },
+      ])
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    })
   })
 
-  it('en un hilo de una persona el bot no responde y avisa a quien lo lleva', async () => {
-    const db = clinicDb()
-    db._tables.conversations[0].assigned_agent_id = 'user-agent'
-    const rec = makeRecorder()
-    const result = await send(db, rec, { text: 'me duele, tengo dolor' }, { humanOwned: true })
-    expect(result).toEqual({ consumed: false })
-    expect(rec.calls).toHaveLength(0)
-    expect(db._tables.notifications).toMatchObject([
-      { user_id: 'user-agent', title: '🚨 Posible urgencia' },
-    ])
+  describe('sin cupo hoy', () => {
+    const expectHandedToAPerson = (db: FakeDb, rec: ReturnType<typeof makeRecorder>) => {
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.urgencyOffHoursNote)
+      expect(priorityNotifications(db)).toMatchObject([
+        { user_id: OWNER, body: texts.urgencyNotificationBody('Marta Ruiz') },
+      ])
+      expect(activeSteps(db)).toEqual([])
+      expect(last(rec).ids).toEqual([])
+    }
+
+    it('da el teléfono de turno y pasa a una persona', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'urgencia' }, { now: SATURDAY })
+      await send(db, rec, { replyId: 'act:alarm_no' }, { now: SATURDAY })
+      expect(last(rec).bodyText).toContain('3001234567')
+      expect(last(rec).bodyText).toBe(texts.urgencyOffHours('3001234567'))
+      expectHandedToAPerson(db, rec)
+    })
+
+    it('sin teléfono de turno, avisa que la clínica le escribe', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      db._tables.clinic_locations[0].on_call_phone = null
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'urgencia' }, { now: SATURDAY })
+      await send(db, rec, { replyId: 'act:alarm_no' }, { now: SATURDAY })
+      expect(last(rec).bodyText).toBe(texts.urgencyOffHours(null))
+      expectHandedToAPerson(db, rec)
+    })
+
+    it('cuando ya pasó el horario de hoy', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'urgencia' }, { now: AFTER_HOURS })
+      await send(db, rec, { replyId: 'act:alarm_no' }, { now: AFTER_HOURS })
+      expect(last(rec).bodyText).toBe(texts.urgencyOffHours('3001234567'))
+      expectHandedToAPerson(db, rec)
+    })
+
+    it('cuando la agenda de hoy está llena', async () => {
+      const db = clinicDb({
+        clinic_consents: [grantedConsent()],
+        booking_appointments: [
+          {
+            id: 'appt-full',
+            account_id: ACCOUNT,
+            staff_id: STAFF_ANA,
+            status: 'confirmed',
+            starts_at: '2026-10-19T14:00:00.000Z',
+            ends_at: '2026-10-19T17:00:00.000Z',
+          },
+        ],
+      })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'urgencia' })
+      await send(db, rec, { replyId: 'act:alarm_no' })
+      expect(last(rec).bodyText).toBe(texts.urgencyOffHours('3001234567'))
+      expectHandedToAPerson(db, rec)
+    })
+
+    it('sin un servicio de urgencia configurado', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      db._tables.clinic_settings[0].urgency_service_id = null
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'urgencia' })
+      await send(db, rec, { replyId: 'act:alarm_no' })
+      expect(last(rec).bodyText).toBe(texts.urgencyOffHours('3001234567'))
+      expectHandedToAPerson(db, rec)
+    })
+
+    it('con un servicio de urgencia que ya no está activo', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      db._tables.booking_services[1].is_active = false
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'urgencia' })
+      await send(db, rec, { replyId: 'act:alarm_no' })
+      expect(last(rec).bodyText).toBe(texts.urgencyOffHours('3001234567'))
+      expectHandedToAPerson(db, rec)
+    })
+
+    it('si no se pueden leer las horas, no se queda callado: pasa a una persona', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const backend: ClinicBackend = {
+        ...createInternalBackend({ db: asClient(db), accountId: ACCOUNT }),
+        getDaySlots: async () => {
+          throw new Error('el conector no responde')
+        },
+      }
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'urgencia' }, { backend })
+      const result = await send(db, rec, { replyId: 'act:alarm_no' }, { backend })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).bodyText).toBe(texts.urgencyOffHours('3001234567'))
+      expectHandedToAPerson(db, rec)
+    })
+
+    it('si la autorización se acaba de dar y no hay cupo, también pasa a una persona', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'urgencia' }, { now: SATURDAY })
+      await send(db, rec, { replyId: 'act:alarm_no' }, { now: SATURDAY })
+      await send(db, rec, { replyId: 'act:consent_yes' }, { now: SATURDAY })
+      expect(last(rec).bodyText).toBe(texts.urgencyOffHours('3001234567'))
+      expectHandedToAPerson(db, rec)
+    })
   })
 
-  it('escribir el nombre "Dolores" no abre la urgencia', async () => {
-    const db = clinicDb({ clinic_consents: [grantedConsent()] })
-    const rec = makeRecorder()
-    await send(db, rec, { text: 'Hola' })
-    await send(db, rec, { replyId: 'act:book' })
-    await send(db, rec, { text: 'Dolores Ruiz' })
-    expect(db._tables.clinic_patients[0].full_name).toBe('Dolores Ruiz')
+  describe('mientras responde los signos de alarma', () => {
+    it('"no puedo respirar" termina en "ve a urgencias", con aviso prioritario', async () => {
+      const { db, rec } = await withAlarmQuestion()
+      await send(db, rec, { text: 'no puedo respirar' })
+      expect(last(rec).bodyText).toBe(texts.urgencyGoEr)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(priorityNotifications(db)).toMatchObject([{ user_id: OWNER }])
+    })
+
+    it('una respuesta que no se entiende se repite con los botones, sin pasar todavía', async () => {
+      const { db, rec } = await withAlarmQuestion()
+      await send(db, rec, { text: 'tengo mucho dolor' })
+      expect(rec.calls.at(-2)?.bodyText).toBe(AGENDA_AGENT_TEXTS.retry)
+      expect(last(rec).bodyText).toBe(texts.urgencyBody(ALARM_TEXT))
+      expect(last(rec).ids).toEqual(ALARM_BUTTONS)
+      expect(activeStates(db)).toMatchObject([{ step: 'urgency', fails: 1 }])
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+      expect(db._tables.notifications).toHaveLength(0)
+    })
+
+    it('dos respuestas que no se entienden terminan con aviso prioritario y los signos de alarma', async () => {
+      const { db, rec } = await withAlarmQuestion()
+      await send(db, rec, { text: 'tengo mucho dolor' })
+      await send(db, rec, { text: 'tengo mucho dolor' })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.urgencyPendingNote)
+      // No es el pase genérico: repite los signos de alarma.
+      expect(last(rec).bodyText).toBe(texts.urgencyPending(ALARM_TEXT))
+      expect(last(rec).bodyText).toContain(ALARM_TEXT)
+      expect(last(rec).bodyText).not.toBe(AGENDA_AGENT_TEXTS.handoff)
+      expect(db._tables.notifications).toMatchObject([
+        {
+          user_id: OWNER,
+          conversation_id: CONVERSATION,
+          title: texts.urgencyNotificationTitle,
+          body: texts.urgencyNotificationBody('Marta Ruiz'),
+        },
+      ])
+      expect(activeSteps(db)).toEqual([])
+    })
+
+    it('un toque de un botón viejo cuenta como respuesta que no se entiende', async () => {
+      const { db, rec } = await withAlarmQuestion()
+      await send(db, rec, { replyId: 'svc:viejo' })
+      await send(db, rec, { replyId: 'svc:viejo' })
+      expect(last(rec).bodyText).toBe(texts.urgencyPending(ALARM_TEXT))
+      expect(priorityNotifications(db)).toHaveLength(1)
+    })
+
+    it('pedir una persona también avisa con prioridad y repite los signos de alarma', async () => {
+      const { db, rec } = await withAlarmQuestion()
+      await send(db, rec, { text: 'quiero hablar con una persona' })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(last(rec).bodyText).toBe(texts.urgencyPending(ALARM_TEXT))
+      expect(priorityNotifications(db)).toHaveLength(1)
+    })
+
+    it('las palabras de urgencia del propio mensaje no reabren los signos', async () => {
+      const { db, rec } = await withAlarmQuestion()
+      const before = rec.calls.length
+      await send(db, rec, { text: 'tengo mucho dolor' })
+      // Es la respuesta a los signos: no se entendió, se repite, no se reinicia.
+      expect(rec.calls.length).toBe(before + 2)
+      expect(activeStates(db)).toMatchObject([{ step: 'urgency', fails: 1 }])
+    })
   })
 
-  it('una cuenta sin el módulo no conoce las urgencias', async () => {
-    const db = clinicDb()
-    const rec = makeRecorder()
-    const result = await send(db, rec, { text: 'tengo dolor' }, { modules: ['agenda'] })
-    expect(result).toEqual({ consumed: false })
+  describe('el toque "Tengo una urgencia"', () => {
+    it('sin sesión y sin autorización muestra los signos de alarma', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:urgent' })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).bodyText).toBe(texts.urgencyBody(ALARM_TEXT))
+      expect(last(rec).ids).toEqual(ALARM_BUTTONS)
+      expect(db._tables.clinic_consents).toHaveLength(0)
+      expect(activeSteps(db)).toEqual(['urgency'])
+    })
+
+    it('con el menú abierto, igual', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:urgent' })
+      expect(last(rec).ids).toEqual(ALARM_BUTTONS)
+      expect(activeSteps(db)).toEqual(['urgency'])
+    })
+
+    it('con la autorización en pantalla, la urgencia va primero', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      expect(last(rec).ids).toEqual(['act:consent_yes', 'act:consent_no'])
+      await send(db, rec, { replyId: 'act:urgent' })
+      expect(last(rec).ids).toEqual(ALARM_BUTTONS)
+      expect(activeSteps(db)).toEqual(['urgency'])
+      expect(db._tables.clinic_consents).toHaveLength(0)
+    })
+
+    it('tocarlo otra vez vuelve a mostrar los signos sin contarlo como fallo', async () => {
+      const { db, rec } = await withAlarmQuestion()
+      const before = rec.calls.length
+      await send(db, rec, { replyId: 'act:urgent' })
+      expect(rec.calls.length).toBe(before + 1)
+      expect(last(rec).ids).toEqual(ALARM_BUTTONS)
+      expect(activeStates(db)).toMatchObject([{ step: 'urgency', fails: 0 }])
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    })
+
+    it('tampoco lo detiene escribir un nombre o una respuesta: es un toque deliberado', async () => {
+      const db = clinicDb({
+        clinic_consents: [grantedConsent()],
+        booking_sessions: [session({ step: 'new_patient_name' })],
+      })
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: 'act:urgent' })
+      expect(last(rec).ids).toEqual(ALARM_BUTTONS)
+    })
+  })
+
+  describe('reemplaza lo que estuviera abierto', () => {
+    it('una reserva a medias', async () => {
+      const db = clinicDb({
+        clinic_consents: [grantedConsent()],
+        booking_sessions: [
+          session({
+            step: 'pick_slot',
+            serviceId: SERVICE_LIMPIEZA,
+            staffId: STAFF_ANA,
+            dateKey: '2026-10-19',
+            options: [{ id: 'slot:2026-10-19T14:00:00.000Z', title: '9:00 a. m.' }],
+          }),
+        ],
+      })
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: 'tengo mucho dolor de muela' })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).ids).toEqual(ALARM_BUTTONS)
+      // La misma sesión, con el estado nuevo: no quedan dos abiertas.
+      expect(db._tables.booking_sessions).toHaveLength(1)
+      expect(db._tables.booking_sessions[0].id).toBe('ses-1')
+      expect(activeStates(db)).toEqual([expect.objectContaining({ step: 'urgency', fails: 0 })])
+      expect(activeStates(db)[0]).not.toHaveProperty('serviceId')
+    })
+
+    it('la autorización sin responder', async () => {
+      const db = clinicDb({
+        booking_sessions: [
+          session({
+            step: 'consent',
+            consentText: 'Texto de autorización',
+            consentVersion: 2,
+            options: [
+              { id: 'act:consent_yes', title: texts.consentAccept },
+              { id: 'act:consent_no', title: texts.consentDecline },
+            ],
+          }),
+        ],
+      })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'tengo dolor' })
+      expect(last(rec).ids).toEqual(ALARM_BUTTONS)
+      expect(activeSteps(db)).toEqual(['urgency'])
+      expect(db._tables.clinic_consents).toHaveLength(0)
+    })
+
+    it('el menú principal y la duda abierta', async () => {
+      for (const step of ['clinic_menu', 'faq_open']) {
+        const db = clinicDb({
+          clinic_consents: [grantedConsent()],
+          booking_sessions: [session({ step })],
+        })
+        const rec = makeRecorder()
+        await send(db, rec, { text: 'tengo dolor' })
+        expect(last(rec).ids).toEqual(ALARM_BUTTONS)
+        expect(activeSteps(db)).toEqual(['urgency'])
+      }
+    })
+
+    it('va antes de pedir una persona', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'quiero un asesor, tengo dolor' })
+      expect(last(rec).ids).toEqual(ALARM_BUTTONS)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    })
+  })
+
+  describe('lo que no abre la urgencia', () => {
+    it('escribir el nombre "Dolores" no abre la urgencia', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:book' })
+      await send(db, rec, { text: 'Dolores Ruiz' })
+      expect(db._tables.clinic_patients[0].full_name).toBe('Dolores Ruiz')
+      expect(priorityNotifications(db)).toHaveLength(0)
+    })
+
+    it('ni uno que SÍ trae la palabra: "Dolor Pérez" es un nombre', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:book' })
+      await send(db, rec, { text: 'Dolor Pérez' })
+      expect(db._tables.clinic_patients[0].full_name).toBe('Dolor Pérez')
+      expect(activeSteps(db)).not.toContain('urgency')
+    })
+
+    it('ni la respuesta de texto a una pregunta extra', async () => {
+      const db = clinicDb({
+        clinic_consents: [grantedConsent()],
+        booking_questions: [
+          {
+            id: 'q-motivo',
+            account_id: ACCOUNT,
+            label: '¿Motivo de la visita?',
+            kind: 'texto',
+            required: true,
+            options: [],
+            position: 0,
+            is_active: true,
+          },
+        ],
+        booking_sessions: [
+          session({
+            step: 'ask_question',
+            questionId: 'q-motivo',
+            serviceId: SERVICE_LIMPIEZA,
+            staffId: STAFF_ANA,
+            dateKey: '2026-10-19',
+            slotStartsAt: '2026-10-19T14:00:00.000Z',
+          }),
+        ],
+      })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Tengo dolor de muela' })
+      expect(activeStates(db)).toMatchObject([{ step: 'summary' }])
+      expect(last(rec).bodyText).not.toBe(texts.urgencyBody(ALARM_TEXT))
+      expect(priorityNotifications(db)).toHaveLength(0)
+    })
+
+    it('una pregunta extra de opciones sí: ahí un texto libre no es la respuesta', async () => {
+      const db = clinicDb({
+        clinic_consents: [grantedConsent()],
+        booking_questions: [
+          {
+            id: 'q-sede',
+            account_id: ACCOUNT,
+            label: '¿En qué sede?',
+            kind: 'opcion',
+            required: true,
+            options: ['Centro', 'Norte'],
+            position: 0,
+            is_active: true,
+          },
+        ],
+        booking_sessions: [
+          session({
+            step: 'ask_question',
+            questionId: 'q-sede',
+            options: [
+              { id: 'ans:q-sede:0', title: 'Centro' },
+              { id: 'ans:q-sede:1', title: 'Norte' },
+            ],
+          }),
+        ],
+      })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'tengo mucho dolor' })
+      expect(last(rec).ids).toEqual(ALARM_BUTTONS)
+    })
+
+    it('una foto, un audio o un sticker no abren nada', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: '[Unsupported message type: audio]' })
+      expect(result).toEqual({ consumed: false })
+      expect(rec.calls).toHaveLength(0)
+    })
+
+    it('un texto sin palabras de urgencia sigue su camino', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      expect(last(rec).ids).toEqual(['act:book', 'act:mine', 'act:faq', 'act:urgent', 'act:human'])
+    })
+  })
+
+  describe('las palabras de la clínica', () => {
+    it('usa las que la clínica configuró, no las de siempre', async () => {
+      const db = clinicDb()
+      db._tables.clinic_settings[0].urgency_words = ['ayuda']
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'me duele' })
+      expect(last(rec).ids).toEqual(['act:consent_yes', 'act:consent_no'])
+      await send(db, rec, { text: 'ayuda' })
+      expect(last(rec).ids).toEqual(ALARM_BUTTONS)
+    })
+
+    it('con las palabras por defecto reconoce los casos de una clínica dental', async () => {
+      for (const text of ['me sangran las encías', 'se me quebró un diente', 'tengo la cara inflamada']) {
+        const db = clinicDb()
+        db._tables.clinic_settings[0].urgency_words = [...DEFAULT_URGENCY_WORDS]
+        const rec = makeRecorder()
+        await send(db, rec, { text })
+        expect(last(rec).ids).toEqual(ALARM_BUTTONS)
+      }
+    })
+  })
+
+  describe('en un hilo de una persona', () => {
+    const humanThread = (assigned: string | null = AGENT, extra: Record<string, Row[]> = {}) => {
+      const db = clinicDb(extra)
+      db._tables.conversations[0].assigned_agent_id = assigned
+      if (!assigned) db._tables.conversations[0].ai_autoreply_disabled = true
+      return db
+    }
+
+    it('el bot no responde y avisa a quien lo lleva', async () => {
+      const db = humanThread()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: 'me duele, tengo dolor' }, { humanOwned: true })
+      expect(result).toEqual({ consumed: false })
+      expect(rec.calls).toHaveLength(0)
+      expect(db._tables.notifications).toMatchObject([
+        {
+          user_id: AGENT,
+          conversation_id: CONVERSATION,
+          title: '🚨 Posible urgencia',
+          body: texts.urgencyNotificationBody('Marta Ruiz'),
+        },
+      ])
+      expect(activeSteps(db)).toEqual([])
+    })
+
+    it('si nadie lo lleva, avisa al dueño', async () => {
+      const db = humanThread(null)
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: 'tengo dolor' }, { humanOwned: true })
+      expect(result).toEqual({ consumed: false })
+      expect(rec.calls).toHaveLength(0)
+      expect(db._tables.notifications).toMatchObject([{ user_id: OWNER, title: '🚨 Posible urgencia' }])
+    })
+
+    it('sin una palabra de urgencia no avisa a nadie', async () => {
+      const db = humanThread()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: 'gracias doctora' }, { humanOwned: true })
+      expect(result).toEqual({ consumed: false })
+      expect(db._tables.notifications).toHaveLength(0)
+    })
+
+    it('un toque en "Tengo una urgencia" de un menú viejo también avisa', async () => {
+      const db = humanThread()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:urgent' }, { humanOwned: true })
+      expect(result).toEqual({ consumed: false })
+      expect(rec.calls).toHaveLength(0)
+      expect(db._tables.notifications).toMatchObject([{ user_id: AGENT }])
+    })
+
+    it('otro toque de un menú viejo no avisa', async () => {
+      const db = humanThread()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: 'act:book' }, { humanOwned: true })
+      expect(db._tables.notifications).toHaveLength(0)
+    })
+
+    it('si la configuración falta o no se pudo leer, igual avisa, con las palabras de siempre', async () => {
+      const missing = humanThread(AGENT, { clinic_settings: [] })
+      await send(missing, makeRecorder(), { text: 'me sangran las encías' }, { humanOwned: true })
+      expect(priorityNotifications(missing)).toMatchObject([{ user_id: AGENT }])
+
+      const unreadable = humanThread()
+      unreadable._failNext('select', 'clinic_settings', { message: 'timeout' })
+      await send(unreadable, makeRecorder(), { text: 'me sangran las encías' }, { humanOwned: true })
+      expect(priorityNotifications(unreadable)).toMatchObject([{ user_id: AGENT }])
+    })
+
+    it('si no se puede leer a quién avisar, no se rompe el mensaje', async () => {
+      const db = humanThread()
+      db._failNext('select', 'conversations', { message: 'timeout' })
+      const result = await send(db, makeRecorder(), { text: 'tengo dolor' }, { humanOwned: true })
+      expect(result).toEqual({ consumed: false })
+      // Sin saber quién lo lleva, el aviso va al dueño.
+      expect(db._tables.notifications).toMatchObject([{ user_id: OWNER, title: texts.urgencyNotificationTitle }])
+    })
+
+    it('una cuenta sin el módulo no avisa nada', async () => {
+      const db = humanThread()
+      const rec = makeRecorder()
+      const result = await send(
+        db,
+        rec,
+        { text: 'tengo dolor' },
+        { humanOwned: true, modules: ['agenda'] },
+      )
+      expect(result).toEqual({ consumed: false })
+      expect(db._tables.notifications).toHaveLength(0)
+    })
+
+    it('un recordatorio contestado en un hilo de una persona sigue su camino', async () => {
+      const db = humanThread()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: 'rem:confirm' }, { humanOwned: true })
+      expect(priorityNotifications(db)).toHaveLength(0)
+    })
+  })
+
+  describe('una cuenta sin el módulo no conoce las urgencias', () => {
+    it('un texto', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: 'tengo dolor' }, { modules: ['agenda'] })
+      expect(result).toEqual({ consumed: false })
+      expect(rec.calls).toHaveLength(0)
+      expect(db._tables.booking_sessions).toHaveLength(0)
+    })
+
+    it('un toque de "Tengo una urgencia"', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:urgent' }, { modules: ['agenda'] })
+      expect(result).toEqual({ consumed: false })
+      expect(rec.calls).toHaveLength(0)
+      expect(db._tables.booking_sessions).toHaveLength(0)
+    })
+  })
+
+  describe('la clínica no está disponible', () => {
+    it('un toque de "Tengo una urgencia" también usa el aviso prioritario', async () => {
+      const db = clinicDb({ clinic_settings: [] })
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:urgent' })
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.clinicUnavailableUrgentNote)
+      expect(priorityNotifications(db)).toMatchObject([{ user_id: OWNER }])
+    })
+  })
+
+  describe('lo que se le dice al paciente', () => {
+    it('sale solo de los textos del sistema y de la configuración de la clínica', async () => {
+      const allowed = new Set([
+        texts.urgencyBody(ALARM_TEXT),
+        texts.urgencyGoEr,
+        texts.urgencyOffHours('3001234567'),
+        texts.urgencyPending(ALARM_TEXT),
+        texts.patientNamePrompt,
+        texts.consentDeclined,
+        AGENDA_AGENT_TEXTS.retry,
+        AGENDA_AGENT_TEXTS.slotMenuBody(formatLongDate('2026-10-19')),
+        'Texto de autorización',
+      ])
+      const everything = new Set<string>()
+      const run = async (
+        steps: { text?: string; replyId?: string }[],
+        opts: Parameters<typeof send>[3] = {},
+        extra: Record<string, Row[]> = {},
+      ) => {
+        const db = clinicDb(extra)
+        const rec = makeRecorder()
+        for (const step of steps) await send(db, rec, step, opts)
+        for (const line of said(rec)) everything.add(line)
+      }
+
+      await run([{ text: 'urgencia' }, { replyId: 'act:alarm_yes' }])
+      await run([{ text: 'urgencia' }, { text: 'no puedo respirar' }])
+      await run([{ text: 'urgencia' }, { text: 'dolor' }, { text: 'dolor' }])
+      await run([{ text: 'urgencia' }, { replyId: 'act:alarm_no' }, { replyId: 'act:consent_yes' }, { text: 'Marta Ruiz' }])
+      await run([{ text: 'urgencia' }, { replyId: 'act:alarm_no' }, { replyId: 'act:consent_no' }])
+      await run(
+        [{ text: 'urgencia' }, { replyId: 'act:alarm_no' }],
+        { now: SATURDAY },
+        { clinic_consents: [grantedConsent()] },
+      )
+
+      expect(everything.size).toBeGreaterThanOrEqual(allowed.size - 1)
+      expect([...everything].filter((line) => !allowed.has(line))).toEqual([])
+    })
+  })
+})
+
+describe('el menú principal', () => {
+  const ctx = { texts } as ClinicStepCtx
+
+  it('"Tengo una urgencia" lleva a los signos de alarma, sin fallo', async () => {
+    const outcome = await handleClinicChoice(ctx, newBookingState('clinic_menu'), {
+      kind: 'act',
+      value: 'urgent',
+    })
+    expect(outcome).toMatchObject({ kind: 'next', state: { step: 'urgency', fails: 0 } })
+  })
+})
+
+describe('textos de urgencia', () => {
+  const ADVICE =
+    /ibuprofeno|acetaminof[eé]n|paracetamol|naproxeno|aspirina|analg[eé]sic|antibi[oó]tic|antiinflamatori|medicament|medicina|pastilla|pomada|tome|toma\s|enjuag|hielo|compresa|infecci[oó]n|diagn[oó]stic|probablemente|seguramente|puede ser/i
+
+  it('no traen medicamentos ni diagnóstico', () => {
+    const patientFacing = [
+      texts.urgencyBody(DEFAULT_URGENCY_ALARM_TEXT),
+      texts.urgencyYes,
+      texts.urgencyNo,
+      texts.urgencyGoEr,
+      texts.urgencyOffHours('3001234567'),
+      texts.urgencyOffHours(null),
+      texts.urgencyPending(DEFAULT_URGENCY_ALARM_TEXT),
+    ]
+    for (const line of patientFacing) expect(line).not.toMatch(ADVICE)
+  })
+
+  it('el aviso de dos respuestas confusas repite los signos de alarma de la clínica', () => {
+    expect(texts.urgencyPending('Signos de la clínica')).toContain('Signos de la clínica')
+    expect(texts.urgencyPendingNote).toMatch(/^Paciente:/)
   })
 })
 ```
@@ -8263,40 +9036,61 @@ describe('urgencias', () => {
 - [ ] **Step 2: Córrelas y verifica que fallan**
 
 Run: `npx vitest run src/verticals/agenda/agent/clinic-urgency.test.ts`
-Expected: FAIL, el bot pide autorización en vez de mostrar los signos.
+Expected: FAIL, el bot pide autorización en vez de mostrar los signos, y `texts.urgencyPending` no existe.
 
-- [ ] **Step 3: Agrega los pasos**
+- [ ] **Step 3: Agrega los textos**
+
+En `src/modules/clinica/texts.ts`, en `buildClinicTexts`, antes de `urgencyNote`:
+
+```ts
+    /**
+     * Dos respuestas que no se entendieron (o pidió una persona) mientras se
+     * preguntaban los signos: ya dijo que le duele y no se sabe si es grave.
+     * Repite los signos, que son los de la clínica, y no dice nada más.
+     */
+    urgencyPending: (alarmText: string) =>
+      `${alarmText}\n\nYa avisé a la clínica para que se comuniquen contigo. Si tienes alguno de esos signos, ve a urgencias ahora.`,
+```
+
+Y después de `urgencyOffHoursNote`:
+
+```ts
+    urgencyPendingNote:
+      'Paciente: escribió una posible urgencia y no confirmó si tiene signos de alarma (bot en pausa). Comunícate con esa persona ya.',
+```
+
+- [ ] **Step 4: Agrega los pasos**
 
 En `src/verticals/agenda/agent/steps/clinic-steps.ts`:
 
-1. Agrega `zonedDateKey` desde `../time`:
-
-```ts
-import { zonedDateKey } from '../time'
-```
-
-2. Agrega `latestConsent` al import:
+1. Agrega `latestConsent` al import de la autorización, `ServiceInfo` y `zonedDateKey`:
 
 ```ts
 import { latestConsent, recordConsent } from '@/modules/clinica/consent'
 ```
 
-3. En `ClinicStepCtx`, agrega:
-
-```ts
-  /** Servicio activo por id, con los candidatos que lo atienden. */
-  serviceScope(serviceId: string): Promise<{ service: ServiceInfo; staffIds: string[] } | null>
-```
-
-Y el import:
-
 ```ts
 import type { ServiceInfo } from '../db'
 ```
 
-4. Después de `handlePatientName`:
+```ts
+import { zonedDateKey } from '../time'
+```
+
+2. En `ClinicStepCtx`, después de `aiAutoReplyOn`:
 
 ```ts
+  /** Servicio activo por id, con los candidatos que lo atienden; null si ya no hay a quién ofrecer. */
+  serviceScope(serviceId: string): Promise<{ service: ServiceInfo; staffIds: string[] } | null>
+```
+
+3. Después de `handlePatientName`:
+
+```ts
+/**
+ * Sin cupo hoy (o sin atención de urgencia configurada): el teléfono de turno si
+ * lo hay, aviso prioritario a la clínica y el hilo a una persona.
+ */
 function urgencyHandoff(ctx: ClinicStepCtx): ClinicHandoff {
   return {
     kind: 'handoff',
@@ -8310,31 +9104,60 @@ function urgencyHandoff(ctx: ClinicStepCtx): ClinicHandoff {
 }
 
 /**
+ * La persona dijo que le duele y no se supo si es grave: dos respuestas que no
+ * se entendieron en los signos de alarma, o pidió una persona en ese paso. No se
+ * sigue agendando. El mensaje repite los signos de alarma de la clínica, y el
+ * aviso al equipo es el prioritario. Nada más: ni medicamentos ni diagnóstico.
+ */
+export function urgencyUnconfirmedHandoff(texts: ClinicTexts, alarmText: string): ClinicHandoff {
+  return {
+    kind: 'handoff',
+    message: texts.urgencyPending(alarmText),
+    note: texts.urgencyPendingNote,
+    notification: {
+      title: texts.urgencyNotificationTitle,
+      body: texts.urgencyNotificationBody,
+    },
+  }
+}
+
+/**
  * Sin signos de alarma: la primera hora de hoy de la atención de urgencia.
- * Sin cupo hoy (fuera de horario o agenda llena) pasa a una persona.
+ * Sin cupo hoy (fuera de horario o agenda llena) pasa a una persona. Si no se
+ * pueden leer las horas, también: quien llegó aquí tiene dolor, y callarse no
+ * es una opción.
  */
 async function urgencyBooking(ctx: ClinicStepCtx): Promise<ClinicOutcome> {
   const serviceId = ctx.clinic.urgencyServiceId
-  const scope = serviceId ? await ctx.serviceScope(serviceId) : null
-  if (!scope) return urgencyHandoff(ctx)
+  if (!serviceId) return urgencyHandoff(ctx)
+  try {
+    const scope = await ctx.serviceScope(serviceId)
+    if (!scope) return urgencyHandoff(ctx)
 
-  const dateKey = zonedDateKey(ctx.now)
-  const slots = await ctx.backend.getDaySlots({ ...scope, dateKey, now: ctx.now })
-  if (!slots.length) return urgencyHandoff(ctx)
+    const dateKey = zonedDateKey(ctx.now)
+    const slots = await ctx.backend.getDaySlots({ ...scope, dateKey, now: ctx.now })
+    if (!slots.length) return urgencyHandoff(ctx)
 
-  return {
-    kind: 'next',
-    state: newBookingState('pick_patient', {
-      serviceId: scope.service.id,
-      staffId: 'any',
-      dateKey,
-      urgent: true,
-    }),
+    return {
+      kind: 'next',
+      state: newBookingState('pick_patient', {
+        serviceId: scope.service.id,
+        staffId: 'any',
+        dateKey,
+        urgent: true,
+      }),
+    }
+  } catch (err) {
+    console.error(
+      '[clinica] no se pudieron leer las horas de la urgencia:',
+      err instanceof Error ? err.message : 'error desconocido',
+    )
+    return urgencyHandoff(ctx)
   }
 }
 ```
 
-5. En `renderClinicStep`, antes de `default`:
+4. En `renderClinicStep`, antes de `default`:
 
 ```ts
     case 'urgency': {
@@ -8351,21 +9174,21 @@ async function urgencyBooking(ctx: ClinicStepCtx): Promise<ClinicOutcome> {
     }
 ```
 
-6. En `handleClinicChoice`, en `case 'consent'`, reemplaza el último `return`:
+5. En `handleClinicChoice`, en `case 'consent'`, antes del último `return`:
 
 ```ts
+      // Quien llegó a la autorización desde una urgencia sigue con su hora de hoy.
       if (state.afterConsent === 'urgency_book') return urgencyBooking(ctx)
-      return { kind: 'next', state: newBookingState('clinic_menu') }
 ```
 
-7. En `clinic_menu`, agrega:
+6. En `clinic_menu`, después de `case 'book'`:
 
 ```ts
         case 'urgent':
           return { kind: 'next', state: newBookingState('urgency') }
 ```
 
-8. Antes de `default` de `handleClinicChoice`:
+7. Antes de `default` de `handleClinicChoice`:
 
 ```ts
     case 'urgency': {
@@ -8382,6 +9205,8 @@ async function urgencyBooking(ctx: ClinicStepCtx): Promise<ClinicOutcome> {
         }
       }
       if (parsed.value !== 'alarm_no') return { kind: 'fail' }
+      // La urgencia no espera la autorización para mostrar los signos de alarma,
+      // pero agendar sí la necesita: se pide ahora y luego sigue la hora de hoy.
       const consent = await latestConsent(ctx.db, {
         accountId: ctx.accountId,
         contactId: ctx.contactId,
@@ -8394,20 +9219,20 @@ async function urgencyBooking(ctx: ClinicStepCtx): Promise<ClinicOutcome> {
     }
 ```
 
-- [ ] **Step 4: Conecta el controlador**
+- [ ] **Step 5: Conecta el controlador**
 
 En `src/verticals/agenda/agent/controller.ts`:
 
-1. Agrega `containsUrgencyWord` al import de `./state`.
+1. Imports: `type ClinicContextResult` desde `@/modules/clinica/settings`, `DEFAULT_URGENCY_ALARM_TEXT` desde `@/modules/clinica/texts`, `DEFAULT_LABELS` desde `../labels` y `urgencyUnconfirmedHandoff` desde `./steps/clinic-steps`. `containsUrgencyWord` ya se importa de `./state`.
 
-2. En `clinicCtx`, agrega:
+2. En `clinicCtx`, después de `aiAutoReplyOn`:
 
 ```ts
     serviceScope: (serviceId) =>
       slotScope(dialog, newBookingState('pick_day', { serviceId, staffId: 'any' })),
 ```
 
-3. Reemplaza la puerta inicial del hilo humano:
+3. Mueve `const clinicActive = args.modules?.includes('clinica') === true` arriba de la puerta del hilo humano, y avisa antes de soltarlo:
 
 ```ts
   if (
@@ -8415,33 +9240,119 @@ En `src/verticals/agenda/agent/controller.ts`:
     !reminderTap &&
     !isCancelConfirmTap(args.session ?? null, replyId)
   ) {
-    if (clinicActive && replyId === null) await warnHumanOfUrgency(args, text)
+    if (clinicActive) await warnHumanOfUrgency(args, { text, replyId })
     return { consumed: false }
   }
 ```
 
-Mueve `const clinicActive = args.modules?.includes('clinica') === true` arriba de esa puerta.
+4. Después de la clínica no disponible, la llamada pasa el toque además del texto:
 
-4. Agrega, después de `handleAgendaInbound`:
+```ts
+    await handoffClinicUnavailable(dialog, args.session?.id ?? null, { text, replyId })
+```
+
+   Y `handoffClinicUnavailable` recibe `input: { text: string; replyId: string | null }` en vez de `text`, y la urgencia vale por el toque o por las palabras de siempre:
+
+```ts
+  const urgent =
+    input.replyId === actId('urgent') || containsUrgencyWord(input.text, DEFAULT_URGENCY_WORDS)
+```
+
+5. En `handleAgendaInbound`, sube `const asking = ...` (y deja `writingAnswer` donde estaba) y agrega, antes de `// 1) Pedir un humano gana...`:
+
+```ts
+  const asking = args.session ? coerceState(args.session.state) : null
+
+  // Clínica: la urgencia gana sobre todo lo demás, también sobre la autorización,
+  // sobre una reserva abierta (la reemplaza) y sobre pedir una persona. Se mira
+  // antes de que ningún otro paso lea el mensaje.
+  if (dialog.clinic && opensUrgency(dialog.clinic, { text, replyId }, asking)) {
+    const state = newBookingState('urgency')
+    const sessionId = args.session?.id ?? (await openSession(dialog, state))
+    await conclude(dialog, sessionId, state)
+    return { consumed: true }
+  }
+```
+
+   Y el pase por palabra, en el paso de los signos, avisa con prioridad:
+
+```ts
+    // Quien ya dijo que le duele y está contestando los signos de alarma no se
+    // queda con un pase cualquiera: el equipo recibe el aviso prioritario.
+    await performHandoff(
+      dialog,
+      args.session?.id ?? null,
+      asking?.step === 'urgency'
+        ? urgencyUnconfirmedHandoff(dialog.clinicTexts, urgencyAlarmText(dialog))
+        : {},
+    )
+```
+
+6. Después de `handleAgendaInbound`:
 
 ```ts
 /**
- * Palabra de urgencia en un hilo de una persona: el bot no responde para
- * no pisarla, pero le avisa a quien lo lleva (o al dueño).
+ * ¿Este mensaje abre los signos de alarma? Un toque en "Tengo una urgencia"
+ * siempre: es una decisión de la persona, valga lo que valga el paso. Un texto
+ * con una palabra de la clínica también, en cualquier paso menos donde lo que
+ * escribe es otra cosa: la respuesta a los signos (ahí la lee `matchChoice`), el
+ * nombre de quien va a asistir o la respuesta de texto a una pregunta extra.
+ * Una foto, un audio o un sticker no cuentan.
  */
-async function warnHumanOfUrgency(args: HandleAgendaInboundArgs, text: string): Promise<void> {
+function opensUrgency(
+  clinic: ClinicContext,
+  input: { text: string; replyId: string | null },
+  current: BookingState | null,
+): boolean {
+  if (input.replyId !== null) return input.replyId === actId('urgent')
+  if (isNonTextInbound(input.text)) return false
+  const writing =
+    current?.step === 'urgency' ||
+    current?.step === 'new_patient_name' ||
+    (current?.step === 'ask_question' && current.options.length === 0)
+  return !writing && containsUrgencyWord(input.text, clinic.urgencyWords)
+}
+
+/** Los signos de alarma de la clínica; sin su configuración, los de siempre. */
+function urgencyAlarmText(dialog: Dialog): string {
+  return dialog.clinic?.urgencyAlarmText ?? DEFAULT_URGENCY_ALARM_TEXT
+}
+
+/**
+ * Urgencia en un hilo de una persona: el bot no responde para no pisarla, pero
+ * le avisa a quien lo lleva (o al dueño). Corre antes de cargar nada más, así
+ * que lee lo suyo. Si la configuración de la clínica falta o no se pudo leer,
+ * valen las palabras de siempre: un fallo de lectura nunca silencia el aviso.
+ */
+async function warnHumanOfUrgency(
+  args: HandleAgendaInboundArgs,
+  input: { text: string; replyId: string | null },
+): Promise<void> {
+  const { text, replyId } = input
+  // Un toque que no es el de urgencias, o un mensaje sin texto, no abre nada.
+  if (replyId !== null ? replyId !== actId('urgent') : isNonTextInbound(text)) return
+
   await bestEffort('aviso de urgencia a la persona del hilo', async () => {
-    const clinic = await loadClinicContext(args.db, args.accountId)
-    if (!clinic || !containsUrgencyWord(text, clinic.urgencyWords)) return
+    if (replyId === null) {
+      const result: ClinicContextResult = await loadClinicContext(args.db, args.accountId).catch(
+        (err: unknown): ClinicContextResult => {
+          console.error('[clinica] no se pudo leer la configuración para vigilar la urgencia:', err)
+          return { status: 'error' }
+        },
+      )
+      const words = result.status === 'ok' ? result.clinic.urgencyWords : DEFAULT_URGENCY_WORDS
+      if (!containsUrgencyWord(text, words)) return
+    }
+
     const [settings, account, assignee, contact] = await Promise.all([
-      loadBotSettings(args.db, args.accountId),
-      loadAccount(args.db, args.accountId),
-      loadConversationAssignee(args.db, args.accountId, args.conversationId),
-      loadContact(args.db, args.accountId, args.contactId),
+      loadBotSettings(args.db, args.accountId).catch(() => null),
+      loadAccount(args.db, args.accountId).catch(() => null),
+      loadConversationAssignee(args.db, args.accountId, args.conversationId).catch(() => null),
+      loadContact(args.db, args.accountId, args.contactId).catch(() => null),
     ])
     const userId = assignee ?? account?.ownerUserId ?? null
     if (!userId) return
-    const texts = buildClinicTexts(settings.labels)
+    const texts = buildClinicTexts(settings?.labels ?? DEFAULT_LABELS)
     const who = contact?.name?.trim() || contact?.phone || 'Un paciente'
     await insertNotification(args.db, {
       accountId: args.accountId,
@@ -8455,32 +9366,30 @@ async function warnHumanOfUrgency(args: HandleAgendaInboundArgs, text: string): 
 }
 ```
 
-5. En `handleAgendaInbound`, antes de `// 1) Pedir un humano gana...`:
+7. En `registerFail`, dentro de `if (fails >= 2) {`, antes del pase de la autorización:
 
 ```ts
-  // Clínica: la urgencia gana sobre todo, incluso sobre la autorización.
-  // No aplica mientras responde los signos ni mientras escribe un nombre.
-  if (dialog.clinic && replyId === null) {
-    const current = args.session ? coerceState(args.session.state) : null
-    const busy = current?.step === 'urgency' || current?.step === 'new_patient_name'
-    if (!busy && containsUrgencyWord(text, dialog.clinic.urgencyWords)) {
-      const state = newBookingState('urgency')
-      const sessionId = args.session?.id ?? (await openSession(dialog, state))
-      await conclude(dialog, sessionId, state)
-      return { consumed: true }
+    // Ya dijo que le duele y no contestó los signos con claridad: no es un pase
+    // cualquiera, el equipo recibe el aviso prioritario.
+    if (state.step === 'urgency') {
+      await performHandoff(
+        dialog,
+        sessionId,
+        urgencyUnconfirmedHandoff(dialog.clinicTexts, urgencyAlarmText(dialog)),
+      )
+      return
     }
-  }
 ```
 
-- [ ] **Step 5: Corre las pruebas**
+- [ ] **Step 6: Corre las pruebas**
 
 Run: `npx vitest run src/verticals/agenda && npx tsc --noEmit`
-Expected: PASS.
+Expected: PASS. En esta tarea, `npx vitest run` completo pasa de 3.470 a 3.526 pruebas.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/verticals/agenda/agent
+git add src/modules/clinica src/verticals/agenda/agent
 git commit -m "feat(clinica): handle dental emergencies with a fixed flow"
 ```
 
