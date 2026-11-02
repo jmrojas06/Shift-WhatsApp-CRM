@@ -2,9 +2,12 @@
 // Configuración de la clínica (clinic_settings + clinic_locations).
 //
 // Los llamadores le pasan el cliente: el bot usa el service role y el
-// instalador también. Sin fila de configuración, el bot sigue como una
-// agenda normal y deja el error en el log: un montaje incompleto nunca
-// puede tumbar la conversación.
+// instalador también.
+//
+// `loadClinicContext` distingue "falta la configuración" de "no se pudo
+// leer": quien la llama decide qué hace en cada caso, y ante un error NO
+// puede tratar la conversación como una agenda normal (se saltaría la
+// autorización de datos y la IA vería el chat de un paciente).
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -35,6 +38,18 @@ export interface ClinicContext {
   location: ClinicLocation | null
 }
 
+/**
+ * Resultado de leer la configuración de la clínica.
+ *   - ok: lista para usar.
+ *   - missing: la cuenta tiene el módulo pero nadie la configuró.
+ *   - error: la lectura falló o la fila no es usable. NO equivale a "no hay
+ *     clínica": hay que fallar cerrado.
+ */
+export type ClinicContextResult =
+  | { status: 'ok'; clinic: ClinicContext }
+  | { status: 'missing' }
+  | { status: 'error' }
+
 function mapLocation(row: Record<string, unknown>): ClinicLocation {
   return {
     id: row.id as string,
@@ -49,7 +64,7 @@ function mapLocation(row: Record<string, unknown>): ClinicLocation {
 export async function loadClinicContext(
   db: SupabaseClient,
   accountId: string,
-): Promise<ClinicContext | null> {
+): Promise<ClinicContextResult> {
   const { data, error } = await db
     .from('clinic_settings')
     .select(
@@ -57,10 +72,21 @@ export async function loadClinicContext(
     )
     .eq('account_id', accountId)
     .maybeSingle()
-  if (error) console.error('[clinica] no se pudo leer la configuración:', error.message)
+  if (error) {
+    console.error('[clinica] no se pudo leer la configuración:', error.message)
+    return { status: 'error' }
+  }
   if (!data) {
     console.error(`[clinica] la cuenta ${accountId} tiene el módulo sin configurar`)
-    return null
+    return { status: 'missing' }
+  }
+
+  // La base lo exige, pero una autorización o unos signos de alarma vacíos
+  // nunca se le muestran a un paciente.
+  const row = data as Record<string, unknown>
+  if (!isFilled(row.consent_text) || !isFilled(row.urgency_alarm_text)) {
+    console.error(`[clinica] la configuración de la cuenta ${accountId} no tiene los textos`)
+    return { status: 'error' }
   }
 
   const { data: locations, error: locationError } = await db
@@ -73,17 +99,21 @@ export async function loadClinicContext(
   if (locationError) console.error('[clinica] no se pudo leer la sede:', locationError.message)
   const location = ((locations ?? []) as Record<string, unknown>[])[0]
 
-  const row = data as Record<string, unknown>
   return {
-    consentText: row.consent_text as string,
-    consentVersion: Number(row.consent_version),
-    urgencyWords: Array.isArray(row.urgency_words) ? (row.urgency_words as string[]) : [],
-    urgencyAlarmText: row.urgency_alarm_text as string,
-    urgencyServiceId: (row.urgency_service_id as string | null) ?? null,
-    offerDays: Number(row.offer_days) || 30,
-    location: location ? mapLocation(location) : null,
+    status: 'ok',
+    clinic: {
+      consentText: row.consent_text as string,
+      consentVersion: Number(row.consent_version),
+      urgencyWords: Array.isArray(row.urgency_words) ? (row.urgency_words as string[]) : [],
+      urgencyAlarmText: row.urgency_alarm_text as string,
+      urgencyServiceId: (row.urgency_service_id as string | null) ?? null,
+      offerDays: Number(row.offer_days) || 30,
+      location: location ? mapLocation(location) : null,
+    },
   }
 }
+
+const isFilled = (value: unknown): boolean => typeof value === 'string' && value.trim() !== ''
 
 /** Instrucciones previas de un servicio; null si no tiene o el catálogo cambió. */
 export async function loadServicePrep(
