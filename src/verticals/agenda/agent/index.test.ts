@@ -77,10 +77,31 @@ describe('agendaInboundHandler', () => {
     expect(mocks.notifyAlert).not.toHaveBeenCalled()
   })
 
-  it('el aviso no incluye texto del paciente ni su teléfono', async () => {
-    await agendaInboundHandler(context(brokenDb, ['clinica']))
+  it('el aviso no lleva el teléfono ni el identificador de WhatsApp que traiga el error', async () => {
+    // Un error de la base puede repetir la fila que no pudo guardar.
+    const leaky = {
+      from() {
+        throw new Error(
+          'duplicate key (573001112233) for +57 300 111 2233, user US.13491208655302741918, wa 3001112233',
+        )
+      },
+    } as unknown as SupabaseClient
+    await agendaInboundHandler(context(leaky, ['clinica']))
     const text = mocks.notifyAlert.mock.calls[0][0]
-    expect(text).not.toContain('573001112233')
+    expect(text).not.toMatch(/\d{4,}/)
+    expect(text).not.toContain('300 111')
+    expect(text).toContain('duplicate key')
+    expect(text).toContain('#')
+  })
+
+  it('el aviso corta un error larguísimo', async () => {
+    const long = {
+      from() {
+        throw new Error(`falló ${'x'.repeat(2000)}`)
+      },
+    } as unknown as SupabaseClient
+    await agendaInboundHandler(context(long, ['clinica']))
+    expect(mocks.notifyAlert.mock.calls[0][0].length).toBeLessThan(700)
   })
 
   it('sin fallos, devuelve lo que decide el bot y no avisa nada', async () => {

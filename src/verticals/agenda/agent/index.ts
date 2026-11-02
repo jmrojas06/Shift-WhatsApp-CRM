@@ -75,6 +75,15 @@ export function createAgendaSender(
 const ALERT_ERROR_MAX = 300
 
 /**
+ * El error de la base puede repetir la fila que no pudo guardar, con el
+ * teléfono o el identificador de WhatsApp del paciente. La alerta sale a un
+ * canal de operaciones: se quitan los números largos, con o sin separadores.
+ */
+function scrubDigits(text: string): string {
+  return text.replace(/\+?\d(?:[\s().-]?\d){5,}/g, '#').replace(/\d{4,}/g, '#')
+}
+
+/**
  * Punto de entrada del seam: el webhook ya validó la firma, guardó
  * el mensaje entrante y resolvió cuenta/contacto/conversación. Aquí
  * solo se construye el sender y se delega en el controlador.
@@ -106,7 +115,7 @@ export const agendaInboundHandler: VerticalInboundHandler = async (ctx) => {
     const reason = err instanceof Error ? err.message : String(err)
     await notifyAlert(
       `Clínica: el bot falló con un mensaje y no se lo pasó a la IA (cuenta ${ctx.accountId}, conversación ${ctx.conversationId}). ` +
-        `El paciente puede haberse quedado sin respuesta; hay que revisar el chat. Error: ${reason.slice(0, ALERT_ERROR_MAX)}`,
+        `El paciente puede haberse quedado sin respuesta; hay que revisar el chat. Error: ${scrubDigits(reason).slice(0, ALERT_ERROR_MAX)}`,
     )
     return { consumed: true }
   }
