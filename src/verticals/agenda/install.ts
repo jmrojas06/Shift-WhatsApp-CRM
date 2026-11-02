@@ -1,6 +1,6 @@
 // ============================================================
 // Instalador de la plantilla de la agenda según un punto de partida
-// (barbería, salón, salud, taller, clases o en blanco).
+// (barbería, salón, salud, odontología, taller, clases o en blanco).
 //
 // Deja lista una cuenta recién marcada como `vertical_key =
 // 'agenda'` (o la clave anterior 'barberia'): catálogo de servicios, un

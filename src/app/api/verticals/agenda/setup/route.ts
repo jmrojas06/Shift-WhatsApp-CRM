@@ -15,7 +15,7 @@ import { badRequest } from '../_lib/http'
 // palabras, piezas, bienvenida y preguntas del punto de partida).
 //
 // Cuerpo opcional: { "preset_key": "barberia" | "salon" | "salud" |
-// "taller" | "clases" | "blanco" }. Sin cuerpo (o sin preset_key) se
+// "odontologia" | "taller" | "clases" | "blanco" }. Sin cuerpo (o sin preset_key) se
 // usa el punto de partida de la cuenta, o barbería si no tiene uno.
 //
 // Guardas:

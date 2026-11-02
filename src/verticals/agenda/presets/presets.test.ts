@@ -69,6 +69,9 @@ describe('puntos de partida', () => {
     expect(preset.seed.services.map((s) => s.name)).toContain('Urgencia')
     expect(preset.seed.services.every((s) => s.price === 0)).toBe(true)
     expect(preset.aiPrompt).toContain('Nunca des diagnósticos')
+    expect(preset.aiPrompt).toContain('medicamentos')
+    expect(preset.aiPrompt).toContain('"urgencia"')
+    expect(preset.aiPrompt).toContain('"cita"')
   })
 
   it('el taller no deja elegir técnico y pide la placa', () => {
