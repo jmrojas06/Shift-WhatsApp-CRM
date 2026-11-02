@@ -28,34 +28,58 @@ interface Policy {
   body: string
 }
 
-function effectivePolicies(): Map<string, Policy> {
-  const files = readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith('.sql'))
-    .sort()
+// Sintaxis de Postgres:
+//   CREATE POLICY nombre ON [esquema.]tabla [AS PERMISSIVE|RESTRICTIVE]
+//     [FOR ALL|SELECT|INSERT|UPDATE|DELETE] [TO roles] [USING (...)] [WITH CHECK (...)]
+// Sin FOR la política vale para todos los comandos (ALL). Las de otros
+// esquemas (storage.objects) no son de las tablas de la app: se ignoran.
+const POLICY_STATEMENT =
+  /(DROP POLICY(?:\s+IF EXISTS)?\s+("?[\w ]+"?)\s+ON\s+(?:(\w+)\.)?(\w+)\s*;)|(CREATE POLICY\s+("?[\w ]+"?)\s+ON\s+(?:(\w+)\.)?(\w+)(?:\s+AS\s+(?:PERMISSIVE|RESTRICTIVE))?(?:\s+FOR\s+(ALL|SELECT|INSERT|UPDATE|DELETE))?([\s\S]*?);)/gi
+
+// Re-aplica en orden los archivos SQL y devuelve las políticas que
+// quedan vigentes (clave `tabla.nombre`).
+function parsePolicies(sqlFiles: string[]): Map<string, Policy> {
   const policies = new Map<string, Policy>()
-  const statement =
-    /(DROP POLICY IF EXISTS\s+("?[\w ]+"?)\s+ON\s+(\w+)\s*;)|(CREATE POLICY\s+("?[\w ]+"?)\s+ON\s+(\w+)\s+FOR\s+(\w+)([\s\S]*?);)/gi
-  for (const file of files) {
+  for (const raw of sqlFiles) {
     // Fuera los comentarios de línea: llevan ';' y nombres de política.
-    const sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8').replace(
-      /--[^\n]*/g,
-      '',
-    )
-    for (const m of sql.matchAll(statement)) {
+    const sql = raw.replace(/--[^\n]*/g, '')
+    for (const m of sql.matchAll(POLICY_STATEMENT)) {
       if (m[1]) {
-        policies.delete(`${m[3]}.${m[2]}`)
+        if (m[3] && m[3].toLowerCase() !== 'public') continue
+        policies.delete(`${m[4]}.${m[2]}`)
       } else {
-        policies.set(`${m[6]}.${m[5]}`, {
-          table: m[6],
-          name: m[5],
-          cmd: m[7].toUpperCase(),
-          body: m[8],
+        if (m[7] && m[7].toLowerCase() !== 'public') continue
+        policies.set(`${m[8]}.${m[6]}`, {
+          table: m[8],
+          name: m[6],
+          cmd: (m[9] ?? 'ALL').toUpperCase(),
+          body: m[10],
         })
       }
     }
   }
   return policies
 }
+
+function effectivePolicies(): Map<string, Policy> {
+  const files = readdirSync(MIGRATIONS_DIR)
+    .filter((f) => f.endsWith('.sql'))
+    .sort()
+  return parsePolicies(
+    files.map((f) => readFileSync(join(MIGRATIONS_DIR, f), 'utf8')),
+  )
+}
+
+// Quita los comentarios de línea de un archivo SQL (CRLF o LF).
+const stripComments = (sql: string): string => sql.replace(/--[^\r\n]*/g, '')
+
+// Junta los espacios para comparar texto SQL sin depender del formato.
+const squash = (s: string): string =>
+  s
+    .replace(/\s+/g, ' ')
+    .replace(/\(\s+/g, '(')
+    .replace(/\s+\)/g, ')')
+    .trim()
 
 // Las políticas permisivas se OR-ean en Postgres: una FOR ALL
 // (cmd='ALL') que mencione 'agent' vuelve inútil a la política
@@ -244,28 +268,164 @@ describe('preguntas extra del bot (051 / booking_questions)', () => {
   })
 })
 
-describe('módulo clínica (055)', () => {
-  for (const table of ['clinic_settings', 'clinic_locations']) {
-    for (const cmd of ['INSERT', 'UPDATE', 'DELETE']) {
-      it(`${table} ${cmd}: solo owner/admin`, () => {
-        const found = policiesFor(table, cmd)
-        expect(found).toHaveLength(1)
-        expect(found[0].body).toContain("'admin'")
-        expect(found[0].body).not.toContain("'agent'")
-      })
-    }
+describe('lector de políticas (parsePolicies)', () => {
+  const only = (sql: string) => [...parsePolicies([sql]).values()]
 
-    it(`${table} SELECT: cualquier miembro`, () => {
-      const found = policiesFor(table, 'SELECT')
-      expect(found.some((p) => /is_account_member\(account_id\)/.test(p.body))).toBe(true)
+  it('una política sin FOR cuenta como ALL', () => {
+    const [p] = only("CREATE POLICY p ON t USING (is_account_member(account_id, 'agent'));")
+    expect(p.cmd).toBe('ALL')
+    expect(p.table).toBe('t')
+  })
+
+  it('acepta ON public.tabla', () => {
+    const [p] = only('CREATE POLICY p ON public.t FOR SELECT USING (true);')
+    expect(p).toMatchObject({ table: 't', cmd: 'SELECT' })
+  })
+
+  it('acepta AS PERMISSIVE / AS RESTRICTIVE antes de FOR (y también sin FOR)', () => {
+    const found = only(`
+      CREATE POLICY a ON t AS PERMISSIVE FOR INSERT WITH CHECK (true);
+      CREATE POLICY b ON public.u AS RESTRICTIVE USING (true);
+    `)
+    expect(found.map((p) => [p.table, p.cmd])).toEqual([
+      ['t', 'INSERT'],
+      ['u', 'ALL'],
+    ])
+  })
+
+  it('DROP POLICY (con o sin IF EXISTS, con public.) retira la política', () => {
+    expect(
+      only('CREATE POLICY p ON t FOR SELECT USING (true); DROP POLICY IF EXISTS p ON public.t;'),
+    ).toHaveLength(0)
+    expect(only('CREATE POLICY p ON t FOR SELECT USING (true); DROP POLICY p ON t;')).toHaveLength(0)
+  })
+
+  it('un CREATE posterior reemplaza al anterior con el mismo nombre', () => {
+    const found = only(`
+      CREATE POLICY p ON t FOR SELECT USING (true);
+      DROP POLICY IF EXISTS p ON t;
+      CREATE POLICY p ON t FOR SELECT USING (false);
+    `)
+    expect(found).toHaveLength(1)
+    expect(found[0].body).toContain('false')
+  })
+
+  it('ignora las políticas de otros esquemas (storage.objects)', () => {
+    expect(only('CREATE POLICY "Avatars" ON storage.objects FOR SELECT USING (true);')).toHaveLength(0)
+  })
+
+  it('ignora lo que está en comentarios', () => {
+    expect(only('-- CREATE POLICY p ON t FOR SELECT USING (true);')).toHaveLength(0)
+  })
+})
+
+describe('ninguna migración apaga ni esquiva la RLS', () => {
+  const offendersFor = (pattern: RegExp): string[] =>
+    readdirSync(MIGRATIONS_DIR)
+      .filter((f) => f.endsWith('.sql'))
+      .filter((f) => pattern.test(stripComments(readFileSync(join(MIGRATIONS_DIR, f), 'utf8'))))
+
+  it('no hay DISABLE ROW LEVEL SECURITY en ningún archivo', () => {
+    expect(offendersFor(/\bDISABLE\s+ROW\s+LEVEL\s+SECURITY\b/i)).toEqual([])
+  })
+
+  it('no hay ALTER POLICY (el lector de políticas no lo sigue: usar DROP + CREATE)', () => {
+    expect(offendersFor(/\bALTER\s+POLICY\b/i)).toEqual([])
+  })
+})
+
+describe('módulo clínica (055)', () => {
+  const CLINIC_TABLES = ['clinic_settings', 'clinic_locations', 'clinic_patients', 'clinic_consents']
+
+  const ADMIN = "is_account_member(account_id, 'admin')"
+  const AGENT = "is_account_member(account_id, 'agent')"
+  // El servicio de urgencias debe ser de la misma cuenta: la FK sola no lo comprueba.
+  const SERVICE_SAME_ACCOUNT = `(
+    urgency_service_id IS NULL
+    OR EXISTS (
+      SELECT 1 FROM booking_services s
+      WHERE s.id = clinic_settings.urgency_service_id
+        AND s.account_id = clinic_settings.account_id
+    )
+  )`
+  // El contacto del paciente debe ser de la misma cuenta (patrón 054, orders.deal_id).
+  const CONTACT_SAME_ACCOUNT = `EXISTS (
+    SELECT 1 FROM contacts c
+    WHERE c.id = clinic_patients.contact_id
+      AND c.account_id = clinic_patients.account_id
+  )`
+
+  // Una sola política por (tabla, comando) y con el cuerpo exacto: una
+  // segunda permisiva, o una FOR ALL, abriría la tabla (se suman con OR).
+  function expectOnly(table: string, cmd: string, body: string) {
+    const found = policiesFor(table, cmd)
+    expect(found, `${table} ${cmd}`).toHaveLength(1)
+    expect(squash(found[0].body)).toBe(squash(body))
+  }
+
+  for (const table of CLINIC_TABLES) {
+    it(`${table} SELECT: una sola política, abierta a cualquier miembro`, () => {
+      expectOnly(table, 'SELECT', 'USING (is_account_member(account_id))')
     })
   }
 
-  it('clinic_patients: agent escribe y nadie borra', () => {
-    for (const cmd of ['INSERT', 'UPDATE']) {
-      expect(policiesFor('clinic_patients', cmd).some((p) => p.body.includes("'agent'"))).toBe(true)
+  describe('configuración y sedes: solo owner/admin escribe', () => {
+    for (const table of ['clinic_settings', 'clinic_locations']) {
+      for (const cmd of ['INSERT', 'UPDATE', 'DELETE']) {
+        it(`${table} ${cmd}: solo owner/admin`, () => {
+          const found = policiesFor(table, cmd)
+          expect(found).toHaveLength(1)
+          expect(found[0].body).toContain("'admin'")
+          expect(found[0].body).not.toContain("'agent'")
+        })
+      }
     }
-    expect(policiesFor('clinic_patients', 'DELETE')).toHaveLength(0)
+
+    it('clinic_locations: cuerpos exactos', () => {
+      expectOnly('clinic_locations', 'INSERT', `WITH CHECK (${ADMIN})`)
+      expectOnly('clinic_locations', 'UPDATE', `USING (${ADMIN}) WITH CHECK (${ADMIN})`)
+      expectOnly('clinic_locations', 'DELETE', `USING (${ADMIN})`)
+    })
+
+    it('clinic_settings: cuerpos exactos, con servicio de urgencias de la misma cuenta', () => {
+      expectOnly('clinic_settings', 'INSERT', `WITH CHECK (${ADMIN} AND ${SERVICE_SAME_ACCOUNT})`)
+      expectOnly(
+        'clinic_settings',
+        'UPDATE',
+        `USING (${ADMIN}) WITH CHECK (${ADMIN} AND ${SERVICE_SAME_ACCOUNT})`,
+      )
+      expectOnly('clinic_settings', 'DELETE', `USING (${ADMIN})`)
+    })
+  })
+
+  describe('pacientes: agent escribe, nadie borra, el contacto es de la misma cuenta', () => {
+    it('INSERT y UPDATE: cuerpos exactos, con el contacto de la misma cuenta', () => {
+      expectOnly('clinic_patients', 'INSERT', `WITH CHECK (${AGENT} AND ${CONTACT_SAME_ACCOUNT})`)
+      expectOnly(
+        'clinic_patients',
+        'UPDATE',
+        `USING (${AGENT}) WITH CHECK (${AGENT} AND ${CONTACT_SAME_ACCOUNT})`,
+      )
+    })
+
+    it('DELETE: sin política (un paciente con citas es un registro del negocio)', () => {
+      expect(policiesFor('clinic_patients', 'DELETE')).toHaveLength(0)
+    })
+  })
+
+  describe('WITH CHECK en los UPDATE (no se puede mover la fila a otra cuenta)', () => {
+    for (const [table, role] of [
+      ['clinic_settings', 'admin'],
+      ['clinic_locations', 'admin'],
+      ['clinic_patients', 'agent'],
+    ] as const) {
+      it(`${table} UPDATE`, () => {
+        const [update] = policiesFor(table, 'UPDATE')
+        expect(update.body).toMatch(
+          new RegExp(`WITH CHECK\\s*\\(\\s*is_account_member\\(account_id,\\s*'${role}'\\)`),
+        )
+      })
+    }
   })
 
   it('clinic_consents: desde el navegador solo se lee', () => {
@@ -275,13 +435,20 @@ describe('módulo clínica (055)', () => {
     }
   })
 
-  const code = readFileSync(join(MIGRATIONS_DIR, '055_clinica_base.sql'), 'utf8').replace(
-    /--[^\r\n]*/g,
-    '',
-  )
+  const code = stripComments(readFileSync(join(MIGRATIONS_DIR, '055_clinica_base.sql'), 'utf8'))
+  const flat = squash(code)
+
+  // El cuerpo de un CREATE TABLE, con los espacios juntos.
+  function tableBlock(name: string): string {
+    const m = code.match(
+      new RegExp(`CREATE TABLE IF NOT EXISTS ${name} \\(([\\s\\S]*?)\\r?\\n\\);`),
+    )
+    expect(m, `CREATE TABLE ${name}`).not.toBeNull()
+    return squash(m![1])
+  }
 
   it('activa RLS en las cuatro tablas', () => {
-    for (const table of ['clinic_settings', 'clinic_locations', 'clinic_patients', 'clinic_consents']) {
+    for (const table of CLINIC_TABLES) {
       expect(code).toMatch(new RegExp(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`))
     }
   })
@@ -290,7 +457,160 @@ describe('módulo clínica (055)', () => {
     expect(code).not.toMatch(/DROP\s+TABLE/i)
     expect(code).not.toMatch(/DROP\s+COLUMN/i)
     expect(code).not.toMatch(/\bDELETE\s+FROM\b/i)
-    expect(code).not.toMatch(/\bTRUNCATE\b/i)
+    // REVOKE TRUNCATE es justo lo que queremos: se mira sin GRANT/REVOKE.
+    expect(code.replace(/\b(?:GRANT|REVOKE)\b[^;]*;/gi, '')).not.toMatch(/\bTRUNCATE\b/i)
     expect(code).toMatch(/SET\s+LOCAL\s+lock_timeout/i)
+  })
+
+  describe('las autorizaciones sobreviven al contacto', () => {
+    it('clinic_consents.contact_id es anulable y pasa a NULL al borrar el contacto', () => {
+      const consents = tableBlock('clinic_consents')
+      expect(consents).toMatch(/contact_id uuid REFERENCES contacts\(id\) ON DELETE SET NULL/)
+      expect(consents).not.toMatch(/contact_id uuid NOT NULL/)
+    })
+
+    it('guarda quién autorizó (contact_ref) y qué texto aceptó (text_snapshot)', () => {
+      const consents = tableBlock('clinic_consents')
+      expect(consents).toContain(
+        'contact_ref text NOT NULL CHECK (char_length(contact_ref) BETWEEN 1 AND 64)',
+      )
+      expect(consents).toContain(
+        'text_snapshot text NOT NULL CHECK (char_length(text_snapshot) BETWEEN 1 AND 1000)',
+      )
+    })
+
+    it('clinic_patients.contact_id es NOT NULL y SIN cascada: un contacto con paciente no se borra', () => {
+      const patients = tableBlock('clinic_patients')
+      const column = patients.match(/\bcontact_id uuid [^,]*/)?.[0] ?? ''
+      expect(column).toBe('contact_id uuid NOT NULL REFERENCES contacts(id)')
+      expect(column).not.toMatch(/ON DELETE/i)
+    })
+  })
+
+  describe('nada cruza cuentas', () => {
+    it('pacientes y sedes llevan UNIQUE (account_id, id)', () => {
+      expect(tableBlock('clinic_patients')).toContain('UNIQUE (account_id, id)')
+      expect(tableBlock('clinic_locations')).toContain('UNIQUE (account_id, id)')
+    })
+
+    it('las columnas de la cita se agregan sin FK simple', () => {
+      expect(flat).toMatch(/ALTER TABLE booking_appointments ADD COLUMN IF NOT EXISTS patient_id uuid, ADD COLUMN IF NOT EXISTS location_id uuid;/)
+    })
+
+    for (const [column, table, constraint] of [
+      ['patient_id', 'clinic_patients', 'booking_appointments_patient_fk'],
+      ['location_id', 'clinic_locations', 'booking_appointments_location_fk'],
+    ] as const) {
+      it(`${column}: FK compuesta (account_id, ${column}) y re-ejecutable`, () => {
+        expect(flat).toContain(
+          `ALTER TABLE booking_appointments DROP CONSTRAINT IF EXISTS ${constraint};`,
+        )
+        expect(flat).toContain(
+          `ALTER TABLE booking_appointments ADD CONSTRAINT ${constraint} ` +
+            `FOREIGN KEY (account_id, ${column}) REFERENCES ${table} (account_id, id) ` +
+            `ON DELETE SET NULL (${column});`,
+        )
+      })
+    }
+
+    it('el encabezado avisa que pide Postgres 15 o más', () => {
+      const sql = readFileSync(join(MIGRATIONS_DIR, '055_clinica_base.sql'), 'utf8')
+      const header = sql.slice(0, sql.indexOf('SET LOCAL lock_timeout'))
+      expect(header).toMatch(/REQUIERE Postgres 15 o más/)
+      expect(header).not.toMatch(/Postgres 1[0-4]\b/)
+    })
+  })
+
+  describe('clinic_consents es solo para agregar de verdad', () => {
+    it('trigger BEFORE UPDATE OR DELETE por fila, re-ejecutable', () => {
+      expect(flat).toContain('DROP TRIGGER IF EXISTS clinic_consents_append_only ON clinic_consents;')
+      expect(flat).toContain(
+        'CREATE TRIGGER clinic_consents_append_only BEFORE UPDATE OR DELETE ON clinic_consents ' +
+          'FOR EACH ROW EXECUTE FUNCTION clinic_consents_append_only();',
+      )
+    })
+
+    it('la función deja pasar las acciones de FK (profundidad > 1) y rechaza el resto', () => {
+      const fn = flat.match(
+        /CREATE OR REPLACE FUNCTION clinic_consents_append_only\(\) RETURNS trigger AS \$\$(.*?)\$\$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;/,
+      )
+      expect(fn, 'CREATE OR REPLACE FUNCTION clinic_consents_append_only').not.toBeNull()
+      const body = fn![1]
+      expect(body).toContain('pg_trigger_depth() > 1')
+      expect(body).toContain("ERRCODE = 'insufficient_privilege'")
+      // El rechazo va DESPUÉS de la salida de las FK: si no, la FK nunca pasaría.
+      expect(body.indexOf('pg_trigger_depth()')).toBeLessThan(body.indexOf('RAISE EXCEPTION'))
+      expect(body).toContain('RETURN OLD')
+      expect(body).toContain('RETURN NEW')
+    })
+
+    it('la función se endurece como 047: dueña postgres, solo service_role ejecuta', () => {
+      expect(flat).toContain('ALTER FUNCTION public.clinic_consents_append_only() OWNER TO postgres;')
+      expect(flat).toContain(
+        'REVOKE ALL ON FUNCTION public.clinic_consents_append_only() FROM PUBLIC, anon, authenticated;',
+      )
+      expect(flat).toContain(
+        'GRANT EXECUTE ON FUNCTION public.clinic_consents_append_only() TO service_role;',
+      )
+    })
+
+    it('TRUNCATE revocado a anon, authenticated y service_role', () => {
+      expect(flat).toContain(
+        'REVOKE TRUNCATE ON clinic_consents FROM anon, authenticated, service_role;',
+      )
+    })
+  })
+
+  describe('índices', () => {
+    it.each([
+      [
+        'citas por paciente (parcial)',
+        'CREATE INDEX IF NOT EXISTS idx_booking_appointments_patient ON booking_appointments (patient_id) WHERE patient_id IS NOT NULL;',
+      ],
+      [
+        'citas por sede (parcial)',
+        'CREATE INDEX IF NOT EXISTS idx_booking_appointments_location ON booking_appointments (location_id) WHERE location_id IS NOT NULL;',
+      ],
+      [
+        'pacientes por contacto (la FK busca por contact_id)',
+        'CREATE INDEX IF NOT EXISTS idx_clinic_patients_contact ON clinic_patients (contact_id);',
+      ],
+      [
+        'autorizaciones por contacto (parcial: contact_id es anulable)',
+        'CREATE INDEX IF NOT EXISTS idx_clinic_consents_contact ON clinic_consents (contact_id) WHERE contact_id IS NOT NULL;',
+      ],
+    ])('%s', (_name, ddl) => {
+      expect(flat).toContain(ddl)
+    })
+  })
+
+  describe('identificador externo y validaciones', () => {
+    const PAIR = 'CHECK ((external_source IS NULL) = (external_id IS NULL))'
+
+    it('fuente e id externos van juntos o ninguno, en pacientes y en sedes', () => {
+      expect(tableBlock('clinic_patients')).toContain(PAIR)
+      expect(tableBlock('clinic_locations')).toContain(PAIR)
+      expect(tableBlock('clinic_locations')).toMatch(/\bexternal_source text\b/)
+    })
+
+    it('el id externo es único por cuenta y fuente, también en sedes', () => {
+      expect(flat).toContain(
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_clinic_patients_external ON clinic_patients (account_id, external_source, external_id) WHERE external_id IS NOT NULL;',
+      )
+      expect(flat).toContain(
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_clinic_locations_external ON clinic_locations (account_id, external_source, external_id) WHERE external_id IS NOT NULL;',
+      )
+    })
+
+    it('los nombres no pueden ser solo espacios', () => {
+      expect(tableBlock('clinic_patients')).toContain("btrim(full_name) <> ''")
+      expect(tableBlock('clinic_locations')).toContain("btrim(name) <> ''")
+    })
+
+    it('latitud y longitud en rango', () => {
+      const locations = tableBlock('clinic_locations')
+      expect(locations).toContain('CHECK (latitude BETWEEN -90 AND 90)')
+      expect(locations).toContain('CHECK (longitude BETWEEN -180 AND 180)')
+    })
   })
 })
