@@ -12649,32 +12649,90 @@ git commit -m "feat(clinica): offer appointments further ahead, page by page"
 
 ### Task 11: Mis citas y varias citas en un número
 
+Cuatro cosas, en este orden: "Mis citas" (tocado o escrito), la lista de citas cuando un número tiene
+varias, el toque de un recordatorio sin id (pregunta cuál en vez de adivinar) y las instrucciones con
+mapa al confirmar. Una cuenta sin el módulo `clinica` sigue usando `findNextAppointment`, sin cambios.
+
+Reglas que esta tarea deja fijas:
+
+- Una cita solo se toca si es de ese contacto y de esa cuenta, está activa (`pending` o `confirmed`) y
+  es futura. Vale para el toque con id, para elegir de la lista y para "Mis citas".
+- Con más de una cita activa en las próximas 72 horas, un toque sin id nunca elige una al azar: pregunta
+  cuál. Si la configuración de la clínica no se puede leer no hay lista que ofrecer, y el hilo pasa a
+  una persona.
+- El mensaje de instrucciones es solo texto de la clínica (lo que escribió para el servicio, la
+  dirección y el mapa). Ningún consejo médico, y sin nada que decir no manda nada.
+- En una clínica, "Nueva cita" desde la gestión de una cita empieza por el paciente (`pick_patient`);
+  si no, se crearían citas sin paciente.
+- El botón "Mis citas" vale en cualquier paso (menos la autorización y los signos de alarma, que se
+  contestan primero), y escrito ("quiero cancelar mi cita") lleva a la misma lista.
+
 **Files:**
 - Create: `src/verticals/agenda/agent/clinic-appointments.test.ts`
-- Modify: `src/verticals/agenda/agent/backend.ts`, `src/verticals/agenda/agent/internal-backend.ts`, `src/verticals/agenda/agent/steps/clinic-steps.ts`, `src/verticals/agenda/agent/controller.ts`
+- Modify: `src/verticals/agenda/agent/backend.ts`, `src/verticals/agenda/agent/internal-backend.ts`, `src/verticals/agenda/agent/internal-backend.test.ts`, `src/verticals/agenda/agent/steps/clinic-steps.ts`, `src/verticals/agenda/agent/steps/clinic-steps.test.ts`, `src/verticals/agenda/agent/controller.ts`, `src/verticals/agenda/agent/clinic-routing.test.ts`, `src/verticals/agenda/agent/testing/clinic-harness.ts`
 
 - [ ] **Step 1: Escribe las pruebas que fallan**
 
-Crea `src/verticals/agenda/agent/clinic-appointments.test.ts`:
+1. En `src/verticals/agenda/agent/testing/clinic-harness.ts`, `send` acepta `replyTo` (el id interno del
+   mensaje al que responde el paciente) y hay un ayudante para sembrar una plantilla que se pueda citar.
+   Agrégalo antes de `send`:
+
+```ts
+/**
+ * Un saliente de plantilla que el paciente puede citar: el toque de un botón de
+ * plantilla llega como respuesta a ella. Devuelve su id interno, para `replyTo`.
+ */
+export function seedTemplateMessage(db: FakeDb, templateName: string): string {
+  counter += 1
+  const id = `msg-tpl-${counter}`
+  db._tables.messages.push({
+    id,
+    conversation_id: CONVERSATION,
+    message_id: `wamid-tpl-${counter}`,
+    sender_type: 'bot',
+    content_type: 'template',
+    content_text: 'Texto de la plantilla',
+    template_name: templateName,
+    interactive_reply_id: null,
+    reply_to_message_id: null,
+  })
+  return id
+}
+```
+
+   En `send`, el tipo de `input` pasa a `{ text?: string; replyId?: string; replyTo?: string }` y el
+   mensaje sembrado lleva `reply_to_message_id: input.replyTo ?? null`.
+
+2. Crea `src/verticals/agenda/agent/clinic-appointments.test.ts`:
 
 ```ts
 import { describe, expect, it } from 'vitest'
 
+import { buildClinicTexts } from '@/modules/clinica/texts'
+
+import { DEFAULT_LABELS } from '../labels'
+import { apptId, remId } from './state'
 import {
   ACCOUNT,
   CONTACT,
   CONVERSATION,
   SERVICE_LIMPIEZA,
+  SERVICE_URGENCIA,
   STAFF_ANA,
   clinicDb,
   grantedConsent,
   last,
   makeRecorder,
+  seedTemplateMessage,
   send,
 } from './testing/clinic-harness'
-import { apptId, remId } from './state'
+import type { Row } from './testing/fake-db'
 
-const appointment = (id: string, patientId: string, startsAt: string) => ({
+const texts = buildClinicTexts(DEFAULT_LABELS)
+
+const MAP_URL = 'https://www.google.com/maps/search/?api=1&query=4.6,-74.08'
+
+const appointment = (id: string, patientId: string, startsAt: string, extra: Row = {}): Row => ({
   id,
   account_id: ACCOUNT,
   contact_id: CONTACT,
@@ -12686,22 +12744,40 @@ const appointment = (id: string, patientId: string, startsAt: string) => ({
   ends_at: new Date(new Date(startsAt).getTime() + 30 * 60_000).toISOString(),
   status: 'pending',
   answers: {},
+  ...extra,
 })
 
-const family = () => [
+const family = (): Row[] => [
   { id: 'pat-1', account_id: ACCOUNT, contact_id: CONTACT, full_name: 'Marta Ruiz' },
   { id: 'pat-2', account_id: ACCOUNT, contact_id: CONTACT, full_name: 'Tomás Gil' },
 ]
 
-const twoAppointments = () =>
+/** Martes 20 de octubre, 9:00 y 10:00 en Bogotá: dos citas del mismo número, a una hora de distancia. */
+const FIRST = '2026-10-20T14:00:00.000Z'
+const SECOND = '2026-10-20T15:00:00.000Z'
+
+const twoAppointments = (extra: Record<string, Row[]> = {}) =>
   clinicDb({
     clinic_consents: [grantedConsent()],
     clinic_patients: family(),
     booking_appointments: [
-      appointment('ap-1', 'pat-1', '2026-10-20T14:00:00.000Z'),
-      appointment('ap-2', 'pat-2', '2026-10-20T15:00:00.000Z'),
+      appointment('ap-1', 'pat-1', FIRST),
+      appointment('ap-2', 'pat-2', SECOND),
     ],
+    ...extra,
   })
+
+type Db = ReturnType<typeof clinicDb>
+
+const statuses = (db: Db) =>
+  Object.fromEntries(db._tables.booking_appointments.map((a) => [a.id, a.status]))
+
+const activeStates = (db: Db) =>
+  db._tables.booking_sessions
+    .filter((s) => s.status === 'active')
+    .map((s) => s.state as Record<string, unknown>)
+
+const BOTH = [apptId('ap-1'), apptId('ap-2')]
 
 describe('varias citas en un número', () => {
   it('Mis citas lista las citas con el nombre de cada paciente', async () => {
@@ -12709,7 +12785,7 @@ describe('varias citas en un número', () => {
     const rec = makeRecorder()
     await send(db, rec, { text: 'Hola' })
     await send(db, rec, { replyId: 'act:mine' })
-    expect(last(rec).ids).toEqual([apptId('ap-1'), apptId('ap-2')])
+    expect(last(rec).ids).toEqual(BOTH)
     expect(last(rec).bodyText).toContain('Marta Ruiz')
     expect(last(rec).bodyText).toContain('Tomás Gil')
     expect(last(rec).titles[1]).toContain('Tomás')
@@ -12719,12 +12795,13 @@ describe('varias citas en un número', () => {
     const db = clinicDb({
       clinic_consents: [grantedConsent()],
       clinic_patients: family(),
-      booking_appointments: [appointment('ap-1', 'pat-1', '2026-10-20T14:00:00.000Z')],
+      booking_appointments: [appointment('ap-1', 'pat-1', FIRST)],
     })
     const rec = makeRecorder()
     await send(db, rec, { text: 'Hola' })
     await send(db, rec, { replyId: 'act:mine' })
     expect(last(rec).ids).toContain('act:reschedule')
+    expect(activeStates(db)[0]).toMatchObject({ step: 'manage_menu', appointmentId: 'ap-1' })
   })
 
   it('sin citas lo dice y vuelve al menú', async () => {
@@ -12732,44 +12809,667 @@ describe('varias citas en un número', () => {
     const rec = makeRecorder()
     await send(db, rec, { text: 'Hola' })
     await send(db, rec, { replyId: 'act:mine' })
-    expect(rec.calls.at(-2)?.bodyText).toContain('No tienes citas próximas')
+    expect(rec.calls.at(-2)?.bodyText).toBe(texts.noUpcoming)
+    expect(rec.calls.at(-2)?.bodyText).toContain('Por ahora no hay citas a tu nombre')
     expect(last(rec).ids[0]).toBe('act:book')
   })
 
-  it('un toque con el id confirma esa cita y no la otra', async () => {
-    const db = twoAppointments()
+  it('solo lista las citas activas y futuras de este número', async () => {
+    const db = twoAppointments({
+      booking_appointments: [
+        appointment('ap-1', 'pat-1', FIRST),
+        appointment('ap-2', 'pat-2', SECOND),
+        appointment('ap-cancelada', 'pat-1', '2026-10-21T14:00:00.000Z', { status: 'cancelled' }),
+        appointment('ap-pasada', 'pat-1', '2026-10-18T14:00:00.000Z'),
+        appointment('ap-ajena', 'pat-1', '2026-10-22T14:00:00.000Z', { contact_id: 'ct-otro' }),
+        appointment('ap-otra-cuenta', 'pat-1', '2026-10-23T14:00:00.000Z', {
+          account_id: 'acc-otra',
+        }),
+      ],
+    })
     const rec = makeRecorder()
-    await send(db, rec, { replyId: remId('confirm', 'ap-2') })
-    const byId = Object.fromEntries(db._tables.booking_appointments.map((a) => [a.id, a.status]))
-    expect(byId).toEqual({ 'ap-1': 'pending', 'ap-2': 'confirmed' })
+    await send(db, rec, { replyId: 'act:mine' })
+    expect(last(rec).ids).toEqual(BOTH)
   })
 
-  it('un toque sin id con dos citas cercanas pregunta cuál', async () => {
+  it('una cita sin paciente se lista con su fecha', async () => {
+    const db = twoAppointments({
+      booking_appointments: [
+        appointment('ap-1', 'pat-1', FIRST),
+        appointment('ap-2', 'pat-borrado', SECOND, { patient_id: null }),
+      ],
+    })
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: 'act:mine' })
+    expect(last(rec).ids).toEqual(BOTH)
+    expect(last(rec).bodyText).toContain('• Marta Ruiz: ')
+    expect(last(rec).bodyText).toContain('• mar 20 oct, 10:00 a. m.')
+  })
+
+  it('elegir una cita de la lista abre su gestión', async () => {
     const db = twoAppointments()
     const rec = makeRecorder()
-    await send(db, rec, { replyId: 'Confirmar' })
-    expect(last(rec).ids).toEqual([apptId('ap-1'), apptId('ap-2')])
+    await send(db, rec, { replyId: 'act:mine' })
     await send(db, rec, { replyId: apptId('ap-2') })
-    const byId = Object.fromEntries(db._tables.booking_appointments.map((a) => [a.id, a.status]))
-    expect(byId).toEqual({ 'ap-1': 'pending', 'ap-2': 'confirmed' })
+    expect(last(rec).ids).toContain('act:cancel')
+    expect(activeStates(db)[0]).toMatchObject({ step: 'manage_menu', appointmentId: 'ap-2' })
   })
 
-  it('un toque con el id de una cita ajena dice que ya no está activa', async () => {
+  it('una cita que ya no está activa no se gestiona: se repite la lista actual', async () => {
     const db = twoAppointments()
     const rec = makeRecorder()
-    await send(db, rec, { replyId: remId('confirm', 'ap-ajena') })
-    expect(last(rec).bodyText).toContain('ya no está activo')
+    await send(db, rec, { replyId: 'act:mine' })
+    db._tables.booking_appointments[1].status = 'cancelled'
+    await send(db, rec, { replyId: apptId('ap-2') })
+    expect(last(rec).ids).toEqual([apptId('ap-1')])
+    expect(activeStates(db)[0]).toMatchObject({ step: 'pick_appointment', fails: 1 })
   })
 
-  it('confirmar manda las instrucciones y el mapa de la sede', async () => {
-    const db = twoAppointments()
+  it('"Nueva cita" desde la gestión pregunta primero quién va a asistir', async () => {
+    const db = clinicDb({
+      clinic_consents: [grantedConsent()],
+      clinic_patients: family(),
+      booking_appointments: [appointment('ap-1', 'pat-1', FIRST)],
+    })
     const rec = makeRecorder()
-    await send(db, rec, { replyId: remId('confirm', 'ap-1') })
-    expect(last(rec).bodyText).toContain('Cepíllate antes de venir.')
-    expect(last(rec).bodyText).toContain('Calle 1 # 2-3')
-    expect(last(rec).bodyText).toContain('google.com/maps')
+    await send(db, rec, { replyId: 'act:mine' })
+    await send(db, rec, { replyId: 'act:new' })
+    expect(last(rec).bodyText).toBe(texts.patientMenuBody)
+    expect(last(rec).ids).toEqual(['pat:pat-1', 'pat:pat-2', 'pat:new'])
+    expect(activeStates(db)[0]).toMatchObject({ step: 'pick_patient' })
+  })
+
+  describe('un toque del recordatorio', () => {
+    it('con el id confirma esa cita y no la otra', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm', 'ap-2') })
+      expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'confirmed' })
+    })
+
+    it('sin id y con dos citas cercanas pregunta cuál, y nada cambia hasta que elige', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: remId('confirm') })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).ids).toEqual(BOTH)
+      expect(last(rec).bodyText).toContain('Marta Ruiz')
+      expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'pending' })
+      expect(activeStates(db)[0]).toMatchObject({ step: 'pick_appointment', reminderAction: 'confirm' })
+
+      await send(db, rec, { replyId: apptId('ap-2') })
+      expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'confirmed' })
+      expect(db._tables.booking_sessions.map((s) => s.status)).toEqual(['completed'])
+    })
+
+    it.each(['recordatorio_cita', 'recordatorio_cita_clinica'])(
+      'la etiqueta "Confirmar" que responde a %s también pregunta cuál',
+      async (templateName) => {
+        const db = twoAppointments()
+        const rec = makeRecorder()
+        const replyTo = seedTemplateMessage(db, templateName)
+        await send(db, rec, { replyId: 'Confirmar', replyTo })
+        expect(last(rec).ids).toEqual(BOTH)
+        expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'pending' })
+
+        await send(db, rec, { replyId: apptId('ap-1') })
+        expect(statuses(db)).toEqual({ 'ap-1': 'confirmed', 'ap-2': 'pending' })
+      },
+    )
+
+    it('la etiqueta de otra plantilla no pregunta ni toca nada', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      const replyTo = seedTemplateMessage(db, 'promo_noviembre')
+      const result = await send(db, rec, { replyId: 'Confirmar', replyTo })
+      expect(result).toEqual({ consumed: false })
+      expect(rec.calls).toHaveLength(0)
+      expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'pending' })
+    })
+
+    it('si la segunda cita queda lejos, la cercana es la del toque y no pregunta', async () => {
+      const db = twoAppointments({
+        booking_appointments: [
+          appointment('ap-1', 'pat-1', FIRST),
+          appointment('ap-2', 'pat-2', '2026-10-30T15:00:00.000Z'),
+        ],
+      })
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm') })
+      expect(statuses(db)).toEqual({ 'ap-1': 'confirmed', 'ap-2': 'pending' })
+    })
+
+    it('Cancelar sin id pregunta cuál y solo cancela la que se elige', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('cancel') })
+      expect(last(rec).ids).toEqual(BOTH)
+      await send(db, rec, { replyId: apptId('ap-2') })
+      expect(last(rec).ids).toEqual(['act:cancel_yes', 'act:back'])
+      expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'pending' })
+      await send(db, rec, { replyId: 'act:cancel_yes' })
+      expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'cancelled' })
+    })
+
+    it('Reprogramar sin id pregunta cuál y sigue con el paciente de esa cita', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('reschedule') })
+      await send(db, rec, { replyId: apptId('ap-2') })
+      expect(activeStates(db)[0]).toMatchObject({
+        step: 'pick_day',
+        mode: 'reschedule',
+        appointmentId: 'ap-2',
+        patientId: 'pat-2',
+      })
+      expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'pending' })
+    })
+
+    it('con una sola cita cercana no pregunta', async () => {
+      const db = clinicDb({
+        clinic_consents: [grantedConsent()],
+        clinic_patients: family(),
+        booking_appointments: [appointment('ap-1', 'pat-1', FIRST)],
+      })
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm') })
+      expect(statuses(db)).toEqual({ 'ap-1': 'confirmed' })
+    })
+
+    it('si una de las dos ya no está activa, la que queda es la del toque', async () => {
+      const db = twoAppointments({
+        booking_appointments: [
+          appointment('ap-1', 'pat-1', FIRST, { status: 'cancelled' }),
+          appointment('ap-2', 'pat-2', SECOND),
+        ],
+      })
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm') })
+      expect(statuses(db)).toEqual({ 'ap-1': 'cancelled', 'ap-2': 'confirmed' })
+    })
+
+    it('sin ninguna cita activa dice que ya no está activo', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm') })
+      expect(last(rec).bodyText).toContain('ya no está activo')
+    })
+
+    describe('con el id de una cita que no se puede tocar', () => {
+      const cases: [string, Row][] = [
+        ['de otro número', appointment('ap-x', 'pat-1', FIRST, { contact_id: 'ct-otro' })],
+        ['de otra cuenta', appointment('ap-x', 'pat-1', FIRST, { account_id: 'acc-otra' })],
+        ['cancelada', appointment('ap-x', 'pat-1', FIRST, { status: 'cancelled' })],
+        ['ya pasada', appointment('ap-x', 'pat-1', '2026-10-18T14:00:00.000Z')],
+      ]
+
+      it.each(cases)('%s dice que ya no está activo y no cambia nada', async (_name, row) => {
+        const db = twoAppointments()
+        db._tables.booking_appointments.push(row)
+        const before = statuses(db)
+        const rec = makeRecorder()
+        for (const action of ['confirm', 'reschedule', 'cancel'] as const) {
+          await send(db, rec, { replyId: remId(action, 'ap-x') })
+          expect(last(rec).bodyText).toContain('ya no está activo')
+        }
+        expect(statuses(db)).toEqual(before)
+        expect(activeStates(db)).toEqual([])
+      })
+
+      it('que no existe dice que ya no está activo', async () => {
+        const db = twoAppointments()
+        const rec = makeRecorder()
+        await send(db, rec, { replyId: remId('confirm', 'ap-ajena') })
+        expect(last(rec).bodyText).toContain('ya no está activo')
+        expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'pending' })
+      })
+    })
+
+    it('elegir una cita que ya no está activa avisa y no la toca', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('cancel') })
+      db._tables.booking_appointments[1].status = 'cancelled'
+      await send(db, rec, { replyId: apptId('ap-2') })
+      expect(last(rec).ids).toEqual([apptId('ap-1')])
+      expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'cancelled' })
+    })
+
+    it('elegir una cita que empezó mientras tanto no la toca', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm') })
+      // Pasa un día: la primera cita ya empezó (9:00 en Bogotá), la segunda todavía no.
+      const later = new Date('2026-10-20T14:30:00.000Z')
+      db._tables.booking_sessions[0].expires_at = '2026-10-20T15:00:00.000Z'
+      await send(db, rec, { replyId: apptId('ap-1') }, { now: later })
+      expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'pending' })
+    })
+  })
+
+  describe('al confirmar', () => {
+    it('manda las instrucciones y el mapa de la sede', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm', 'ap-1') })
+      expect(rec.calls.at(-2)?.bodyText).toContain('Queda confirmado')
+      expect(last(rec).bodyText).toContain('Cepíllate antes de venir.')
+      expect(last(rec).bodyText).toContain('Calle 1 # 2-3')
+      expect(last(rec).bodyText).toContain('google.com/maps')
+    })
+
+    it('el mensaje es solo lo que escribió la clínica, la dirección y el mapa', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm', 'ap-1') })
+      expect(last(rec).bodyText).toBe(
+        texts.prepInfo({ prep: 'Cepíllate antes de venir.', address: 'Calle 1 # 2-3', mapUrl: MAP_URL }),
+      )
+      expect(last(rec).bodyText).not.toContain('Marta')
+    })
+
+    it('sin instrucciones del servicio manda la dirección y el mapa', async () => {
+      const db = twoAppointments({
+        booking_appointments: [appointment('ap-1', 'pat-1', FIRST, { service_id: SERVICE_URGENCIA })],
+      })
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm', 'ap-1') })
+      expect(last(rec).bodyText).toBe(
+        texts.prepInfo({ prep: null, address: 'Calle 1 # 2-3', mapUrl: MAP_URL }),
+      )
+    })
+
+    it('sin nada que decir no manda un segundo mensaje', async () => {
+      const db = twoAppointments({
+        booking_appointments: [appointment('ap-1', 'pat-1', FIRST, { service_id: SERVICE_URGENCIA })],
+        clinic_locations: [
+          {
+            id: 'loc-1',
+            account_id: ACCOUNT,
+            name: 'Centro',
+            address: null,
+            latitude: null,
+            longitude: null,
+            on_call_phone: null,
+            is_active: true,
+            created_at: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+      })
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm', 'ap-1') })
+      expect(rec.calls).toHaveLength(1)
+      expect(last(rec).bodyText).toContain('Queda confirmado')
+    })
+
+    it('confirmar al elegir de la lista también las manda', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm') })
+      await send(db, rec, { replyId: apptId('ap-2') })
+      expect(rec.calls.at(-2)?.bodyText).toContain('Queda confirmado')
+      expect(last(rec).bodyText).toContain('Cepíllate antes de venir.')
+    })
+
+    it('una cuenta sin clínica no manda nada de eso', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm') }, { modules: ['agenda'] })
+      expect(rec.calls).toHaveLength(1)
+      expect(last(rec).bodyText).toContain('Queda confirmado')
+      expect(rec.calls.some((c) => c.bodyText.includes('Cepíllate'))).toBe(false)
+    })
+  })
+
+  describe('una cuenta sin clínica', () => {
+    it('sigue con la próxima cita activa y no pregunta cuál', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm') }, { modules: ['agenda'] })
+      expect(statuses(db)).toEqual({ 'ap-1': 'confirmed', 'ap-2': 'pending' })
+      expect(activeStates(db)).toEqual([])
+    })
+
+    it('ignora el id del botón, como antes', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm', 'ap-2') }, { modules: ['agenda'] })
+      expect(statuses(db)).toEqual({ 'ap-1': 'confirmed', 'ap-2': 'pending' })
+    })
+  })
+
+  describe('una clínica sin configuración usable', () => {
+    it('con una sola cita la confirma, sin instrucciones', async () => {
+      const db = clinicDb({
+        clinic_consents: [grantedConsent()],
+        clinic_settings: [],
+        booking_appointments: [appointment('ap-1', 'pat-1', FIRST)],
+      })
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm') })
+      expect(statuses(db)).toEqual({ 'ap-1': 'confirmed' })
+      expect(rec.calls).toHaveLength(1)
+    })
+
+    it('con el id confirma esa cita', async () => {
+      const db = twoAppointments({ clinic_settings: [] })
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm', 'ap-2') })
+      expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'confirmed' })
+    })
+
+    it('con dos citas cercanas y sin id no adivina: pasa a una persona', async () => {
+      const db = twoAppointments({ clinic_settings: [] })
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: remId('confirm') })
+      expect(result).toEqual({ consumed: true })
+      expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'pending' })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.clinicUnavailableNote)
+    })
+  })
+
+  describe('en un hilo que lleva una persona', () => {
+    const human = { humanOwned: true }
+
+    it('el toque sin id pregunta cuál y la elección se atiende', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      const asked = await send(db, rec, { replyId: remId('confirm') }, human)
+      expect(asked).toEqual({ consumed: true })
+      expect(last(rec).ids).toEqual(BOTH)
+
+      const chosen = await send(db, rec, { replyId: apptId('ap-2') }, human)
+      expect(chosen).toEqual({ consumed: true })
+      expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'confirmed' })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    })
+
+    it('reprogramar elegida de la lista avisa a la persona en vez de abrir el flujo', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('reschedule') }, human)
+      await send(db, rec, { replyId: apptId('ap-1') }, human)
+      expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'pending' })
+      expect(activeStates(db)).toEqual([])
+    })
+
+    it('la lista de "Mis citas" abierta antes de que la persona tomara el hilo no se atiende', async () => {
+      const db = twoAppointments({
+        booking_sessions: [
+          {
+            id: 'ses-1',
+            account_id: ACCOUNT,
+            contact_id: CONTACT,
+            status: 'active',
+            expires_at: '2026-10-19T13:10:00.000Z',
+            state: {
+              step: 'pick_appointment',
+              mode: 'book',
+              fails: 0,
+              options: BOTH.map((id) => ({ id, title: id })),
+            },
+          },
+        ],
+      })
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: apptId('ap-1') }, human)
+      expect(result).toEqual({ consumed: false })
+      expect(rec.calls).toHaveLength(0)
+    })
   })
 })
+
+describe('texto libre que pide cambiar o cancelar una cita', () => {
+  const PHRASES = [
+    'quiero cancelar mi cita',
+    'no puedo ir a la cita',
+    '¿puedo cancelar mi cita?',
+    'quiero cambiar mi cita',
+    'necesito reprogramar',
+    'quiero mover mi cita',
+  ]
+
+  it.each(PHRASES)('sin sesión, %j lista las citas', async (text) => {
+    const db = twoAppointments()
+    const rec = makeRecorder()
+    const result = await send(db, rec, { text })
+    expect(result).toEqual({ consumed: true })
+    expect(last(rec).ids).toEqual(BOTH)
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+  })
+
+  it.each(PHRASES)('con el menú abierto, %j lista las citas', async (text) => {
+    const db = twoAppointments()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    const result = await send(db, rec, { text })
+    expect(result).toEqual({ consumed: true })
+    expect(last(rec).ids).toEqual(BOTH)
+  })
+
+  it('esperando una duda, también', async () => {
+    const db = twoAppointments()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { replyId: 'act:faq' })
+    const result = await send(db, rec, { text: 'quiero cancelar mi cita' })
+    expect(result).toEqual({ consumed: true })
+    expect(last(rec).ids).toEqual(BOTH)
+  })
+
+  it('con una sola cita va directo a gestionarla', async () => {
+    const db = clinicDb({
+      clinic_consents: [grantedConsent()],
+      clinic_patients: family(),
+      booking_appointments: [appointment('ap-1', 'pat-1', FIRST)],
+    })
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'quiero cancelar mi cita' })
+    expect(last(rec).ids).toContain('act:cancel')
+    expect(statuses(db)).toEqual({ 'ap-1': 'pending' })
+  })
+
+  it('sin autorización, primero la autorización', async () => {
+    const db = twoAppointments({ clinic_consents: [] })
+    const rec = makeRecorder()
+    const result = await send(db, rec, { text: 'quiero cancelar mi cita' })
+    expect(result).toEqual({ consumed: true })
+    expect(last(rec).ids).toEqual(['act:consent_yes', 'act:consent_no'])
+    expect(rec.calls.some((c) => c.ids.includes(apptId('ap-1')))).toBe(false)
+  })
+
+  it('una duda sobre la política de cancelación sigue yendo a la IA', async () => {
+    const db = twoAppointments()
+    const rec = makeRecorder()
+    const result = await send(db, rec, { text: '¿cuánto cuesta cancelar una cita?' })
+    expect(result).toEqual({ consumed: false })
+    expect(rec.calls).toHaveLength(0)
+  })
+
+  it('una queja por la cita sigue yendo a una persona', async () => {
+    const db = twoAppointments()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'quiero poner una queja por mi cita' })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+  })
+
+  it('una cuenta sin clínica no cambia: abre la gestión de su próxima cita, sin lista', async () => {
+    const db = twoAppointments()
+    const rec = makeRecorder()
+    const result = await send(db, rec, { text: 'quiero cancelar mi cita' }, { modules: ['agenda'] })
+    expect(result).toEqual({ consumed: true })
+    expect(last(rec).ids).toEqual(['act:new', 'act:reschedule', 'act:cancel'])
+    expect(activeStates(db)[0]).toMatchObject({ step: 'manage_menu', appointmentId: 'ap-1' })
+  })
+})
+```
+
+3. En `src/verticals/agenda/agent/steps/clinic-steps.test.ts`, el bloque "cancelar o no poder ir no es
+   pedir una cita (hasta la Task 11)" ya no vale: esas frases ahora llevan a "Mis citas". Reemplázalo
+   por:
+
+```ts
+  // Cancelar, cambiar o no poder ir a una cita no es pedir una: lleva a "Mis citas".
+  describe('cancelar o cambiar su cita lleva a "Mis citas"', () => {
+    it.each([
+      'quiero cancelar mi cita',
+      'no puedo ir a la cita',
+      '¿puedo cancelar mi cita?',
+      'quiero cambiar mi cita',
+      'necesito reprogramar',
+      'quiero mover mi cita',
+      'necesito cambiar mi cita',
+      'quiero reprogramar la cita',
+      'no voy a poder asistir a mi cita de mañana',
+      'Hola, quiero cancelar mi cita',
+      'hola buenas tardes, quisiera reagendar',
+      'necesito anular mi cita del martes',
+      'quiero aplazar mi cita',
+      '¿cómo cancelo mi cita?',
+      '¿se puede cambiar la cita?',
+      'cancelar cita',
+      'QUIERO CANCELAR MI CITA!!',
+    ])('mine: %j', (text) => {
+      expect(routeClinicText(text)).toBe('mine')
+    })
+
+    it('usa las palabras que la clínica le da a la cita', () => {
+      expect(routeClinicText('quiero cambiar mi sesión')).toBe('ai')
+      expect(routeClinicText('quiero cambiar mi sesión', ['sesión', 'sesiones'])).toBe('mine')
+      expect(routeClinicText('no puedo ir a la sesión', ['sesión'])).toBe('mine')
+    })
+
+    it('cambiar o mover solos no hablan de una cita', () => {
+      expect(routeClinicText('quiero cambiar mi número de teléfono')).toBe('ai')
+      expect(routeClinicText('necesito mover el carro')).toBe('ai')
+      expect(routeClinicText('cambiar')).toBe('ai')
+    })
+
+    it('una duda sobre cancelar no es un pedido: va a la IA', () => {
+      expect(routeClinicText('¿cuánto cuesta cancelar una cita?')).toBe('ai')
+      expect(routeClinicText('¿qué pasa si cancelo mi cita?')).toBe('ai')
+      expect(routeClinicText('¿cuál es la política de cancelación de la cita?')).toBe('ai')
+      expect(routeClinicText('¿cancelar mi cita tiene costo?')).toBe('ai')
+      expect(routeClinicText('quiero cancelar mi cita, ¿hay costo?')).toBe('ai')
+    })
+
+    it('una queja, un pago o un documento con la cita van a una persona', () => {
+      expect(routeClinicText('quiero poner una queja por mi cita')).toBe('human')
+      expect(routeClinicText('tengo un reclamo sobre mi cita')).toBe('human')
+      expect(routeClinicText('quiero cancelar mi cita y que me devuelvan el pago')).toBe('human')
+      expect(routeClinicText('necesito cancelar mi cita, ya pagué')).toBe('human')
+    })
+
+    it('pedir una cita nueva sigue siendo agendar', () => {
+      expect(routeClinicText('quiero una cita')).toBe('book')
+      expect(routeClinicText('necesito agendar')).toBe('book')
+    })
+  })
+```
+
+4. En `src/verticals/agenda/agent/clinic-routing.test.ts` desaparecen los dos `it.todo` de "Mis citas" y
+   el test que decía que todavía no existía. Agrega, junto a `authorized`:
+
+```ts
+/** Una cita confirmada de Marta para el martes 20 a las 9:00 en Bogotá (la hora actual es el lunes 19). */
+const UPCOMING = {
+  id: 'ap-1',
+  account_id: ACCOUNT,
+  contact_id: CONTACT,
+  service_id: 'svc-limpieza',
+  staff_id: 'st-ana',
+  patient_id: 'pat-1',
+  starts_at: '2026-10-20T14:00:00.000Z',
+  ends_at: '2026-10-20T14:30:00.000Z',
+  status: 'confirmed',
+  answers: {},
+}
+```
+
+   Reemplaza el primer `it.todo` por:
+
+```ts
+  it('sin sesión, "Mis citas" abre la gestión de la única cita del paciente', async () => {
+    const db = clinicDb({
+      clinic_consents: [grantedConsent()],
+      clinic_patients: [{ id: 'pat-1', account_id: ACCOUNT, contact_id: CONTACT, full_name: 'Marta Ruiz' }],
+      booking_appointments: [UPCOMING],
+    })
+    const rec = makeRecorder()
+    const result = await send(db, rec, { replyId: 'act:mine' })
+    expect(result).toEqual({ consumed: true })
+    expect(last(rec).ids).toEqual(['act:new', 'act:reschedule', 'act:cancel'])
+    expect(activeSteps(db)).toEqual(['manage_menu'])
+    expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(false)
+  })
+
+  it('sin sesión, "Mis citas" sin citas lo dice y muestra el menú', async () => {
+    const db = authorized()
+    const rec = makeRecorder()
+    const result = await send(db, rec, { replyId: 'act:mine' })
+    expect(result).toEqual({ consumed: true })
+    expect(rec.calls.at(-2)?.bodyText).toBe(texts.noUpcoming)
+    expect(last(rec).ids).toEqual(MENU_IDS)
+    expect(activeSteps(db)).toEqual(['clinic_menu'])
+  })
+
+  it('con el menú abierto, "Mis citas" abre la gestión de la cita', async () => {
+    const { db, rec } = await withMenuOpen()
+    db._tables.booking_appointments.push(UPCOMING)
+    const result = await send(db, rec, { replyId: 'act:mine' })
+    expect(result).toEqual({ consumed: true })
+    expect(last(rec).ids).toEqual(['act:new', 'act:reschedule', 'act:cancel'])
+    expect(activeSteps(db)).toEqual(['manage_menu'])
+  })
+```
+
+   En "sin autorización, el toque muestra la autorización" y en "en la autorización ... sigue pidiendo la
+   autorización", agrega `'act:mine'` a la lista de toques. Dentro de `describe.each(STEPS)`, antes de
+   "Agendar", agrega:
+
+```ts
+    it('"Mis citas" deja la reserva y abre la gestión de la cita', async () => {
+      const db = open(state)
+      db._tables.booking_appointments.push(UPCOMING)
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:mine' })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).ids).toEqual(['act:new', 'act:reschedule', 'act:cancel'])
+      expect(saidRetry(rec)).toBe(false)
+      expect(activeSteps(db)).toEqual(['manage_menu'])
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    })
+
+    it('"Mis citas" sin citas lo dice y vuelve al menú', async () => {
+      const db = open(state)
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:mine' })
+      expect(result).toEqual({ consumed: true })
+      expect(rec.calls.at(-2)?.bodyText).toBe(texts.noUpcoming)
+      expect(last(rec).ids).toEqual(MENU_IDS)
+      expect(saidRetry(rec)).toBe(false)
+      expect(activeSteps(db)).toEqual(['clinic_menu'])
+    })
+```
+
+   Reemplaza el test "Mis citas todavía no existe" por el siguiente, y borra el segundo `it.todo`:
+
+```ts
+  it('"Mis citas" con varias citas ofrece la lista, también a media reserva', async () => {
+    const db = open({ step: 'pick_slot', ...booking, dateKey: '2026-10-19', options: [slot] })
+    db._tables.booking_appointments.push(UPCOMING, {
+      ...UPCOMING,
+      id: 'ap-2',
+      starts_at: '2026-10-21T14:00:00.000Z',
+      ends_at: '2026-10-21T14:30:00.000Z',
+    })
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: 'act:mine' })
+    expect(last(rec).ids).toEqual(['appt:ap-1', 'appt:ap-2'])
+    expect(last(rec).bodyText).toContain('Marta Ruiz')
+    expect(activeSteps(db)).toEqual(['pick_appointment'])
+  })
 ```
 
 - [ ] **Step 2: Córrelas y verifica que fallan**
@@ -12779,13 +13479,14 @@ Expected: FAIL, `act:mine` cuenta como fallo.
 
 - [ ] **Step 3: Agrega `listUpcoming`**
 
-En `src/verticals/agenda/agent/backend.ts`:
+En `src/verticals/agenda/agent/backend.ts`, antes de `BookResult`:
 
 ```ts
 /** Cita activa próxima, con el nombre de su paciente. */
 export interface AppointmentSnapshot {
   id: string
   startsAt: Date
+  /** null si la cita no tiene paciente o el paciente ya no está. */
   patientName: string | null
 }
 ```
@@ -12793,11 +13494,17 @@ export interface AppointmentSnapshot {
 Y en `ClinicBackend`, antes de `book`:
 
 ```ts
-  /** Citas activas futuras del contacto, en orden. Consulta en vivo. */
+  /**
+   * Citas activas (pendientes o confirmadas) y futuras del contacto, en orden.
+   * Consulta en vivo. Lanza si no pudo leer.
+   */
   listUpcoming(args: { contactId: string; nowIso: string }): Promise<AppointmentSnapshot[]>
 ```
 
-En `src/verticals/agenda/agent/internal-backend.ts`:
+En el contrato de fallas del encabezado, `listUpcoming` va con las lecturas que lanzan: un conector
+nunca contesta "no hay citas" si no pudo leerlas.
+
+En `src/verticals/agenda/agent/internal-backend.ts`, antes de `book`:
 
 ```ts
     async listUpcoming({ contactId, nowIso }) {
@@ -12811,6 +13518,7 @@ En `src/verticals/agenda/agent/internal-backend.ts`:
         .order('starts_at')
       if (error) throw new Error(`No se pudieron leer las citas: ${error.message}`)
       const rows = (data ?? []) as { id: string; starts_at: string; patient_id: string | null }[]
+      if (!rows.length) return []
       const patients = await listPatients(db, { accountId, contactId })
       const names = new Map(patients.map((p) => [p.id, p.fullName]))
       return rows.map((row) => ({
@@ -12821,22 +13529,175 @@ En `src/verticals/agenda/agent/internal-backend.ts`:
     },
 ```
 
-- [ ] **Step 4: Agrega los pasos**
+Y sus pruebas, al final de `src/verticals/agenda/agent/internal-backend.test.ts`, dentro del
+`describe('InternalBackend')`:
+
+```ts
+  describe('listUpcoming', () => {
+    const appointment = (id: string, startsAt: string, extra: Record<string, unknown> = {}) => ({
+      id,
+      account_id: ACCOUNT,
+      contact_id: 'ct-1',
+      status: 'pending',
+      patient_id: 'pat-1',
+      starts_at: startsAt,
+      ...extra,
+    })
+
+    const seedUpcoming = () =>
+      makeFakeDb({
+        clinic_patients: [
+          { id: 'pat-1', account_id: ACCOUNT, contact_id: 'ct-1', full_name: 'Marta Ruiz' },
+          { id: 'pat-2', account_id: ACCOUNT, contact_id: 'ct-1', full_name: 'Tomás Gil' },
+        ],
+        booking_appointments: [
+          appointment('ap-late', '2026-10-22T14:00:00.000Z', { patient_id: 'pat-2' }),
+          appointment('ap-soon', '2026-10-20T14:00:00.000Z', { status: 'confirmed' }),
+          appointment('ap-no-patient', '2026-10-21T14:00:00.000Z', { patient_id: null }),
+          appointment('ap-gone-patient', '2026-10-21T15:00:00.000Z', { patient_id: 'pat-borrado' }),
+          appointment('ap-cancelled', '2026-10-20T15:00:00.000Z', { status: 'cancelled' }),
+          appointment('ap-past', '2026-10-18T14:00:00.000Z'),
+          appointment('ap-other-contact', '2026-10-20T16:00:00.000Z', { contact_id: 'ct-2' }),
+          appointment('ap-other-account', '2026-10-20T17:00:00.000Z', { account_id: 'acc-2' }),
+        ],
+      })
+
+    it('trae las citas activas y futuras de ese contacto, en orden, con su paciente', async () => {
+      const backend = createInternalBackend({ db: asClient(seedUpcoming()), accountId: ACCOUNT })
+      const upcoming = await backend.listUpcoming({ contactId: 'ct-1', nowIso: NOW.toISOString() })
+      expect(upcoming).toEqual([
+        { id: 'ap-soon', startsAt: new Date('2026-10-20T14:00:00.000Z'), patientName: 'Marta Ruiz' },
+        { id: 'ap-no-patient', startsAt: new Date('2026-10-21T14:00:00.000Z'), patientName: null },
+        { id: 'ap-gone-patient', startsAt: new Date('2026-10-21T15:00:00.000Z'), patientName: null },
+        { id: 'ap-late', startsAt: new Date('2026-10-22T14:00:00.000Z'), patientName: 'Tomás Gil' },
+      ])
+    })
+
+    it('una cita que empieza justo ahora ya no es próxima', async () => {
+      const backend = createInternalBackend({ db: asClient(seedUpcoming()), accountId: ACCOUNT })
+      const upcoming = await backend.listUpcoming({
+        contactId: 'ct-1',
+        nowIso: '2026-10-20T14:00:00.000Z',
+      })
+      expect(upcoming.map((a) => a.id)).not.toContain('ap-soon')
+    })
+
+    it('sin citas devuelve una lista vacía', async () => {
+      const backend = createInternalBackend({ db: asClient(seedUpcoming()), accountId: ACCOUNT })
+      expect(await backend.listUpcoming({ contactId: 'ct-9', nowIso: NOW.toISOString() })).toEqual([])
+    })
+
+    it('si no puede leer las citas, lanza: nunca contesta "no hay"', async () => {
+      const db = seedUpcoming()
+      db._failNext('select', 'booking_appointments', { message: 'se cayó la base' })
+      const backend = createInternalBackend({ db: asClient(db), accountId: ACCOUNT })
+      await expect(
+        backend.listUpcoming({ contactId: 'ct-1', nowIso: NOW.toISOString() }),
+      ).rejects.toThrow('No se pudieron leer las citas')
+    })
+
+    it('si no puede leer los pacientes, lanza en vez de listar citas sin nombre', async () => {
+      const db = seedUpcoming()
+      db._failNext('select', 'clinic_patients', { message: 'se cayó la base' })
+      const backend = createInternalBackend({ db: asClient(db), accountId: ACCOUNT })
+      await expect(
+        backend.listUpcoming({ contactId: 'ct-1', nowIso: NOW.toISOString() }),
+      ).rejects.toThrow('No se pudieron leer los pacientes')
+    })
+  })
+```
+
+- [ ] **Step 4: Agrega los pasos y la ruta del texto libre**
 
 En `src/verticals/agenda/agent/steps/clinic-steps.ts`:
 
-1. Amplía los imports:
+1. Amplía los imports: `formatDayLabel` y `formatTimeLabel` de `'../format'`, `apptId` de `'../state'` y
+   `zonedParts` de `'../time'` (junto a `zonedDateKey`).
+
+2. `ClinicRoute` suma `'mine'`:
 
 ```ts
-import { formatDayLabel, formatTimeLabel } from '../format'
-import { zonedDateKey, zonedParts } from '../time'
+export type ClinicRoute = 'book' | 'mine' | 'greeting' | 'human' | 'ai'
 ```
 
-Y agrega `apptId` al import de `../state`.
-
-2. Después de `urgencyBooking`:
+3. Las palabras de cambiar una cita salen de `NOT_A_BOOKING_WORDS` (que desaparece) y la regla gana una
+   ruta. Reemplaza `NOT_A_BOOKING_WORDS` y `CANNOT_ATTEND`, con sus comentarios, por:
 
 ```ts
+/**
+ * Quien las trae sin una palabra de cita ya habla de la suya: la cancela o la
+ * reprograma ("necesito reprogramar").
+ */
+const CHANGE_WORDS = [
+  'cancelar',
+  'cancelo',
+  'cancela',
+  'anular',
+  'reprogramar',
+  'reagendar',
+  'aplazar',
+  'posponer',
+]
+
+/**
+ * Estas solas no hablan de una cita ("quiero cambiar mi número", "mover el
+ * carro"): solo cuentan junto a una palabra de cita.
+ */
+const CHANGE_WITH_APPOINTMENT_WORDS = ['cancelacion', 'cambiar', 'mover']
+
+/** Quejas: no piden una cita ni la cambian, y las atiende una persona. */
+const COMPLAINT_WORDS = ['queja', 'quejas', 'reclamo', 'reclamos', 'pqr', 'pqrs']
+
+/** "No puedo ir a la cita": avisar que no va, no pedir una. */
+const CANNOT_ATTEND = /\bno (puedo|podre|podemos|podria|voy a poder) (ir|asistir|llegar|venir|acudir)\b/
+
+/**
+ * Quien arranca así pide algo aunque lo escriba como pregunta: "¿puedo cancelar mi
+ * cita?", "¿cómo cambio mi cita?". Cualquier otra pregunta sobre cancelar ("¿cuánto
+ * cuesta cancelar?", "¿qué pasa si cancelo?") es una duda para la IA.
+ */
+const REQUEST_STARTS = ['puedo', 'puede', 'pueden', 'como']
+```
+
+   En la explicación de `routeClinicText`, los puntos 3 a 5 quedan:
+
+```text
+ *   3. mine: quiere cancelar, cambiar o mover SU cita, o dice que no puede ir
+ *      ("quiero cancelar mi cita", "necesito reprogramar"): se le muestran sus
+ *      citas. Una pregunta que no sea un pedido ("¿cuánto cuesta cancelar?") es
+ *      una duda y va a la IA.
+ *   4. greeting: arranca con un saludo y no pasa de cuatro palabras.
+ *   5. ai: todo lo demás.
+```
+
+   Y en el cuerpo, `notABooking` se calcula así:
+
+```ts
+  const changesIt =
+    containsAnyWord(normalized, CHANGE_WORDS) ||
+    (namesAppointment &&
+      (containsAnyWord(normalized, CHANGE_WITH_APPOINTMENT_WORDS) || CANNOT_ATTEND.test(normalized)))
+  const notABooking = changesIt || containsAnyWord(normalized, COMPLAINT_WORDS)
+```
+
+   La ruta `mine` va después de `human` (un pago o una queja junto a la cita gana) y antes de
+   `greeting`:
+
+```ts
+  if (changesIt) {
+    const asksForIt = REQUEST_STARTS.includes(body[0] ?? '') || bodyPlain.startsWith('se puede ')
+    if (!isQuestion || asksForIt) return 'mine'
+  }
+```
+
+4. Después de `urgencyBooking`:
+
+```ts
+/**
+ * "Mis citas": sin citas lo dice y vuelve al menú; con una sola va directo a
+ * gestionarla; con varias pregunta cuál. Se lee en vivo: una cita cancelada en
+ * recepción no aparece.
+ */
 async function myAppointments(ctx: ClinicStepCtx): Promise<ClinicOutcome> {
   const upcoming = await ctx.backend.listUpcoming({
     contactId: ctx.contactId,
@@ -12856,7 +13717,7 @@ async function myAppointments(ctx: ClinicStepCtx): Promise<ClinicOutcome> {
 }
 ```
 
-3. En `renderClinicStep`, antes de `default`:
+5. En `renderClinicStep`, antes de `urgency`:
 
 ```ts
     case 'pick_appointment': {
@@ -12868,8 +13729,9 @@ async function myAppointments(ctx: ClinicStepCtx): Promise<ClinicOutcome> {
         await ctx.sender.sendText({ text: texts.noUpcoming })
         return { state, closed: true }
       }
-      // Con 3 citas o menos van botones, que no llevan descripción: el nombre
-      // del paciente tiene que caber en el título y estar en el cuerpo.
+      // Una lista admite 10 filas. Con 3 o menos van botones, que no llevan
+      // descripción: el nombre del paciente tiene que caber en el título y estar
+      // también en el cuerpo, donde cabe completo.
       const rows = upcoming.slice(0, 10).map((appt) => {
         const parts = zonedParts(appt.startsAt)
         const when = `${formatDayLabel(parts.dateKey)}, ${formatTimeLabel(parts)}`
@@ -12891,18 +13753,25 @@ async function myAppointments(ctx: ClinicStepCtx): Promise<ClinicOutcome> {
     }
 ```
 
-4. En `clinic_menu` de `handleClinicChoice`:
+6. En `handleClinicChoice`, el menú principal atiende `mine`:
 
 ```ts
         case 'mine':
           return myAppointments(ctx)
 ```
 
-5. Antes de `default` de `handleClinicChoice`:
+   Y antes del caso `urgency`:
 
 ```ts
     case 'pick_appointment': {
       if (parsed?.kind !== 'appt') return { kind: 'fail' }
+      // El menú guardado puede ser viejo: manda la base. Solo vale una cita activa
+      // y futura de este contacto en esta cuenta (el backend lee con las dos).
+      const upcoming = await ctx.backend.listUpcoming({
+        contactId: ctx.contactId,
+        nowIso: ctx.nowIso,
+      })
+      if (!upcoming.some((a) => a.id === parsed.value)) return { kind: 'fail' }
       if (state.reminderAction) {
         return { kind: 'reminder', action: state.reminderAction, appointmentId: parsed.value }
       }
@@ -12917,63 +13786,87 @@ async function myAppointments(ctx: ClinicStepCtx): Promise<ClinicOutcome> {
 
 En `src/verticals/agenda/agent/controller.ts`:
 
-1. Agrega los imports:
-
-```ts
-import { loadServicePrep } from '@/modules/clinica/settings'
-```
-
-(únelo con el import existente de `settings`) y, en `./state`, nada nuevo.
+1. Suma `loadServicePrep` al import existente de `@/modules/clinica/settings`.
 
 2. Después de `SESSION_TTL_MS`:
 
 ```ts
-/** Citas de un mismo número a menos de esto se consideran ambiguas. */
+/**
+ * Si un número tiene más de una cita activa que empieza en menos de esto, un
+ * toque de recordatorio sin id de cita no dice a cuál se refiere: se pregunta,
+ * no se adivina.
+ */
 const TAP_AMBIGUITY_MS = 72 * 60 * 60 * 1000
 ```
 
-3. Reemplaza `isCancelConfirmTap` por:
+3. Reemplaza el comentario de los recordatorios, `isCancelConfirmTap` (ahora `isSystemTap`) y
+   `handleReminderTap` completo por lo siguiente. El uso de `isCancelConfirmTap` en `handleAgendaInbound`
+   pasa a `isSystemTap`. La elección de la lista de un recordatorio es una respuesta del sistema y se
+   atiende aunque una persona lleve el hilo; la lista de "Mis citas" no (por eso pide `reminderAction`).
+   Reprogramar sigue usando `rescheduleState`, que conserva el paciente y la sede de la cita anterior.
 
 ```ts
 /**
- * ¿Es la respuesta a una pregunta que abrió un recordatorio? Se atiende
- * aunque un humano sea dueño del hilo: el "Sí, cancelar" / "No" de una
- * cancelación, o elegir la cita cuando el toque era ambiguo.
+ * Acciones Confirmar / Reprogramar / Cancelar del recordatorio.
+ *
+ * La cita sobre la que se actúa:
+ *   - Con el id de la cita en el botón (`rem:<acción>:<cita>`), esa cita, si es de
+ *     este contacto y de esta cuenta, está activa y es futura.
+ *   - Sin id (los botones de una plantilla de Meta pueden devolver solo la etiqueta),
+ *     la PRÓXIMA cita activa del contacto. En una clínica, con más de una cita
+ *     activa en las próximas 72 horas no se adivina: se pregunta cuál.
+ *
+ *   - Confirmar: marca la cita y responde; no toca la sesión.
+ *   - Reprogramar: retoma el flujo existente (`pick_day` en modo
+ *     reschedule) reutilizando la fila de sesión si ya había una.
+ *   - Cancelar: entra a la confirmación de cancelación existente
+ *     (`manage_cancel_confirm`), que ya cancela con etiqueta y evento.
+ */
+
+/**
+ * ¿Es la respuesta a una pregunta que abrió el propio sistema? Se atiende aunque
+ * una persona sea dueña del hilo:
+ *   - el "Sí, cancelar" / "No" de una cancelación abierta, o
+ *   - elegir la cita cuando el toque de un recordatorio no decía cuál era.
+ * La lista de "Mis citas" no cuenta: si una persona tomó el hilo mientras tanto,
+ * lo que sigue es suyo.
  */
 function isSystemTap(session: VerticalSession | null, replyId: string | null): boolean {
   if (!session || !replyId) return false
-  if (session.state.step === 'pick_appointment') return replyId.startsWith('appt:')
+  if (session.state.step === 'pick_appointment') {
+    return typeof session.state.reminderAction === 'string' && parseOptionId(replyId)?.kind === 'appt'
+  }
   if (session.state.step !== 'manage_cancel_confirm') return false
   return replyId === actId('cancel_yes') || replyId === actId('back')
 }
-```
 
-Y cambia sus dos usos en `handleAgendaInbound`: `!isCancelConfirmTap(...)` pasa a `!isSystemTap(...)`.
+/** La cita, solo si es de este contacto y de esta cuenta, está activa y es futura. */
+async function loadUpcomingAppointment(
+  dialog: Dialog,
+  appointmentId: string,
+): Promise<AppointmentInfo | null> {
+  const appt = await loadAppointment(dialog.db, dialog.accountId, dialog.contactId, appointmentId)
+  if (!appt) return null
+  if (appt.status !== 'pending' && appt.status !== 'confirmed') return null
+  return appt.startsAt > dialog.now ? appt : null
+}
 
-4. Reemplaza `handleReminderTap` completo por:
-
-```ts
 /**
- * La cita del toque: la que viene en el botón, o la próxima activa. En una
- * clínica, con dos citas cercanas en el mismo número se pregunta cuál y se
- * devuelve 'asked'.
+ * La cita del toque, o `null` si ya no hay una activa. Devuelve 'handled' cuando
+ * no se puede saber cuál es y el mensaje ya se atendió: se le preguntó al paciente
+ * o, sin la configuración de la clínica, pasó a una persona.
+ *
+ * Una cuenta sin el módulo clínica no cambia: siempre la próxima cita activa.
  */
 async function resolveTapAppointment(
   dialog: Dialog,
   session: VerticalSession | null,
   tap: ReminderTap,
-): Promise<AppointmentInfo | 'asked' | null> {
-  const active = async (id: string) => {
-    const appt = await loadAppointment(dialog.db, dialog.accountId, dialog.contactId, id)
-    if (!appt) return null
-    if (appt.status !== 'pending' && appt.status !== 'confirmed') return null
-    return appt.startsAt > dialog.now ? appt : null
-  }
-
-  if (tap.appointmentId) return active(tap.appointmentId)
-  if (!dialog.clinic) {
+): Promise<AppointmentInfo | 'handled' | null> {
+  if (!dialog.clinic && !dialog.clinicUnavailable) {
     return findNextAppointment(dialog.db, dialog.accountId, dialog.contactId, dialog.nowIso)
   }
+  if (tap.appointmentId) return loadUpcomingAppointment(dialog, tap.appointmentId)
 
   const upcoming = await dialog.backend.listUpcoming({
     contactId: dialog.contactId,
@@ -12982,12 +13875,18 @@ async function resolveTapAppointment(
   const limit = dialog.now.getTime() + TAP_AMBIGUITY_MS
   const near = upcoming.filter((a) => a.startsAt.getTime() <= limit)
   if (near.length > 1) {
+    // Sin la configuración de la clínica no hay lista que ofrecer, y adivinar
+    // podría confirmar o cancelar la cita de otro paciente: lo atiende una persona.
+    if (!dialog.clinic) {
+      await handoffClinicUnavailable(dialog, session?.id ?? null, { text: '', replyId: null })
+      return 'handled'
+    }
     const state = newBookingState('pick_appointment', { reminderAction: tap.action })
     const sessionId = session?.id ?? (await openSession(dialog, state))
     await conclude(dialog, sessionId, state)
-    return 'asked'
+    return 'handled'
   }
-  return upcoming[0] ? active(upcoming[0].id) : null
+  return upcoming[0] ? loadUpcomingAppointment(dialog, upcoming[0].id) : null
 }
 
 async function handleReminderTap(
@@ -12997,7 +13896,7 @@ async function handleReminderTap(
   humanOwned = false,
 ): Promise<void> {
   const appt = await resolveTapAppointment(dialog, session, tap)
-  if (appt === 'asked') return
+  if (appt === 'handled') return
   if (!appt) {
     await dialog.sender.sendText({
       text: dialog.texts.managedAppointmentGone,
@@ -13070,18 +13969,17 @@ async function applyReminderAction(
 
   const state =
     action === 'reschedule'
-      ? newBookingState('pick_day', {
-          mode: 'reschedule',
-          appointmentId: appt.id,
-          serviceId: appt.serviceId ?? undefined,
-          staffId: rescheduleStaffId(dialog, appt),
-        })
+      ? await rescheduleState(dialog, appt)
       : newBookingState('manage_cancel_confirm', { appointmentId: appt.id })
 
   await conclude(dialog, sessionId ?? (await openSession(dialog, state)), state)
 }
 
-/** Tras confirmar: instrucciones previas del servicio, dirección y mapa. */
+/**
+ * Tras confirmar: lo que la clínica escribió para ese servicio, la dirección y el
+ * mapa de la sede. Solo texto de la clínica: ni procedimiento ni consejo médico.
+ * Sin nada que decir no manda nada.
+ */
 async function sendPrepInfo(dialog: Dialog, appt: AppointmentInfo): Promise<void> {
   const location = dialog.clinic?.location ?? null
   const prep = appt.serviceId
@@ -13091,22 +13989,18 @@ async function sendPrepInfo(dialog: Dialog, appt: AppointmentInfo): Promise<void
     location?.latitude != null && location.longitude != null
       ? `https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}`
       : null
-  const text = dialog.clinicTexts?.prepInfo({ prep, address: location?.address ?? null, mapUrl })
+  const text = dialog.clinicTexts.prepInfo({ prep, address: location?.address ?? null, mapUrl })
   if (text) await dialog.sender.sendText({ text })
 }
 ```
 
-5. Reemplaza el caso `reminder` de `applyClinicOutcome`:
+4. Reemplaza el caso `reminder` de `applyClinicOutcome`. Confirmar cierra la sesión de la lista;
+   reprogramar con una persona a cargo también, porque solo le avisa:
 
 ```ts
     case 'reminder': {
-      const appt = await loadAppointment(
-        dialog.db,
-        dialog.accountId,
-        dialog.contactId,
-        outcome.appointmentId,
-      )
-      if (!appt || (appt.status !== 'pending' && appt.status !== 'confirmed')) {
+      const appt = await loadUpcomingAppointment(dialog, outcome.appointmentId)
+      if (!appt) {
         await dialog.sender.sendText({ text: dialog.texts.managedAppointmentGone })
         await closeSession(dialog.db, {
           id: sessionId,
@@ -13116,7 +14010,12 @@ async function sendPrepInfo(dialog: Dialog, appt: AppointmentInfo): Promise<void
         })
         return
       }
-      if (outcome.action === 'confirm') {
+      // La pregunta "¿cuál?" ya cumplió. Confirmar termina aquí, y reprogramar con
+      // una persona a cargo también (solo le avisa). Cancelar y reprogramar siguen
+      // en la misma sesión, que cambia de paso, o la cierra quien las pasa a una persona.
+      const endsHere =
+        outcome.action === 'confirm' || (outcome.action === 'reschedule' && dialog.humanOwned)
+      if (endsHere) {
         await closeSession(dialog.db, {
           id: sessionId,
           accountId: dialog.accountId,
@@ -13126,7 +14025,7 @@ async function sendPrepInfo(dialog: Dialog, appt: AppointmentInfo): Promise<void
       }
       await applyReminderAction(
         dialog,
-        outcome.action === 'confirm' ? null : sessionId,
+        endsHere ? null : sessionId,
         outcome.action,
         appt,
         dialog.humanOwned,
@@ -13135,10 +14034,62 @@ async function sendPrepInfo(dialog: Dialog, appt: AppointmentInfo): Promise<void
     }
 ```
 
+5. En `manage_menu` de `handleChoice`, una cita nueva en una clínica empieza por el paciente:
+
+```ts
+      if (parsed.value === 'new') {
+        // En una clínica la cita nueva es de un paciente: sin elegirlo primero se
+        // crearía a nombre de nadie.
+        await conclude(
+          dialog,
+          sessionId,
+          newBookingState(dialog.clinic ? 'pick_patient' : 'pick_service'),
+        )
+        return
+      }
+```
+
+6. En `handleClinicInbound`, "Mis citas" deja de ser una excepción de los toques que valen en cualquier
+   paso (se borra el `replyId !== actId('mine')`):
+
+```ts
+    // citas" también: a media reserva deja la reserva y abre la cita.
+    if (
+      isClinicMenuTap(replyId) &&
+      step !== 'consent' &&
+      step !== 'clinic_menu' &&
+      step !== 'urgency'
+    ) {
+      await handleChoice(dialog, session.id, newBookingState('clinic_menu'), replyId)
+```
+
+   La ruta `mine` del texto libre, con el menú abierto o esperando una duda:
+
+```ts
+      if (route === 'book' || route === 'mine') {
+        const tap = route === 'book' ? actId('book') : actId('mine')
+        await handleChoice(dialog, session.id, newBookingState('clinic_menu'), tap)
+        return { consumed: true }
+      }
+```
+
+   Y sin sesión, después de la autorización (sin autorización, primero la autorización) y del caso
+   `book` / `greeting`:
+
+```ts
+  // Quiere cancelar o cambiar su cita (ya con autorización): se le muestran las suyas.
+  if (route === 'mine') {
+    const menu = newBookingState('clinic_menu')
+    const sessionId = await openSession(dialog, menu)
+    await handleChoice(dialog, sessionId, menu, actId('mine'))
+    return { consumed: true }
+  }
+```
+
 - [ ] **Step 6: Corre las pruebas**
 
 Run: `npx vitest run src/verticals/agenda && npx tsc --noEmit`
-Expected: PASS, con los toques de recordatorio de `controller.test.ts` intactos.
+Expected: PASS, con `controller.test.ts` intacto.
 
 - [ ] **Step 7: Commit**
 
