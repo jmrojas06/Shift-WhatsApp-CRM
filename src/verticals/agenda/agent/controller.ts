@@ -490,12 +490,33 @@ async function handleClinicInbound(
   }
 
   if (session && state) {
+    // Los botones del menú principal valen en cualquier paso: un menú viejo sigue
+    // en el chat, y tocarlo no puede dar "No entendí". Quedan aparte la
+    // autorización, que se contesta primero ("Tengo una urgencia" sí va antes: lo
+    // atiende `opensUrgency`), el propio menú, que lee el emparejamiento de
+    // siempre, y los signos de alarma, que también se contestan primero. "Mis
+    // citas" aún no existe (Task 11): no tira una reserva a medias por un botón
+    // que no sabe atender.
+    if (
+      isClinicMenuTap(replyId) &&
+      replyId !== actId('mine') &&
+      step !== 'consent' &&
+      step !== 'clinic_menu' &&
+      step !== 'urgency'
+    ) {
+      await handleChoice(dialog, session.id, newBookingState('clinic_menu'), replyId)
+      return { consumed: true }
+    }
+    // En los signos de alarma, pedir una persona avisa con prioridad, como escribirlo.
+    if (step === 'urgency' && replyId === actId('human')) {
+      await performHandoff(
+        dialog,
+        session.id,
+        urgencyUnconfirmedHandoff(dialog.clinicTexts, urgencyAlarmText(dialog)),
+      )
+      return { consumed: true }
+    }
     if (step === 'clinic_menu' || step === 'faq_open') {
-      // El menú sigue vivo mientras se espera la duda: sus botones valen igual.
-      if (step === 'faq_open' && isClinicMenuTap(replyId)) {
-        await handleChoice(dialog, session.id, newBookingState('clinic_menu'), replyId)
-        return { consumed: true }
-      }
       if (route === 'book') {
         await handleChoice(dialog, session.id, newBookingState('clinic_menu'), actId('book'))
         return { consumed: true }

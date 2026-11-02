@@ -447,13 +447,19 @@ describe('el menú sigue vivo', () => {
     expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
   })
 
-  it.each(['act:mine', 'act:urgent'])('sin sesión, %s también lo atiende el bot', async (replyId) => {
+  it('sin sesión, "Tengo una urgencia" muestra los signos de alarma', async () => {
     const db = authorized()
     const rec = makeRecorder()
-    const result = await send(db, rec, { replyId })
+    const result = await send(db, rec, { replyId: 'act:urgent' })
     expect(result).toEqual({ consumed: true })
-    expect(rec.calls.length).toBeGreaterThan(0)
+    expect(last(rec).bodyText).toBe(texts.urgencyBody('Signos de alarma'))
+    expect(last(rec).ids).toEqual(['act:alarm_yes', 'act:alarm_no'])
+    expect(activeSteps(db)).toEqual(['urgency'])
   })
+
+  // "Mis citas" todavía no existe: hoy el bot responde "No entendí" a ese botón.
+  // Lo construye la Task 11; esta prueba no debe darlo por hecho.
+  it.todo('sin sesión, "Mis citas" (act:mine) lista las citas del paciente: Task 11')
 
   it('sin sesión y sin IA, "Precios y dudas" pasa a una persona', async () => {
     const db = authorized()
@@ -513,6 +519,210 @@ describe('el menú sigue vivo', () => {
     expect(result).toEqual({ consumed: false })
     expect(rec.calls).toHaveLength(0)
   })
+})
+
+/**
+ * Los botones del menú principal valen en cualquier paso de una sesión: un
+ * menú viejo sigue en el chat y tocarlo no puede dar "No entendí" ni, en el
+ * nombre, "Necesito nombre y apellidos". Quedan fuera la autorización (se
+ * contesta primero; "Tengo una urgencia" sí va antes), el propio menú (lo lee
+ * el emparejamiento de siempre) y los signos de alarma (se contestan primero).
+ * "Mis citas" (act:mine) no está aquí: es de la Task 11.
+ */
+describe('los toques del menú valen en cualquier paso', () => {
+  const PATIENT = { id: 'pat-1', account_id: ACCOUNT, contact_id: CONTACT, full_name: 'Marta Ruiz' }
+  const day = { id: 'day:2026-10-19', title: 'Hoy' }
+  const slot = { id: 'slot:2026-10-19T14:00:00.000Z', title: '9:00 a. m.' }
+  const booking = { serviceId: 'svc-limpieza', staffId: 'st-ana' }
+
+  const STEPS: [string, Record<string, unknown>][] = [
+    [
+      'pick_patient',
+      {
+        step: 'pick_patient',
+        options: [
+          { id: 'pat:pat-1', title: 'Marta Ruiz' },
+          { id: 'pat:new', title: texts.patientOther },
+        ],
+      },
+    ],
+    ['new_patient_name', { step: 'new_patient_name' }],
+    ['pick_service', { step: 'pick_service', options: [{ id: 'svc:svc-limpieza', title: 'Limpieza' }] }],
+    [
+      'pick_staff',
+      { step: 'pick_staff', serviceId: 'svc-limpieza', options: [{ id: 'staff:any', title: 'Cualquiera' }] },
+    ],
+    ['pick_day', { step: 'pick_day', ...booking, options: [day] }],
+    ['pick_slot', { step: 'pick_slot', ...booking, dateKey: '2026-10-19', options: [slot] }],
+    [
+      'ask_question',
+      {
+        step: 'ask_question',
+        ...booking,
+        dateKey: '2026-10-19',
+        questionId: 'q-1',
+        slotStartsAt: slot.id.slice(5),
+      },
+    ],
+    [
+      'summary',
+      {
+        step: 'summary',
+        ...booking,
+        dateKey: '2026-10-19',
+        slotStartsAt: slot.id.slice(5),
+        options: [{ id: 'act:confirm', title: 'Confirmar' }],
+      },
+    ],
+  ]
+
+  const open = (state: Record<string, unknown>) =>
+    clinicDb({
+      clinic_consents: [grantedConsent()],
+      clinic_patients: [PATIENT],
+      booking_sessions: [session(state)],
+    })
+
+  const saidRetry = (rec: ReturnType<typeof makeRecorder>) =>
+    rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry || c.bodyText === texts.patientNameRetry)
+
+  describe.each(STEPS)('en %s', (_step, state) => {
+    it('"Agendar" empieza de nuevo por el paciente', async () => {
+      const db = open(state)
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:book' })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).bodyText).toBe(texts.patientMenuBody)
+      expect(last(rec).ids).toEqual(['pat:pat-1', 'pat:new'])
+      expect(saidRetry(rec)).toBe(false)
+      expect(activeSteps(db)).toEqual(['pick_patient'])
+    })
+
+    it('"Precios y dudas" invita a preguntar', async () => {
+      const db = open(state)
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:faq' })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).bodyText).toBe(texts.faqPrompt)
+      expect(saidRetry(rec)).toBe(false)
+      expect(activeSteps(db)).toEqual(['faq_open'])
+    })
+
+    it('"Hablar con una persona" pasa el hilo', async () => {
+      const db = open(state)
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:human' })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
+      expect(saidRetry(rec)).toBe(false)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.booking_sessions[0].status).toBe('cancelled')
+    })
+
+    it('"Tengo una urgencia" muestra los signos de alarma', async () => {
+      const db = open(state)
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:urgent' })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).bodyText).toBe(texts.urgencyBody('Signos de alarma'))
+      expect(last(rec).ids).toEqual(['act:alarm_yes', 'act:alarm_no'])
+      expect(saidRetry(rec)).toBe(false)
+      expect(activeSteps(db)).toEqual(['urgency'])
+    })
+  })
+
+  it('"Precios y dudas" sin IA pasa a una persona, no promete una respuesta', async () => {
+    const db = open({ step: 'pick_slot', ...booking, dateKey: '2026-10-19', options: [slot] })
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: 'act:faq' }, { aiOn: false })
+    expect(rec.calls.some((c) => c.bodyText === texts.faqPrompt)).toBe(false)
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+  })
+
+  it('un toque que no es del menú sigue dando "No entendí"', async () => {
+    const db = open({ step: 'pick_service', options: [{ id: 'svc:svc-limpieza', title: 'Limpieza' }] })
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: 'day:2026-10-19' })
+    expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(true)
+    expect(activeSteps(db)).toEqual(['pick_service'])
+  })
+
+  describe('en la autorización', () => {
+    const consent = () =>
+      clinicDb({
+        booking_sessions: [
+          session({
+            step: 'consent',
+            consentText: 'Texto de autorización',
+            consentVersion: 2,
+            options: [
+              { id: 'act:consent_yes', title: texts.consentAccept },
+              { id: 'act:consent_no', title: texts.consentDecline },
+            ],
+          }),
+        ],
+      })
+
+    it.each(['act:book', 'act:faq', 'act:human'])('%s sigue pidiendo la autorización', async (replyId) => {
+      const db = consent()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).bodyText).toBe('Texto de autorización')
+      expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
+      expect(db._tables.clinic_consents).toHaveLength(0)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+      expect(activeSteps(db)).toEqual(['consent'])
+    })
+
+    it('"Tengo una urgencia" va primero', async () => {
+      const db = consent()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: 'act:urgent' })
+      expect(last(rec).bodyText).toBe(texts.urgencyBody('Signos de alarma'))
+      expect(db._tables.clinic_consents).toHaveLength(0)
+    })
+  })
+
+  describe('en los signos de alarma', () => {
+    const urgency = () => clinicDb({ booking_sessions: [session({ step: 'urgency' })] })
+
+    it.each(['act:book', 'act:faq'])('%s no se salta la pregunta: se repite', async (replyId) => {
+      const db = urgency()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId })
+      expect(last(rec).bodyText).toBe(texts.urgencyBody('Signos de alarma'))
+      expect(last(rec).ids).toEqual(['act:alarm_yes', 'act:alarm_no'])
+      expect(activeSteps(db)).toEqual(['urgency'])
+    })
+
+    it('"Hablar con una persona" avisa con prioridad y repite los signos', async () => {
+      const db = urgency()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: 'act:human' })
+      expect(last(rec).bodyText).toBe(texts.urgencyPending('Signos de alarma'))
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.notifications).toMatchObject([{ title: texts.urgencyNotificationTitle }])
+    })
+  })
+
+  it('"Mis citas" todavía no existe: un toque no tira la reserva a medias', async () => {
+    const db = open({ step: 'pick_slot', ...booking, dateKey: '2026-10-19', options: [slot] })
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: 'act:mine' })
+    expect(activeSteps(db)).toEqual(['pick_slot'])
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+  })
+
+  it('en el menú principal el toque sigue su camino de siempre', async () => {
+    const db = open({ step: 'clinic_menu', options: MENU_IDS.map((id) => ({ id, title: id })) })
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: 'act:book' })
+    expect(last(rec).bodyText).toBe(texts.patientMenuBody)
+  })
+
+  // "Mis citas" (act:mine) es de la Task 11: hoy responde "No entendí" en todos los pasos.
+  it.todo('"Mis citas" (act:mine) vale en cualquier paso: Task 11')
 })
 
 describe('si la IA está apagada', () => {
@@ -588,7 +798,7 @@ describe('si la IA está apagada', () => {
   })
 })
 
-describe('las palabras de quejas, pagos y documentos solo valen sin sesión y con el menú abierto', () => {
+describe('las palabras de quejas, pagos y documentos solo valen sin sesión, con el menú abierto y esperando la duda', () => {
   it('no en la autorización: "no acepto dar mis documentos" es un rechazo registrado', async () => {
     const db = clinicDb()
     const rec = makeRecorder()
