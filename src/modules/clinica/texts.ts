@@ -1,0 +1,118 @@
+// ============================================================
+// Copy del bot clínico — español colombiano.
+//
+// Como el resto del vertical, vive en código y no en messages/*.json.
+// El texto de autorización y los signos de alarma son valores por
+// defecto: el abogado y el director de la clínica los revisan antes de
+// ir a producción, y cada cuenta guarda los suyos en clinic_settings.
+// ============================================================
+
+import type { AgendaLabels } from '@/verticals/agenda/labels'
+
+export const DEFAULT_CONSENT_TEXT = [
+  'Antes de seguir: para atenderte guardamos tu nombre, tu número y los datos de tus citas.',
+  'Algunos pueden ser datos de salud, que son sensibles. No estás obligado a autorizarlos y te atendemos igual si no aceptas.',
+  'Los usamos solo para gestionar tus citas y recordatorios.',
+  '¿Autorizas el tratamiento de tus datos?',
+].join('\n\n')
+
+export const DEFAULT_URGENCY_ALARM_TEXT =
+  'Ve a urgencias ahora si tienes dificultad para respirar o tragar, hinchazón que crece en la cara o el cuello, sangrado que no para, fiebre alta o un golpe fuerte en la cara.'
+
+/** Sin tildes: se comparan contra el texto normalizado. */
+export const DEFAULT_URGENCY_WORDS: readonly string[] = [
+  'urgencia',
+  'urgente',
+  'emergencia',
+  'dolor',
+  'duele',
+  'sangrado',
+  'sangra',
+  'sangrando',
+  'hinchazon',
+  'hinchado',
+  'hinchada',
+  'absceso',
+  'pus',
+  'fiebre',
+  'golpe',
+  'fractura',
+  'se partio',
+  'se me cayo',
+]
+
+/** Nota: una lista admite títulos de hasta 24 caracteres y un botón, 20. */
+export function buildClinicTexts(l: AgendaLabels) {
+  return {
+    consentAccept: 'Sí, acepto',
+    consentDecline: 'No acepto',
+    consentDeclined:
+      'Entendido, no guardaremos tus datos de salud. Una persona de la clínica te atiende por este chat. 🙌',
+    consentDeclinedNote: 'El paciente no aceptó la autorización de datos (bot en pausa).',
+    consentError: 'No pude guardar tu respuesta en este momento 😅. Intenta de nuevo, por favor.',
+
+    menuBody: '¡Hola! 👋 Soy el asistente de la clínica. ¿En qué te ayudo?',
+    menuButton: 'Ver opciones',
+    menuBook: `Agendar ${l.cita}`,
+    menuMine: `Mis ${l.citas}`,
+    menuFaq: 'Precios y dudas',
+    menuUrgent: 'Tengo una urgencia',
+    menuHuman: 'Hablar con una persona',
+    faqPrompt: 'Cuéntame tu duda y te respondo. 🙌',
+
+    noUpcoming: `No tienes ${l.citas} próximas. ¿Quieres agendar?`,
+    pickAppointmentBody: `¿Sobre cuál ${l.cita}?`,
+    pickAppointmentButton: `Ver ${l.citas}`,
+
+    patientMenuBody: `¿Para quién es la ${l.cita}?`,
+    patientMenuButton: 'Ver personas',
+    patientOther: 'Otra persona',
+    patientNamePrompt: `Escríbeme el nombre y los apellidos de quien va a la ${l.cita}.`,
+    patientNameRetry: 'Necesito nombre y apellidos, sin números. Escríbelos de nuevo, por favor.',
+    patientSaveError: `No pude registrar a esa persona en este momento 😅. Intenta de nuevo o escríbeme "asesor".`,
+
+    urgencyBody: (alarmText: string) => `${alarmText}\n\n¿Tienes alguno de estos signos?`,
+    urgencyYes: 'Sí, tengo alguno',
+    urgencyNo: 'No, ninguno',
+    urgencyGoEr: 'Por favor ve a urgencias ahora. Ya avisé a la clínica para que se comuniquen contigo.',
+    urgencyOffHours: (onCallPhone: string | null) =>
+      onCallPhone
+        ? `Hoy no tengo cupo en la agenda. Llama al ${onCallPhone}, que es el teléfono de turno. Si aparece alguno de los signos de alarma, ve a urgencias.`
+        : 'Hoy no tengo cupo en la agenda. Ya avisé a la clínica para que te escriban a primera hora. Si aparece alguno de los signos de alarma, ve a urgencias.',
+    urgencyNote: 'El paciente reportó signos de alarma (bot en pausa).',
+    urgencyOffHoursNote: 'Urgencia sin cupo en la agenda de hoy (bot en pausa).',
+    urgencyNotificationTitle: '🚨 Posible urgencia',
+    urgencyNotificationBody: (who: string) =>
+      `${who} reportó una posible urgencia por WhatsApp. Comunícate con esa persona ya.`,
+
+    moreDays: 'Ver más días',
+
+    marketingBody: '¿Quieres que te avisemos cuando te toque tu próximo control o limpieza?',
+    marketingYes: 'Sí, avísame',
+    marketingNo: 'No, gracias',
+    marketingThanksYes: 'Listo, te avisaremos. 🙌',
+    marketingThanksNo: 'Perfecto, no te escribiremos por eso. 🙌',
+
+    reminderBody: (a: {
+      patient: string
+      business: string
+      location: string
+      staff: string
+      date: string
+      time: string
+    }) =>
+      `¡Hola! 👋 Te recordamos la ${l.cita} de ${a.patient} en ${a.business}, sede ${a.location}:\n\n👤 ${a.staff}\n📅 ${a.date}\n🕐 ${a.time}\n\n¿Nos confirmas?`,
+    reminderStaffFallback: 'el equipo de la clínica',
+
+    /** Mapa e instrucciones previas tras confirmar; null si no hay nada que decir. */
+    prepInfo: (a: { prep: string | null; address: string | null; mapUrl: string | null }) => {
+      const lines: string[] = []
+      if (a.prep) lines.push(`Para tu ${l.cita}:\n${a.prep}`)
+      if (a.address) lines.push(`📍 ${a.address}`)
+      if (a.mapUrl) lines.push(a.mapUrl)
+      return lines.length ? lines.join('\n\n') : null
+    },
+  }
+}
+
+export type ClinicTexts = ReturnType<typeof buildClinicTexts>
