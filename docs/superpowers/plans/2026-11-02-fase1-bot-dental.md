@@ -1522,7 +1522,7 @@ describe('configuración de la clínica', () => {
     expect(db._tables.clinic_settings[0].urgency_service_id).toBe('svc-u')
     expect(db._tables.clinic_settings[0].consent_version).toBe(1)
     expect(db._tables.clinic_locations).toHaveLength(1)
-    expect(db._tables.clinic_locations[0].name).toBe('Sede principal')
+    expect(db._tables.clinic_locations[0].name).toBe('Principal')
   })
 
   it('si otro montaje creó la configuración justo antes, no falla ni la pisa', async () => {
@@ -1564,6 +1564,7 @@ import { DEFAULT_LABELS } from '@/verticals/agenda/labels'
 import {
   buildClinicTexts,
   DEFAULT_CONSENT_TEXT,
+  DEFAULT_LOCATION_NAME,
   DEFAULT_URGENCY_ALARM_TEXT,
   DEFAULT_URGENCY_WORDS,
 } from './texts'
@@ -1628,6 +1629,44 @@ describe('textos de la clínica', () => {
     ).toBe(
       `¡Hola! 👋 Te recordamos que Ana Pérez tiene ${cita} en Clínica Sonrisa, sede Centro:\n\n👤 Dra. Gómez\n📅 lunes 4\n🕐 3:00 p. m.\n\n¿Nos confirmas?`,
     )
+  })
+})
+
+describe('respuesta a tocar Confirmar', () => {
+  const when = { staff: 'Dra. Ana', date: 'martes 20 de octubre de 2026', time: '9:00 a. m.' }
+
+  it('nombra al paciente, al profesional, la fecha y la hora', () => {
+    expect(texts.reminderConfirmed({ patient: 'Tomás Gil', ...when })).toBe(
+      '¡Listo! Queda confirmado:\n\n🙋 Paciente: Tomás Gil\n👤 Dra. Ana\n📅 martes 20 de octubre de 2026\n🕐 9:00 a. m.\n\n¡Te esperamos! 🙌',
+    )
+  })
+
+  it('sin el nombre del paciente omite esa línea', () => {
+    const body = texts.reminderConfirmed({ patient: null, ...when })
+    expect(body).not.toContain('Paciente')
+    expect(body).toBe(
+      '¡Listo! Queda confirmado:\n\n👤 Dra. Ana\n📅 martes 20 de octubre de 2026\n🕐 9:00 a. m.\n\n¡Te esperamos! 🙌',
+    )
+  })
+
+  it('no tiene dónde poner el procedimiento', () => {
+    expect(texts.reminderConfirmed({ patient: 'Tomás Gil', ...when })).not.toContain('📌')
+  })
+})
+
+describe('sede por defecto', () => {
+  it('no repite la palabra "sede" en el recordatorio', () => {
+    expect(DEFAULT_LOCATION_NAME).toBe('Principal')
+    const body = texts.reminderBody({
+      patient: 'Ana Pérez',
+      business: 'Clínica Sonrisa',
+      location: DEFAULT_LOCATION_NAME,
+      staff: 'Dra. Gómez',
+      date: 'lunes 4',
+      time: '3:00 p. m.',
+    })
+    expect(body).toContain('sede Principal:')
+    expect(body).not.toMatch(/sede sede/i)
   })
 })
 
@@ -1735,6 +1774,13 @@ export const DEFAULT_CONSENT_TEXT = [
   'Los usamos para atenderte: tus citas, tus recordatorios y el seguimiento después de cada visita.',
   '¿Autorizas el tratamiento de tus datos?',
 ].join('\n\n')
+
+/**
+ * Nombre de la sede que se crea sola, y el que se usa cuando una cita no tiene
+ * sede. Va sin la palabra "sede": el recordatorio ya dice "sede {nombre}", y
+ * "Sede principal" saldría como "sede Sede principal".
+ */
+export const DEFAULT_LOCATION_NAME = 'Principal'
 
 export const DEFAULT_URGENCY_ALARM_TEXT =
   'Ve a urgencias ahora si tienes dificultad para respirar o tragar, hinchazón que crece en la cara o el cuello, sangrado que no para, fiebre alta o un golpe fuerte en la cara.'
@@ -1844,6 +1890,28 @@ export function buildClinicTexts(l: AgendaLabels) {
     }) =>
       `¡Hola! 👋 Te recordamos que ${a.patient} tiene ${l.cita} en ${a.business}, sede ${a.location}:\n\n👤 ${a.staff}\n📅 ${a.date}\n🕐 ${a.time}\n\n¿Nos confirmas?`,
     reminderStaffFallback: 'el equipo de la clínica',
+    /**
+     * La respuesta a tocar Confirmar en un recordatorio. El teléfono puede ser
+     * compartido: nombra al paciente, al profesional, la fecha y la hora, y nunca
+     * el procedimiento (por eso no recibe el servicio). Sin el nombre del
+     * paciente omite esa línea.
+     */
+    reminderConfirmed: (a: {
+      patient: string | null
+      staff: string
+      date: string
+      time: string
+    }) =>
+      [
+        '¡Listo! Queda confirmado:',
+        '',
+        ...(a.patient ? [`🙋 Paciente: ${a.patient}`] : []),
+        `👤 ${a.staff}`,
+        `📅 ${a.date}`,
+        `🕐 ${a.time}`,
+        '',
+        '¡Te esperamos! 🙌',
+      ].join('\n'),
 
     /** Mapa e instrucciones previas tras confirmar; null si no hay nada que decir. */
     prepInfo: (a: { prep: string | null; address: string | null; mapUrl: string | null }) => {
@@ -1880,6 +1948,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import {
   DEFAULT_CONSENT_TEXT,
+  DEFAULT_LOCATION_NAME,
   DEFAULT_URGENCY_ALARM_TEXT,
   DEFAULT_URGENCY_WORDS,
 } from './texts'
@@ -2043,7 +2112,7 @@ export async function ensureClinicSetup(db: SupabaseClient, accountId: string): 
     const { error } = await db.from('clinic_locations').insert({
       id: crypto.randomUUID(),
       account_id: accountId,
-      name: 'Sede principal',
+      name: DEFAULT_LOCATION_NAME,
       is_active: true,
     })
     if (error) throw error
@@ -7392,8 +7461,12 @@ const NOT_A_BOOKING_WORDS = [
   'pqrs',
 ]
 
-/** "No puedo ir a la cita": avisar que no va, no pedir una. */
-const CANNOT_ATTEND = /\bno (puedo|podre|podemos|podria|voy a poder) (ir|asistir|llegar|venir|acudir)\b/
+/**
+ * "No puedo ir a la cita", "mi hijo no puede ir": avisar que no va, no pedir una.
+ * `puede` y `pueden` cubren al paciente que escribe un familiar.
+ */
+const CANNOT_ATTEND =
+  /\bno (puedo|puede|pueden|podre|podemos|podria|voy a poder) (ir|asistir|llegar|venir|acudir)\b/
 
 /** Quien las usa pide algo. */
 const ASKING_WORDS = [
@@ -13322,6 +13395,8 @@ describe('texto libre que pide cambiar o cancelar una cita', () => {
       'necesito cambiar mi cita',
       'quiero reprogramar la cita',
       'no voy a poder asistir a mi cita de mañana',
+      'mi hijo no puede ir a la cita',
+      'mis papás no pueden asistir a la cita',
       'Hola, quiero cancelar mi cita',
       'hola buenas tardes, quisiera reagendar',
       'necesito anular mi cita del martes',
@@ -13648,8 +13723,12 @@ const CHANGE_WITH_APPOINTMENT_WORDS = ['cancelacion', 'cambiar', 'mover']
 /** Quejas: no piden una cita ni la cambian, y las atiende una persona. */
 const COMPLAINT_WORDS = ['queja', 'quejas', 'reclamo', 'reclamos', 'pqr', 'pqrs']
 
-/** "No puedo ir a la cita": avisar que no va, no pedir una. */
-const CANNOT_ATTEND = /\bno (puedo|podre|podemos|podria|voy a poder) (ir|asistir|llegar|venir|acudir)\b/
+/**
+ * "No puedo ir a la cita", "mi hijo no puede ir": avisar que no va, no pedir una.
+ * `puede` y `pueden` cubren al paciente que escribe un familiar.
+ */
+const CANNOT_ATTEND =
+  /\bno (puedo|puede|pueden|podre|podemos|podria|voy a poder) (ir|asistir|llegar|venir|acudir)\b/
 
 /**
  * Quien arranca así pide algo aunque lo escriba como pregunta: "¿puedo cancelar mi
@@ -14103,8 +14182,8 @@ git commit -m "feat(clinica): resolve appointments per patient and send prep inf
 ### Task 12: Recordatorio clínico, sin procedimiento
 
 Un recordatorio de clínica nombra al **paciente** y la **sede**, y nunca el procedimiento: el teléfono puede ser
-compartido y el texto pasa por Meta. Vale para la plantilla, para el mensaje libre y para lo que se guarda en
-`messages.content_text`.
+compartido y el texto pasa por Meta. Vale para la plantilla, para el mensaje libre, para lo que se guarda en
+`messages.content_text` y para la respuesta a tocar Confirmar.
 
 Reglas que esta tarea deja fijas:
 
@@ -14116,6 +14195,8 @@ Reglas que esta tarea deja fijas:
 - Si no se puede leer al paciente o la sede, el recordatorio no sale y la señal **no se reclama**: la próxima
   corrida lo reintenta. Un error de lectura no es "la cita no tiene paciente", y mandar otro nombre u otra
   sede es peor que mandarlo después. El error lleva la cita y el mensaje de la base, nunca el nombre.
+- Una cita sin sede dice `Principal` (`DEFAULT_LOCATION_NAME`, la misma que se crea sola): el mensaje dice
+  "sede {nombre}", y "Sede principal" saldría como "sede Sede principal".
 - Los botones de la plantilla son fijos. Los tres payloads salen siempre, en el orden de los botones aprobados
   (Confirmar, Reprogramar, Cancelar), aunque la cuenta tenga apagada la pieza de reprogramar: quitar uno
   correría "cancelar" al índice del botón de reprogramar. El orden sale de `reminderButtons(true, cita)`, la
@@ -14123,10 +14204,14 @@ Reglas que esta tarea deja fijas:
 - El nombre de plantilla sale de `CLINIC_REMINDER_TEMPLATE_NAME` (ya existe en `reminders.ts`), y
   `handleAgendaInbound` ya acepta la etiqueta "Confirmar" si responde a `recordatorio_cita_clinica`
   (`isReminderTemplateName`); `controller.test.ts` y `clinic-appointments.test.ts` ya lo cubren.
+- La respuesta a tocar Confirmar tiene su propio texto en una clínica (`reminderConfirmed` de
+  `buildClinicTexts`): paciente, profesional, fecha y hora. Cubre también la cuenta con el módulo y sin su
+  configuración. Las demás cuentas siguen con el texto de siempre, con el servicio.
 
 **Files:**
 - Create: `src/modules/clinica/reminder-info.ts`, `src/lib/whatsapp/template-quick-reply.test.ts`
 - Modify: `src/lib/whatsapp/meta-api.ts`, `src/verticals/agenda/agent/reminders.ts`, `src/verticals/agenda/agent/reminders.test.ts`, `src/verticals/agenda/agent/reminders-send.ts`, `src/verticals/agenda/agent/reminders-send.test.ts`
+- Modify (pasos 8 a 10): `src/modules/clinica/texts.ts`, `src/modules/clinica/texts.test.ts`, `src/verticals/agenda/agent/controller.ts`, `src/verticals/agenda/agent/clinic-appointments.test.ts`
 
 - [ ] **Step 1: Escribe las pruebas que fallan**
 
@@ -14421,14 +14506,14 @@ Dentro de `describe('runAgendaReminders', ...)`, después de la última prueba:
       expect(rec.deliveries[0].clinic?.patientName).toBe('tu familiar')
     })
 
-    it('una cita sin sede dice "principal"', async () => {
+    it('una cita sin sede dice "Principal", como la sede que se crea sola', async () => {
       const seed = clinicSeed()
       seed.booking_appointments[0].location_id = null
       const rec = makeRecorder()
 
       await runAgendaReminders({ db: asClient(makeFakeDb(seed)), now: NOW, send: rec.send })
 
-      expect(rec.deliveries[0].clinic?.locationName).toBe('principal')
+      expect(rec.deliveries[0].clinic?.locationName).toBe('Principal')
     })
 
     it('no lee pacientes ni sedes de otra cuenta', async () => {
@@ -14443,7 +14528,7 @@ Dentro de `describe('runAgendaReminders', ...)`, después de la última prueba:
 
       await runAgendaReminders({ db: asClient(makeFakeDb(seed)), now: NOW, send: rec.send })
 
-      expect(rec.deliveries[0].clinic).toEqual({ patientName: 'Laura Gil', locationName: 'principal' })
+      expect(rec.deliveries[0].clinic).toEqual({ patientName: 'Laura Gil', locationName: 'Principal' })
     })
 
     it('si no puede leer al paciente no envía ni reclama la señal, y sigue con las demás', async () => {
@@ -14764,8 +14849,8 @@ Agrégalo a la desestructuración de `sendTemplateMessage`, y reemplaza la rama 
 
 - [ ] **Step 4: Lee paciente y sede**
 
-Crea `src/modules/clinica/reminder-info.ts`. Reutiliza `loadAppointmentClinicLinks` (Tarea 8) y `loadContact`, y
-**lanza** si una lectura falla:
+Crea `src/modules/clinica/reminder-info.ts`. Reutiliza `loadAppointmentClinicLinks` (Tarea 8) y `loadContact`,
+**lanza** si una lectura falla, y su respaldo de sede es `DEFAULT_LOCATION_NAME` (Tarea 5):
 
 ```ts
 // ============================================================
@@ -14787,13 +14872,16 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { loadAppointmentClinicLinks, loadContact } from '@/verticals/agenda/agent/db'
 
+import { DEFAULT_LOCATION_NAME } from './texts'
+
 export interface ClinicReminderInfo {
   patientName: string
   locationName: string
 }
 
 const FALLBACK_PATIENT = 'tu familiar'
-const FALLBACK_LOCATION = 'principal'
+// Como la sede que se crea sola: el recordatorio dice "sede {nombre}".
+const FALLBACK_LOCATION = DEFAULT_LOCATION_NAME
 
 const HAS_LETTER = /\p{L}/u
 
@@ -15072,20 +15160,263 @@ git add src/lib/whatsapp src/modules/clinica src/verticals/agenda/agent
 git commit -m "feat(clinica): send reminders without the procedure name"
 ```
 
+- [ ] **Step 8: Escribe las pruebas de la respuesta a Confirmar**
+
+Tocar Confirmar respondía con el servicio ("📌 Limpieza"), y el teléfono puede ser compartido. En
+`src/modules/clinica/texts.test.ts`, antes de `describe('sede por defecto', ...)`:
+
+```ts
+describe('respuesta a tocar Confirmar', () => {
+  const when = { staff: 'Dra. Ana', date: 'martes 20 de octubre de 2026', time: '9:00 a. m.' }
+
+  it('nombra al paciente, al profesional, la fecha y la hora', () => {
+    expect(texts.reminderConfirmed({ patient: 'Tomás Gil', ...when })).toBe(
+      '¡Listo! Queda confirmado:\n\n🙋 Paciente: Tomás Gil\n👤 Dra. Ana\n📅 martes 20 de octubre de 2026\n🕐 9:00 a. m.\n\n¡Te esperamos! 🙌',
+    )
+  })
+
+  it('sin el nombre del paciente omite esa línea', () => {
+    const body = texts.reminderConfirmed({ patient: null, ...when })
+    expect(body).not.toContain('Paciente')
+    expect(body).toBe(
+      '¡Listo! Queda confirmado:\n\n👤 Dra. Ana\n📅 martes 20 de octubre de 2026\n🕐 9:00 a. m.\n\n¡Te esperamos! 🙌',
+    )
+  })
+
+  it('no tiene dónde poner el procedimiento', () => {
+    expect(texts.reminderConfirmed({ patient: 'Tomás Gil', ...when })).not.toContain('📌')
+  })
+})
+```
+
+En `src/verticals/agenda/agent/clinic-appointments.test.ts`, después de `describe('al confirmar', ...)`:
+
+```ts
+  // El teléfono puede ser compartido: lo que se le responde a un toque de Confirmar
+  // nombra al paciente, pero no el procedimiento.
+  describe('la respuesta a Confirmar no nombra el procedimiento', () => {
+    const confirmedFor = (patient: string | null) =>
+      texts.reminderConfirmed({
+        patient,
+        staff: 'Dra. Ana',
+        date: 'martes 20 de octubre de 2026',
+        time: '9:00 a. m.',
+      })
+
+    it('dice paciente, doctor, fecha y hora', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm', 'ap-1') })
+      expect(rec.calls.at(-2)?.bodyText).toBe(confirmedFor('Marta Ruiz'))
+      expect(rec.calls.some((c) => c.bodyText.includes('Limpieza'))).toBe(false)
+    })
+
+    it('es el paciente de esa cita, no el de la otra', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm', 'ap-2') })
+      expect(rec.calls.at(-2)?.bodyText).toContain('Tomás Gil')
+      expect(rec.calls.at(-2)?.bodyText).not.toContain('Marta Ruiz')
+      expect(rec.calls.at(-2)?.bodyText).toContain('10:00 a. m.')
+    })
+
+    it('al elegir la cita de la lista también', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm') })
+      await send(db, rec, { replyId: apptId('ap-2') })
+      expect(rec.calls.at(-2)?.bodyText).toContain('Queda confirmado')
+      expect(rec.calls.some((c) => c.bodyText.includes('Limpieza'))).toBe(false)
+    })
+
+    it('con la etiqueta de la plantilla clínica también', async () => {
+      const db = clinicDb({
+        clinic_consents: [grantedConsent()],
+        clinic_patients: family(),
+        booking_appointments: [appointment('ap-1', 'pat-1', FIRST)],
+      })
+      const rec = makeRecorder()
+      const replyTo = seedTemplateMessage(db, 'recordatorio_cita_clinica')
+      await send(db, rec, { replyId: 'Confirmar', replyTo })
+      expect(rec.calls.at(-2)?.bodyText).toBe(confirmedFor('Marta Ruiz'))
+    })
+
+    it('una cita sin paciente se confirma sin esa línea', async () => {
+      const db = twoAppointments({
+        booking_appointments: [appointment('ap-1', 'pat-borrado', FIRST, { patient_id: null })],
+      })
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm', 'ap-1') })
+      expect(rec.calls.at(-2)?.bodyText).toBe(confirmedFor(null))
+    })
+
+    it('si no se pueden leer los pacientes, se confirma igual y sin el nombre', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      const failing = {
+        ...db,
+        from(table: string) {
+          if (table === 'clinic_patients') throw new Error('boom')
+          return db.from(table)
+        },
+      } as typeof db
+      await send(failing, rec, { replyId: remId('confirm', 'ap-1') })
+      expect(statuses(db)['ap-1']).toBe('confirmed')
+      expect(rec.calls.at(-2)?.bodyText).toBe(confirmedFor(null))
+    })
+
+    it('con el módulo activo pero sin su configuración tampoco', async () => {
+      const db = twoAppointments({ clinic_settings: [] })
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm', 'ap-1') })
+      expect(statuses(db)['ap-1']).toBe('confirmed')
+      expect(last(rec).bodyText).toContain('Queda confirmado')
+      expect(rec.calls.some((c) => c.bodyText.includes('Limpieza'))).toBe(false)
+    })
+
+    it('una cuenta sin clínica sigue con el servicio en la respuesta', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm') }, { modules: ['agenda'] })
+      expect(last(rec).bodyText).toContain('📌 Limpieza')
+      expect(last(rec).bodyText).not.toContain('Paciente')
+    })
+  })
+```
+
+Run: `npx vitest run src/modules/clinica/texts.test.ts src/verticals/agenda/agent/clinic-appointments.test.ts`
+Expected: FAIL, `reminderConfirmed` no existe en los textos de la clínica.
+
+- [ ] **Step 9: Texto y controlador**
+
+En `src/modules/clinica/texts.ts`, después de `reminderStaffFallback`:
+
+```ts
+    /**
+     * La respuesta a tocar Confirmar en un recordatorio. El teléfono puede ser
+     * compartido: nombra al paciente, al profesional, la fecha y la hora, y nunca
+     * el procedimiento (por eso no recibe el servicio). Sin el nombre del
+     * paciente omite esa línea.
+     */
+    reminderConfirmed: (a: {
+      patient: string | null
+      staff: string
+      date: string
+      time: string
+    }) =>
+      [
+        '¡Listo! Queda confirmado:',
+        '',
+        ...(a.patient ? [`🙋 Paciente: ${a.patient}`] : []),
+        `👤 ${a.staff}`,
+        `📅 ${a.date}`,
+        `🕐 ${a.time}`,
+        '',
+        '¡Te esperamos! 🙌',
+      ].join('\n'),
+```
+
+En `src/verticals/agenda/agent/controller.ts`, en `applyReminderAction` (la rama `confirm`) reemplaza lo que va después de
+`evento confirmed (recordatorio)`, y agrega el ayudante antes de `withPatient`:
+
+```ts
+    const staffName = appt.staffId
+      ? await loadStaffName(dialog.db, dialog.accountId, appt.staffId)
+      : null
+    const parts = zonedParts(appt.startsAt)
+    const date = formatLongDate(parts.dateKey)
+    const time = formatTimeLabel(parts)
+    // Una clínica (incluida la que tiene el módulo sin configurar) no nombra el
+    // procedimiento: el teléfono puede ser compartido. Dice quién va, con quién,
+    // y cuándo. Las demás cuentas siguen igual.
+    if (dialog.clinic || dialog.clinicUnavailable) {
+      await dialog.sender.sendText({
+        text: dialog.clinicTexts.reminderConfirmed({
+          patient: await appointmentPatientName(dialog, appt),
+          staff: staffName ?? dialog.clinicTexts.reminderStaffFallback,
+          date,
+          time,
+        }),
+      })
+    } else {
+      const service = appt.serviceId ? await findService(dialog, appt.serviceId) : null
+      await dialog.sender.sendText({
+        text: dialog.texts.reminderConfirmed({
+          service: service?.name ?? dialog.texts.serviceFallback,
+          staff: staffName ?? dialog.texts.staffAnyTitle,
+          date,
+          time,
+        }),
+      })
+    }
+    if (dialog.clinic) await bestEffort('instrucciones previas', () => sendPrepInfo(dialog, appt))
+    return
+```
+
+```ts
+/**
+ * El paciente de una cita que ya existe, para la respuesta a Confirmar. Es un dato
+ * personal: se le muestra a quien recibió el recordatorio y no va a logs. Si no se
+ * puede leer, la cita ya quedó confirmada y solo falta la línea.
+ */
+async function appointmentPatientName(dialog: Dialog, appt: AppointmentInfo): Promise<string | null> {
+  try {
+    const { patientId } = await loadAppointmentClinicLinks(dialog.db, dialog.accountId, appt.id)
+    if (!patientId) return null
+    const patients = await dialog.backend.findPatients({ contactId: dialog.contactId })
+    return patients.find((p) => p.id === patientId)?.fullName ?? null
+  } catch {
+    return null
+  }
+}
+```
+
+- [ ] **Step 10: Corre las pruebas y haz commit**
+
+Run: `npx vitest run src/verticals/agenda src/modules/clinica && npx tsc --noEmit`
+Expected: PASS.
+
+```bash
+git add src/modules/clinica src/verticals/agenda/agent
+git commit -m "fix(clinica): the reply to Confirmar names the patient, not the procedure"
+```
+
 ---
 
 ### Task 13: Candado por conversación
 
+El candado vive en `conversations.bot_lock_until` (migración 055, ya revisada) y solo lo usan las cuentas con el
+módulo `clinica`: las demás siguen exactamente igual.
+
+Reglas que esta tarea deja fijas:
+
+- **Todo dentro de `failClosed`.** Tomar, esperar y soltar el candado van DENTRO del `try` de
+  `agendaInboundHandler`: si cualquiera lanza, el mensaje de un paciente no llega a la IA (se consume y se avisa).
+- **Un error no es "ocupado".** Si la base falla al tomar el candado, `acquireBotLock` lanza; no se espera 5 s para
+  descartar el mensaje en silencio.
+- **Se suelta siempre**, también si el trabajo falla, y solo si sigue siendo el de este proceso: si el trabajo
+  tardó más que el candado (30 s) y otro mensaje lo tomó, no se le quita.
+- **Lo que trajo el dispatcher puede estar viejo.** Tras tomar el candado se vuelve a leer la sesión
+  (`loadActiveSession`) y quién lleva el hilo (`loadHumanOwned`): el mensaje de antes pudo cerrar la sesión o pasar
+  el hilo a una persona. Si el dispatcher ya veía el hilo de una persona, se respeta.
+- **Una urgencia no se pierde.** Si tras esperar 5 s el candado sigue ocupado, el mensaje se consume sin
+  responder, salvo que sea una urgencia (el toque de "Tengo una urgencia" o "Sí, tengo alguno", o un texto con una
+  palabra de urgencia de la clínica o del piso fijo, con `DEFAULT_URGENCY_WORDS` si la configuración no se puede
+  leer): entonces se procesa igual, sin candado y sin soltar el de otro. Se eligió procesarlo y no solo avisar al
+  equipo porque así la persona recibe ya los signos de alarma, y lo peor que puede pasar es una respuesta cruzada
+  con el otro mensaje; avisar sin responder la dejaría esperando a que alguien mire. Si no se puede leer el
+  mensaje, falla cerrado (alerta) en vez de dar por hecho que no era urgente.
+
 **Files:**
 - Create: `src/verticals/agenda/agent/bot-lock.ts`, `src/verticals/agenda/agent/bot-lock.test.ts`
-- Modify: `src/verticals/agenda/agent/db.ts`, `src/verticals/agenda/agent/index.ts`
+- Modify: `src/verticals/agenda/agent/db.ts`, `src/verticals/agenda/agent/db.test.ts`, `src/verticals/agenda/agent/index.ts`, `src/verticals/agenda/agent/index.test.ts`, `src/verticals/agenda/agent/testing/clinic-harness.ts`
 
-- [ ] **Step 1: Escribe la prueba que falla**
+- [ ] **Step 1: Escribe las pruebas que fallan**
 
 Crea `src/verticals/agenda/agent/bot-lock.test.ts`:
 
 ```ts
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { acquireBotLock, withBotLock } from './bot-lock'
 import { asClient, makeFakeDb } from './testing/fake-db'
@@ -15093,24 +15424,77 @@ import { asClient, makeFakeDb } from './testing/fake-db'
 const ACCOUNT = 'acc-1'
 const CONVERSATION = 'cv-1'
 const NOW = new Date('2026-10-19T13:00:00.000Z')
+/** Un candado que nadie suelta mientras dura la prueba. */
+const FAR_FUTURE = '2099-01-01T00:00:00.000Z'
 
 const seed = (lockedUntil: string | null = null) =>
   makeFakeDb({
-    conversations: [{ id: CONVERSATION, account_id: ACCOUNT, bot_lock_until: lockedUntil }],
+    conversations: [
+      { id: CONVERSATION, account_id: ACCOUNT, bot_lock_until: lockedUntil },
+      { id: 'cv-2', account_id: ACCOUNT, bot_lock_until: null },
+      // Misma conversación en OTRA cuenta: el candado se acota por cuenta.
+      { id: CONVERSATION, account_id: 'acc-2', bot_lock_until: null },
+    ],
   })
 
 const args = { accountId: ACCOUNT, conversationId: CONVERSATION }
+const lockOf = (fake: ReturnType<typeof seed>, index = 0) => fake._tables.conversations[index].bot_lock_until
 
-describe('candado por conversación', () => {
+beforeEach(() => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+})
+
+describe('acquireBotLock', () => {
   it('solo gana uno', async () => {
     const db = asClient(seed())
-    await expect(acquireBotLock(db, { ...args, now: NOW })).resolves.toBe(true)
-    await expect(acquireBotLock(db, { ...args, now: NOW })).resolves.toBe(false)
+    expect(await acquireBotLock(db, { ...args, now: NOW })).toBeTruthy()
+    expect(await acquireBotLock(db, { ...args, now: NOW })).toBeNull()
   })
 
   it('un candado vencido se puede tomar', async () => {
     const db = asClient(seed('2026-10-19T12:59:00.000Z'))
-    await expect(acquireBotLock(db, { ...args, now: NOW })).resolves.toBe(true)
+    expect(await acquireBotLock(db, { ...args, now: NOW })).toBeTruthy()
+  })
+
+  it('dura 30 segundos', async () => {
+    const fake = seed()
+    await acquireBotLock(asClient(fake), { ...args, now: NOW })
+    expect(lockOf(fake)).toBe('2026-10-19T13:00:30.000Z')
+  })
+
+  it('es de esa conversación y de esa cuenta', async () => {
+    const fake = seed()
+    await acquireBotLock(asClient(fake), { ...args, now: NOW })
+    expect(lockOf(fake, 1)).toBeNull()
+    expect(lockOf(fake, 2)).toBeNull()
+  })
+
+  it('un error de la base lanza: no se confunde con un candado ocupado', async () => {
+    const fake = seed()
+    fake._failNext('update', 'conversations', { message: 'la base se cayó' })
+    await expect(acquireBotLock(asClient(fake), { ...args, now: NOW })).rejects.toThrow(
+      'la base se cayó',
+    )
+  })
+})
+
+describe('withBotLock', () => {
+  it('corre el trabajo con el candado puesto y lo suelta al terminar', async () => {
+    const fake = seed()
+    let heldDuringWork: unknown = null
+    const result = await withBotLock(asClient(fake), args, async () => {
+      heldDuringWork = lockOf(fake)
+      return { consumed: false }
+    })
+    expect(result).toEqual({ consumed: false })
+    expect(heldDuringWork).not.toBeNull()
+    expect(lockOf(fake)).toBeNull()
   })
 
   it('suelta el candado aunque el trabajo falle', async () => {
@@ -15120,25 +15504,472 @@ describe('candado por conversación', () => {
         throw new Error('boom')
       }),
     ).rejects.toThrow('boom')
-    expect(fake._tables.conversations[0].bot_lock_until).toBeNull()
+    expect(lockOf(fake)).toBeNull()
   })
 
   it('si no consigue el candado no ejecuta el trabajo y consume el mensaje', async () => {
-    const fake = seed('2099-01-01T00:00:00.000Z')
+    const fake = seed(FAR_FUTURE)
     const work = vi.fn(async () => ({ consumed: false }))
     const result = await withBotLock(asClient(fake), args, work, { waitMs: 0 })
     expect(result).toEqual({ consumed: true })
     expect(work).not.toHaveBeenCalled()
+    // El candado es de otro: ni se toca ni se suelta.
+    expect(lockOf(fake)).toBe(FAR_FUTURE)
+  })
+
+  it('espera a que se libere', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+    // Vence 2 s después: dentro de los 5 s de espera.
+    const fake = seed('2026-10-19T13:00:02.000Z')
+    const work = vi.fn(async () => ({ consumed: false }))
+
+    const pending = withBotLock(asClient(fake), args, work)
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(await pending).toEqual({ consumed: false })
+    expect(work).toHaveBeenCalledTimes(1)
+  })
+
+  it('no espera para siempre', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+    const fake = seed(FAR_FUTURE)
+    const work = vi.fn(async () => ({ consumed: false }))
+
+    const pending = withBotLock(asClient(fake), args, work)
+    await vi.advanceTimersByTimeAsync(6_000)
+
+    expect(await pending).toEqual({ consumed: true })
+    expect(work).not.toHaveBeenCalled()
+  })
+
+  it('si el trabajo tardó más que el candado, no suelta el de quien lo tomó después', async () => {
+    const fake = seed()
+    await withBotLock(asClient(fake), args, async () => {
+      // El candado venció y otro mensaje lo tomó mientras este trabajo seguía.
+      fake._tables.conversations[0].bot_lock_until = FAR_FUTURE
+      return { consumed: true }
+    })
+    expect(lockOf(fake)).toBe(FAR_FUTURE)
+  })
+
+  it('un error de la base al tomarlo lanza, sin ejecutar el trabajo', async () => {
+    const fake = seed()
+    fake._failNext('update', 'conversations', { message: 'la base se cayó' })
+    const work = vi.fn(async () => ({ consumed: false }))
+    await expect(withBotLock(asClient(fake), args, work)).rejects.toThrow('la base se cayó')
+    expect(work).not.toHaveBeenCalled()
+  })
+
+  describe('sin el candado, un mensaje urgente no se pierde', () => {
+    it('lo procesa igual, y el candado sigue siendo del otro', async () => {
+      const fake = seed(FAR_FUTURE)
+      const work = vi.fn(async () => ({ consumed: true }))
+      const result = await withBotLock(asClient(fake), args, work, {
+        waitMs: 0,
+        runWithoutLockWhen: async () => true,
+      })
+      expect(result).toEqual({ consumed: true })
+      expect(work).toHaveBeenCalledTimes(1)
+      expect(lockOf(fake)).toBe(FAR_FUTURE)
+    })
+
+    it('si no es urgente, se consume sin responder como siempre', async () => {
+      const fake = seed(FAR_FUTURE)
+      const work = vi.fn(async () => ({ consumed: false }))
+      const result = await withBotLock(asClient(fake), args, work, {
+        waitMs: 0,
+        runWithoutLockWhen: async () => false,
+      })
+      expect(result).toEqual({ consumed: true })
+      expect(work).not.toHaveBeenCalled()
+    })
+
+    it('solo pregunta si es urgente cuando no consiguió el candado', async () => {
+      const urgent = vi.fn(async () => true)
+      await withBotLock(asClient(seed()), args, async () => ({ consumed: false }), {
+        runWithoutLockWhen: urgent,
+      })
+      expect(urgent).not.toHaveBeenCalled()
+    })
+
+    it('si no se puede saber, lanza (y quien llama no pasa el mensaje a la IA)', async () => {
+      const fake = seed(FAR_FUTURE)
+      await expect(
+        withBotLock(asClient(fake), args, async () => ({ consumed: false }), {
+          waitMs: 0,
+          runWithoutLockWhen: async () => {
+            throw new Error('no se pudo leer')
+          },
+        }),
+      ).rejects.toThrow('no se pudo leer')
+    })
   })
 })
 ```
 
-- [ ] **Step 2: Córrela y verifica que falla**
+En `src/verticals/agenda/agent/testing/clinic-harness.ts`, la fila de la conversación nace con el candado libre
+(el fake solo entiende `is(null)` si la columna existe):
 
-Run: `npx vitest run src/verticals/agenda/agent/bot-lock.test.ts`
-Expected: FAIL, no existe `./bot-lock`.
+```ts
+        // Migración 055: el candado por conversación (null = libre).
+        bot_lock_until: null,
+```
 
-- [ ] **Step 3: Implementa**
+En `src/verticals/agenda/agent/db.test.ts` agrega `loadActiveSession` y `loadHumanOwned` al import de `./db` y, al final:
+
+```ts
+describe('loadActiveSession', () => {
+  const NOW_ISO = '2026-10-19T13:00:00.000Z'
+  const session = (over: Record<string, unknown> = {}) => ({
+    id: 'se-1',
+    account_id: 'acc',
+    contact_id: 'ct-1',
+    status: 'active',
+    expires_at: '2026-10-19T13:30:00.000Z',
+    state: { step: 'clinic_menu' },
+    ...over,
+  })
+  const read = (rows: Record<string, unknown>[]) =>
+    loadActiveSession(asClient(makeFakeDb({ booking_sessions: rows })), {
+      accountId: 'acc',
+      contactId: 'ct-1',
+      nowIso: NOW_ISO,
+    })
+
+  it('devuelve la sesión activa y vigente del contacto', async () => {
+    expect(await read([session()])).toEqual({
+      id: 'se-1',
+      state: { step: 'clinic_menu' },
+      expiresAt: '2026-10-19T13:30:00.000Z',
+    })
+  })
+
+  it('ignora la vencida, la cerrada, la de otro contacto y la de otra cuenta', async () => {
+    expect(
+      await read([
+        session({ id: 'vencida', expires_at: '2026-10-19T12:59:00.000Z' }),
+        session({ id: 'cerrada', status: 'completed' }),
+        session({ id: 'otro', contact_id: 'ct-2' }),
+        session({ id: 'otra-cuenta', account_id: 'acc-2' }),
+      ]),
+    ).toBeNull()
+  })
+
+  it('sin estado guardado devuelve uno vacío', async () => {
+    expect((await read([session({ state: null })]))?.state).toEqual({})
+  })
+
+  it('si la lectura falla lanza: no se confunde con "no hay sesión"', async () => {
+    const fake = makeFakeDb({ booking_sessions: [] })
+    fake._failNext('select', 'booking_sessions', { message: 'la base se cayó' })
+    await expect(
+      loadActiveSession(asClient(fake), { accountId: 'acc', contactId: 'ct-1', nowIso: NOW_ISO }),
+    ).rejects.toThrow('la base se cayó')
+  })
+})
+
+describe('loadHumanOwned', () => {
+  const read = (row: Record<string, unknown> | null) =>
+    loadHumanOwned(
+      asClient(makeFakeDb({ conversations: row ? [{ id: 'cv-1', account_id: 'acc', ...row }] : [] })),
+      'acc',
+      'cv-1',
+    )
+
+  it('es verdad con una persona asignada o con el bot en pausa', async () => {
+    expect(await read({ assigned_agent_id: 'u-1', ai_autoreply_disabled: false })).toBe(true)
+    expect(await read({ assigned_agent_id: null, ai_autoreply_disabled: true })).toBe(true)
+  })
+
+  it('es falso sin persona y sin pausa, o sin la conversación', async () => {
+    expect(await read({ assigned_agent_id: null, ai_autoreply_disabled: false })).toBe(false)
+    expect(await read({ assigned_agent_id: null, ai_autoreply_disabled: null })).toBe(false)
+    expect(await read(null)).toBe(false)
+  })
+
+  it('si la lectura falla lanza', async () => {
+    const fake = makeFakeDb({ conversations: [] })
+    fake._failNext('select', 'conversations', { message: 'la base se cayó' })
+    await expect(loadHumanOwned(asClient(fake), 'acc', 'cv-1')).rejects.toThrow('la base se cayó')
+  })
+})
+```
+
+En `src/verticals/agenda/agent/index.test.ts`, al final del archivo (`context`, `mocks` y `clinicDb` ya existen ahí):
+
+```ts
+// ------------------------------------------------------------
+// Candado por conversación (solo cuentas con clínica).
+// ------------------------------------------------------------
+
+describe('agendaInboundHandler — candado por conversación', () => {
+  const BUSY = '2099-01-01T00:00:00.000Z'
+  const NOW = new Date('2026-10-19T13:00:00.000Z')
+
+  type Db = ReturnType<typeof clinicDb>
+
+  const lockOf = (db: Db) => db._tables.conversations[0].bot_lock_until
+
+  /** El mensaje que el webhook ya guardó; el bot lo lee por su id. */
+  function withInbound(db: Db, text: string, replyId: string | null = null): Db {
+    db._tables.messages.push({
+      id: 'msg-in',
+      conversation_id: CONVERSATION,
+      message_id: 'wamid-in',
+      content_text: text,
+      interactive_reply_id: replyId,
+      reply_to_message_id: null,
+    })
+    return db
+  }
+
+  const ctx = (db: Db, over: Partial<VerticalInboundContext> = {}): VerticalInboundContext => ({
+    ...context(asClient(db), ['agenda', 'clinica']),
+    inboundMessageId: 'wamid-in',
+    ...over,
+  })
+
+  /** Corre el bot dejando pasar la espera del candado (5 s) sin esperar de verdad. */
+  async function runWaiting(input: VerticalInboundContext) {
+    const pending = agendaInboundHandler(input)
+    await vi.advanceTimersByTimeAsync(6_000)
+    return pending
+  }
+
+  const sentBodies = () =>
+    mocks.sendButtons.mock.calls.map((call) => (call[0] as { bodyText: string }).bodyText)
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+    vi.clearAllMocks()
+  })
+
+  it('toma el candado mientras responde y lo suelta al terminar', async () => {
+    const db = withInbound(clinicDb(), 'Hola')
+    let heldWhileSending: unknown = null
+    mocks.sendButtons.mockImplementationOnce(async () => {
+      heldWhileSending = lockOf(db)
+    })
+
+    const result = await agendaInboundHandler(ctx(db))
+
+    expect(result).toEqual({ consumed: true })
+    expect(heldWhileSending).not.toBeNull()
+    expect(lockOf(db)).toBeNull()
+  })
+
+  it('lo suelta aunque el bot falle, y el mensaje no llega a la IA', async () => {
+    const db = withInbound(clinicDb(), 'Hola')
+    mocks.sendButtons.mockRejectedValueOnce(new Error('Meta rechazó el envío'))
+
+    const result = await agendaInboundHandler(ctx(db))
+
+    expect(result).toEqual({ consumed: true })
+    expect(mocks.notifyAlert).toHaveBeenCalledTimes(1)
+    expect(lockOf(db)).toBeNull()
+  })
+
+  it('un error al tomar el candado cae en el mismo cierre: consume y avisa', async () => {
+    const db = withInbound(clinicDb(), 'Hola')
+    db._failNext('update', 'conversations', { message: 'la base se cayó' })
+
+    const result = await agendaInboundHandler(ctx(db))
+
+    expect(result).toEqual({ consumed: true })
+    expect(mocks.notifyAlert.mock.calls[0][0]).toContain('la base se cayó')
+    expect(mocks.sendButtons).not.toHaveBeenCalled()
+  })
+
+  describe('después de tomar el candado se lee de nuevo lo que pudo cambiar', () => {
+    it('la sesión: la que trajo el dispatcher pudo quedar vieja', async () => {
+      // El dispatcher la vio abierta en el menú; mientras esperaba, la cerró otro mensaje.
+      const stale = {
+        id: 'se-vieja',
+        state: { step: 'clinic_menu', mode: 'book', options: [], fails: 0 },
+        expiresAt: '2026-10-19T13:30:00.000Z',
+      }
+      const db = withInbound(clinicDb(), 'Hola')
+
+      await agendaInboundHandler(ctx(db, { session: stale }))
+
+      // Sin sesión y sin autorización, lo que corresponde es pedir la autorización. Con
+      // la sesión vieja habría vuelto a mostrar el menú.
+      expect(sentBodies()).toEqual(['Texto de autorización'])
+    })
+
+    it('la sesión abierta mientras tanto: la del dispatcher era null', async () => {
+      const db = withInbound(
+        clinicDb({
+          booking_sessions: [
+            {
+              id: 'se-nueva',
+              account_id: ACCOUNT,
+              contact_id: CONTACT,
+              status: 'active',
+              expires_at: '2026-10-19T13:30:00.000Z',
+              state: {
+                step: 'consent',
+                mode: 'book',
+                options: [
+                  { id: 'act:consent_yes', title: 'Sí, acepto' },
+                  { id: 'act:consent_no', title: 'No acepto' },
+                ],
+                fails: 0,
+              },
+            },
+          ],
+        }),
+        'Hola',
+      )
+
+      await agendaInboundHandler(ctx(db, { session: null }))
+
+      // Con la sesión de la base, "Hola" no responde a la autorización: se vuelve a
+      // preguntar en ella, sin abrir otra sesión.
+      expect(db._tables.booking_sessions).toHaveLength(1)
+      expect(db._tables.booking_sessions[0]).toMatchObject({ id: 'se-nueva', status: 'active' })
+      expect(db._tables.booking_sessions[0].state).toMatchObject({ step: 'consent', fails: 1 })
+    })
+
+    it('si una persona tomó el hilo mientras esperaba, el bot no contesta', async () => {
+      const db = withInbound(clinicDb(), 'Hola')
+      db._tables.conversations[0].ai_autoreply_disabled = true
+
+      const result = await agendaInboundHandler(ctx(db, { humanOwned: false }))
+
+      expect(result).toEqual({ consumed: false })
+      expect(mocks.sendButtons).not.toHaveBeenCalled()
+      expect(mocks.sendText).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('si el candado sigue ocupado', () => {
+    it('un mensaje normal se consume sin responder y el candado sigue siendo del otro', async () => {
+      const db = withInbound(clinicDb(), 'quiero una cita')
+      db._tables.conversations[0].bot_lock_until = BUSY
+
+      const result = await runWaiting(ctx(db))
+
+      expect(result).toEqual({ consumed: true })
+      expect(mocks.sendButtons).not.toHaveBeenCalled()
+      expect(mocks.sendText).not.toHaveBeenCalled()
+      expect(lockOf(db)).toBe(BUSY)
+    })
+
+    it.each([
+      ['una palabra de la clínica', 'tengo mucho dolor'],
+      ['una palabra del piso fijo', 'no puedo respirar bien'],
+    ])('%s se procesa igual, sin soltar el candado de otro', async (_label, text) => {
+      const db = withInbound(clinicDb(), text)
+      db._tables.conversations[0].bot_lock_until = BUSY
+
+      const result = await runWaiting(ctx(db))
+
+      expect(result).toEqual({ consumed: true })
+      // Los signos de alarma salen aunque el candado sea de otro.
+      expect(sentBodies().some((body) => body.includes('Signos de alarma'))).toBe(true)
+      expect(lockOf(db)).toBe(BUSY)
+    })
+
+    it('el toque de "Tengo una urgencia" también', async () => {
+      const db = withInbound(clinicDb(), '', 'act:urgent')
+      db._tables.conversations[0].bot_lock_until = BUSY
+
+      await runWaiting(ctx(db))
+
+      expect(sentBodies().some((body) => body.includes('Signos de alarma'))).toBe(true)
+      expect(lockOf(db)).toBe(BUSY)
+    })
+
+    it('si la configuración de la clínica no se puede leer, valen las palabras de siempre', async () => {
+      const db = withInbound(clinicDb({ clinic_settings: [] }), 'me duele mucho una muela')
+      db._tables.conversations[0].bot_lock_until = BUSY
+
+      const result = await runWaiting(ctx(db))
+
+      // Sin configuración el bot no atiende, pero el aviso prioritario al equipo sale.
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.notifications.length).toBeGreaterThan(0)
+      expect(lockOf(db)).toBe(BUSY)
+    })
+
+    it('un mensaje que no se encuentra no se da por urgente', async () => {
+      const db = clinicDb() // sin el mensaje guardado
+      db._tables.conversations[0].bot_lock_until = BUSY
+
+      const result = await runWaiting(ctx(db))
+
+      expect(result).toEqual({ consumed: true })
+      expect(mocks.sendButtons).not.toHaveBeenCalled()
+    })
+
+    it('si el mensaje no se puede leer por un error, falla cerrado y avisa', async () => {
+      const db = withInbound(clinicDb(), 'tengo mucho dolor')
+      db._tables.conversations[0].bot_lock_until = BUSY
+      db._failNext('select', 'messages', { message: 'la base se cayó' })
+
+      const result = await runWaiting(ctx(db))
+
+      expect(result).toEqual({ consumed: true })
+      expect(mocks.notifyAlert).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('una cuenta sin clínica', () => {
+    it('no toma ni espera el candado: sigue igual que siempre', async () => {
+      const db = withInbound(clinicDb(), 'Hola')
+      db._tables.conversations[0].bot_lock_until = BUSY
+
+      // Sin temporizadores que avanzar: si esperara el candado, esto no terminaría.
+      const result = await agendaInboundHandler(ctx(db, { modules: ['agenda'] }))
+
+      expect(result).toEqual({ consumed: true })
+      expect(mocks.sendList.mock.calls.length + mocks.sendButtons.mock.calls.length).toBeGreaterThan(0)
+      expect(lockOf(db)).toBe(BUSY)
+    })
+
+    it('tampoco lo toma si no trae módulos', async () => {
+      const db = withInbound(clinicDb(), 'Hola')
+
+      await agendaInboundHandler(ctx(db, { modules: undefined }))
+
+      expect(lockOf(db)).toBeNull()
+    })
+
+    it('no vuelve a leer la sesión: usa la que trajo el dispatcher', async () => {
+      const db = withInbound(clinicDb(), 'Hola')
+      const stale = {
+        id: 'se-vieja',
+        state: { step: 'pick_service', mode: 'book', options: [], fails: 0 },
+        expiresAt: '2026-10-19T13:30:00.000Z',
+      }
+
+      await agendaInboundHandler(ctx(db, { modules: ['agenda'], session: stale }))
+
+      // La sesión del dispatcher se atendió tal cual (aunque ya no exista en la base).
+      expect(db._tables.booking_sessions).toHaveLength(0)
+      expect(mocks.sendText.mock.calls.length + mocks.sendList.mock.calls.length + mocks.sendButtons.mock.calls.length).toBeGreaterThan(0)
+    })
+  })
+})
+```
+
+- [ ] **Step 2: Córrelas y verifica que fallan**
+
+Run: `npx vitest run src/verticals/agenda/agent/bot-lock.test.ts src/verticals/agenda/agent/db.test.ts src/verticals/agenda/agent/index.test.ts`
+Expected: FAIL, no existe `./bot-lock` y `loadActiveSession` no existe.
+
+- [ ] **Step 3: Implementa el candado**
 
 Crea `src/verticals/agenda/agent/bot-lock.ts`:
 
@@ -15148,9 +15979,11 @@ Crea `src/verticals/agenda/agent/bot-lock.ts`:
 //
 // Si un cliente manda dos mensajes seguidos, el webhook los procesa en
 // paralelo y el segundo puede leer el paso antes de que el primero lo
-// guarde. El candado es un UPDATE condicional sobre `conversations`: la
-// fila siempre existe, también en el primer mensaje. Vence solo, por si
-// un proceso muere con el candado puesto.
+// guarde. El candado es un UPDATE condicional sobre `conversations`
+// (`bot_lock_until`, migración 055): la fila siempre existe, también en el
+// primer mensaje. Vence solo, por si un proceso muere con el candado puesto.
+//
+// Solo lo usan las cuentas con el módulo clínica.
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -15166,10 +15999,16 @@ interface LockArgs {
   conversationId: string
 }
 
+/**
+ * Toma el candado. Devuelve con qué valor quedó (la hora en que vence), que es
+ * lo que identifica a su dueño al soltarlo, o `null` si lo tiene otro. Lanza si
+ * la base falla: un error no es "candado ocupado" (esperar y descartar el
+ * mensaje lo escondería).
+ */
 export async function acquireBotLock(
   db: SupabaseClient,
   args: LockArgs & { now: Date },
-): Promise<boolean> {
+): Promise<string | null> {
   const nowIso = args.now.toISOString()
   const untilIso = new Date(args.now.getTime() + LOCK_TTL_MS).toISOString()
   const claim = () =>
@@ -15180,61 +16019,86 @@ export async function acquireBotLock(
       .eq('account_id', args.accountId)
 
   const free = await claim().is('bot_lock_until', null).select('id')
-  if (((free.data ?? []) as unknown[]).length > 0) return true
+  if (free.error) throw new Error(`No se pudo tomar el candado: ${free.error.message}`)
+  if (((free.data ?? []) as unknown[]).length > 0) return untilIso
 
   const expired = await claim().lt('bot_lock_until', nowIso).select('id')
-  return ((expired.data ?? []) as unknown[]).length > 0
+  if (expired.error) throw new Error(`No se pudo tomar el candado: ${expired.error.message}`)
+  return ((expired.data ?? []) as unknown[]).length > 0 ? untilIso : null
 }
 
-async function releaseBotLock(db: SupabaseClient, args: LockArgs): Promise<void> {
+/**
+ * Suelta el candado solo si sigue siendo el de este proceso: si el trabajo
+ * tardó más que el candado, otro mensaje pudo tomarlo y no se le quita.
+ */
+async function releaseBotLock(db: SupabaseClient, args: LockArgs, held: string): Promise<void> {
   const { error } = await db
     .from('conversations')
     .update({ bot_lock_until: null })
     .eq('id', args.conversationId)
     .eq('account_id', args.accountId)
+    .eq('bot_lock_until', held)
   if (error) console.error('[agenda] no se pudo soltar el candado:', error.message)
 }
 
 /**
- * Corre `work` con el candado. Espera hasta `waitMs` a que se libere; si
- * sigue ocupado, registra y consume el mensaje sin responder.
+ * Corre `work` con el candado. Espera hasta `waitMs` a que se libere. Si sigue
+ * ocupado, el mensaje se consume sin responder (se registra), salvo que
+ * `runWithoutLockWhen` diga que no puede perderse (una urgencia): entonces el
+ * trabajo corre igual, sin candado y sin soltar el de otro. Si esa pregunta
+ * lanza, el error sube.
  */
 export async function withBotLock(
   db: SupabaseClient,
   args: LockArgs,
   work: () => Promise<VerticalDispatchResult>,
-  opts: { waitMs?: number } = {},
+  opts: { waitMs?: number; runWithoutLockWhen?: () => Promise<boolean> } = {},
 ): Promise<VerticalDispatchResult> {
   const deadline = Date.now() + (opts.waitMs ?? DEFAULT_WAIT_MS)
-  let locked = await acquireBotLock(db, { ...args, now: new Date() })
-  while (!locked && Date.now() < deadline) {
+  let held = await acquireBotLock(db, { ...args, now: new Date() })
+  while (!held && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, POLL_MS))
-    locked = await acquireBotLock(db, { ...args, now: new Date() })
+    held = await acquireBotLock(db, { ...args, now: new Date() })
   }
-  if (!locked) {
+  if (!held) {
+    if (opts.runWithoutLockWhen && (await opts.runWithoutLockWhen())) {
+      console.warn(
+        `[agenda] mensaje urgente sin candado en la conversación ${args.conversationId}: se procesa igual`,
+      )
+      return work()
+    }
     console.warn(`[agenda] mensaje sin candado en la conversación ${args.conversationId}`)
     return { consumed: true }
   }
   try {
     return await work()
   } finally {
-    await releaseBotLock(db, args)
+    await releaseBotLock(db, args, held)
   }
 }
 ```
 
-En `src/verticals/agenda/agent/db.ts`, después de `closeSession`:
+- [ ] **Step 4: Lecturas de la base**
+
+En `src/verticals/agenda/agent/db.ts`, el import de tipos arriba:
+
+```ts
+import type { VerticalSession } from '@/lib/verticals/types'
+```
+
+Después de `closeSession`:
 
 ```ts
 /**
- * Sesión activa y vigente del contacto. Tras esperar el candado hay que
- * volver a leerla: la que trajo el dispatcher pudo quedar vieja.
+ * Sesión activa y vigente del contacto. Tras esperar el candado hay que volver
+ * a leerla: la que trajo el dispatcher pudo quedar vieja. Lanza si la lectura
+ * falla: sin saber si hay una sesión, el mensaje no se puede atender.
  */
 export async function loadActiveSession(
   db: SupabaseClient,
   args: { accountId: string; contactId: string; nowIso: string },
 ): Promise<VerticalSession | null> {
-  const { data } = await db
+  const { data, error } = await db
     .from('booking_sessions')
     .select('id, state, expires_at')
     .eq('account_id', args.accountId)
@@ -15242,6 +16106,7 @@ export async function loadActiveSession(
     .eq('status', 'active')
     .gt('expires_at', args.nowIso)
     .maybeSingle()
+  if (error) throw new Error(`No se pudo leer la sesión: ${error.message}`)
   if (!data) return null
   const row = data as Record<string, unknown>
   return {
@@ -15252,24 +16117,105 @@ export async function loadActiveSession(
 }
 ```
 
-Y el import de tipos arriba:
+Antes de `loadHandoffAgentId`:
 
 ```ts
-import type { VerticalSession } from '@/lib/verticals/types'
+/**
+ * ¿Una persona lleva el hilo, o el bot está en pausa? Es lo que el dispatcher
+ * llama `humanOwned`. Tras esperar el candado se vuelve a leer: el mensaje de
+ * antes pudo pasar el hilo a una persona. Lanza si la lectura falla.
+ */
+export async function loadHumanOwned(
+  db: SupabaseClient,
+  accountId: string,
+  conversationId: string,
+): Promise<boolean> {
+  const { data, error } = await db
+    .from('conversations')
+    .select('assigned_agent_id, ai_autoreply_disabled')
+    .eq('id', conversationId)
+    .eq('account_id', accountId)
+    .maybeSingle()
+  if (error) throw new Error(`No se pudo leer el hilo: ${error.message}`)
+  const row = data as { assigned_agent_id: string | null; ai_autoreply_disabled: boolean | null } | null
+  return Boolean(row?.assigned_agent_id || row?.ai_autoreply_disabled)
+}
 ```
 
-En `src/verticals/agenda/agent/index.ts`:
+Y `loadInboundMessage` gana una opción `strict`, para que un error de la base no se lea como "no hay mensaje"
+(las demás llamadas no cambian):
 
 ```ts
+export async function loadInboundMessage(
+  db: SupabaseClient,
+  conversationId: string,
+  messageId: string,
+  /** Con `strict`, un error de la base lanza en vez de leerse como "no hay mensaje". */
+  opts: { strict?: boolean } = {},
+): Promise<InboundMessage | null> {
+  const { data, error } = await db
+    .from('messages')
+    .select('content_text, interactive_reply_id, reply_to_message_id')
+    .eq('conversation_id', conversationId)
+    .eq('message_id', messageId)
+    .maybeSingle()
+  if (error && opts.strict) throw new Error(`No se pudo leer el mensaje: ${error.message}`)
+  if (!data) return null
+  // …lo demás, igual
+```
+
+- [ ] **Step 5: Úsalo en el handler**
+
+En `src/verticals/agenda/agent/index.ts`, los imports y el handler (`isUrgentInbound` va antes de
+`agendaInboundHandler`, que se reemplaza):
+
+```ts
+import { loadClinicContext } from '@/modules/clinica/settings'
+import { DEFAULT_URGENCY_WORDS } from '@/modules/clinica/texts'
+
 import { withBotLock } from './bot-lock'
-import { loadActiveSession } from './db'
+import { handleAgendaInbound, type AgendaSender } from './controller'
+import { loadActiveSession, loadHumanOwned, loadInboundMessage } from './db'
+import { actId, detectsUrgency } from './state'
 ```
 
-Reemplaza `agendaInboundHandler`. El candado va **dentro** del `try`: tomarlo, esperarlo o soltarlo también puede lanzar, y si eso queda fuera de `failClosed` (tarea 7) el mensaje de un paciente llega a la IA.
-
 ```ts
+/**
+ * ¿Este mensaje no puede perderse aunque el candado esté ocupado? Un toque de
+ * urgencia ("Tengo una urgencia", "Sí, tengo alguno") o un texto con una palabra
+ * de urgencia de la clínica o del piso fijo (`detectsUrgency`). Si la
+ * configuración de la clínica no se puede leer valen las palabras de siempre:
+ * un fallo de lectura nunca esconde una urgencia. Un mensaje que no se
+ * encuentra no se da por urgente; uno que no se puede leer lanza.
+ */
+async function isUrgentInbound(ctx: VerticalInboundContext): Promise<boolean> {
+  if (!ctx.inboundMessageId) return false
+  const inbound = await loadInboundMessage(ctx.db, ctx.conversationId, ctx.inboundMessageId, {
+    strict: true,
+  })
+  if (!inbound) return false
+  if (inbound.replyId !== null) {
+    return inbound.replyId === actId('urgent') || inbound.replyId === actId('alarm_yes')
+  }
+  const clinic = await loadClinicContext(ctx.db, ctx.accountId).catch(() => null)
+  const words = clinic?.status === 'ok' ? clinic.clinic.urgencyWords : DEFAULT_URGENCY_WORDS
+  return detectsUrgency(inbound.text, words)
+}
+
+/**
+ * Punto de entrada del seam: el webhook ya validó la firma, guardó
+ * el mensaje entrante y resolvió cuenta/contacto/conversación. Aquí
+ * solo se construye el sender y se delega en el controlador. Todo lo que
+ * pueda lanzar va dentro del `try` (ver `failClosed`), también el candado.
+ *
+ * Con el módulo clínica, el mensaje se atiende con el candado de la
+ * conversación (ver `withBotLock`), y lo que pudo cambiar mientras se esperaba
+ * se lee de nuevo: la sesión y quién lleva el hilo. Si el candado no se
+ * consigue, el mensaje se consume sin responder, salvo una urgencia, que se
+ * procesa igual. Las demás cuentas siguen igual que siempre.
+ */
 export const agendaInboundHandler: VerticalInboundHandler = async (ctx) => {
-  const run = (session: VerticalInboundContext['session']) =>
+  const run = (session: VerticalInboundContext['session'], humanOwned: boolean) =>
     handleAgendaInbound({
       db: ctx.db,
       sender: createAgendaSender(ctx),
@@ -15279,25 +16225,31 @@ export const agendaInboundHandler: VerticalInboundHandler = async (ctx) => {
       configOwnerUserId: ctx.configOwnerUserId,
       inboundMessageId: ctx.inboundMessageId,
       session,
-      humanOwned: ctx.humanOwned ?? false,
+      humanOwned,
       modules: ctx.modules,
     })
 
   try {
-    if (!ctx.modules?.includes('clinica')) return await run(ctx.session)
-    // Clínicas: el candado evita respuestas cruzadas. La sesión se vuelve a
-    // leer adentro, porque la del dispatcher pudo cambiar mientras esperaba.
+    if (ctx.modules?.includes('clinica') !== true) return await run(ctx.session, ctx.humanOwned ?? false)
     return await withBotLock(
       ctx.db,
       { accountId: ctx.accountId, conversationId: ctx.conversationId },
-      async () =>
-        run(
-          await loadActiveSession(ctx.db, {
+      async () => {
+        // La sesión y el dueño del hilo que trajo el dispatcher pudieron quedar
+        // viejos mientras se esperaba: el mensaje de antes pudo cerrar la sesión o
+        // pasar el hilo a una persona. Si el dispatcher ya lo veía de una persona,
+        // se respeta.
+        const [session, humanNow] = await Promise.all([
+          loadActiveSession(ctx.db, {
             accountId: ctx.accountId,
             contactId: ctx.contactId,
             nowIso: new Date().toISOString(),
           }),
-        ),
+          loadHumanOwned(ctx.db, ctx.accountId, ctx.conversationId).catch(() => false),
+        ])
+        return run(session, (ctx.humanOwned ?? false) || humanNow)
+      },
+      { runWithoutLockWhen: () => isUrgentInbound(ctx) },
     )
   } catch (err) {
     return failClosed(ctx, err)
@@ -15305,12 +16257,12 @@ export const agendaInboundHandler: VerticalInboundHandler = async (ctx) => {
 }
 ```
 
-- [ ] **Step 4: Corre las pruebas**
+- [ ] **Step 6: Corre las pruebas**
 
 Run: `npx vitest run src/verticals/agenda src/lib/verticals && npx tsc --noEmit`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add src/verticals/agenda/agent
@@ -15321,86 +16273,354 @@ git commit -m "feat(clinica): lock the bot per conversation"
 
 ### Task 14: Permiso para avisos de control
 
+Después de agendar, una clínica pregunta **una sola vez** si el paciente quiere que le avisen cuando le toque
+control. La respuesta es una autorización aparte (`mercadeo`), distinta de la de datos.
+
+Reglas que esta tarea deja fijas:
+
+- **`mkt_yes` solo por toque.** Ningún texto acepta (`state.ts` no lo empareja: ni "sí", ni "acepto", ni un
+  número). Un "no" sí puede escribirse. Un toque viejo, sin la pregunta abierta, no autoriza nada.
+- **Qué queda guardado:** `kind: 'mercadeo'`, la decisión, `textSnapshot: texts.marketingBody` (el texto exacto
+  que vio la persona), la versión del texto de la clínica y `contact_ref` (lo pone `recordConsent`).
+- **No se pregunta** en una reserva de urgencia (`state.urgent`: primero la urgencia), ni tras reprogramar, ni si
+  ya respondió (sí o no), ni en una cuenta sin el módulo.
+- **Un "sí" que no se pudo guardar no promete avisos:** se vuelve a pedir (`consentError`). Un "no" que no se
+  pudo guardar no cambia nada (sin permiso no se le escribe) y no se le hace repetirlo.
+- **Si la pregunta no se puede enviar**, la cita sigue y no queda una sesión abierta sin menú.
+- **Es opcional:** quien escribe otra cosa ("gracias", una duda, un "sí" escrito) no recibe un "no entendí" ni,
+  a la segunda, pasa a una persona. La pregunta se cierra sin registrar nada y el mensaje sigue su camino como si
+  no hubiera sesión (paso 6).
+
 **Files:**
 - Create: `src/verticals/agenda/agent/clinic-marketing.test.ts`
-- Modify: `src/verticals/agenda/agent/steps/clinic-steps.ts`, `src/verticals/agenda/agent/controller.ts`
+- Modify: `src/verticals/agenda/agent/steps/clinic-steps.ts`, `src/verticals/agenda/agent/controller.ts`, `src/verticals/agenda/agent/state.ts` (solo un comentario), `src/verticals/agenda/agent/testing/clinic-harness.ts`, `src/verticals/agenda/agent/clinic-patients.test.ts`
 
 - [ ] **Step 1: Escribe las pruebas que fallan**
+
+En `src/verticals/agenda/agent/testing/clinic-harness.ts`, después de `grantedConsent`, una respuesta ya dada a la
+pregunta (con ella el bot no vuelve a preguntar):
+
+```ts
+/**
+ * Respuesta ya dada a la pregunta de avisos de control (por defecto, un "no").
+ * Con ella el bot no vuelve a preguntar después de agendar: sirve para las
+ * pruebas que miran el último mensaje de la reserva.
+ */
+export const answeredMarketing = (granted = false): Row => ({
+  ...grantedConsent(),
+  id: 'cons-mkt',
+  kind: 'mercadeo',
+  granted,
+  text_snapshot: '¿Quieres que te avisemos cuando te toque tu próximo control o limpieza?',
+  created_at: '2026-10-02T00:00:00.000Z',
+})
+```
 
 Crea `src/verticals/agenda/agent/clinic-marketing.test.ts`:
 
 ```ts
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { buildClinicTexts } from '@/modules/clinica/texts'
+
+import { DEFAULT_LABELS } from '../labels'
+import { patId, svcId } from './state'
 import {
   ACCOUNT,
   CONTACT,
   SERVICE_LIMPIEZA,
+  STAFF_ANA,
+  answeredMarketing,
   clinicDb,
   grantedConsent,
   last,
   makeRecorder,
   send,
+  type Recorder,
 } from './testing/clinic-harness'
-import { patId, svcId } from './state'
+import type { FakeDb } from './testing/fake-db'
 
-const patient = () => [
+const texts = buildClinicTexts(DEFAULT_LABELS)
+
+const patients = () => [
   { id: 'pat-1', account_id: ACCOUNT, contact_id: CONTACT, full_name: 'Marta Ruiz' },
 ]
 
-async function bookOnce(db: ReturnType<typeof clinicDb>, rec: ReturnType<typeof makeRecorder>) {
+/** Un paciente con autorización de datos y sin respuesta a los avisos de control. */
+const newPatientDb = (extra: Record<string, never[]> = {}) =>
+  clinicDb({ clinic_consents: [grantedConsent()], clinic_patients: patients(), ...extra })
+
+/** Del saludo a la cita confirmada. */
+async function bookOnce(db: FakeDb, rec: Recorder) {
   await send(db, rec, { text: 'Hola' })
   await send(db, rec, { replyId: 'act:book' })
   await send(db, rec, { replyId: patId('pat-1') })
   await send(db, rec, { replyId: svcId(SERVICE_LIMPIEZA) })
-  await send(db, rec, { replyId: last(rec).ids[0] })
-  await send(db, rec, { replyId: last(rec).ids[0] })
+  await send(db, rec, { replyId: last(rec).ids[0] }) // día
+  await send(db, rec, { replyId: last(rec).ids[0] }) // hora
   await send(db, rec, { replyId: 'act:confirm' })
 }
 
+const marketingRows = (db: FakeDb) => db._tables.clinic_consents.filter((c) => c.kind === 'mercadeo')
+
+const activeSteps = (db: FakeDb) =>
+  db._tables.booking_sessions
+    .filter((s) => s.status === 'active')
+    .map((s) => (s.state as { step: string }).step)
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
 describe('permiso para avisos de control', () => {
-  it('después de agendar pregunta y guarda la respuesta aparte', async () => {
-    const db = clinicDb({ clinic_consents: [grantedConsent()], clinic_patients: patient() })
+  it('después de agendar confirma la cita y pregunta, con dos botones', async () => {
+    const db = newPatientDb()
     const rec = makeRecorder()
     await bookOnce(db, rec)
+
+    expect(rec.calls.at(-2)?.bodyText).toContain('Quedó agendado')
+    expect(last(rec).bodyText).toBe(texts.marketingBody)
     expect(last(rec).ids).toEqual(['act:mkt_yes', 'act:mkt_no'])
+    expect(last(rec).titles).toEqual([texts.marketingYes, texts.marketingNo])
+    expect(activeSteps(db)).toEqual(['marketing_consent'])
+    // Preguntar no guarda nada todavía.
+    expect(marketingRows(db)).toHaveLength(0)
+  })
+
+  it('al tocar "Sí, avísame" guarda la respuesta aparte, con el texto que vio', async () => {
+    const db = newPatientDb()
+    const rec = makeRecorder()
+    await bookOnce(db, rec)
 
     await send(db, rec, { replyId: 'act:mkt_yes' })
-    expect(db._tables.clinic_consents.at(-1)).toMatchObject({
-      kind: 'mercadeo',
-      granted: true,
-      contact_ref: '573001112233',
-      text_snapshot: '¿Quieres que te avisemos cuando te toque tu próximo control o limpieza?',
-    })
-    expect(last(rec).bodyText).toContain('te avisaremos')
+
+    expect(marketingRows(db)).toMatchObject([
+      {
+        account_id: ACCOUNT,
+        contact_id: CONTACT,
+        contact_ref: '573001112233',
+        kind: 'mercadeo',
+        granted: true,
+        text_version: 2,
+        text_snapshot: '¿Quieres que te avisemos cuando te toque tu próximo control o limpieza?',
+        source: 'whatsapp',
+        message_id: expect.stringMatching(/^wamid-/),
+      },
+    ])
+    // La autorización de datos sigue siendo la suya, aparte.
+    expect(db._tables.clinic_consents.filter((c) => c.kind === 'datos_sensibles')).toHaveLength(1)
+    expect(last(rec).bodyText).toBe(texts.marketingThanksYes)
+    expect(activeSteps(db)).toEqual([])
   })
 
-  it('si ya respondió, no vuelve a preguntar', async () => {
-    const db = clinicDb({
-      clinic_consents: [
-        grantedConsent(),
-        { ...grantedConsent(), id: 'cons-2', kind: 'mercadeo', granted: false },
-      ],
-      clinic_patients: patient(),
-    })
+  it('al tocar "No, gracias" guarda el rechazo', async () => {
+    const db = newPatientDb()
     const rec = makeRecorder()
     await bookOnce(db, rec)
-    expect(last(rec).bodyText).toContain('Quedó agendado')
+
+    await send(db, rec, { replyId: 'act:mkt_no' })
+
+    expect(marketingRows(db)).toMatchObject([
+      { kind: 'mercadeo', granted: false, text_snapshot: texts.marketingBody },
+    ])
+    expect(last(rec).bodyText).toBe(texts.marketingThanksNo)
+    expect(activeSteps(db)).toEqual([])
   })
 
-  it('una cuenta sin el módulo no pregunta', async () => {
-    const db = clinicDb()
+  it('escribir "No, gracias" también es un rechazo', async () => {
+    const db = newPatientDb()
     const rec = makeRecorder()
-    const agenda = { modules: ['agenda' as const] }
-    await send(db, rec, { text: 'Hola' }, agenda)
-    await send(db, rec, { replyId: svcId(SERVICE_LIMPIEZA) }, agenda)
-    await send(db, rec, { replyId: last(rec).ids[0] }, agenda)
-    await send(db, rec, { replyId: last(rec).ids[0] }, agenda)
-    await send(db, rec, { replyId: 'act:confirm' }, agenda)
-    expect(last(rec).bodyText).toContain('Quedó agendado')
-    expect(db._tables.clinic_consents).toHaveLength(0)
+    await bookOnce(db, rec)
+
+    await send(db, rec, { text: 'No, gracias' })
+
+    expect(marketingRows(db)).toMatchObject([{ granted: false }])
+  })
+
+  describe('el sí llega solo por el toque del botón', () => {
+    it.each(['sí', 'si', 'Sí, avísame', 'acepto', 'claro', 'dale', '1', 'ok'])(
+      'escribir %j no autoriza nada',
+      async (text) => {
+        const db = newPatientDb()
+        const rec = makeRecorder()
+        await bookOnce(db, rec)
+
+        await send(db, rec, { text })
+
+        expect(marketingRows(db)).toHaveLength(0)
+      },
+    )
+
+    it('un toque viejo, sin la pregunta abierta, no autoriza nada', async () => {
+      const db = newPatientDb()
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' }) // el menú, sin pregunta
+
+      await send(db, rec, { replyId: 'act:mkt_yes' })
+      expect(marketingRows(db)).toHaveLength(0)
+
+      // Sin ninguna sesión abierta tampoco.
+      const closed = newPatientDb()
+      const rec2 = makeRecorder()
+      await send(closed, rec2, { replyId: 'act:mkt_yes' })
+      expect(marketingRows(closed)).toHaveLength(0)
+      expect(rec2.calls.at(-2)?.bodyText).toBe(texts.optionExpired)
+    })
+  })
+
+  describe('solo se pregunta una vez', () => {
+    it.each([
+      ['dijo que sí', true],
+      ['dijo que no', false],
+    ])('si ya respondió (%s), no vuelve a preguntar', async (_label, granted) => {
+      const db = clinicDb({
+        clinic_consents: [grantedConsent(), answeredMarketing(granted)],
+        clinic_patients: patients(),
+      })
+      const rec = makeRecorder()
+      await bookOnce(db, rec)
+
+      expect(last(rec).bodyText).toContain('Quedó agendado')
+      expect(activeSteps(db)).toEqual([])
+    })
+
+    it('tras responder, la siguiente cita ya no lo pregunta', async () => {
+      const db = newPatientDb()
+      const rec = makeRecorder()
+      await bookOnce(db, rec)
+      await send(db, rec, { replyId: 'act:mkt_no' })
+
+      await bookOnce(db, rec)
+
+      expect(last(rec).bodyText).toContain('Quedó agendado')
+      expect(marketingRows(db)).toHaveLength(1)
+    })
+  })
+
+  describe('cuándo no se pregunta', () => {
+    it('no en una reserva de urgencia: primero la urgencia', async () => {
+      const db = newPatientDb()
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'urgencia' })
+      await send(db, rec, { replyId: 'act:alarm_no' })
+      await send(db, rec, { replyId: 'pat:pat-1' })
+      await send(db, rec, { replyId: last(rec).ids[0] }) // hora de hoy
+      await send(db, rec, { replyId: 'act:confirm' })
+
+      expect(db._tables.booking_appointments).toHaveLength(1)
+      expect(last(rec).bodyText).toContain('Quedó agendado')
+      expect(activeSteps(db)).toEqual([])
+      expect(marketingRows(db)).toHaveLength(0)
+    })
+
+    it('no tras reprogramar', async () => {
+      const db = newPatientDb({
+        booking_appointments: [
+          {
+            id: 'ap-old',
+            account_id: ACCOUNT,
+            contact_id: CONTACT,
+            service_id: SERVICE_LIMPIEZA,
+            staff_id: STAFF_ANA,
+            patient_id: 'pat-1',
+            starts_at: '2026-10-20T15:00:00.000Z',
+            ends_at: '2026-10-20T15:30:00.000Z',
+            status: 'confirmed',
+            answers: {},
+          },
+        ] as never[],
+      })
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: 'rem:reschedule' })
+      await send(db, rec, { replyId: last(rec).ids[0] }) // día
+      await send(db, rec, { replyId: last(rec).ids[0] }) // hora
+      await send(db, rec, { replyId: 'act:confirm' })
+
+      expect(last(rec).bodyText).toContain('Quedó reprogramado')
+      expect(activeSteps(db)).toEqual([])
+      expect(marketingRows(db)).toHaveLength(0)
+    })
+
+    it('una cuenta sin el módulo no pregunta ni guarda nada', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      const agenda = { modules: ['agenda' as const] }
+      await send(db, rec, { text: 'Hola' }, agenda)
+      await send(db, rec, { replyId: svcId(SERVICE_LIMPIEZA) }, agenda)
+      await send(db, rec, { replyId: last(rec).ids[0] }, agenda)
+      await send(db, rec, { replyId: last(rec).ids[0] }, agenda)
+      await send(db, rec, { replyId: 'act:confirm' }, agenda)
+
+      expect(last(rec).bodyText).toContain('Quedó agendado')
+      expect(db._tables.clinic_consents).toHaveLength(0)
+      expect(activeSteps(db)).toEqual([])
+    })
+  })
+
+  describe('si algo falla', () => {
+    it('un "sí" que no se pudo guardar no promete avisos: se vuelve a pedir', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const db = newPatientDb()
+      const rec = makeRecorder()
+      await bookOnce(db, rec)
+
+      db._failNext('insert', 'clinic_consents', { message: 'timeout' })
+      await send(db, rec, { replyId: 'act:mkt_yes' })
+
+      expect(marketingRows(db)).toHaveLength(0)
+      expect(rec.calls.some((c) => c.bodyText === texts.marketingThanksYes)).toBe(false)
+      expect(rec.calls.at(-2)?.bodyText).toBe(texts.consentError)
+      expect(last(rec).bodyText).toBe(texts.marketingBody)
+      expect(activeSteps(db)).toEqual(['marketing_consent'])
+
+      // Otro toque, ya sin el fallo, sí queda.
+      await send(db, rec, { replyId: 'act:mkt_yes' })
+      expect(marketingRows(db)).toMatchObject([{ granted: true }])
+      expect(last(rec).bodyText).toBe(texts.marketingThanksYes)
+    })
+
+    it('un "no" que no se pudo guardar no cambia nada: sin permiso no se le escribe', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const db = newPatientDb()
+      const rec = makeRecorder()
+      await bookOnce(db, rec)
+
+      db._failNext('insert', 'clinic_consents', { message: 'timeout' })
+      await send(db, rec, { replyId: 'act:mkt_no' })
+
+      expect(marketingRows(db)).toHaveLength(0)
+      expect(last(rec).bodyText).toBe(texts.marketingThanksNo)
+      expect(activeSteps(db)).toEqual([])
+    })
+
+    it('si la pregunta no se puede enviar, la cita sigue y no queda una sesión colgada', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const db = newPatientDb()
+      const rec = makeRecorder()
+      const sendButtons = rec.sender.sendButtons
+      rec.sender.sendButtons = async (args) => {
+        if (args.bodyText === texts.marketingBody) throw new Error('Meta rechazó el envío')
+        return sendButtons(args)
+      }
+
+      await bookOnce(db, rec)
+
+      expect(db._tables.booking_appointments).toHaveLength(1)
+      expect(last(rec).bodyText).toContain('Quedó agendado')
+      expect(activeSteps(db)).toEqual([])
+    })
   })
 })
+```
+
+Las pruebas que miran el último mensaje de una reserva ahora empiezan con la pregunta ya respondida. En
+`src/verticals/agenda/agent/clinic-patients.test.ts`, importa `answeredMarketing` del arnés y cambia `open()` (la
+del bloque "el resumen y la confirmación dicen para quién es la cita"):
+
+```ts
+  // Con la pregunta de avisos de control ya respondida, la confirmación es lo último que se manda.
+  const open = () =>
+    clinicDb({ clinic_consents: [grantedConsent(), answeredMarketing()], clinic_patients: family() })
 ```
 
 - [ ] **Step 2: Córrelas y verifica que fallan**
@@ -15433,6 +16653,9 @@ En `handleClinicChoice`, antes de `default`:
 
 ```ts
     case 'marketing_consent': {
+      // El permiso para escribirle cuando le toque control es aparte del de los
+      // datos y solo se da con el toque: el emparejamiento nunca lee un "sí" escrito
+      // como `mkt_yes`, y un toque viejo no llega aquí sin la pregunta abierta.
       if (parsed?.kind !== 'act') return { kind: 'fail' }
       if (parsed.value !== 'mkt_yes' && parsed.value !== 'mkt_no') return { kind: 'fail' }
       const granted = parsed.value === 'mkt_yes'
@@ -15443,14 +16666,18 @@ En `handleClinicChoice`, antes de `default`:
           kind: 'mercadeo',
           granted,
           textVersion: ctx.clinic.consentVersion,
+          // El texto exacto que vio la persona: el de la pregunta.
           textSnapshot: texts.marketingBody,
           source: 'whatsapp',
           messageId: ctx.inboundMessageId,
           createdAtIso: ctx.nowIso,
         })
       } catch (err) {
-        // No se bloquea nada: sin registro simplemente no se le escribirá.
         console.error('[clinica] no se pudo guardar el permiso de control:', err)
+        // Un "sí" sin registro no puede prometer avisos: se vuelve a pedir. Un "no"
+        // sin registro no cambia nada (sin permiso no se le escribe), y no se le
+        // hace repetirlo.
+        if (granted) return { kind: 'fail', message: texts.consentError }
       }
       await ctx.sender.sendText({
         text: granted ? texts.marketingThanksYes : texts.marketingThanksNo,
@@ -15459,18 +16686,20 @@ En `handleClinicChoice`, antes de `default`:
     }
 ```
 
-En `src/verticals/agenda/agent/controller.ts`, al final de `confirmAppointment`, después de enviar la confirmación:
+En `src/verticals/agenda/agent/controller.ts`, al final de `confirmAppointment`, después de enviar la confirmación, y
+la función que pregunta justo después:
 
 ```ts
-  if (!oldAppt && dialog.clinic) {
+  // Clínica: después de agendar se pregunta, una sola vez, si quiere que le avisen
+  // cuando le toque control. No tras reprogramar (ya la hizo), y no en una reserva
+  // de urgencia: primero la urgencia. La cita ya está hecha: si la pregunta falla,
+  // no pasa nada.
+  if (!oldAppt && dialog.clinic && !state.urgent) {
     await bestEffort('pregunta de avisos de control', () => askMarketingConsent(dialog))
   }
-```
+}
 
-Y después de `sendPrepInfo`:
-
-```ts
-/** Permiso aparte para escribirle cuando le toque control (Fase 5). */
+/** Permiso aparte para escribirle cuando le toque control (Fase 5). Solo si nunca respondió. */
 async function askMarketingConsent(dialog: Dialog): Promise<void> {
   const answered = await latestConsent(dialog.db, {
     accountId: dialog.accountId,
@@ -15479,7 +16708,20 @@ async function askMarketingConsent(dialog: Dialog): Promise<void> {
   })
   if (answered) return
   const state = newBookingState('marketing_consent')
-  await conclude(dialog, await openSession(dialog, state), state)
+  const sessionId = await openSession(dialog, state)
+  try {
+    await conclude(dialog, sessionId, state)
+  } catch (err) {
+    // La pregunta no salió: una sesión abierta sin menú contestaría con "no
+    // entendí" a lo siguiente que escriba el paciente.
+    await closeSession(dialog.db, {
+      id: sessionId,
+      accountId: dialog.accountId,
+      status: 'completed',
+      updatedAtIso: dialog.nowIso,
+    })
+    throw err
+  }
 }
 ```
 
@@ -15493,6 +16735,149 @@ Expected: PASS.
 ```bash
 git add src/verticals/agenda/agent
 git commit -m "feat(clinica): ask for permission to send check-up notices"
+```
+
+- [ ] **Step 6: Que una pregunta sin contestar no pause al bot**
+
+Escribir "gracias" después de agendar daba "No entendí" y, con un segundo mensaje ("ok"), pasaba la conversación a
+una persona. Agrega a `src/verticals/agenda/agent/clinic-marketing.test.ts`, antes de `describe('solo se pregunta una vez', ...)`:
+
+```ts
+  // La pregunta es opcional: quien escribe otra cosa ("gracias", una duda) no recibe un
+  // "no entendí", y dos mensajes así no pasan la conversación a una persona.
+  describe('si no la contesta', () => {
+    async function afterQuestion() {
+      const db = newPatientDb()
+      const rec = makeRecorder()
+      await bookOnce(db, rec)
+      return { db, rec, callsBefore: rec.calls.length }
+    }
+
+    it.each(['gracias', 'ok', 'sí', 'perfecto, muchas gracias'])(
+      'escribir %j la deja sin responder, sin registrar nada y sigue su camino',
+      async (text) => {
+        const { db, rec, callsBefore } = await afterQuestion()
+
+        const result = await send(db, rec, { text })
+
+        expect(marketingRows(db)).toHaveLength(0)
+        expect(activeSteps(db)).toEqual([])
+        expect(rec.calls).toHaveLength(callsBefore)
+        // No lo contesta el bot: el mensaje sigue su camino (a la IA).
+        expect(result).toEqual({ consumed: false })
+      },
+    )
+
+    it('dos mensajes seguidos no pasan la conversación a una persona', async () => {
+      const { db, rec } = await afterQuestion()
+
+      await send(db, rec, { text: 'gracias' })
+      await send(db, rec, { text: 'ok' })
+
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+      expect(rec.calls.some((c) => c.bodyText.includes('asesor humano'))).toBe(false)
+      expect(rec.calls.some((c) => c.bodyText.includes('No entendí'))).toBe(false)
+    })
+
+    it('una duda va a la IA, como si no hubiera pregunta', async () => {
+      const { db, rec, callsBefore } = await afterQuestion()
+
+      const result = await send(db, rec, { text: '¿a qué hora debo llegar?' })
+
+      expect(result.consumed).toBe(false)
+      expect(rec.calls).toHaveLength(callsBefore)
+      expect(activeSteps(db)).toEqual([])
+    })
+
+    it('un saludo vuelve al menú', async () => {
+      const { db, rec } = await afterQuestion()
+
+      await send(db, rec, { text: 'Hola' })
+
+      expect(last(rec).ids).toContain('act:book')
+      expect(activeSteps(db)).toEqual(['clinic_menu'])
+      expect(marketingRows(db)).toHaveLength(0)
+    })
+
+    it('una foto o un audio reciben el aviso de siempre y el menú', async () => {
+      const { db, rec } = await afterQuestion()
+
+      await send(db, rec, { text: '[Unsupported message type: image]' })
+
+      expect(rec.calls.at(-2)?.bodyText).toBe(texts.nonTextNotice)
+      expect(last(rec).ids).toContain('act:book')
+    })
+
+    it('el toque de un menú que ya no está activo se dice, no se confunde con la pregunta', async () => {
+      const { db, rec } = await afterQuestion()
+
+      await send(db, rec, { replyId: svcId(SERVICE_LIMPIEZA) })
+
+      expect(rec.calls.at(-2)?.bodyText).toBe(texts.optionExpired)
+      expect(marketingRows(db)).toHaveLength(0)
+    })
+
+    it('una urgencia gana sobre la pregunta', async () => {
+      const { db, rec } = await afterQuestion()
+
+      await send(db, rec, { text: 'tengo mucho dolor' })
+
+      expect(last(rec).bodyText).toContain('Signos de alarma')
+      expect(activeSteps(db)).toEqual(['urgency'])
+      expect(marketingRows(db)).toHaveLength(0)
+    })
+
+    it('pedir una persona sigue pasando la conversación a una persona', async () => {
+      const { db, rec } = await afterQuestion()
+
+      await send(db, rec, { text: 'quiero hablar con un asesor' })
+
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    })
+
+    it('contestar con el botón después de otro mensaje ya no cuenta: la pregunta se cerró', async () => {
+      const { db, rec } = await afterQuestion()
+      await send(db, rec, { text: 'gracias' })
+
+      await send(db, rec, { replyId: 'act:mkt_yes' })
+
+      expect(marketingRows(db)).toHaveLength(0)
+      expect(rec.calls.at(-2)?.bodyText).toBe(texts.optionExpired)
+    })
+  })
+```
+
+Run: `npx vitest run src/verticals/agenda/agent/clinic-marketing.test.ts`
+Expected: FAIL, el bot contesta "No entendí" y a la segunda pasa a una persona.
+
+En `src/verticals/agenda/agent/controller.ts`, en `handleClinicInbound`, justo antes de `await advanceSession(dialog, session, input)`
+del bloque `if (session && state)`:
+
+```ts
+    // La pregunta de avisos de control es opcional. Quien escribe otra cosa ("gracias",
+    // una duda, un "sí" escrito) no recibe un "no entendí" ni, a la segunda, pasa a una
+    // persona: la pregunta se cierra sin registrar nada y el mensaje sigue su camino,
+    // como si no hubiera sesión. Solo el toque de sus botones o un "no" la contestan.
+    if (step === 'marketing_consent' && !matchChoice({ text, replyId, options: state.options })) {
+      await closeSession(dialog.db, {
+        id: session.id,
+        accountId: dialog.accountId,
+        status: 'completed',
+        updatedAtIso: dialog.nowIso,
+      })
+      return handleClinicInbound(dialog, null, null, input)
+    }
+```
+
+En `src/verticals/agenda/agent/state.ts`, el comentario de los menús de decisión aclara que el controlador cierra
+la pregunta de marketing con un `null` en vez de repetirla.
+
+Run: `npx vitest run src/verticals/agenda && npx tsc --noEmit`
+Expected: PASS.
+
+```bash
+git add src/verticals/agenda/agent
+git commit -m "fix(clinica): an unanswered check-up question does not pause the bot"
 ```
 
 ---
