@@ -91,6 +91,11 @@ describe('palabras de urgencia por defecto', () => {
     expect(new Set(words).size).toBe(words.length)
   })
 
+  it('"dolores" no es una palabra de urgencia: es un nombre', () => {
+    expect(words).not.toContain('dolores')
+    expect(containsUrgencyWord('Dolores Pérez pide una cita', words)).toBe(false)
+  })
+
   it.each([
     'me duelen las muelas',
     'me sangran las encías',
@@ -107,6 +112,12 @@ describe('palabras de urgencia por defecto', () => {
     'no puedo tragar',
     'tengo mucho dolor',
     'se me cayó una corona',
+    'no paro de sangrar',
+    'yo sangro mucho',
+    'se me hinchó la cara',
+    'se me inflamó la encía',
+    'me fracturé un diente',
+    'me falta el aire',
   ])('reconoce una urgencia: %s', (message) => {
     expect(containsUrgencyWord(message, words)).toBe(true)
   })
