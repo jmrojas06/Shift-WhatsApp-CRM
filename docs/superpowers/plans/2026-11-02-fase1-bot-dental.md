@@ -6236,6 +6236,17 @@ git commit -m "feat(clinica): ask for data consent and open the clinic menu"
 **Files:**
 - Create: `src/modules/clinica/patients.ts`, `src/modules/clinica/patients.test.ts`, `src/verticals/agenda/agent/clinic-patients.test.ts`
 - Modify: `src/verticals/agenda/agent/backend.ts`, `src/verticals/agenda/agent/internal-backend.ts`, `src/verticals/agenda/agent/steps/clinic-steps.ts`, `src/verticals/agenda/agent/controller.ts`, `src/verticals/agenda/agent/db.ts`
+- Modify (pruebas): `src/verticals/agenda/agent/db.test.ts`, `src/verticals/agenda/agent/internal-backend.test.ts`, `src/verticals/agenda/agent/clinic-consent.test.ts`
+
+**Reglas de esta tarea** (lo que el código real obliga y el plan primero no decía):
+
+- Un paciente solo se elige si es de **ese contacto y de esa cuenta**. El menú guardado en la sesión puede ser viejo, así que al elegir manda la base: `findPatients` lee con la cuenta del backend y el contacto, y un id que no aparece falla.
+- **El nombre del paciente es un dato personal.** No va a logs, avisos ni notas. Los errores solo llevan el mensaje de la base, y `handlePatientName` registra solo ese mensaje.
+- `advanceSession` no reinicia `fails` en los pasos clínicos. Por eso `applyClinicOutcome` lo pone en 0 cuando el paso cambia (un error en `pick_patient` seguido de "Otra persona" no puede pasar a una persona al primer nombre malo).
+- Mientras la persona escribe su nombre no valen ni el pase por `CLINIC_HUMAN_WORDS` ni las palabras de urgencia: "Paz Documento" es un nombre. `writingAnswer` cubre `new_patient_name`, y el chequeo aparte que había en el pase por `CLINIC_HUMAN_WORDS` sobra y se quita. (Las palabras de urgencia entran en la tarea 9, que debe respetar el mismo paso.)
+- `validatePatientName` solo deja letras, tildes, espacios, apóstrofo, guion y punto. Un sticker o una foto llegan como texto `[Unsupported message type: …]` y con la regla del plan original (sin números ni caracteres invisibles) se habrían registrado como paciente.
+- Una cuenta sin `clinica` no cambia: la cita no lleva `patient_id` ni `location_id`, porque `insertAppointment` solo los envía si vienen.
+- "Agendar" del menú ahora pasa por `pick_patient`: dos pruebas de `clinic-consent.test.ts` que esperaban el menú de servicios ahora esperan la pregunta del nombre.
 
 - [ ] **Step 1: Escribe las pruebas que fallan**
 
@@ -6244,19 +6255,132 @@ Crea `src/modules/clinica/patients.test.ts`:
 ```ts
 import { describe, expect, it } from 'vitest'
 
-import { validatePatientName } from './patients'
+import { asClient, makeFakeDb } from '@/verticals/agenda/agent/testing/fake-db'
+
+import { insertPatient, listPatients, validatePatientName } from './patients'
+
+const ACCOUNT = 'acc-1'
+const OTHER_ACCOUNT = 'acc-2'
+const CONTACT = 'ct-1'
+const OTHER_CONTACT = 'ct-2'
 
 describe('validatePatientName', () => {
   it('pide nombre y apellido', () => {
     expect(validatePatientName('Juan Pérez')).toEqual({ ok: true, value: 'Juan Pérez' })
     expect(validatePatientName('  Ana   María  Ruiz ')).toEqual({ ok: true, value: 'Ana María Ruiz' })
     expect(validatePatientName('Juan')).toEqual({ ok: false })
+    expect(validatePatientName('')).toEqual({ ok: false })
+    expect(validatePatientName('   ')).toEqual({ ok: false })
   })
 
   it('rechaza números, control y textos muy largos', () => {
     expect(validatePatientName('Juan 123')).toEqual({ ok: false })
     expect(validatePatientName('Juan​ Pérez')).toEqual({ ok: false })
+    expect(validatePatientName('Juan\u0000 Pérez')).toEqual({ ok: false })
     expect(validatePatientName('a b'.repeat(60))).toEqual({ ok: false })
+  })
+
+  it('acepta los nombres de verdad: tildes, apóstrofos, guiones y abreviaturas', () => {
+    for (const name of [
+      'María de los Ángeles Núñez',
+      "Sean O'Brien",
+      'Sean O’Brien',
+      'Jean-Pierre Dupont',
+      'Ma. Fernanda Gil',
+      'José Peña Jr.',
+    ]) {
+      expect(validatePatientName(name)).toEqual({ ok: true, value: name })
+    }
+  })
+
+  it('rechaza lo que no es un nombre: el aviso de un adjunto, emojis, etiquetas y símbolos', () => {
+    for (const text of [
+      '[Unsupported message type: sticker]',
+      'Juan 😀 Pérez',
+      '<b>Juan</b> Pérez',
+      'Juan @ Pérez',
+      'Juan_Pérez Gil',
+      '- -',
+      '. .',
+    ]) {
+      expect(validatePatientName(text)).toEqual({ ok: false })
+    }
+  })
+
+  it('admite el largo máximo de la base y ni un carácter más', () => {
+    const exact = `${'a'.repeat(59)} ${'b'.repeat(60)}`
+    expect([...exact]).toHaveLength(120)
+    expect(validatePatientName(exact)).toEqual({ ok: true, value: exact })
+    expect(validatePatientName(`${exact}c`)).toEqual({ ok: false })
+  })
+})
+
+describe('listPatients', () => {
+  const row = (overrides: Record<string, unknown>) => ({
+    id: 'pat-x',
+    account_id: ACCOUNT,
+    contact_id: CONTACT,
+    full_name: 'Nombre Apellido',
+    ...overrides,
+  })
+
+  it('trae solo los pacientes de ese contacto en esa cuenta, por nombre', async () => {
+    const db = makeFakeDb({
+      clinic_patients: [
+        row({ id: 'pat-2', full_name: 'Tomás Gil' }),
+        row({ id: 'pat-1', full_name: 'Marta Ruiz' }),
+        row({ id: 'pat-3', contact_id: OTHER_CONTACT, full_name: 'Ajeno Gil' }),
+        row({ id: 'pat-4', account_id: OTHER_ACCOUNT, full_name: 'Otra Cuenta' }),
+      ],
+    })
+    expect(await listPatients(asClient(db), { accountId: ACCOUNT, contactId: CONTACT })).toEqual([
+      { id: 'pat-1', fullName: 'Marta Ruiz' },
+      { id: 'pat-2', fullName: 'Tomás Gil' },
+    ])
+  })
+
+  it('sin pacientes devuelve una lista vacía', async () => {
+    const db = makeFakeDb({ clinic_patients: [] })
+    expect(await listPatients(asClient(db), { accountId: ACCOUNT, contactId: CONTACT })).toEqual([])
+  })
+
+  it('si la base falla lanza, y el error no lleva datos de nadie', async () => {
+    const db = makeFakeDb({ clinic_patients: [row({ full_name: 'Marta Ruiz' })] })
+    db._failNext('select', 'clinic_patients', { message: 'timeout' })
+    const error = await listPatients(asClient(db), { accountId: ACCOUNT, contactId: CONTACT }).catch(
+      (err: unknown) => err,
+    )
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toBe('No se pudieron leer los pacientes: timeout')
+  })
+})
+
+describe('insertPatient', () => {
+  it('guarda al paciente en esa cuenta y ese contacto, y devuelve su id', async () => {
+    const db = makeFakeDb({ clinic_patients: [] })
+    const patient = await insertPatient(asClient(db), {
+      accountId: ACCOUNT,
+      contactId: CONTACT,
+      fullName: 'Tomás Gil Ruiz',
+    })
+    expect(patient.fullName).toBe('Tomás Gil Ruiz')
+    expect(patient.id).toMatch(/^[0-9a-f-]{36}$/)
+    expect(db._tables.clinic_patients).toEqual([
+      { id: patient.id, account_id: ACCOUNT, contact_id: CONTACT, full_name: 'Tomás Gil Ruiz' },
+    ])
+  })
+
+  it('si la base falla lanza, y el error no lleva el nombre', async () => {
+    const db = makeFakeDb({ clinic_patients: [] })
+    db._failNext('insert', 'clinic_patients', { message: 'caída' })
+    const error = await insertPatient(asClient(db), {
+      accountId: ACCOUNT,
+      contactId: CONTACT,
+      fullName: 'Tomás Gil Ruiz',
+    }).catch((err: unknown) => err)
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toBe('No se pudo registrar al paciente: caída')
+    expect(db._tables.clinic_patients).toHaveLength(0)
   })
 })
 ```
@@ -6264,24 +6388,69 @@ describe('validatePatientName', () => {
 Crea `src/verticals/agenda/agent/clinic-patients.test.ts`:
 
 ```ts
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { buildClinicTexts } from '@/modules/clinica/texts'
+
+import { DEFAULT_LABELS } from '../labels'
+import { AGENDA_AGENT_TEXTS } from '../texts'
+import { patId, svcId } from './state'
 import {
   ACCOUNT,
   CONTACT,
+  LOCATION,
   SERVICE_LIMPIEZA,
+  STAFF_ANA,
   clinicDb,
   grantedConsent,
   last,
   makeRecorder,
   send,
+  type Recorder,
 } from './testing/clinic-harness'
-import { patId, svcId } from './state'
+import type { FakeDb, Row } from './testing/fake-db'
 
-const family = () => [
+const texts = buildClinicTexts(DEFAULT_LABELS)
+
+const OTHER_CONTACT = 'ct-2'
+const OTHER_ACCOUNT = 'acc-2'
+
+const family = (): Row[] => [
   { id: 'pat-1', account_id: ACCOUNT, contact_id: CONTACT, full_name: 'Marta Ruiz' },
   { id: 'pat-2', account_id: ACCOUNT, contact_id: CONTACT, full_name: 'Tomás Gil' },
 ]
+
+/** Pacientes que existen pero NO son de este contacto en esta cuenta. */
+const strangers = (): Row[] => [
+  { id: 'pat-ajeno', account_id: ACCOUNT, contact_id: OTHER_CONTACT, full_name: 'Ajeno Gil' },
+  { id: 'pat-otra-cuenta', account_id: OTHER_ACCOUNT, contact_id: CONTACT, full_name: 'Otra Cuenta' },
+]
+
+const session = (state: Record<string, unknown>): Row => ({
+  id: 'ses-1',
+  account_id: ACCOUNT,
+  contact_id: CONTACT,
+  status: 'active',
+  expires_at: '2026-10-19T13:10:00.000Z',
+  state: { mode: 'book', options: [], fails: 0, ...state },
+})
+
+const sessionState = (db: FakeDb) =>
+  db._tables.booking_sessions.find((s) => s.status === 'active')?.state as
+    | { step: string; fails: number; patientId?: string }
+    | undefined
+
+/** Del menú a "Agendar" y, con el paciente ya elegido, hasta confirmar. */
+async function confirmBooking(db: FakeDb, rec: Recorder) {
+  await send(db, rec, { replyId: svcId(SERVICE_LIMPIEZA) })
+  await send(db, rec, { replyId: last(rec).ids[0] }) // día
+  await send(db, rec, { replyId: last(rec).ids[0] }) // hora
+  await send(db, rec, { replyId: 'act:confirm' })
+}
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 describe('pacientes por número', () => {
   it('sin pacientes pide el nombre y lo registra', async () => {
@@ -6289,13 +6458,20 @@ describe('pacientes por número', () => {
     const rec = makeRecorder()
     await send(db, rec, { text: 'Hola' })
     await send(db, rec, { replyId: 'act:book' })
+    expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
     expect(last(rec).bodyText).toContain('nombre y los apellidos')
+    expect(sessionState(db)?.step).toBe('new_patient_name')
 
     await send(db, rec, { text: 'Tomás Gil Ruiz' })
     expect(db._tables.clinic_patients).toMatchObject([
       { account_id: ACCOUNT, contact_id: CONTACT, full_name: 'Tomás Gil Ruiz' },
     ])
     expect(last(rec).ids).toContain(svcId(SERVICE_LIMPIEZA))
+    expect(sessionState(db)).toMatchObject({
+      step: 'pick_service',
+      fails: 0,
+      patientId: db._tables.clinic_patients[0].id,
+    })
   })
 
   it('un nombre incompleto se vuelve a pedir, y al segundo fallo pasa a una persona', async () => {
@@ -6303,10 +6479,30 @@ describe('pacientes por número', () => {
     const rec = makeRecorder()
     await send(db, rec, { text: 'Hola' })
     await send(db, rec, { replyId: 'act:book' })
+
     await send(db, rec, { text: 'Juan' })
+    expect(rec.calls.at(-2)?.bodyText).toBe(texts.patientNameRetry)
     expect(rec.calls.at(-2)?.bodyText).toContain('Necesito nombre y apellidos')
+    expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    expect(sessionState(db)).toMatchObject({ step: 'new_patient_name', fails: 1 })
+
     await send(db, rec, { text: 'Juan' })
     expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
+    expect(db._tables.clinic_patients).toHaveLength(0)
+    expect(db._tables.booking_sessions[0].status).toBe('cancelled')
+  })
+
+  it('un fallo seguido de un nombre completo no deja huella: nace con 0 fallos', async () => {
+    const db = clinicDb({ clinic_consents: [grantedConsent()] })
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { replyId: 'act:book' })
+    await send(db, rec, { text: 'Juan' })
+    await send(db, rec, { text: 'Juan Pérez' })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    expect(sessionState(db)).toMatchObject({ step: 'pick_service', fails: 0 })
   })
 
   it('con varios pacientes los ofrece junto a "Otra persona"', async () => {
@@ -6314,37 +6510,578 @@ describe('pacientes por número', () => {
     const rec = makeRecorder()
     await send(db, rec, { text: 'Hola' })
     await send(db, rec, { replyId: 'act:book' })
-    expect(last(rec).titles).toEqual(['Marta Ruiz', 'Tomás Gil', 'Otra persona'])
+    expect(last(rec).bodyText).toBe(texts.patientMenuBody)
+    expect(last(rec).titles).toEqual(['Marta Ruiz', 'Tomás Gil', texts.patientOther])
+    expect(last(rec).ids).toEqual([patId('pat-1'), patId('pat-2'), patId('new')])
   })
 
-  it('la cita queda a nombre del paciente elegido', async () => {
+  it('solo ofrece los pacientes de este contacto en esta cuenta', async () => {
+    const db = clinicDb({
+      clinic_consents: [grantedConsent()],
+      clinic_patients: [...family(), ...strangers()],
+    })
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { replyId: 'act:book' })
+    expect(last(rec).titles).toEqual(['Marta Ruiz', 'Tomás Gil', texts.patientOther])
+  })
+
+  it('con muchos pacientes caben en la lista junto a "Otra persona"', async () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({
+      id: `pat-${String(i).padStart(2, '0')}`,
+      account_id: ACCOUNT,
+      contact_id: CONTACT,
+      full_name: `Paciente ${String.fromCharCode(65 + i)} Gil`,
+    }))
+    const db = clinicDb({ clinic_consents: [grantedConsent()], clinic_patients: many })
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { replyId: 'act:book' })
+    expect(last(rec).kind).toBe('list')
+    expect(last(rec).ids).toHaveLength(10)
+    expect(last(rec).ids.at(-1)).toBe(patId('new'))
+  })
+
+  it('la cita queda a nombre del paciente elegido, en la sede de la clínica', async () => {
     const db = clinicDb({ clinic_consents: [grantedConsent()], clinic_patients: family() })
     const rec = makeRecorder()
     await send(db, rec, { text: 'Hola' })
     await send(db, rec, { replyId: 'act:book' })
     await send(db, rec, { replyId: patId('pat-2') })
-    await send(db, rec, { replyId: svcId(SERVICE_LIMPIEZA) })
-    await send(db, rec, { replyId: last(rec).ids[0] }) // día
-    await send(db, rec, { replyId: last(rec).ids[0] }) // hora
-    await send(db, rec, { replyId: 'act:confirm' })
-    expect(db._tables.booking_appointments).toMatchObject([{ patient_id: 'pat-2' }])
+    await confirmBooking(db, rec)
+    expect(db._tables.booking_appointments).toMatchObject([
+      { patient_id: 'pat-2', location_id: LOCATION, contact_id: CONTACT },
+    ])
   })
 
-  it('un paciente de otro contacto no se puede elegir', async () => {
+  it('también se puede elegir escribiendo el nombre o el número', async () => {
     const db = clinicDb({ clinic_consents: [grantedConsent()], clinic_patients: family() })
     const rec = makeRecorder()
     await send(db, rec, { text: 'Hola' })
     await send(db, rec, { replyId: 'act:book' })
-    await send(db, rec, { replyId: patId('ajeno') })
-    expect(last(rec).titles).toContain('Otra persona')
+    await send(db, rec, { text: 'tomas gil' })
+    expect(sessionState(db)).toMatchObject({ step: 'pick_service', patientId: 'pat-2' })
+
+    const db2 = clinicDb({ clinic_consents: [grantedConsent()], clinic_patients: family() })
+    const rec2 = makeRecorder()
+    await send(db2, rec2, { text: 'Hola' })
+    await send(db2, rec2, { replyId: 'act:book' })
+    await send(db2, rec2, { text: '1' })
+    expect(sessionState(db2)).toMatchObject({ step: 'pick_service', patientId: 'pat-1' })
+  })
+
+  it('"Otra persona" pide el nombre, la registra y la cita queda a su nombre', async () => {
+    const db = clinicDb({ clinic_consents: [grantedConsent()], clinic_patients: family() })
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { replyId: 'act:book' })
+    await send(db, rec, { replyId: patId('new') })
+    expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
+
+    await send(db, rec, { text: 'Lucía Gil Ruiz' })
+    const created = db._tables.clinic_patients.find((p) => p.full_name === 'Lucía Gil Ruiz')
+    expect(created).toMatchObject({ account_id: ACCOUNT, contact_id: CONTACT })
+    await confirmBooking(db, rec)
+    expect(db._tables.booking_appointments).toMatchObject([{ patient_id: created?.id }])
+  })
+
+  it('un fallo en el menú de personas no se arrastra al nombre', async () => {
+    const db = clinicDb({ clinic_consents: [grantedConsent()], clinic_patients: family() })
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { replyId: 'act:book' })
+    await send(db, rec, { text: 'no sé' })
+    expect(sessionState(db)).toMatchObject({ step: 'pick_patient', fails: 1 })
+
+    await send(db, rec, { replyId: patId('new') })
+    expect(sessionState(db)).toMatchObject({ step: 'new_patient_name', fails: 0 })
+
+    // Un solo nombre malo no debe pasar a una persona.
+    await send(db, rec, { text: 'Juan' })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    expect(sessionState(db)).toMatchObject({ step: 'new_patient_name', fails: 1 })
+
+    // El segundo sí.
+    await send(db, rec, { text: 'Juan' })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+  })
+
+  it('elegir a alguien del menú olvida los fallos anteriores', async () => {
+    const db = clinicDb({ clinic_consents: [grantedConsent()], clinic_patients: family() })
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { replyId: 'act:book' })
+    await send(db, rec, { text: 'no sé' })
+    await send(db, rec, { replyId: patId('pat-1') })
+    expect(sessionState(db)).toMatchObject({ step: 'pick_service', fails: 0, patientId: 'pat-1' })
+  })
+
+  describe('un paciente solo se elige si es de este contacto y de esta cuenta', () => {
+    it('un id que no está en el menú no se puede elegir', async () => {
+      const db = clinicDb({
+        clinic_consents: [grantedConsent()],
+        clinic_patients: [...family(), ...strangers()],
+      })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:book' })
+      await send(db, rec, { replyId: patId('ajeno') })
+      expect(last(rec).titles).toContain(texts.patientOther)
+      expect(sessionState(db)).toMatchObject({ step: 'pick_patient', fails: 1 })
+      expect(sessionState(db)?.patientId).toBeUndefined()
+    })
+
+    it.each(['pat-ajeno', 'pat-otra-cuenta', 'pat-no-existe'])(
+      'aunque el menú guardado lo traiga (%s), la base manda',
+      async (id) => {
+        const db = clinicDb({
+          clinic_consents: [grantedConsent()],
+          clinic_patients: [...family(), ...strangers()],
+          booking_sessions: [
+            session({
+              step: 'pick_patient',
+              options: [
+                { id: patId(id), title: 'Intruso' },
+                { id: patId('new'), title: texts.patientOther },
+              ],
+            }),
+          ],
+        })
+        const rec = makeRecorder()
+        await send(db, rec, { replyId: patId(id) })
+        expect(sessionState(db)?.patientId).toBeUndefined()
+        expect(sessionState(db)).toMatchObject({ step: 'pick_patient', fails: 1 })
+        // Vuelve a mostrar solo a las personas de este contacto.
+        expect(last(rec).titles).toEqual(['Marta Ruiz', 'Tomás Gil', texts.patientOther])
+        expect(db._tables.booking_appointments).toHaveLength(0)
+      },
+    )
+
+    it('un paciente que dejó de ser de este contacto no se agenda aunque el menú siga abierto', async () => {
+      const db = clinicDb({
+        clinic_consents: [grantedConsent()],
+        clinic_patients: [family()[0]],
+        booking_sessions: [
+          session({
+            step: 'pick_patient',
+            options: [
+              { id: patId('pat-1'), title: 'Marta Ruiz' },
+              { id: patId('pat-2'), title: 'Tomás Gil' },
+              { id: patId('new'), title: texts.patientOther },
+            ],
+          }),
+        ],
+      })
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: patId('pat-2') })
+      expect(sessionState(db)?.patientId).toBeUndefined()
+      expect(last(rec).titles).toEqual(['Marta Ruiz', texts.patientOther])
+    })
+  })
+
+  describe('mientras escribe el nombre no cuentan las palabras de otros temas', () => {
+    it.each(['Paz Documento', 'Camila Pago Receta', 'Dolor Pérez', 'Ana Queja Gil', 'Rosa Factura'])(
+      '"%s" es un nombre: no pasa a una persona, ni por documentos ni por urgencia',
+      async (name) => {
+        const db = clinicDb({ clinic_consents: [grantedConsent()] })
+        const rec = makeRecorder()
+        await send(db, rec, { text: 'Hola' })
+        await send(db, rec, { replyId: 'act:book' })
+        const result = await send(db, rec, { text: name })
+
+        expect(result).toEqual({ consumed: true })
+        expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+        expect(db._tables.notifications).toHaveLength(0)
+        expect(db._tables.clinic_patients).toMatchObject([{ full_name: name }])
+        expect(last(rec).ids).toContain(svcId(SERVICE_LIMPIEZA))
+      },
+    )
+
+    it('un nombre con "persona" o "humano" tampoco es un pedido de asesor', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:book' })
+      await send(db, rec, { text: 'Ana Persona Humano' })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+      expect(db._tables.clinic_patients).toMatchObject([{ full_name: 'Ana Persona Humano' }])
+    })
+
+    it('pero pedir un asesor, solo, sigue pasando a una persona', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:book' })
+      await send(db, rec, { text: 'asesor' })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.clinic_patients).toHaveLength(0)
+    })
+
+    it('fuera del paso del nombre, esas mismas palabras sí pasan a una persona', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { text: 'Necesito mi documento' })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    })
+  })
+
+  describe('lo que no es un nombre', () => {
+    it.each(['[Unsupported message type: sticker]', '[Unsupported message type: image]', '', '12345 678'])(
+      'no se registra como paciente: %j',
+      async (text) => {
+        const db = clinicDb({ clinic_consents: [grantedConsent()] })
+        const rec = makeRecorder()
+        await send(db, rec, { text: 'Hola' })
+        await send(db, rec, { replyId: 'act:book' })
+        await send(db, rec, { text })
+        expect(db._tables.clinic_patients).toHaveLength(0)
+        expect(rec.calls.at(-2)?.bodyText).toBe(texts.patientNameRetry)
+        expect(sessionState(db)).toMatchObject({ step: 'new_patient_name', fails: 1 })
+      },
+    )
+
+    it('un toque viejo de un botón no se toma como nombre', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:book' })
+      await send(db, rec, { replyId: 'act:book' })
+      expect(db._tables.clinic_patients).toHaveLength(0)
+      expect(sessionState(db)).toMatchObject({ step: 'new_patient_name', fails: 1 })
+    })
+  })
+
+  describe('si no se pudo guardar', () => {
+    it('avisa, no crea al paciente y deja volver a intentar', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:book' })
+
+      db._failNext('insert', 'clinic_patients', { message: 'caída' })
+      await send(db, rec, { text: 'Tomás Gil Ruiz' })
+      expect(rec.calls.at(-2)?.bodyText).toBe(texts.patientSaveError)
+      expect(db._tables.clinic_patients).toHaveLength(0)
+      expect(sessionState(db)).toMatchObject({ step: 'new_patient_name', fails: 1 })
+
+      await send(db, rec, { text: 'Tomás Gil Ruiz' })
+      expect(db._tables.clinic_patients).toMatchObject([{ full_name: 'Tomás Gil Ruiz' }])
+      expect(sessionState(db)).toMatchObject({ step: 'pick_service', fails: 0 })
+    })
+
+    it('si falla dos veces seguidas pasa a una persona', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:book' })
+      db._failNext('insert', 'clinic_patients', { message: 'caída' })
+      db._failNext('insert', 'clinic_patients', { message: 'caída' })
+      await send(db, rec, { text: 'Tomás Gil Ruiz' })
+      await send(db, rec, { text: 'Tomás Gil Ruiz' })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.clinic_patients).toHaveLength(0)
+    })
+  })
+
+  describe('el nombre del paciente no sale en logs, avisos ni notas', () => {
+    const NAME = 'Eleuterio Zambrano Quintero'
+
+    const everythingLogged = (spies: { mock: { calls: unknown[][] } }[]) =>
+      JSON.stringify(
+        spies.flatMap((spy) =>
+          spy.mock.calls.map((args) =>
+            args.map((arg) => (arg instanceof Error ? arg.message : arg)),
+          ),
+        ),
+      )
+
+    it('ni cuando se registra, ni cuando se agenda', async () => {
+      const spies = [
+        vi.spyOn(console, 'error').mockImplementation(() => {}),
+        vi.spyOn(console, 'warn').mockImplementation(() => {}),
+        vi.spyOn(console, 'log').mockImplementation(() => {}),
+        vi.spyOn(console, 'info').mockImplementation(() => {}),
+      ]
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:book' })
+      await send(db, rec, { text: NAME })
+      await confirmBooking(db, rec)
+      expect(db._tables.booking_appointments).toHaveLength(1)
+      expect(everythingLogged(spies)).not.toContain('Zambrano')
+    })
+
+    it('ni cuando la base falla al guardarlo', async () => {
+      const spies = [
+        vi.spyOn(console, 'error').mockImplementation(() => {}),
+        vi.spyOn(console, 'warn').mockImplementation(() => {}),
+        vi.spyOn(console, 'log').mockImplementation(() => {}),
+      ]
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:book' })
+      db._failNext('insert', 'clinic_patients', { message: 'caída' })
+      await send(db, rec, { text: NAME })
+      expect(spies[0]).toHaveBeenCalled()
+      expect(everythingLogged(spies)).not.toContain('Zambrano')
+      expect(everythingLogged(spies)).not.toContain('Eleuterio')
+    })
+
+    it('ni en el aviso ni en la nota cuando el nombre falla y pasa a una persona', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:book' })
+      await send(db, rec, { text: 'Eleuterio' })
+      await send(db, rec, { text: 'Eleuterio' })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      const written = JSON.stringify([
+        db._tables.notifications,
+        db._tables.conversations,
+        db._tables.booking_events,
+      ])
+      expect(written).not.toContain('Eleuterio')
+    })
+  })
+})
+
+describe('la cita conserva al paciente', () => {
+  const oldAppointment = (extra: Row = {}): Row => ({
+    id: 'ap-old',
+    account_id: ACCOUNT,
+    contact_id: CONTACT,
+    service_id: SERVICE_LIMPIEZA,
+    staff_id: STAFF_ANA,
+    starts_at: '2026-10-20T15:00:00.000Z',
+    ends_at: '2026-10-20T15:30:00.000Z',
+    status: 'confirmed',
+    answers: {},
+    ...extra,
+  })
+
+  async function reschedule(db: FakeDb) {
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: 'rem:reschedule' })
+    await send(db, rec, { replyId: last(rec).ids[0] }) // día
+    await send(db, rec, { replyId: last(rec).ids[0] }) // hora
+    await send(db, rec, { replyId: 'act:confirm' })
+    return rec
+  }
+
+  it('al reprogramar, la cita nueva es del mismo paciente', async () => {
+    const db = clinicDb({
+      clinic_consents: [grantedConsent()],
+      clinic_patients: family(),
+      booking_appointments: [oldAppointment({ patient_id: 'pat-2' })],
+    })
+    await reschedule(db)
+    const [old, fresh] = db._tables.booking_appointments
+    expect(old).toMatchObject({ id: 'ap-old', status: 'cancelled' })
+    expect(fresh).toMatchObject({
+      patient_id: 'pat-2',
+      location_id: LOCATION,
+      rescheduled_from: 'ap-old',
+      status: 'confirmed',
+    })
+  })
+
+  it('una cita sin paciente (anterior al módulo) se reprograma sin inventarle uno', async () => {
+    const db = clinicDb({
+      clinic_consents: [grantedConsent()],
+      clinic_patients: family(),
+      booking_appointments: [oldAppointment()],
+    })
+    await reschedule(db)
+    const fresh = db._tables.booking_appointments[1]
+    expect(fresh).toMatchObject({ rescheduled_from: 'ap-old', status: 'confirmed' })
+    expect('patient_id' in fresh).toBe(false)
+  })
+})
+
+describe('una cuenta sin clínica no cambia', () => {
+  it('la cita no lleva paciente ni sede, y no se toca la tabla de pacientes', async () => {
+    const db = clinicDb({ clinic_patients: family() })
+    const rec = makeRecorder()
+    const agenda = { modules: ['agenda' as const] }
+    await send(db, rec, { text: 'Hola' }, agenda)
+    expect(last(rec).ids[0]).toBe(svcId(SERVICE_LIMPIEZA))
+    await send(db, rec, { replyId: svcId(SERVICE_LIMPIEZA) }, agenda)
+    await send(db, rec, { replyId: last(rec).ids[0] }, agenda) // día
+    await send(db, rec, { replyId: last(rec).ids[0] }, agenda) // hora
+    await send(db, rec, { replyId: 'act:confirm' }, agenda)
+
+    expect(db._tables.booking_appointments).toHaveLength(1)
+    const row = db._tables.booking_appointments[0]
+    expect('patient_id' in row).toBe(false)
+    expect('location_id' in row).toBe(false)
+    expect(db._tables.clinic_patients).toEqual(family())
   })
 })
 ```
 
+En `src/verticals/agenda/agent/db.test.ts`, cambia los imports:
+
+```ts
+import { insertAppointment, loadAppointment, loadAppointmentPatientId, loadBotSettings } from './db'
+import { asClient, makeFakeDb } from './testing/fake-db'
+```
+
+Y agrega, antes de `describe('loadAppointment: respuestas'`:
+
+```ts
+describe('insertAppointment: paciente y sede', () => {
+  const base = {
+    id: 'a1',
+    accountId: 'acc-1',
+    contactId: 'ct-1',
+    conversationId: 'cv-1',
+    serviceId: 'svc-1',
+    staffId: 'st-1',
+    startsAtIso: '2026-10-19T14:00:00.000Z',
+    endsAtIso: '2026-10-19T14:30:00.000Z',
+    status: 'confirmed' as const,
+    createdVia: 'bot' as const,
+    confirmedAtIso: '2026-10-19T13:00:00.000Z',
+  }
+
+  function recordingClient() {
+    const inserted: Record<string, unknown>[] = []
+    const client = {
+      from: () => ({
+        insert: async (row: Record<string, unknown>) => {
+          inserted.push(row)
+          return { error: null }
+        },
+      }),
+    } as unknown as SupabaseClient
+    return { client, inserted }
+  }
+
+  it('manda el paciente y la sede cuando vienen', async () => {
+    const { client, inserted } = recordingClient()
+    await insertAppointment(client, { ...base, patientId: 'pat-1', locationId: 'loc-1' })
+    expect(inserted[0]).toMatchObject({ patient_id: 'pat-1', location_id: 'loc-1' })
+  })
+
+  it('no manda las columnas cuando no vienen (ni nulas): los demás negocios no las tienen', async () => {
+    const { client, inserted } = recordingClient()
+    await insertAppointment(client, base)
+    await insertAppointment(client, { ...base, patientId: null, locationId: null })
+    await insertAppointment(client, { ...base, patientId: undefined, locationId: undefined })
+    expect(inserted).toHaveLength(3)
+    for (const row of inserted) {
+      expect('patient_id' in row).toBe(false)
+      expect('location_id' in row).toBe(false)
+    }
+  })
+
+  it('cada una va por su lado', async () => {
+    const { client, inserted } = recordingClient()
+    await insertAppointment(client, { ...base, patientId: 'pat-1' })
+    await insertAppointment(client, { ...base, locationId: 'loc-1' })
+    expect(inserted[0]).toMatchObject({ patient_id: 'pat-1' })
+    expect('location_id' in inserted[0]).toBe(false)
+    expect(inserted[1]).toMatchObject({ location_id: 'loc-1' })
+    expect('patient_id' in inserted[1]).toBe(false)
+  })
+})
+
+describe('loadAppointmentPatientId', () => {
+  const seed = () =>
+    makeFakeDb({
+      booking_appointments: [
+        { id: 'ap-1', account_id: 'acc-1', patient_id: 'pat-1' },
+        { id: 'ap-2', account_id: 'acc-2', patient_id: 'pat-9' },
+        { id: 'ap-3', account_id: 'acc-1', patient_id: null },
+        { id: 'ap-4', account_id: 'acc-1' },
+      ],
+    })
+
+  it('devuelve el paciente de la cita', async () => {
+    expect(await loadAppointmentPatientId(asClient(seed()), 'acc-1', 'ap-1')).toBe('pat-1')
+  })
+
+  it('una cita sin paciente, o que no existe, da null', async () => {
+    const db = asClient(seed())
+    expect(await loadAppointmentPatientId(db, 'acc-1', 'ap-3')).toBeNull()
+    expect(await loadAppointmentPatientId(db, 'acc-1', 'ap-4')).toBeNull()
+    expect(await loadAppointmentPatientId(db, 'acc-1', 'ap-no')).toBeNull()
+  })
+
+  it('no lee la cita de otra cuenta', async () => {
+    expect(await loadAppointmentPatientId(asClient(seed()), 'acc-1', 'ap-2')).toBeNull()
+  })
+
+  it('si la lectura falla lanza: no se confunde con una cita sin paciente', async () => {
+    const db = seed()
+    db._failNext('select', 'booking_appointments', { message: 'timeout' })
+    await expect(loadAppointmentPatientId(asClient(db), 'acc-1', 'ap-1')).rejects.toThrow(
+      'No se pudo leer el paciente de la cita: timeout',
+    )
+  })
+})
+```
+
+En `src/verticals/agenda/agent/internal-backend.test.ts`, al final del `describe('InternalBackend'`, después de la prueba `book distingue un choque de otro error`:
+
+```ts
+  it('book guarda el paciente y la sede solo si vienen', async () => {
+    const db = seed()
+    const backend = createInternalBackend({ db: asClient(db), accountId: ACCOUNT })
+
+    await backend.book({ ...bookArgs, id: 'ap-1' })
+    await backend.book({ ...bookArgs, id: 'ap-2', patientId: 'pat-1', locationId: 'loc-1' })
+
+    const [plain, withPatient] = db._tables.booking_appointments
+    expect('patient_id' in plain).toBe(false)
+    expect('location_id' in plain).toBe(false)
+    expect(withPatient).toMatchObject({ patient_id: 'pat-1', location_id: 'loc-1' })
+  })
+
+  describe('pacientes', () => {
+    const patientRows = () => [
+      { id: 'pat-2', account_id: ACCOUNT, contact_id: 'ct-1', full_name: 'Tomás Gil' },
+      { id: 'pat-1', account_id: ACCOUNT, contact_id: 'ct-1', full_name: 'Marta Ruiz' },
+      { id: 'pat-3', account_id: ACCOUNT, contact_id: 'ct-2', full_name: 'Ajeno Gil' },
+      { id: 'pat-4', account_id: 'acc-2', contact_id: 'ct-1', full_name: 'Otra Cuenta' },
+    ]
+
+    it('findPatients trae solo los de ese contacto en la cuenta del backend', async () => {
+      const db = makeFakeDb({ clinic_patients: patientRows() })
+      const backend = createInternalBackend({ db: asClient(db), accountId: ACCOUNT })
+      expect(await backend.findPatients({ contactId: 'ct-1' })).toEqual([
+        { id: 'pat-1', fullName: 'Marta Ruiz' },
+        { id: 'pat-2', fullName: 'Tomás Gil' },
+      ])
+    })
+
+    it('createPatient lo guarda en la cuenta del backend, no en otra', async () => {
+      const db = makeFakeDb({ clinic_patients: [] })
+      const backend = createInternalBackend({ db: asClient(db), accountId: ACCOUNT })
+      const created = await backend.createPatient({ contactId: 'ct-1', fullName: 'Lucía Gil Ruiz' })
+      expect(created.fullName).toBe('Lucía Gil Ruiz')
+      expect(db._tables.clinic_patients).toMatchObject([
+        { id: created.id, account_id: ACCOUNT, contact_id: 'ct-1', full_name: 'Lucía Gil Ruiz' },
+      ])
+    })
+  })
+```
+
+En `src/verticals/agenda/agent/clinic-consent.test.ts`, las pruebas `el toque del menú sigue valiendo después de un doble toque` y `un toque del menú sigue su camino` esperaban `expect(last(rec).ids[0]).toMatch(/^svc:/)` tras tocar `act:book`. Sin pacientes, "Agendar" pide primero el nombre; cambia esa línea por:
+
+```ts
+expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
+```
+
 - [ ] **Step 2: Córrelas y verifica que fallan**
 
-Run: `npx vitest run src/modules/clinica/patients.test.ts src/verticals/agenda/agent/clinic-patients.test.ts`
-Expected: FAIL, no existe `./patients`.
+Run: `npx vitest run src/modules/clinica/patients.test.ts src/verticals/agenda/agent/clinic-patients.test.ts src/verticals/agenda/agent/db.test.ts src/verticals/agenda/agent/internal-backend.test.ts`
+Expected: FAIL, no existe `./patients`, ni `findPatients`, ni `loadAppointmentPatientId`.
 
 - [ ] **Step 3: Crea el acceso a pacientes**
 
@@ -6355,6 +7092,9 @@ Crea `src/modules/clinica/patients.ts`:
 // Pacientes de un contacto. Un número de WhatsApp puede tener varios:
 // una mamá agenda a sus hijos desde el suyo. La autorización la da el
 // contacto; la cita es del paciente.
+//
+// El nombre de un paciente es un dato personal: no va a logs, avisos ni
+// notas. Los errores de este archivo solo llevan el mensaje de la base.
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -6364,20 +7104,32 @@ export interface ClinicPatient {
   fullName: string
 }
 
+/** Como el CHECK de clinic_patients.full_name. */
 export const PATIENT_NAME_MAX = 120
 
-const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}]/u
-const HAS_DIGIT = /\p{N}/u
+/**
+ * Lo que puede tener un nombre: letras de cualquier idioma, tildes sueltas
+ * (marcas), espacios, apóstrofo, guion y punto ("O'Brien", "Jean-Pierre",
+ * "Ma. Fernanda"). Deja fuera números, emojis, símbolos, caracteres de control
+ * e invisibles, y el aviso "[Unsupported message type: …]" con que llega una
+ * foto o un sticker.
+ */
+const NAME_CHARS = /^[\p{L}\p{M}' ’.-]+$/u
+const HAS_LETTER = /\p{L}/u
 
-/** Nombre y apellidos: dos palabras o más, sin números ni caracteres invisibles. */
+/** Nombre y apellidos: dos palabras o más, solo letras y signos de nombre. */
 export function validatePatientName(raw: string): { ok: true; value: string } | { ok: false } {
   const value = raw.replace(/\s+/gu, ' ').trim()
-  if (CONTROL_OR_FORMAT.test(value) || HAS_DIGIT.test(value)) return { ok: false }
   if ([...value].length > PATIENT_NAME_MAX) return { ok: false }
-  if (value.split(' ').length < 2) return { ok: false }
+  if (!NAME_CHARS.test(value)) return { ok: false }
+  const words = value.split(' ')
+  if (words.length < 2) return { ok: false }
+  // Un guion o un punto solos no son una palabra.
+  if (words.some((word) => !HAS_LETTER.test(word))) return { ok: false }
   return { ok: true, value }
 }
 
+/** Pacientes de ese contacto en esa cuenta, por nombre. */
 export async function listPatients(
   db: SupabaseClient,
   args: { accountId: string; contactId: string },
@@ -6395,6 +7147,7 @@ export async function listPatients(
   }))
 }
 
+/** Lanza si no se pudo guardar: sin paciente no hay a nombre de quién agendar. */
 export async function insertPatient(
   db: SupabaseClient,
   args: { accountId: string; contactId: string; fullName: string },
@@ -6422,6 +7175,7 @@ import type { ClinicPatient } from '@/modules/clinica/patients'
 En `BookArgs`, después de `staffId: string`:
 
 ```ts
+  /** Paciente y sede de la cita (módulo clínica). Sin ellos no se guardan. */
   patientId?: string | null
   locationId?: string | null
 ```
@@ -6429,9 +7183,13 @@ En `BookArgs`, después de `staffId: string`:
 En `ClinicBackend`, antes de `book`:
 
 ```ts
+  /** Pacientes de ese contacto (un número puede tener varios). Lanza si no pudo leer. */
   findPatients(args: { contactId: string }): Promise<ClinicPatient[]>
+  /** Registra a un paciente del contacto. Lanza si no se pudo guardar. */
   createPatient(args: { contactId: string; fullName: string }): Promise<ClinicPatient>
 ```
+
+Y en el contrato de fallas del encabezado, suma `findPatients` a las lecturas que lanzan y `createPatient` a las escrituras que lanzan, y agrega que ningún conector pone el nombre de un paciente en un error ni en un log.
 
 En `src/verticals/agenda/agent/internal-backend.ts`:
 
@@ -6449,15 +7207,41 @@ import { insertPatient, listPatients } from '@/modules/clinica/patients'
 En `src/verticals/agenda/agent/db.ts`, en los argumentos de `insertAppointment`, después de `rescheduledFrom?`:
 
 ```ts
+    /** Módulo clínica. Solo se envían si vienen: las demás cuentas no tienen estas columnas. */
     patientId?: string | null
     locationId?: string | null
 ```
 
-Y dentro del `insert`, después de `confirmed_at`. Solo se envían si vienen, para no tocar a los demás negocios:
+Y dentro del `insert`, después de `rescheduled_from`. Solo se envían si vienen, para no tocar a los demás negocios:
 
 ```ts
     ...(args.patientId ? { patient_id: args.patientId } : {}),
     ...(args.locationId ? { location_id: args.locationId } : {}),
+```
+
+Después de `insertAppointment`, agrega una lectura aparte. `APPOINTMENT_COLS` no cambia, porque otros negocios lo leen y la columna puede no existir aún. **Lanza si no pudo leer**: un fallo no es "la cita no tiene paciente", y reprogramar con ese error le quitaría el paciente a la cita nueva.
+
+```ts
+/**
+ * Paciente de una cita (módulo clínica). Lectura aparte: `APPOINTMENT_COLS` no
+ * cambia porque otros negocios lo leen y la columna puede no existir aún.
+ * Lanza si no pudo leer: un fallo no es "la cita no tiene paciente", y
+ * reprogramar con ese error le quitaría el paciente a la cita nueva.
+ */
+export async function loadAppointmentPatientId(
+  db: SupabaseClient,
+  accountId: string,
+  appointmentId: string,
+): Promise<string | null> {
+  const { data, error } = await db
+    .from('booking_appointments')
+    .select('patient_id')
+    .eq('id', appointmentId)
+    .eq('account_id', accountId)
+    .maybeSingle()
+  if (error) throw new Error(`No se pudo leer el paciente de la cita: ${error.message}`)
+  return ((data as Record<string, unknown> | null)?.patient_id as string | null | undefined) ?? null
+}
 ```
 
 - [ ] **Step 5: Agrega los pasos**
@@ -6476,7 +7260,10 @@ function afterPatient(state: BookingState, patientId: string): BookingState {
   return { ...state, patientId, step: state.urgent ? 'pick_slot' : 'pick_service' }
 }
 
-/** Lo que escribe el cliente en el paso del nombre. */
+/**
+ * Lo que escribe el cliente en el paso del nombre. Un toque de un botón viejo
+ * no es un nombre. El nombre es un dato personal: no va a logs ni a avisos.
+ */
 export async function handlePatientName(
   ctx: ClinicStepCtx,
   state: BookingState,
@@ -6489,9 +7276,12 @@ export async function handlePatientName(
       contactId: ctx.contactId,
       fullName: name.value,
     })
-    return { kind: 'next', state: afterPatient({ ...state, fails: 0 }, patient.id) }
+    return { kind: 'next', state: afterPatient(state, patient.id) }
   } catch (err) {
-    console.error('[clinica] no se pudo registrar al paciente:', err)
+    console.error(
+      '[clinica] no se pudo registrar al paciente:',
+      err instanceof Error ? err.message : 'error desconocido',
+    )
     return { kind: 'fail', message: ctx.texts.patientSaveError }
   }
 }
@@ -6502,9 +7292,11 @@ En `renderClinicStep`, antes de `default`:
 ```ts
     case 'pick_patient': {
       const patients = await ctx.backend.findPatients({ contactId: ctx.contactId })
+      // Sin pacientes registrados no hay a quién elegir: se pide el nombre.
       if (!patients.length) {
-        return renderClinicStep(ctx, { ...state, step: 'new_patient_name' })
+        return renderClinicStep(ctx, { ...state, step: 'new_patient_name', fails: 0 })
       }
+      // Una lista admite 10 filas: 9 pacientes y "Otra persona".
       const options: OfferedOption[] = [
         ...patients.slice(0, 9).map((p) => ({ id: patId(p.id), title: p.fullName })),
         { id: patId('new'), title: texts.patientOther },
@@ -6518,6 +7310,8 @@ En `renderClinicStep`, antes de `default`:
     }
 
     case 'new_patient_name': {
+      // Se espera un texto, no un toque: sin opciones, lo que llegue lo lee
+      // `handlePatientName`.
       await ctx.sender.sendText({ text: texts.patientNamePrompt })
       return { state: { ...state, options: [] }, closed: false }
     }
@@ -6538,6 +7332,8 @@ Y antes de `default`:
       if (parsed.value === 'new') {
         return { kind: 'next', state: { ...state, step: 'new_patient_name' } }
       }
+      // El menú guardado puede ser viejo: manda la base. Solo vale un paciente
+      // de este contacto en esta cuenta (el backend lee con las dos).
       const patients = await ctx.backend.findPatients({ contactId: ctx.contactId })
       if (!patients.some((p) => p.id === parsed.value)) return { kind: 'fail' }
       return { kind: 'next', state: afterPatient(state, parsed.value) }
@@ -6548,11 +7344,12 @@ Y antes de `default`:
 
 En `src/verticals/agenda/agent/controller.ts`:
 
-1. Agrega `handlePatientName` al import de `./steps/clinic-steps`.
+1. Agrega `handlePatientName` al import de `./steps/clinic-steps` y `loadAppointmentPatientId` al de `./db`.
 
 2. En `advanceSession`, después del bloque de `ask_question`:
 
 ```ts
+  // El nombre de quien va a asistir se escribe: tampoco tiene menú que emparejar.
   if (state.step === 'new_patient_name' && dialog.clinic) {
     const outcome = await handlePatientName(clinicCtx(dialog), state, input)
     await applyClinicOutcome(dialog, session.id, state, outcome)
@@ -6568,54 +7365,50 @@ En `src/verticals/agenda/agent/controller.ts`:
     asking?.step === 'new_patient_name'
 ```
 
-4. En `confirmAppointment`, en la llamada a `dialog.backend.book`, después de `staffId: assigned,`:
+   Y en el pase por `CLINIC_HUMAN_WORDS` quita la línea `asking?.step !== 'new_patient_name' &&`: `!writingAnswer` ya la cubre.
+
+4. En `confirmAppointment`, después de `const answers = await answersForNewAppointment(...)` y **antes de reclamar la sesión** (`claimSession`), resuelve el paciente. Al reprogramar se conserva el de la cita anterior. Si la lectura falla, la sesión sigue viva y el paciente puede reintentar, en vez de quedar con una cita sin paciente:
 
 ```ts
-    patientId: state.patientId ?? oldAppt?.patientId ?? null,
-    locationId: dialog.clinic?.location?.id ?? null,
+  let patientId = state.patientId ?? null
+  if (!patientId && dialog.clinic && oldAppt) {
+    try {
+      patientId = await loadAppointmentPatientId(dialog.db, dialog.accountId, oldAppt.id)
+    } catch (err) {
+      console.error('[clinica] no se pudo leer el paciente de la cita anterior:', err)
+      await dialog.sender.sendText({ text: dialog.texts.confirmError })
+      await conclude(dialog, sessionId, state)
+      return
+    }
+  }
 ```
 
-5. Para conservar el paciente al reprogramar, en `src/verticals/agenda/agent/db.ts` agrega una lectura aparte. `APPOINTMENT_COLS` no cambia, porque otros negocios lo leen y la columna puede no existir aún:
-
-```ts
-/** Paciente de una cita (módulo clínica). */
-export async function loadAppointmentPatientId(
-  db: SupabaseClient,
-  accountId: string,
-  appointmentId: string,
-): Promise<string | null> {
-  const { data } = await db
-    .from('booking_appointments')
-    .select('patient_id')
-    .eq('id', appointmentId)
-    .eq('account_id', accountId)
-    .maybeSingle()
-  return ((data as Record<string, unknown> | null)?.patient_id as string | null) ?? null
-}
-```
-
-Y en `confirmAppointment`, antes de `const appointmentId = crypto.randomUUID()`:
-
-```ts
-  const patientId =
-    state.patientId ??
-    (dialog.clinic && oldAppt
-      ? await loadAppointmentPatientId(dialog.db, dialog.accountId, oldAppt.id)
-      : null)
-```
-
-Y usa ese valor en la llamada:
+   Y en la llamada a `dialog.backend.book`, después de `staffId: assigned,`:
 
 ```ts
     patientId,
+    locationId: dialog.clinic?.location?.id ?? null,
 ```
 
-Agrega `loadAppointmentPatientId` al import de `./db`.
+5. En `applyClinicOutcome`, `case 'next'`: un paso nuevo nace con 0 fallos.
+
+```ts
+    case 'next':
+      // `advanceSession` no reinicia los fallos en los pasos clínicos, así que
+      // aquí un paso nuevo nace con 0: un error en el menú anterior no puede
+      // adelantar el pase a una persona del paso que sigue.
+      await conclude(
+        dialog,
+        sessionId,
+        outcome.state.step === state.step ? outcome.state : { ...outcome.state, fails: 0 },
+      )
+      return
+```
 
 - [ ] **Step 7: Corre las pruebas**
 
 Run: `npx vitest run src/modules/clinica src/verticals/agenda && npx tsc --noEmit`
-Expected: PASS.
+Expected: PASS. En esta tarea, `npx vitest run` completo pasa de 3.326 a 3.383 pruebas.
 
 - [ ] **Step 8: Commit**
 
