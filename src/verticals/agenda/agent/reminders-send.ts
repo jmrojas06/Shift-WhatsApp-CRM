@@ -29,6 +29,7 @@ import { resolveContactSendTarget } from '@/lib/whatsapp/wa-identity'
 import { createAgendaSender } from './index'
 import {
   AGENDA_REMINDER_TEMPLATE,
+  CLINIC_REMINDER_TEMPLATE,
   buildReminderBody,
   buildReminderTemplateParams,
   reminderButtons,
@@ -57,7 +58,11 @@ export async function sendAgendaReminder(
     try {
       await sender.sendButtons({
         bodyText: buildReminderBody(delivery),
-        buttons: reminderButtons(delivery.allowReschedule),
+        // Una clínica amarra los botones a la cita: el número puede tener varias.
+        buttons: reminderButtons(
+          delivery.allowReschedule,
+          delivery.clinic ? delivery.appointmentId : undefined,
+        ),
       })
     } catch (err) {
       if (!(err instanceof MessagePersistAfterSendError)) throw err
@@ -86,6 +91,13 @@ function logDeliveredButNotLogged(
  * hora) y los quick replies Confirmar / Reprogramar / Cancelar que
  * aprobó Meta. El payload de esos quick replies es estático
  * (`rem:*`), por eso la cita se resuelve en el controlador.
+ *
+ * Una clínica usa `recordatorio_cita_clinica` (paciente y sede, nunca el
+ * procedimiento) y manda el id de la cita en el payload de cada botón
+ * (`rem:<acción>:<cita>`). Los botones de la plantilla son fijos: los tres
+ * payloads salen siempre, en el orden de los botones aprobados, aunque la
+ * cuenta tenga apagada la pieza de reprogramar (quitar uno correría los
+ * índices).
  */
 async function sendReminderTemplate(delivery: ReminderDelivery): Promise<void> {
   const db = supabaseAdmin()
@@ -112,14 +124,22 @@ async function sendReminderTemplate(delivery: ReminderDelivery): Promise<void> {
   )
 
   const params = buildReminderTemplateParams(delivery)
+  const template = delivery.clinic ? CLINIC_REMINDER_TEMPLATE : AGENDA_REMINDER_TEMPLATE
+  // Mismo orden que los botones del mensaje libre (y los de la plantilla
+  // aprobada): una sola fuente, para que no se separen.
+  const quickReplyPayloads = delivery.clinic
+    ? reminderButtons(true, delivery.appointmentId).map((button) => button.id)
+    : undefined
   const sendTo = (phone: string) =>
     sendTemplateMessage({
       phoneNumberId,
       accessToken,
       to: phone,
-      templateName: AGENDA_REMINDER_TEMPLATE.name,
-      language: AGENDA_REMINDER_TEMPLATE.language,
+      templateName: template.name,
+      language: template.language,
       params,
+      // Sin la clave para las demás cuentas: su envío no cambia ni un byte.
+      ...(quickReplyPayloads ? { quickReplyPayloads } : {}),
     })
 
   // Mismo reintento por variantes de teléfono que el resto del CRM.
@@ -156,7 +176,7 @@ async function sendReminderTemplate(delivery: ReminderDelivery): Promise<void> {
     sender_type: 'bot',
     content_type: 'template',
     content_text: contentText,
-    template_name: AGENDA_REMINDER_TEMPLATE.name,
+    template_name: template.name,
     message_id: waMessageId,
     status: 'sent',
   })

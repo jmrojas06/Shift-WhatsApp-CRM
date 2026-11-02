@@ -28,6 +28,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { isUndefinedColumnError } from '@/lib/modules/undefined-column'
 import { hasModule, type AccountModulesSource } from '@/lib/verticals/registry'
 import { AGENDA_VERTICAL_KEYS } from '@/lib/verticals/types'
+import { loadClinicReminderInfo, type ClinicReminderInfo } from '@/modules/clinica/reminder-info'
+import { buildClinicTexts } from '@/modules/clinica/texts'
 
 import { DEFAULT_LABELS, readLabels, type AgendaLabels } from '../labels'
 import { AGENDA_AGENT_TEXTS, buildAgentTexts } from '../texts'
@@ -55,6 +57,16 @@ export const AGENDA_REMINDER_TEMPLATE = {
 
 /** Plantilla del recordatorio de las clínicas (módulo clínica). */
 export const CLINIC_REMINDER_TEMPLATE_NAME = 'recordatorio_cita_clinica'
+
+/**
+ * Plantilla de las clínicas: nombra al paciente y la sede, nunca el
+ * procedimiento (el teléfono puede ser compartido). Seis variables, en el
+ * orden de `buildReminderTemplateParams`.
+ */
+export const CLINIC_REMINDER_TEMPLATE = {
+  name: CLINIC_REMINDER_TEMPLATE_NAME,
+  language: 'es',
+} as const
 
 const REMINDER_TEMPLATE_NAMES: ReadonlySet<string> = new Set([
   AGENDA_REMINDER_TEMPLATE.name,
@@ -141,6 +153,12 @@ export interface ReminderDelivery {
    * solo ofrece Confirmar (la plantilla de Meta tiene botones fijos).
    */
   allowReschedule: boolean
+  /**
+   * Solo cuentas con el módulo clínica: a nombre de quién va la cita y en qué
+   * sede. Con esto el mensaje y la plantilla son los de la clínica, que nunca
+   * nombran el procedimiento.
+   */
+  clinic?: ClinicReminderInfo
 }
 
 export type ReminderSender = (delivery: ReminderDelivery) => Promise<void>
@@ -158,11 +176,14 @@ export const reminderStaffLabel = (
 ): string => name ?? texts.staffAnyTitle
 
 /**
- * Botones Confirmar / Reprogramar / Cancelar (ids estáticos rem:*).
- * Con la pieza de reprogramar apagada solo queda Confirmar.
+ * Botones Confirmar / Reprogramar / Cancelar (ids rem:*). Con la pieza de
+ * reprogramar apagada solo queda Confirmar. `appointmentId` amarra cada botón
+ * a una cita (`rem:<acción>:<cita>`) cuando el número puede tener varias; sin
+ * él los ids son los estáticos de siempre.
  */
 export function reminderButtons(
   allowReschedule = true,
+  appointmentId?: string,
 ): { id: string; title: string }[] {
   const actions: { action: ReminderAction; title: string }[] = [
     { action: 'confirm', title: AGENDA_AGENT_TEXTS.reminderConfirm },
@@ -173,11 +194,22 @@ export function reminderButtons(
         ]
       : []),
   ]
-  return actions.map(({ action, title }) => ({ id: remId(action), title }))
+  return actions.map(({ action, title }) => ({ id: remId(action, appointmentId), title }))
 }
 
 /** Cuerpo del mensaje libre (la versión con botones del recordatorio). */
 export function buildReminderBody(d: ReminderDelivery): string {
+  if (d.clinic) {
+    const texts = buildClinicTexts(d.labels)
+    return texts.reminderBody({
+      patient: d.clinic.patientName,
+      business: d.businessName,
+      location: d.clinic.locationName,
+      staff: d.staffName ?? texts.reminderStaffFallback,
+      date: d.dateLabel,
+      time: d.timeLabel,
+    })
+  }
   const texts = buildAgentTexts(d.labels)
   return texts.reminderBody({
     business: d.businessName,
@@ -192,8 +224,22 @@ export function buildReminderBody(d: ReminderDelivery): string {
  * Variables del cuerpo de la plantilla, en el orden documentado:
  * {{1}} negocio · {{2}} servicio · {{3}} barbero · {{4}} fecha ·
  * {{5}} hora.
+ *
+ * Las clínicas usan otra plantilla, con seis: {{1}} paciente · {{2}} negocio ·
+ * {{3}} sede · {{4}} profesional · {{5}} fecha · {{6}} hora. Ninguna es el
+ * procedimiento.
  */
 export function buildReminderTemplateParams(d: ReminderDelivery): string[] {
+  if (d.clinic) {
+    return [
+      d.clinic.patientName,
+      d.businessName,
+      d.clinic.locationName,
+      d.staffName ?? buildClinicTexts(d.labels).reminderStaffFallback,
+      d.dateLabel,
+      d.timeLabel,
+    ]
+  }
   const texts = buildAgentTexts(d.labels)
   return [
     d.businessName,
@@ -379,7 +425,7 @@ interface DueAppointmentRow {
   reminder_2h_sent_at: string | null
 }
 
-interface AccountRow {
+interface AccountRow extends AccountModulesSource {
   id: string
   name: string
   owner_user_id: string
@@ -533,6 +579,10 @@ export async function runAgendaReminders(
   })
   summary.due = due.length
 
+  const clinicAccounts = new Set(
+    accounts.filter((a) => hasModule(a, 'clinica')).map((a) => a.id),
+  )
+
   for (const appt of due) {
     const account = accountsById.get(appt.account_id)
     if (!account) {
@@ -574,13 +624,38 @@ export async function runAgendaReminders(
       ? 'text'
       : 'template'
 
-    const serviceName = appt.service_id
-      ? await loadServiceName(args.db, appt.account_id, appt.service_id)
-      : null
+    const isClinic = clinicAccounts.has(appt.account_id)
+    // El recordatorio de una clínica nunca nombra el procedimiento: ni
+    // siquiera se carga, para que no haya por dónde se cuele.
+    const serviceName =
+      !isClinic && appt.service_id
+        ? await loadServiceName(args.db, appt.account_id, appt.service_id)
+        : null
     const staffName = appt.staff_id
       ? await loadStaffName(args.db, appt.account_id, appt.staff_id)
       : null
     const parts = zonedParts(new Date(startsAtMs))
+
+    // Paciente y sede, en consultas aparte (solo las cuentas con clínica leen
+    // las columnas de la 055). Si no se pueden leer, no se envía ni se
+    // reclama la señal: la próxima corrida lo reintenta. El error lleva la
+    // cita y el mensaje de la base, nunca el nombre del paciente.
+    let clinic: ClinicReminderInfo | undefined
+    if (isClinic) {
+      try {
+        clinic = await loadClinicReminderInfo(args.db, {
+          accountId: appt.account_id,
+          appointmentId: appt.id,
+          contactId: appt.contact_id,
+        })
+      } catch (err) {
+        summary.failed++
+        summary.errors.push(
+          `cita ${appt.id}: ${err instanceof Error ? err.message : String(err)}`,
+        )
+        continue
+      }
+    }
 
     const delivery: ReminderDelivery = {
       appointmentId: appt.id,
@@ -598,6 +673,7 @@ export async function runAgendaReminders(
       timeLabel: formatTimeLabel(parts),
       labels: labelsByAccount.get(appt.account_id) ?? DEFAULT_LABELS,
       allowReschedule: !noChangesAccounts.has(appt.account_id),
+      ...(clinic ? { clinic } : {}),
     }
 
     const claim = await claimReminder(args.db, {

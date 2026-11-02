@@ -484,6 +484,13 @@ export interface SendTemplateMessageArgs {
    * in `buttonParams` keyed by index.
    */
   messageParams?: SendTimeParams
+  /**
+   * Payload de cada quick reply, en el orden de los botones de la
+   * plantilla. Meta lo devuelve en `button.payload` al tocar (sin él
+   * devuelve la etiqueta del botón). Solo aplica a la ruta legacy
+   * (`params`).
+   */
+  quickReplyPayloads?: string[]
   /** Meta's message_id of the message being replied to. */
   contextMessageId?: string
 }
@@ -511,6 +518,7 @@ export async function sendTemplateMessage(
     params,
     template,
     messageParams,
+    quickReplyPayloads,
     contextMessageId,
   } = args
   const url = `${META_API_BASE}/${phoneNumberId}/messages`
@@ -533,14 +541,25 @@ export async function sendTemplateMessage(
     if (components.length > 0) {
       templatePayload.components = components
     }
-  } else if (params && params.length > 0) {
-    // Legacy body-only path — no template row available.
-    templatePayload.components = [
-      {
+  } else if ((params && params.length > 0) || quickReplyPayloads?.length) {
+    // Legacy path — no template row available: body variables and, when
+    // asked, one quick-reply payload per button, in the template's order.
+    const components: Record<string, unknown>[] = []
+    if (params && params.length > 0) {
+      components.push({
         type: 'body',
         parameters: params.map((p) => ({ type: 'text', text: String(p) })),
-      },
-    ]
+      })
+    }
+    for (const [index, payload] of (quickReplyPayloads ?? []).entries()) {
+      components.push({
+        type: 'button',
+        sub_type: 'quick_reply',
+        index: String(index),
+        parameters: [{ type: 'payload', payload }],
+      })
+    }
+    templatePayload.components = components
   }
 
   const body: Record<string, unknown> = {
