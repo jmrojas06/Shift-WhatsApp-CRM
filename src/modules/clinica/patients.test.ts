@@ -82,6 +82,44 @@ describe('validatePatientName', () => {
     }
   })
 
+  it.each([
+    'para mi hijo Juan',
+    'Mi hijo Juan Pérez',
+    'no sé cómo se llama',
+    'yo soy Juan Pérez',
+    'Soy Juan Pérez',
+    'cuánto vale la consulta',
+    'Hablar con alguien',
+    'se llama Juan Pérez',
+    'el niño Juan Pérez',
+    'La niña Ana Gil',
+    'PARA MI MAMÁ',
+  ])('una frase que arranca con una de esas palabras no es un nombre: %j', (text) => {
+    expect(validatePatientName(text)).toEqual({ ok: false })
+  })
+
+  it('solo cuenta la primera palabra entera: los nombres que se le parecen siguen valiendo', () => {
+    for (const name of [
+      'Miguel Ángel Ruiz',
+      'Paraíso Gil',
+      'Elena Soto',
+      'Laura Gómez',
+      'Yolanda Soy',
+      'Sebastián Noel Pérez',
+      'María de la Luz Gil',
+      'Juan el Grande',
+    ]) {
+      expect(validatePatientName(name)).toEqual({ ok: true, value: name })
+    }
+  })
+
+  it('acepta el acento agudo como apóstrofo ("D´Angelo") y rechaza el selector de variación', () => {
+    expect(validatePatientName('Marco D´Angelo')).toEqual({ ok: true, value: 'Marco D´Angelo' })
+    expect(validatePatientName('Juan️ Pérez')).toEqual({ ok: false })
+    expect(validatePatientName('Juan Pérez️')).toEqual({ ok: false })
+    expect(validatePatientName('Ana︎ María Gil')).toEqual({ ok: false })
+  })
+
   it('admite el largo máximo de la base y ni un carácter más', () => {
     const exact = `${'a'.repeat(59)} ${'b'.repeat(60)}`
     expect([...exact]).toHaveLength(120)
