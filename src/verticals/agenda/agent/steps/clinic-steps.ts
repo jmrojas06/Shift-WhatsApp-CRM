@@ -276,11 +276,23 @@ function urgencyHandoff(ctx: ClinicStepCtx): ClinicHandoff {
     kind: 'handoff',
     message: ctx.texts.urgencyOffHours(ctx.clinic.location?.onCallPhone ?? null),
     note: ctx.texts.urgencyOffHoursNote,
-    notification: {
-      title: ctx.texts.urgencyNotificationTitle,
-      body: ctx.texts.urgencyNotificationBody,
-    },
+    notification: urgencyNotice(ctx.texts),
   }
+}
+
+/** El aviso prioritario al equipo: el mismo en todos los pases de una urgencia. */
+const urgencyNotice = (texts: ClinicTexts): NonNullable<ClinicHandoff['notification']> => ({
+  title: texts.urgencyNotificationTitle,
+  body: texts.urgencyNotificationBody,
+})
+
+/**
+ * Quien llegó a la autorización desde una urgencia la dejó sin responder (dos
+ * respuestas que no se entienden, o dos veces que no se pudo guardar): el pase
+ * es el de siempre, pero con el aviso prioritario.
+ */
+export function urgencyConsentUnansweredHandoff(texts: ClinicTexts): Omit<ClinicHandoff, 'kind'> {
+  return { note: texts.urgencyConsentUnansweredNote, notification: urgencyNotice(texts) }
 }
 
 /**
@@ -294,10 +306,7 @@ export function urgencyUnconfirmedHandoff(texts: ClinicTexts, alarmText: string)
     kind: 'handoff',
     message: texts.urgencyPending(alarmText),
     note: texts.urgencyPendingNote,
-    notification: {
-      title: texts.urgencyNotificationTitle,
-      body: texts.urgencyNotificationBody,
-    },
+    notification: urgencyNotice(texts),
   }
 }
 
@@ -460,6 +469,16 @@ export async function handleClinicChoice(
         return { kind: 'fail', message: texts.consentError }
       }
       if (!granted) {
+        // Quien llegó aquí desde una urgencia ya dijo que le duele: el pase es
+        // prioritario, no el de cualquier paciente que no autoriza.
+        if (state.afterConsent === 'urgency_book') {
+          return {
+            kind: 'handoff',
+            message: texts.consentDeclined,
+            note: texts.urgencyConsentDeclinedNote,
+            notification: urgencyNotice(texts),
+          }
+        }
         return {
           kind: 'handoff',
           message: texts.consentDeclined,
@@ -508,10 +527,7 @@ export async function handleClinicChoice(
           kind: 'handoff',
           message: texts.urgencyGoEr,
           note: texts.urgencyNote,
-          notification: {
-            title: texts.urgencyNotificationTitle,
-            body: texts.urgencyNotificationBody,
-          },
+          notification: urgencyNotice(texts),
         }
       }
       if (parsed.value !== 'alarm_no') return { kind: 'fail' }

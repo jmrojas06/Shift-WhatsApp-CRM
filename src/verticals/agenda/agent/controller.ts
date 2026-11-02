@@ -119,6 +119,7 @@ import {
   recordConsentRevoked,
   renderClinicStep,
   routeClinicText,
+  urgencyConsentUnansweredHandoff,
   urgencyUnconfirmedHandoff,
   type ClinicHandoff,
   type ClinicOutcome,
@@ -970,10 +971,15 @@ async function registerFail(
       return
     }
     // Una autorización sin responder no es un pedido de hablar con una persona.
+    // Si se pidió para agendar una urgencia, el aviso es el prioritario.
     await performHandoff(
       dialog,
       sessionId,
-      state.step === 'consent' ? { note: dialog.clinicTexts.consentUnansweredNote } : {},
+      state.step !== 'consent'
+        ? {}
+        : state.afterConsent === 'urgency_book'
+          ? urgencyConsentUnansweredHandoff(dialog.clinicTexts)
+          : { note: dialog.clinicTexts.consentUnansweredNote },
     )
     return
   }

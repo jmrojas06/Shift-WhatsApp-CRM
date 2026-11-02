@@ -161,6 +161,11 @@ export function buildClinicTexts(l: AgendaLabels) {
     urgencyOffHoursNote: 'Paciente: urgencia sin cupo en la agenda de hoy (bot en pausa).',
     urgencyPendingNote:
       'Paciente: escribió una posible urgencia y no confirmó si tiene signos de alarma (bot en pausa). Comunícate con esa persona ya.',
+    /** Rechazó o dejó sin responder la autorización que se le pidió para agendar la urgencia. */
+    urgencyConsentDeclinedNote:
+      'Paciente: escribió una posible urgencia y no aceptó la autorización de datos (bot en pausa). Comunícate con esa persona ya.',
+    urgencyConsentUnansweredNote:
+      'Paciente: escribió una posible urgencia y dejó la autorización de datos sin responder (bot en pausa). Comunícate con esa persona ya.',
     urgencyNotificationTitle: '🚨 Posible urgencia',
     urgencyNotificationBody: (who: string) =>
       `${who} reportó una posible urgencia por WhatsApp. Comunícate con esa persona ya.`,

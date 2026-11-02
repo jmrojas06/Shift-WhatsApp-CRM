@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { buildClinicTexts, DEFAULT_URGENCY_ALARM_TEXT, DEFAULT_URGENCY_WORDS } from '@/modules/clinica/texts'
 
@@ -151,14 +151,77 @@ describe('urgencias', () => {
       expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
     })
 
-    it('rechazar la autorización pasa a una persona', async () => {
+    it('rechazar la autorización pasa a una persona, con el aviso prioritario', async () => {
       const db = clinicDb()
       const rec = makeRecorder()
       await send(db, rec, { text: 'urgencia' })
       await send(db, rec, { replyId: 'act:alarm_no' })
       await send(db, rec, { replyId: 'act:consent_no' })
+      expect(db._tables.clinic_consents).toMatchObject([{ granted: false }])
       expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.urgencyConsentDeclinedNote)
       expect(last(rec).bodyText).toBe(texts.consentDeclined)
+      expect(db._tables.notifications).toMatchObject([
+        {
+          user_id: OWNER,
+          title: texts.urgencyNotificationTitle,
+          body: texts.urgencyNotificationBody('Marta Ruiz'),
+        },
+      ])
+      expect(activeSteps(db)).toEqual([])
+    })
+
+    it('dejar la autorización sin responder también: a la segunda pasa con el aviso prioritario', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'urgencia' })
+      await send(db, rec, { replyId: 'act:alarm_no' })
+      await send(db, rec, { text: 'ok' })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+      expect(db._tables.notifications).toHaveLength(0)
+      await send(db, rec, { text: 'ok' })
+      expect(db._tables.clinic_consents).toHaveLength(0)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.urgencyConsentUnansweredNote)
+      expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
+      expect(db._tables.notifications).toMatchObject([
+        { user_id: OWNER, title: texts.urgencyNotificationTitle },
+      ])
+    })
+
+    it('si la autorización no se puede guardar dos veces, también pasa con el aviso prioritario', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const db = clinicDb()
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'urgencia' })
+      await send(db, rec, { replyId: 'act:alarm_no' })
+      db._failNext('insert', 'clinic_consents', { message: 'boom' })
+      await send(db, rec, { replyId: 'act:consent_yes' })
+      expect(rec.calls.at(-2)?.bodyText).toBe(texts.consentError)
+      db._failNext('insert', 'clinic_consents', { message: 'boom' })
+      await send(db, rec, { replyId: 'act:consent_yes' })
+      expect(db._tables.clinic_consents).toHaveLength(0)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.urgencyConsentUnansweredNote)
+      expect(priorityNotifications(db)).toHaveLength(1)
+    })
+
+    it('fuera de una urgencia, rechazar o no responder la autorización sigue con el aviso de siempre', async () => {
+      const declined = clinicDb()
+      const rec = makeRecorder()
+      await send(declined, rec, { text: 'Hola' })
+      await send(declined, rec, { replyId: 'act:consent_no' })
+      expect(declined._tables.conversations[0].ai_handoff_summary).toBe(texts.consentDeclinedNote)
+      expect(priorityNotifications(declined)).toHaveLength(0)
+      expect(declined._tables.notifications).toMatchObject([
+        { title: AGENDA_AGENT_TEXTS.handoffNotificationTitle },
+      ])
+
+      const unanswered = clinicDb()
+      await send(unanswered, makeRecorder(), { text: 'Hola' })
+      await send(unanswered, makeRecorder(), { text: 'ok' })
+      await send(unanswered, makeRecorder(), { text: 'ok' })
+      expect(unanswered._tables.conversations[0].ai_handoff_summary).toBe(texts.consentUnansweredNote)
+      expect(priorityNotifications(unanswered)).toHaveLength(0)
     })
 
     it('con pacientes registrados los ofrece y, al elegir, salta a las horas de hoy', async () => {
