@@ -53,12 +53,12 @@ SET LOCAL lock_timeout = '5s';
 CREATE TABLE IF NOT EXISTS clinic_settings (
   account_id uuid PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
   -- El cuerpo de un mensaje interactivo admite 1024 unidades UTF-16.
-  consent_text text NOT NULL CHECK (char_length(consent_text) BETWEEN 1 AND 900),
+  consent_text text NOT NULL CHECK (char_length(consent_text) BETWEEN 1 AND 900 AND consent_text ~ '\S'),
   consent_version integer NOT NULL DEFAULT 1 CHECK (consent_version >= 1),
   -- La clínica declara que obtiene el permiso en recepción (ver spec §6.6).
   reception_consent_declared_at timestamptz,
   urgency_words text[] NOT NULL DEFAULT '{}',
-  urgency_alarm_text text NOT NULL CHECK (char_length(urgency_alarm_text) BETWEEN 1 AND 900),
+  urgency_alarm_text text NOT NULL CHECK (char_length(urgency_alarm_text) BETWEEN 1 AND 900 AND urgency_alarm_text ~ '\S'),
   -- La política de escritura exige además que sea de la misma cuenta.
   urgency_service_id uuid REFERENCES booking_services(id) ON DELETE SET NULL,
   offer_days integer NOT NULL DEFAULT 30 CHECK (offer_days BETWEEN 1 AND 180),
@@ -137,13 +137,13 @@ CREATE TABLE IF NOT EXISTS clinic_consents (
   -- contact_ref sigue diciendo quién autorizó.
   contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
   -- Teléfono (o wa_user_id si no hay teléfono) del titular al autorizar.
-  contact_ref text NOT NULL CHECK (char_length(contact_ref) BETWEEN 1 AND 64),
+  contact_ref text NOT NULL CHECK (char_length(contact_ref) BETWEEN 1 AND 64 AND contact_ref ~ '\S'),
   kind text NOT NULL CHECK (kind IN ('datos_sensibles', 'mercadeo')),
   granted boolean NOT NULL,
   text_version integer NOT NULL CHECK (text_version >= 1),
   -- El texto exacto que vio la persona: cambiar clinic_settings.consent_text
   -- no puede borrar qué aceptó cada una.
-  text_snapshot text NOT NULL CHECK (char_length(text_snapshot) BETWEEN 1 AND 1000),
+  text_snapshot text NOT NULL CHECK (char_length(text_snapshot) BETWEEN 1 AND 1000 AND text_snapshot ~ '\S'),
   source text NOT NULL CHECK (source IN ('whatsapp', 'recepcion')),
   message_id text,
   created_at timestamptz NOT NULL DEFAULT now()
@@ -238,10 +238,12 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON clinic_patients
 -- bot (service role, que se salta la RLS) sí podría. Este trigger rechaza
 -- cualquier UPDATE o DELETE directo, venga de quien venga.
 --
--- Las acciones de FK pasan: borrar un contacto pone contact_id en NULL y
--- borrar una cuenta borra sus filas. Postgres las ejecuta dentro de un
+-- Las acciones de FK pasan: borrar una cuenta borra sus filas y borrar un
+-- contacto pone contact_id en NULL. Postgres las ejecuta dentro de un
 -- trigger propio, así que aquí corren a profundidad 2 o más; una edición
--- directa corre a profundidad 1.
+-- directa corre a profundidad 1. A profundidad 2 o más el DELETE queda
+-- abierto (lo necesita borrar la cuenta), pero un UPDATE solo pasa si
+-- únicamente pone contact_id en NULL: no cambia nada más de la fila.
 --
 -- SECURITY DEFINER + EXECUTE solo para service_role: mismo endurecimiento
 -- que log_booking_appointment_event (047, patrón de 044). Al disparar el
@@ -253,7 +255,10 @@ BEGIN
     IF TG_OP = 'DELETE' THEN
       RETURN OLD;
     END IF;
-    RETURN NEW;
+    IF NEW.contact_id IS NULL
+       AND to_jsonb(NEW) - 'contact_id' = to_jsonb(OLD) - 'contact_id' THEN
+      RETURN NEW;
+    END IF;
   END IF;
 
   RAISE EXCEPTION 'clinic_consents es de solo agregar: % no permitido', TG_OP

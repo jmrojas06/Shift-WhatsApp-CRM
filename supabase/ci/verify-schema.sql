@@ -915,8 +915,8 @@ BEGIN
 
   -- All four tables: RLS on, and exactly ONE policy that applies to SELECT
   -- (a second permissive one, or a FOR ALL, would be OR-ed in and widen it)
-  -- which is the plain "any member" check. pg_policies deparses the call
-  -- with its default role, so only the shape is matched.
+  -- which is the plain "any member" check. pg_policies shows the call as
+  -- `is_account_member(account_id)`, without the default role.
   FOR v_table IN SELECT unnest(ARRAY[
     'clinic_settings', 'clinic_locations', 'clinic_patients', 'clinic_consents'
   ]) LOOP
@@ -1038,6 +1038,9 @@ BEGIN
   -- clinic_consents is append-only: a BEFORE UPDATE OR DELETE row trigger
   -- (tgtype bits: row 1, before 2, insert 4, delete 8, update 16) running a
   -- hardened SECURITY DEFINER function, and no TRUNCATE for the API roles.
+  -- The function body must still reject (RAISE EXCEPTION) and still tell FK
+  -- actions apart (pg_trigger_depth): a later migration that empties it
+  -- would otherwise leave a trigger that exists and does nothing.
   IF NOT EXISTS (
     SELECT 1
     FROM pg_trigger t
@@ -1051,9 +1054,11 @@ BEGIN
       AND p.prosecdef
       AND p.proconfig IS NOT NULL
       AND 'search_path=public' = ANY(p.proconfig)
+      AND p.prosrc LIKE '%RAISE EXCEPTION%'
+      AND p.prosrc LIKE '%pg_trigger_depth%'
   ) THEN
     RAISE EXCEPTION
-      'clinic_consents_append_only trigger is missing, disabled or not hardened — migration 055 did not apply';
+      'clinic_consents_append_only trigger is missing, disabled, emptied or not hardened — migration 055 did not apply';
   END IF;
 
   IF has_function_privilege('anon', 'public.clinic_consents_append_only()', 'EXECUTE')

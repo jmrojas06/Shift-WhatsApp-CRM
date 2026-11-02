@@ -472,10 +472,10 @@ describe('módulo clínica (055)', () => {
     it('guarda quién autorizó (contact_ref) y qué texto aceptó (text_snapshot)', () => {
       const consents = tableBlock('clinic_consents')
       expect(consents).toContain(
-        'contact_ref text NOT NULL CHECK (char_length(contact_ref) BETWEEN 1 AND 64)',
+        "contact_ref text NOT NULL CHECK (char_length(contact_ref) BETWEEN 1 AND 64 AND contact_ref ~ '\\S')",
       )
       expect(consents).toContain(
-        'text_snapshot text NOT NULL CHECK (char_length(text_snapshot) BETWEEN 1 AND 1000)',
+        "text_snapshot text NOT NULL CHECK (char_length(text_snapshot) BETWEEN 1 AND 1000 AND text_snapshot ~ '\\S')",
       )
     })
 
@@ -530,7 +530,7 @@ describe('módulo clínica (055)', () => {
       )
     })
 
-    it('la función deja pasar las acciones de FK (profundidad > 1) y rechaza el resto', () => {
+    it('a profundidad > 1 deja pasar DELETE, pero un UPDATE solo si pone contact_id en NULL y nada más', () => {
       const fn = flat.match(
         /CREATE OR REPLACE FUNCTION clinic_consents_append_only\(\) RETURNS trigger AS \$\$(.*?)\$\$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;/,
       )
@@ -540,8 +540,15 @@ describe('módulo clínica (055)', () => {
       expect(body).toContain("ERRCODE = 'insufficient_privilege'")
       // El rechazo va DESPUÉS de la salida de las FK: si no, la FK nunca pasaría.
       expect(body.indexOf('pg_trigger_depth()')).toBeLessThan(body.indexOf('RAISE EXCEPTION'))
-      expect(body).toContain('RETURN OLD')
-      expect(body).toContain('RETURN NEW')
+      // Borrar la cuenta borra las filas (DELETE abierto); borrar el contacto
+      // solo pone contact_id en NULL. Cualquier otro UPDATE anidado cae al RAISE.
+      expect(body).toContain(
+        "IF pg_trigger_depth() > 1 THEN IF TG_OP = 'DELETE' THEN RETURN OLD; END IF; " +
+          "IF NEW.contact_id IS NULL AND to_jsonb(NEW) - 'contact_id' = to_jsonb(OLD) - 'contact_id' " +
+          'THEN RETURN NEW; END IF; END IF;',
+      )
+      expect(body.match(/RETURN NEW/g)).toHaveLength(1)
+      expect(body.match(/RETURN OLD/g)).toHaveLength(1)
     })
 
     it('la función se endurece como 047: dueña postgres, solo service_role ejecuta', () => {
@@ -605,6 +612,19 @@ describe('módulo clínica (055)', () => {
     it('los nombres no pueden ser solo espacios', () => {
       expect(tableBlock('clinic_patients')).toContain("btrim(full_name) <> ''")
       expect(tableBlock('clinic_locations')).toContain("btrim(name) <> ''")
+    })
+
+    it('los textos de autorización no pueden estar en blanco (~ \'\\S\': btrim no quita saltos de línea)', () => {
+      for (const [table, column, max] of [
+        ['clinic_settings', 'consent_text', 900],
+        ['clinic_settings', 'urgency_alarm_text', 900],
+        ['clinic_consents', 'contact_ref', 64],
+        ['clinic_consents', 'text_snapshot', 1000],
+      ] as const) {
+        expect(tableBlock(table)).toContain(
+          `CHECK (char_length(${column}) BETWEEN 1 AND ${max} AND ${column} ~ '\\S')`,
+        )
+      }
     })
 
     it('latitud y longitud en rango', () => {
