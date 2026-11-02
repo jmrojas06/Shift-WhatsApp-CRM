@@ -100,7 +100,16 @@ const MENU_TAPS: readonly string[] = ['book', 'mine', 'faq', 'urgent', 'human'].
 export const isClinicMenuTap = (replyId: string | null): replyId is string =>
   replyId !== null && MENU_TAPS.includes(replyId)
 
+/** Quien arranca así pregunta, no pide: "puedo pagar con tarjeta", "dan factura". */
 const QUESTION_STARTS = [
+  'puedo',
+  'puede',
+  'pueden',
+  'dan',
+  'dar',
+  'debo',
+  'existe',
+  'existen',
   'cuanto',
   'cuantos',
   'cuanta',
@@ -119,12 +128,58 @@ const QUESTION_STARTS = [
 /** Adónde va un texto libre en una clínica. */
 export type ClinicRoute = 'book' | 'greeting' | 'human' | 'ai'
 
+/** Dos palabras con las que arranca una pregunta: "tengo que llevar documentos". */
+const QUESTION_PHRASES = ['tengo que', 'hay que', 'se puede', 'se debe', 'es necesario']
+
 /** Palabras de cita. Las de la clínica ("turno", "sesión") se suman al llamar. */
-const BOOK_WORDS = ['cita', 'citas', 'agendar', 'agenda', 'agendo', 'reservar', 'turno']
+const BOOK_WORDS = [
+  'cita',
+  'citas',
+  'agendar',
+  'agenda',
+  'agendo',
+  'reservar',
+  'turno',
+  'valoracion',
+  'cupo',
+  'cupos',
+]
+
+/**
+ * Quien las trae no pide una cita: la cambia o la cancela, o se queja de ella. Hasta
+ * que la tarea 11 le dé una ruta a "Mis citas", va a la IA (que no cancela nada) o,
+ * si es una queja, a una persona; lo que no puede es abrirle el menú de agendar.
+ */
+const NOT_A_BOOKING_WORDS = [
+  'cancelar',
+  'cancelo',
+  'cancela',
+  'cancelacion',
+  'anular',
+  'reprogramar',
+  'reagendar',
+  'cambiar',
+  'mover',
+  'aplazar',
+  'posponer',
+  'queja',
+  'quejas',
+  'reclamo',
+  'reclamos',
+  'pqr',
+  'pqrs',
+]
+
+/** "No puedo ir a la cita": avisar que no va, no pedir una. */
+const CANNOT_ATTEND = /\bno (puedo|podre|podemos|podria|voy a poder) (ir|asistir|llegar|venir|acudir)\b/
 
 /** Quien las usa pide algo. */
 const ASKING_WORDS = [
   'quiero',
+  'queria',
+  'me gustaria',
+  'me regala',
+  'me regalas',
   'quisiera',
   'necesito',
   'me das',
@@ -141,23 +196,11 @@ const ASKING_WORDS = [
 
 const GREETINGS = ['hola', 'buenas', 'buenos dias', 'buen dia', 'buenas tardes', 'buenas noches']
 
-/** Una de estas antes de la palabra la anula: "no tengo ninguna queja", "gracias por la receta". */
-const NEGATIONS_AND_THANKS = [
-  'no',
-  'ni',
-  'nunca',
-  'jamas',
-  'tampoco',
-  'sin',
-  'ningun',
-  'ninguna',
-  'ninguno',
-  'nada',
-  'gracias',
-  'agradezco',
-  'agradecido',
-  'agradecida',
-]
+/** Una de estas JUSTO antes de la palabra (dos palabras como mucho) la anula: "no tengo ninguna queja". */
+const NEGATIONS = ['no', 'ni', 'nunca', 'jamas', 'tampoco', 'sin', 'ningun', 'ninguna', 'ninguno', 'nada']
+
+/** Un agradecimiento en las tres palabras de antes la anula: "gracias por la receta". */
+const THANKS = ['gracias', 'agradezco', 'agradecido', 'agradecida']
 
 /**
  * Una sola regla para el texto libre de una clínica, en este orden. Lo que no
@@ -165,9 +208,12 @@ const NEGATIONS_AND_THANKS = [
  * ahí cuesta menos que mandar a alguien al menú o a una persona sin motivo.
  *
  *   1. book: nombra una cita Y la pide (un verbo de pedir), o es un mensaje de
- *      tres palabras o menos ("cita", "una cita hoy").
- *   2. human: trae una palabra de queja, pago o documento sin una negación ni un
- *      agradecimiento antes, y no es una pregunta.
+ *      tres palabras o menos ("cita", "una cita hoy"), o arranca con la cita y no
+ *      es una duda ("cita para mi hijo"). No lo es cancelarla, cambiarla, no
+ *      poder ir ni quejarse de ella.
+ *   2. human: trae una palabra de queja, pago o documento sin una negación justo
+ *      antes (dos palabras) ni un agradecimiento antes (tres), y no es una pregunta.
+ *      El saludo del principio no cuenta para saber si es una pregunta.
  *   3. greeting: arranca con un saludo y no pasa de cuatro palabras.
  *   4. ai: todo lo demás.
  *
@@ -176,25 +222,56 @@ const NEGATIONS_AND_THANKS = [
  */
 export function routeClinicText(text: string, appointmentWords: readonly string[] = []): ClinicRoute {
   const normalized = normalizeText(text)
-  const words = normalized.match(/[\p{L}\p{N}]+/gu) ?? []
+  const words = normalized.match(WORD) ?? []
+  // Sin el saludo del principio: "hola cuánto vale una radiografía" es una pregunta.
+  const body = afterGreeting(words)
+  const bodyPlain = body.join(' ')
+  const isQuestion =
+    /[?¿]/.test(normalized) ||
+    QUESTION_STARTS.includes(body[0] ?? '') ||
+    QUESTION_PHRASES.some((phrase) => bodyPlain.startsWith(`${phrase} `))
 
-  const namesAppointment = containsAnyWord(normalized, [...BOOK_WORDS, ...appointmentWords])
-  if (namesAppointment && (words.length <= 3 || containsAnyWord(normalized, ASKING_WORDS))) return 'book'
-
-  const topicAt = indexOfAnyWord(normalized, CLINIC_HUMAN_WORDS)
-  const isQuestion = /[?¿]/.test(normalized) || QUESTION_STARTS.includes(words[0] ?? '')
-  if (
-    topicAt >= 0 &&
-    !containsAnyWord(normalized.slice(0, topicAt), NEGATIONS_AND_THANKS) &&
-    !isQuestion
-  ) {
-    return 'human'
+  const bookWords = [...BOOK_WORDS, ...appointmentWords]
+  const namesAppointment = containsAnyWord(normalized, bookWords)
+  const notABooking =
+    containsAnyWord(normalized, NOT_A_BOOKING_WORDS) || CANNOT_ATTEND.test(normalized)
+  if (namesAppointment && !notABooking) {
+    const asks = containsAnyWord(normalized, ASKING_WORDS)
+    // "cita para mi hijo": arranca con la cita y no pregunta nada.
+    const startsWithBooking = containsAnyWord(body[0] ?? '', bookWords)
+    const isDoubt = isQuestion || body.some((w) => QUESTION_STARTS.includes(w))
+    if (words.length <= 3 || asks || (startsWithBooking && !isDoubt)) return 'book'
   }
 
-  const plain = words.join(' ')
-  if (words.length <= 4 && GREETINGS.some((g) => plain === g || plain.startsWith(`${g} `))) return 'greeting'
+  const topicAt = indexOfAnyWord(normalized, CLINIC_HUMAN_WORDS)
+  if (topicAt >= 0 && !isQuestion) {
+    const before = normalized.slice(0, topicAt).match(WORD) ?? []
+    const negated = containsAnyWord(before.slice(-2).join(' '), NEGATIONS)
+    const thanked = containsAnyWord(before.slice(-3).join(' '), THANKS)
+    if (!negated && !thanked) return 'human'
+  }
+
+  if (words.length <= 4 && greetingAt(words) !== null) return 'greeting'
 
   return 'ai'
+}
+
+const WORD = /[\p{L}\p{N}]+/gu
+
+/** El saludo con que arranca la lista de palabras (el más largo), o null. */
+function greetingAt(words: readonly string[]): string | null {
+  const plain = words.join(' ')
+  const found = GREETINGS.filter((g) => plain === g || plain.startsWith(`${g} `))
+  return found.sort((a, b) => b.length - a.length)[0] ?? null
+}
+
+/** Las palabras sin los saludos del principio ("hola, buenas tardes, ..."). */
+function afterGreeting(words: readonly string[]): string[] {
+  let rest = [...words]
+  for (let greeting = greetingAt(rest); greeting; greeting = greetingAt(rest)) {
+    rest = rest.slice(greeting.split(' ').length)
+  }
+  return rest
 }
 
 /**

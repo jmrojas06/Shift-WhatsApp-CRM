@@ -14,11 +14,16 @@ describe('routeClinicText', () => {
     'Tienen citas disponibles',
     'me pueden dar una cita?',
     '¿me agendan una cita?',
-    '¿puedo cancelar mi cita?',
     '¿tienen cita hoy?',
     'quiero una cita para una radiografía',
     'necesito cita, traigo la radiografía',
     'quiero agendar, ya hice el pago',
+    'me regala una cita',
+    'quería una cita para mañana',
+    'me gustaría agendar una cita',
+    'cita para mi hijo',
+    'quiero una valoración',
+    'tienen cupo para hoy',
   ])('book: %j', (text) => {
     expect(routeClinicText(text)).toBe('book')
   })
@@ -33,6 +38,11 @@ describe('routeClinicText', () => {
     'el saldo',
     'documento de identidad',
     'necesito mi historia clínica',
+    'no me ha llegado la factura',
+    'no me atendieron bien y quiero poner una queja',
+    'necesito mis radiografías',
+    'ya pagué',
+    'quiero poner una queja por mi cita',
   ])('human: %j', (text) => {
     expect(routeClinicText(text)).toBe('human')
   })
@@ -48,8 +58,32 @@ describe('routeClinicText', () => {
     'gracias, buenas noches',
     'excelente, no tengo ninguna queja',
     'muchas gracias por la receta',
+    'hola cuánto vale una radiografía',
+    'puedo pagar con tarjeta',
+    'dan factura',
+    'tengo que llevar documentos',
   ])('ai: %j', (text) => {
     expect(routeClinicText(text)).toBe('ai')
+  })
+
+  // La Task 11 agrega la ruta a "Mis citas": hasta entonces cancelar o no poder ir
+  // a una cita no es pedir una, y va a la IA (que no la cancela) en vez de abrir el menú.
+  describe('cancelar o no poder ir no es pedir una cita (hasta la Task 11)', () => {
+    it.each([
+      'quiero cancelar mi cita',
+      '¿puedo cancelar mi cita?',
+      'necesito cambiar mi cita',
+      'quiero reprogramar la cita',
+      'no puedo ir a la cita',
+      'no voy a poder asistir a mi cita de mañana',
+    ])('ai: %j', (text) => {
+      expect(routeClinicText(text)).toBe('ai')
+    })
+
+    it('una queja por la cita es una queja, no una cita', () => {
+      expect(routeClinicText('quiero poner una queja por mi cita')).toBe('human')
+      expect(routeClinicText('tengo un reclamo sobre mi cita')).toBe('human')
+    })
   })
 
   describe('book', () => {
@@ -70,6 +104,19 @@ describe('routeClinicText', () => {
     it('usa las palabras que la clínica le da a la cita', () => {
       expect(routeClinicText('cuándo tienen sesiones para el viernes')).toBe('ai')
       expect(routeClinicText('cuándo tienen sesiones para el viernes', ['sesión', 'sesiones'])).toBe('book')
+    })
+
+    it('un pedido que arranca con la cita ("cita para mi hijo") es una cita, pero no una duda', () => {
+      expect(routeClinicText('cita para mi hijo')).toBe('book')
+      expect(routeClinicText('citas para esta semana')).toBe('book')
+      expect(routeClinicText('cita de valoración, ¿cuánto vale?')).toBe('ai')
+      expect(routeClinicText('cita de valoración cuánto vale')).toBe('ai')
+    })
+
+    it('"valoración" y "cupo" son palabras de cita', () => {
+      expect(routeClinicText('valoración')).toBe('book')
+      expect(routeClinicText('hay cupo mañana')).toBe('book')
+      expect(routeClinicText('cuánto vale la valoración')).toBe('ai')
     })
 
     it('gana sobre las palabras de quejas, pagos y documentos', () => {
@@ -98,10 +145,17 @@ describe('routeClinicText', () => {
       }
     })
 
-    it('una negación antes de la palabra la anula', () => {
+    it('una negación justo antes de la palabra la anula', () => {
       expect(routeClinicText('no tengo ninguna queja')).toBe('ai')
       expect(routeClinicText('sin ninguna queja, todo bien')).toBe('ai')
-      expect(routeClinicText('nunca he recibido una factura')).toBe('ai')
+      expect(routeClinicText('no hay reclamo')).toBe('ai')
+    })
+
+    it('una negación lejos de la palabra no la anula: "no me ha llegado la factura" es una queja', () => {
+      expect(routeClinicText('no me ha llegado la factura')).toBe('human')
+      expect(routeClinicText('nunca he recibido una factura')).toBe('human')
+      expect(routeClinicText('no llegó la factura')).toBe('human')
+      expect(routeClinicText('no me atendieron bien y quiero poner una queja')).toBe('human')
     })
 
     it('un agradecimiento antes de la palabra la anula', () => {
@@ -111,6 +165,25 @@ describe('routeClinicText', () => {
 
     it('una negación después de la palabra no la anula', () => {
       expect(routeClinicText('tengo una queja, no me atendieron')).toBe('human')
+    })
+
+    it('el saludo del principio no esconde la pregunta', () => {
+      expect(routeClinicText('hola cuánto vale una radiografía')).toBe('ai')
+      expect(routeClinicText('Hola, buenas tardes, ¿cuánto cuesta el certificado?')).toBe('ai')
+      expect(routeClinicText('hola, quiero pagar mi factura')).toBe('human')
+    })
+
+    it('una pregunta con "puedo", "dan" o "tengo que" no es un pedido', () => {
+      expect(routeClinicText('puedo pagar con tarjeta')).toBe('ai')
+      expect(routeClinicText('dan factura')).toBe('ai')
+      expect(routeClinicText('tengo que llevar documentos')).toBe('ai')
+      expect(routeClinicText('tengo una queja')).toBe('human')
+    })
+
+    it('el plural y el pasado también cuentan', () => {
+      expect(routeClinicText('necesito mis radiografías')).toBe('human')
+      expect(routeClinicText('ya pagué')).toBe('human')
+      expect(routeClinicText('tengo unas quejas')).toBe('human')
     })
 
     it('una pregunta no es un pedido: ni con signo ni con palabra interrogativa', () => {

@@ -126,6 +126,16 @@ export const CLINIC_HUMAN_WORDS: readonly string[] = [
   'receta',
   'documento',
   'documentos',
+  // Pasado y plurales: "ya pagué", "necesito mis radiografías".
+  'pague',
+  'quejas',
+  'reclamos',
+  'pagos',
+  'facturas',
+  'abonos',
+  'certificados',
+  'radiografias',
+  'recetas',
 ]
 
 /** Nota: una lista admite títulos de hasta 24 caracteres y un botón, 20. */

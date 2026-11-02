@@ -224,6 +224,15 @@ describe('sin sesión', () => {
         'receta',
         'documento',
         'documentos',
+        'pague',
+        'quejas',
+        'reclamos',
+        'pagos',
+        'facturas',
+        'abonos',
+        'certificados',
+        'radiografias',
+        'recetas',
       ])
     })
 
