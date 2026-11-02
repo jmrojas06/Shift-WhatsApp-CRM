@@ -341,9 +341,12 @@ const ACTION_SYNONYMS: Record<string, string[]> = {
 //     que ser explícita. Un texto con una negación en cualquier parte es un
 //     rechazo ("acepto, no hay problema" también); cualquier otro, null: el
 //     bot vuelve a mostrar los botones y a la segunda pasa a una persona.
-//   - Signos de alarma (alarm_*): descartarlos (alarm_no) exige un mensaje
-//     completo de una lista cerrada; una negación dentro de una frase va a
-//     una persona (alarm_yes: ante la duda, no se agenda); lo demás, null.
+//   - Signos de alarma (alarm_*): descartarlos (alarm_no) exige el toque o un
+//     mensaje completo de una lista cerrada y SIN emojis ni símbolos
+//     ("ninguno 🤔" no descarta nada). Va a una persona (alarm_yes) un toque,
+//     un mensaje de otra lista cerrada, una negación dentro de una frase
+//     ("no puedo respirar") o un signo dicho con palabras ("fiebre alta"):
+//     ante la duda, no se agenda. Lo demás ("tengo mucho dolor"), null.
 // Estos botones no muestran números, así que un número tampoco acepta ni
 // descarta nada. Un toque de botón (replyId) no pasa por aquí y siempre vale.
 // ------------------------------------------------------------
@@ -357,20 +360,46 @@ const ALARM_NO_WHOLE: readonly string[] = [
   'no ninguno',
   'ninguno',
   'ninguna',
+  'no ninguna',
   'no tengo',
   'no tengo ninguno',
   'no tengo ninguna',
   'no tengo nada',
   'nada',
+  'ninguno de esos',
+  'ninguna de esas',
+  'ninguno de los anteriores',
+  'no ninguno de esos',
+  'no ninguna de esas',
+  'no tengo ninguno de esos',
+  'no tengo ninguna de esas',
+  'no no',
+  'no no tengo',
+  'nop',
+  'nope',
+  'noo',
+  'no gracias',
+  'no senor',
+  'no senora',
+  'nada de eso',
+  'no nada de eso',
 ]
+
+/**
+ * El texto ORIGINAL solo trae letras, números, espacios y puntuación simple.
+ * `squash` borra emojis y símbolos, así que sin esta comprobación "ninguno 🤔"
+ * parecería un "ninguno" limpio.
+ */
+const PLAIN_TEXT = /^[\p{L}\p{N}\s.,;:!¡]+$/u
+
+/** Un signo de alarma dicho con palabras (texto ya normalizado). */
+const ALARM_SIGNS = /\b(si|respir\w*|trag\w*|sangr\w*|hinch\w*|inflam\w*|fiebre|golpe\w*|ahog\w*)\b/
 
 /** Mensajes completos que dicen que sí hay signos de alarma. */
 const ALARM_YES_WHOLE: readonly string[] = ['si', 'si tengo', 'si tengo alguno', 'tengo alguno']
 
 /** Negaciones en texto ya normalizado: "noo", "nop", "para nada", "nunca"… */
 const NEGATION = /\b(no+|nop|nope|ni|nunca|jamas|tampoco|nada)\b/
-
-const IS_QUESTION = /[?¿]/
 
 /**
  * Lee la respuesta escrita a un menú de decisión. `undefined` = el menú no
@@ -390,10 +419,14 @@ function matchDecision(
   }
 
   if (offered.has('act:alarm_yes') || offered.has('act:alarm_no')) {
-    if (offered.has('act:alarm_no') && !IS_QUESTION.test(text) && ALARM_NO_WHOLE.includes(squashed)) {
+    // Con "?" no hay respuesta: "¿ninguno?" es una pregunta (y "?" no pasa PLAIN_TEXT).
+    if (offered.has('act:alarm_no') && PLAIN_TEXT.test(text) && ALARM_NO_WHOLE.includes(squashed)) {
       return 'act:alarm_no'
     }
-    if (offered.has('act:alarm_yes') && (ALARM_YES_WHOLE.includes(squashed) || NEGATION.test(squashed))) {
+    if (
+      offered.has('act:alarm_yes') &&
+      (ALARM_YES_WHOLE.includes(squashed) || NEGATION.test(squashed) || ALARM_SIGNS.test(squashed))
+    ) {
       return 'act:alarm_yes'
     }
     return null

@@ -493,6 +493,24 @@ describe('signos de alarma escritos', () => {
     'no tengo nada',
     'nada',
     'Nada.',
+    'no ninguna',
+    'ninguno de esos',
+    'Ninguna de esas',
+    'ninguno de los anteriores',
+    'no ninguno de esos',
+    'no ninguna de esas',
+    'no tengo ninguno de esos',
+    'no tengo ninguna de esas',
+    'no no',
+    'no, no tengo',
+    'nop',
+    'nope',
+    'noo',
+    'no gracias',
+    'no señor',
+    'no señora',
+    'nada de eso',
+    'no, nada de eso',
   ])('solo el mensaje completo de la lista dice que no hay signos: %j', (text) => {
     expect(choice(text)).toBe('act:alarm_no')
   })
@@ -503,6 +521,21 @@ describe('signos de alarma escritos', () => {
       expect(choice(text)).toBe('act:alarm_yes')
     },
   )
+
+  it.each([
+    'tengo dificultad para respirar',
+    'respiro mal',
+    'sí, tengo fiebre',
+    'fiebre alta',
+    'estoy sangrando mucho',
+    'se me hinchó la cara',
+    'tengo la encía inflamada',
+    'me cuesta tragar',
+    'me dieron un golpe fuerte en la cara',
+    'siento que me ahogo',
+  ])('un signo dicho con palabras va a una persona: %j', (text) => {
+    expect(choice(text)).toBe('act:alarm_yes')
+  })
 
   it.each([
     'no puedo respirar',
@@ -520,12 +553,29 @@ describe('signos de alarma escritos', () => {
     expect(choice(text)).toBe('act:alarm_yes')
   })
 
-  it.each(['hola', '¿cuáles son los signos?', 'ninguno de esos', 'quiero agendar', '¿ninguno?', '3', ''])(
-    'lo demás no decide: %j',
+  it.each([
+    'tengo mucho dolor',
+    'hola',
+    '¿cuáles son los signos?',
+    'quiero agendar',
+    '¿ninguno?',
+    'ninguno?',
+    '3',
+    '',
+  ])('lo demás no decide (el dolor, por sí solo, no es un signo de alarma): %j', (text) => {
+    expect(choice(text)).toBeNull()
+  })
+
+  it.each(['ninguno 🤔', 'no 👍', 'nada :(', 'ninguno ❌', '✅ ninguno', 'no tengo ninguno 😀', 'nada de eso 🙏'])(
+    'con emojis o símbolos nunca descarta los signos: %j',
     (text) => {
-      expect(choice(text)).toBeNull()
+      expect(choice(text)).not.toBe('act:alarm_no')
     },
   )
+
+  it('"ninguno 🤔" no decide: el bot vuelve a preguntar', () => {
+    expect(choice('ninguno 🤔')).toBeNull()
+  })
 
   it('por número, "no hay signos" no vale y "sí hay" sí (lleva a una persona)', () => {
     expect(choice('2')).toBeNull()
@@ -546,8 +596,8 @@ describe('signos de alarma escritos', () => {
 })
 
 describe('menús de decisión: nunca se acepta por accidente', () => {
-  // Frases que no están en la lista de ningún menú: no pueden acertar la opción
-  // que acepta (consent_yes, mkt_yes, alarm_no).
+  // Frases que no son un toque: no pueden acertar la opción que acepta
+  // (consent_yes, mkt_yes) ni la que descarta los signos (alarm_no).
   const stray = [
     'tal vez',
     'no sé qué hacer',
@@ -557,6 +607,15 @@ describe('menús de decisión: nunca se acepta por accidente', () => {
     'dame un momento',
     '1 y 2',
     '😀',
+    'sí',
+    'acepto',
+    'autorizo',
+    'autorizó',
+    '❌ acepto',
+    'acepto 🤔',
+    'acepto :(',
+    'ninguno 🤔',
+    '¿ninguno?',
   ]
   it.each([
     ['autorización', consentOptions, 'act:consent_yes'],
