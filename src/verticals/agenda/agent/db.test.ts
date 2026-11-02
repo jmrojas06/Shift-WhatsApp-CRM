@@ -9,7 +9,7 @@ import {
   insertAppointment,
   insertNotification,
   loadAppointment,
-  loadAppointmentPatientId,
+  loadAppointmentClinicLinks,
   loadBotSettings,
 } from './db'
 import { asClient, makeFakeDb } from './testing/fake-db'
@@ -263,37 +263,49 @@ describe('hasRecentNotification', () => {
   })
 })
 
-describe('loadAppointmentPatientId', () => {
+describe('loadAppointmentClinicLinks', () => {
   const seed = () =>
     makeFakeDb({
       booking_appointments: [
-        { id: 'ap-1', account_id: 'acc-1', patient_id: 'pat-1' },
-        { id: 'ap-2', account_id: 'acc-2', patient_id: 'pat-9' },
-        { id: 'ap-3', account_id: 'acc-1', patient_id: null },
+        { id: 'ap-1', account_id: 'acc-1', patient_id: 'pat-1', location_id: 'loc-1' },
+        { id: 'ap-2', account_id: 'acc-2', patient_id: 'pat-9', location_id: 'loc-9' },
+        { id: 'ap-3', account_id: 'acc-1', patient_id: null, location_id: null },
         { id: 'ap-4', account_id: 'acc-1' },
+        { id: 'ap-5', account_id: 'acc-1', patient_id: 'pat-5' },
       ],
     })
 
-  it('devuelve el paciente de la cita', async () => {
-    expect(await loadAppointmentPatientId(asClient(seed()), 'acc-1', 'ap-1')).toBe('pat-1')
+  it('devuelve el paciente y la sede de la cita', async () => {
+    expect(await loadAppointmentClinicLinks(asClient(seed()), 'acc-1', 'ap-1')).toEqual({
+      patientId: 'pat-1',
+      locationId: 'loc-1',
+    })
   })
 
-  it('una cita sin paciente, o que no existe, da null', async () => {
+  it('lo que la cita no tiene, o la cita que no existe, da null', async () => {
     const db = asClient(seed())
-    expect(await loadAppointmentPatientId(db, 'acc-1', 'ap-3')).toBeNull()
-    expect(await loadAppointmentPatientId(db, 'acc-1', 'ap-4')).toBeNull()
-    expect(await loadAppointmentPatientId(db, 'acc-1', 'ap-no')).toBeNull()
+    const none = { patientId: null, locationId: null }
+    expect(await loadAppointmentClinicLinks(db, 'acc-1', 'ap-3')).toEqual(none)
+    expect(await loadAppointmentClinicLinks(db, 'acc-1', 'ap-4')).toEqual(none)
+    expect(await loadAppointmentClinicLinks(db, 'acc-1', 'ap-no')).toEqual(none)
+    expect(await loadAppointmentClinicLinks(db, 'acc-1', 'ap-5')).toEqual({
+      patientId: 'pat-5',
+      locationId: null,
+    })
   })
 
   it('no lee la cita de otra cuenta', async () => {
-    expect(await loadAppointmentPatientId(asClient(seed()), 'acc-1', 'ap-2')).toBeNull()
+    expect(await loadAppointmentClinicLinks(asClient(seed()), 'acc-1', 'ap-2')).toEqual({
+      patientId: null,
+      locationId: null,
+    })
   })
 
   it('si la lectura falla lanza: no se confunde con una cita sin paciente', async () => {
     const db = seed()
     db._failNext('select', 'booking_appointments', { message: 'timeout' })
-    await expect(loadAppointmentPatientId(asClient(db), 'acc-1', 'ap-1')).rejects.toThrow(
-      'No se pudo leer el paciente de la cita: timeout',
+    await expect(loadAppointmentClinicLinks(asClient(db), 'acc-1', 'ap-1')).rejects.toThrow(
+      'No se pudo leer el paciente y la sede de la cita: timeout',
     )
   })
 })

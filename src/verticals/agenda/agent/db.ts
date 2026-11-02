@@ -578,24 +578,28 @@ export async function insertAppointment(
 }
 
 /**
- * Paciente de una cita (módulo clínica). Lectura aparte: `APPOINTMENT_COLS` no
- * cambia porque otros negocios lo leen y la columna puede no existir aún.
+ * Paciente y sede de una cita (módulo clínica). Lectura aparte: `APPOINTMENT_COLS`
+ * no cambia porque otros negocios lo leen y las columnas pueden no existir aún.
  * Lanza si no pudo leer: un fallo no es "la cita no tiene paciente", y
- * reprogramar con ese error le quitaría el paciente a la cita nueva.
+ * reprogramar con ese error le quitaría el paciente y la sede a la cita nueva.
  */
-export async function loadAppointmentPatientId(
+export async function loadAppointmentClinicLinks(
   db: SupabaseClient,
   accountId: string,
   appointmentId: string,
-): Promise<string | null> {
+): Promise<{ patientId: string | null; locationId: string | null }> {
   const { data, error } = await db
     .from('booking_appointments')
-    .select('patient_id')
+    .select('patient_id, location_id')
     .eq('id', appointmentId)
     .eq('account_id', accountId)
     .maybeSingle()
-  if (error) throw new Error(`No se pudo leer el paciente de la cita: ${error.message}`)
-  return ((data as Record<string, unknown> | null)?.patient_id as string | null | undefined) ?? null
+  if (error) throw new Error(`No se pudo leer el paciente y la sede de la cita: ${error.message}`)
+  const row = (data as Record<string, unknown> | null) ?? null
+  return {
+    patientId: (row?.patient_id as string | null | undefined) ?? null,
+    locationId: (row?.location_id as string | null | undefined) ?? null,
+  }
 }
 
 export async function cancelAppointment(

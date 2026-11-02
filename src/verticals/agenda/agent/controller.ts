@@ -63,7 +63,7 @@ import {
   listServices,
   loadAccount,
   loadAppointment,
-  loadAppointmentPatientId,
+  loadAppointmentClinicLinks,
   loadBotSettings,
   loadContact,
   hasRecentBookingEvent,
@@ -891,12 +891,7 @@ async function handleReminderTap(
 
   const state =
     action === 'reschedule'
-      ? newBookingState('pick_day', {
-          mode: 'reschedule',
-          appointmentId: appt.id,
-          serviceId: appt.serviceId ?? undefined,
-          staffId: rescheduleStaffId(dialog, appt),
-        })
+      ? await rescheduleState(dialog, appt)
       : newBookingState('manage_cancel_confirm', { appointmentId: appt.id })
 
   const sessionId = session?.id ?? (await openSession(dialog, state))
@@ -956,6 +951,33 @@ function rescheduleStaffId(dialog: Dialog, appt: AppointmentInfo): string {
   return dialog.settings.toggles.chooseStaff ? (appt.staffId ?? 'any') : 'any'
 }
 
+/**
+ * Dónde empieza reprogramar una cita. En una clínica el paciente y la sede de la
+ * cita anterior viajan en la sesión desde aquí: la cita nueva es del mismo paciente
+ * y queda en la misma sede, pase lo que pase en los pasos de en medio. Si no se
+ * pueden leer ahora, se leen al confirmar (ahí un fallo no agenda nada).
+ */
+async function rescheduleState(dialog: Dialog, appt: AppointmentInfo): Promise<BookingState> {
+  const base = newBookingState('pick_day', {
+    mode: 'reschedule',
+    appointmentId: appt.id,
+    serviceId: appt.serviceId ?? undefined,
+    staffId: rescheduleStaffId(dialog, appt),
+  })
+  if (!dialog.clinic) return base
+  try {
+    const links = await loadAppointmentClinicLinks(dialog.db, dialog.accountId, appt.id)
+    return {
+      ...base,
+      ...(links.patientId ? { patientId: links.patientId } : {}),
+      ...(links.locationId ? { locationId: links.locationId } : {}),
+    }
+  } catch (err) {
+    console.error('[clinica] no se pudo leer el paciente y la sede de la cita anterior:', err)
+    return base
+  }
+}
+
 function expiryIso(dialog: Dialog, state?: BookingState): string {
   const ttl = state?.step === 'urgency' ? URGENCY_SESSION_TTL_MS : SESSION_TTL_MS
   return new Date(dialog.now.getTime() + ttl).toISOString()
@@ -988,6 +1010,7 @@ function coerceState(raw: Record<string, unknown>): BookingState {
       ? { answers: readAnswerMap(raw.answers, { keepEmpty: true }) }
       : {}),
     ...(typeof raw.patientId === 'string' ? { patientId: raw.patientId } : {}),
+    ...(typeof raw.locationId === 'string' ? { locationId: raw.locationId } : {}),
     ...(typeof raw.dayPage === 'number' ? { dayPage: raw.dayPage } : {}),
     ...(typeof raw.consentText === 'string' ? { consentText: raw.consentText } : {}),
     ...(typeof raw.consentVersion === 'number' ? { consentVersion: raw.consentVersion } : {}),
@@ -1501,14 +1524,7 @@ async function handleChoice(
           })
           return
         }
-        await conclude(dialog, sessionId, {
-          ...newBookingState('pick_day', {
-            mode: 'reschedule',
-            appointmentId: appt.id,
-            serviceId: appt.serviceId ?? undefined,
-            staffId: rescheduleStaffId(dialog, appt),
-          }),
-        })
+        await conclude(dialog, sessionId, await rescheduleState(dialog, appt))
         return
       }
       if (parsed.value === 'cancel') {
@@ -1671,15 +1687,19 @@ async function confirmAppointment(
 
   const answers = await answersForNewAppointment(dialog, state, oldAppt)
 
-  // Clínica: la cita es del paciente. Al reprogramar se conserva el de la cita
-  // anterior. Se lee antes de reclamar la sesión: si la lectura falla, la sesión
-  // sigue viva y se puede reintentar, y la cita nueva no pierde al paciente.
+  // Clínica: la cita es del paciente. Al reprogramar se conservan el paciente y la
+  // sede de la cita anterior (no la sede que tenga la clínica hoy). Se leen antes de
+  // reclamar la sesión: si la lectura falla, la sesión sigue viva y se puede
+  // reintentar, y la cita nueva no pierde al paciente.
   let patientId = state.patientId ?? null
-  if (!patientId && dialog.clinic && oldAppt) {
+  let locationId = oldAppt ? (state.locationId ?? null) : (dialog.clinic?.location?.id ?? null)
+  if (dialog.clinic && oldAppt && (!patientId || !locationId)) {
     try {
-      patientId = await loadAppointmentPatientId(dialog.db, dialog.accountId, oldAppt.id)
+      const links = await loadAppointmentClinicLinks(dialog.db, dialog.accountId, oldAppt.id)
+      patientId ??= links.patientId
+      locationId ??= links.locationId
     } catch (err) {
-      console.error('[clinica] no se pudo leer el paciente de la cita anterior:', err)
+      console.error('[clinica] no se pudo leer el paciente y la sede de la cita anterior:', err)
       await dialog.sender.sendText({ text: dialog.texts.confirmError })
       await conclude(dialog, sessionId, state)
       return
@@ -1704,7 +1724,7 @@ async function confirmAppointment(
     serviceId: service.id,
     staffId: assigned,
     patientId,
-    locationId: dialog.clinic?.location?.id ?? null,
+    locationId,
     startsAtIso: start.toISOString(),
     endsAtIso: end.toISOString(),
     confirmedAtIso: dialog.nowIso,

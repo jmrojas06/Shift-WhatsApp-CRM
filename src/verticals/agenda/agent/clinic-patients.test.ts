@@ -512,11 +512,11 @@ describe('la cita conserva al paciente', () => {
     return rec
   }
 
-  it('al reprogramar, la cita nueva es del mismo paciente', async () => {
+  it('al reprogramar, la cita nueva es del mismo paciente y de la misma sede', async () => {
     const db = clinicDb({
       clinic_consents: [grantedConsent()],
       clinic_patients: family(),
-      booking_appointments: [oldAppointment({ patient_id: 'pat-2' })],
+      booking_appointments: [oldAppointment({ patient_id: 'pat-2', location_id: LOCATION })],
     })
     await reschedule(db)
     const [old, fresh] = db._tables.booking_appointments
@@ -525,6 +525,73 @@ describe('la cita conserva al paciente', () => {
       patient_id: 'pat-2',
       location_id: LOCATION,
       rescheduled_from: 'ap-old',
+      status: 'confirmed',
+    })
+  })
+
+  it('al reprogramar, la sede es la de la cita anterior, no la actual de la clínica', async () => {
+    const db = clinicDb({
+      clinic_consents: [grantedConsent()],
+      clinic_patients: family(),
+      booking_appointments: [oldAppointment({ patient_id: 'pat-2', location_id: 'loc-vieja' })],
+    })
+    await reschedule(db)
+    expect(db._tables.booking_appointments[1]).toMatchObject({
+      patient_id: 'pat-2',
+      location_id: 'loc-vieja',
+      rescheduled_from: 'ap-old',
+    })
+  })
+
+  it('una cita sin sede no se reprograma con la sede actual: no se inventa una', async () => {
+    const db = clinicDb({
+      clinic_consents: [grantedConsent()],
+      clinic_patients: family(),
+      booking_appointments: [oldAppointment({ patient_id: 'pat-2' })],
+    })
+    await reschedule(db)
+    expect('location_id' in db._tables.booking_appointments[1]).toBe(false)
+  })
+
+  it('el paciente y la sede viajan en la sesión desde que empieza a reprogramar', async () => {
+    const db = clinicDb({
+      clinic_consents: [grantedConsent()],
+      clinic_patients: family(),
+      booking_appointments: [oldAppointment({ patient_id: 'pat-2', location_id: 'loc-vieja' })],
+    })
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: 'rem:reschedule' })
+    await send(db, rec, { replyId: last(rec).ids[0] }) // día
+    expect(sessionState(db)).toMatchObject({
+      step: 'pick_slot',
+      mode: 'reschedule',
+      patientId: 'pat-2',
+      locationId: 'loc-vieja',
+    })
+  })
+
+  it('con una pregunta extra en la agenda, el paciente se conserva igual', async () => {
+    const db = clinicDb({
+      clinic_consents: [grantedConsent()],
+      clinic_patients: family(),
+      booking_questions: [
+        {
+          id: 'q-motivo',
+          account_id: ACCOUNT,
+          label: '¿Motivo de la visita?',
+          kind: 'texto',
+          required: true,
+          options: [],
+          position: 0,
+          is_active: true,
+        },
+      ],
+      booking_appointments: [oldAppointment({ patient_id: 'pat-2', location_id: 'loc-vieja' })],
+    })
+    await reschedule(db)
+    expect(db._tables.booking_appointments[1]).toMatchObject({
+      patient_id: 'pat-2',
+      location_id: 'loc-vieja',
       status: 'confirmed',
     })
   })

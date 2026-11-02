@@ -76,6 +76,11 @@ export interface BookingState {
   answers?: AnswerMap
   /** Paciente de la cita (módulo clínica). */
   patientId?: string
+  /**
+   * Sede de la cita que se reprograma (módulo clínica): la nueva cita queda en la
+   * misma sede que la anterior, no en la que tenga la clínica ese día.
+   */
+  locationId?: string
   /** Página del menú de días, cuando hay más de los que caben en una lista. */
   dayPage?: number
   /**
