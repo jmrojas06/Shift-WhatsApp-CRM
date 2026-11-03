@@ -1632,6 +1632,21 @@ describe('textos de la clínica', () => {
   })
 })
 
+describe('instrucciones previas', () => {
+  it('instrucciones o dirección con solo espacios no mandan un mensaje vacío', () => {
+    expect(texts.prepInfo({ prep: '   ', address: '\n ', mapUrl: ' ' })).toBeNull()
+    expect(texts.prepInfo({ prep: '', address: '', mapUrl: null })).toBeNull()
+  })
+
+  it('recorta los espacios de lo que sí dice', () => {
+    expect(texts.prepInfo({ prep: '  Cepíllate antes.  ', address: ' Calle 1 ', mapUrl: null })).toBe(
+      'Para tu cita:\nCepíllate antes.\n\n📍 Calle 1',
+    )
+    // Una de las dos vacía: solo sale la otra.
+    expect(texts.prepInfo({ prep: '  ', address: 'Calle 1', mapUrl: null })).toBe('📍 Calle 1')
+  })
+})
+
 describe('respuesta a tocar Confirmar', () => {
   const when = { staff: 'Dra. Ana', date: 'martes 20 de octubre de 2026', time: '9:00 a. m.' }
 
@@ -1913,12 +1928,18 @@ export function buildClinicTexts(l: AgendaLabels) {
         '¡Te esperamos! 🙌',
       ].join('\n'),
 
-    /** Mapa e instrucciones previas tras confirmar; null si no hay nada que decir. */
+    /**
+     * Mapa e instrucciones previas tras confirmar; null si no hay nada que decir. Lo
+     * que solo tiene espacios no cuenta: no se manda un mensaje vacío.
+     */
     prepInfo: (a: { prep: string | null; address: string | null; mapUrl: string | null }) => {
+      const prep = a.prep?.trim()
+      const address = a.address?.trim()
+      const mapUrl = a.mapUrl?.trim()
       const lines: string[] = []
-      if (a.prep) lines.push(`Para tu ${l.cita}:\n${a.prep}`)
-      if (a.address) lines.push(`📍 ${a.address}`)
-      if (a.mapUrl) lines.push(a.mapUrl)
+      if (prep) lines.push(`Para tu ${l.cita}:\n${prep}`)
+      if (address) lines.push(`📍 ${address}`)
+      if (mapUrl) lines.push(mapUrl)
       return lines.length ? lines.join('\n\n') : null
     },
   }
@@ -12730,9 +12751,14 @@ Reglas que esta tarea deja fijas:
 
 - Una cita solo se toca si es de ese contacto y de esa cuenta, está activa (`pending` o `confirmed`) y
   es futura. Vale para el toque con id, para elegir de la lista y para "Mis citas".
-- Con más de una cita activa en las próximas 72 horas, un toque sin id nunca elige una al azar: pregunta
-  cuál. Si la configuración de la clínica no se puede leer no hay lista que ofrecer, y el hilo pasa a
-  una persona.
+- Un toque sin id nunca adivina: con más de una cita activa y sin exactamente una en las próximas 72 horas
+  (ninguna o varias) pregunta cuál; con exactamente una cercana, es esa. Si la configuración de la clínica no
+  se puede leer no hay lista que ofrecer, y el hilo pasa a una persona.
+- Leer la cita de un toque lanza si la base falla (como `listUpcoming`): un error no es "esa cita ya no está
+  activa", y decírselo a un paciente con la cita viva es peor que fallar (`failClosed` lo recoge).
+- La lista de citas nunca repite títulos: lleva la fecha corta y el nombre de pila, y si aun recortados al tope de
+  20 dos quedan iguales se numeran todos. En esa lista, un texto escrito que coincide con VARIAS citas ("Marta" con
+  dos citas de Marta) no elige la primera: cuenta como fallo (`matchAppointmentOption`). Los demás menús no cambian.
 - El mensaje de instrucciones es solo texto de la clínica (lo que escribió para el servicio, la
   dirección y el mapa). Ningún consejo médico, y sin nada que decir no manda nada.
 - En una clínica, "Nueva cita" desde la gestión de una cita empieza por el paciente (`pick_patient`);
@@ -12779,7 +12805,7 @@ export function seedTemplateMessage(db: FakeDb, templateName: string): string {
 2. Crea `src/verticals/agenda/agent/clinic-appointments.test.ts`:
 
 ```ts
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { buildClinicTexts } from '@/modules/clinica/texts'
 
@@ -12919,6 +12945,164 @@ describe('varias citas en un número', () => {
     expect(last(rec).bodyText).toContain('• mar 20 oct, 10:00 a. m.')
   })
 
+  describe('los títulos de la lista son siempre distintos', () => {
+    const DAY2 = '2026-10-21T14:00:00.000Z'
+    const patientsWith = (...names: string[]): Row[] =>
+      names.map((full_name, i) => ({
+        id: `pat-${i + 1}`,
+        account_id: ACCOUNT,
+        contact_id: CONTACT,
+        full_name,
+      }))
+
+    /** Abre "Mis citas" con estas citas y devuelve lo que se mostró y lo que quedó guardado. */
+    async function listFor(patientNames: string[], appts: Row[]) {
+      const db = clinicDb({
+        clinic_consents: [grantedConsent()],
+        clinic_patients: patientsWith(...patientNames),
+        booking_appointments: appts,
+      })
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: 'act:mine' })
+      const stored = (activeStates(db)[0] as { options: { title: string }[] }).options.map((o) => o.title)
+      return { db, rec, shown: last(rec).titles, stored, body: last(rec).bodyText }
+    }
+
+    const expectDistinct = (titles: string[]) => {
+      expect(new Set(titles).size).toBe(titles.length)
+      for (const title of titles) expect(title.length).toBeLessThanOrEqual(20)
+    }
+
+    it('la misma persona en dos días: se distinguen por la fecha, sin numerar', async () => {
+      const { shown, stored } = await listFor(
+        ['Marta Ruiz'],
+        [appointment('ap-1', 'pat-1', FIRST), appointment('ap-2', 'pat-1', DAY2)],
+      )
+      expect(shown).toEqual(['20 oct Marta', '21 oct Marta'])
+      expect(stored).toEqual(shown)
+    })
+
+    it('la misma persona dos veces el mismo día: se numeran', async () => {
+      const { shown, stored, body } = await listFor(
+        ['Marta Ruiz'],
+        [appointment('ap-1', 'pat-1', FIRST), appointment('ap-2', 'pat-1', SECOND)],
+      )
+      expect(shown).toEqual(['1. 20 oct Marta', '2. 20 oct Marta'])
+      expect(stored).toEqual(shown)
+      // El cuerpo las numera igual, con la hora completa: así se sabe cuál es cuál.
+      expect(body).toContain('1. Marta Ruiz: mar 20 oct, 9:00 a. m.')
+      expect(body).toContain('2. Marta Ruiz: mar 20 oct, 10:00 a. m.')
+    })
+
+    it('dos personas con el mismo nombre de pila el mismo día', async () => {
+      const { shown } = await listFor(
+        ['Marta Ruiz', 'Marta Gil'],
+        [appointment('ap-1', 'pat-1', FIRST), appointment('ap-2', 'pat-2', SECOND)],
+      )
+      expectDistinct(shown)
+      expect(shown[0]).toMatch(/^1\. /)
+    })
+
+    it('un nombre largo no hace chocar dos títulos al recortarse', async () => {
+      const { shown, stored } = await listFor(
+        ['Guillermina-Ana Pérez', 'Guillermina-Eva Gil'],
+        [appointment('ap-1', 'pat-1', FIRST), appointment('ap-2', 'pat-2', FIRST)],
+      )
+      // Distintos sin recortar, pero al tope de 20 los dos quedarían "20 oct Guillermina-…".
+      expectDistinct(shown)
+      expectDistinct(stored)
+      expect(shown[0]).toMatch(/^1\. /)
+    })
+
+    it('citas sin paciente se distinguen por la fecha y la hora', async () => {
+      const { shown } = await listFor(
+        [],
+        [
+          appointment('ap-1', 'pat-x', FIRST, { patient_id: null }),
+          appointment('ap-2', 'pat-x', SECOND, { patient_id: null }),
+          appointment('ap-3', 'pat-x', DAY2, { patient_id: null }),
+        ],
+      )
+      expectDistinct(shown)
+      expect(shown[0]).toBe('20 oct 9:00 a. m.')
+    })
+
+    it('con diez citas de la misma persona siguen siendo distintos', async () => {
+      const many = Array.from({ length: 10 }, (_, i) =>
+        appointment(`ap-${i + 1}`, 'pat-1', new Date(Date.parse(FIRST) + i * 15 * 60_000).toISOString()),
+      )
+      const { shown, stored } = await listFor(['Marta Ruiz'], many)
+      expect(shown).toHaveLength(10)
+      expectDistinct(shown)
+      expectDistinct(stored)
+    })
+
+    it('el número del título elige esa cita', async () => {
+      const { db, rec } = await listFor(
+        ['Marta Ruiz'],
+        [appointment('ap-1', 'pat-1', FIRST), appointment('ap-2', 'pat-1', SECOND)],
+      )
+      await send(db, rec, { text: '2' })
+      expect(activeStates(db)[0]).toMatchObject({ step: 'manage_menu', appointmentId: 'ap-2' })
+    })
+  })
+
+  describe('escribir en la lista de citas', () => {
+    const DAY2 = '2026-10-21T14:00:00.000Z'
+    const open = () =>
+      clinicDb({
+        clinic_consents: [grantedConsent()],
+        clinic_patients: family(),
+        booking_appointments: [
+          appointment('ap-1', 'pat-1', FIRST),
+          appointment('ap-2', 'pat-1', DAY2),
+          appointment('ap-3', 'pat-2', DAY2),
+        ],
+      })
+
+    it('un nombre que es de varias citas no elige la primera: cuenta como fallo', async () => {
+      const db = open()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: 'act:mine' })
+
+      await send(db, rec, { text: 'Marta' })
+
+      expect(activeStates(db)[0]).toMatchObject({ step: 'pick_appointment', fails: 1 })
+      expect(rec.calls.some((c) => c.bodyText.includes('No entendí'))).toBe(true)
+      // Nada se abrió: sigue la lista.
+      expect(last(rec).ids).toEqual([apptId('ap-1'), apptId('ap-2'), apptId('ap-3')])
+    })
+
+    it('a la segunda vez pasa a una persona, como cualquier menú', async () => {
+      const db = open()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: 'act:mine' })
+      await send(db, rec, { text: 'Marta' })
+      await send(db, rec, { text: 'Marta' })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    })
+
+    it('un nombre que es de una sola cita la elige', async () => {
+      const db = open()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: 'act:mine' })
+
+      await send(db, rec, { text: 'Tomás' })
+
+      expect(activeStates(db)[0]).toMatchObject({ step: 'manage_menu', appointmentId: 'ap-3' })
+    })
+
+    it('el toque sigue eligiendo la cita exacta', async () => {
+      const db = open()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: 'act:mine' })
+
+      await send(db, rec, { replyId: apptId('ap-2') })
+
+      expect(activeStates(db)[0]).toMatchObject({ step: 'manage_menu', appointmentId: 'ap-2' })
+    })
+  })
+
   it('elegir una cita de la lista abre su gestión', async () => {
     const db = twoAppointments()
     const rec = makeRecorder()
@@ -13010,6 +13194,98 @@ describe('varias citas en un número', () => {
       const rec = makeRecorder()
       await send(db, rec, { replyId: remId('confirm') })
       expect(statuses(db)).toEqual({ 'ap-1': 'confirmed', 'ap-2': 'pending' })
+    })
+
+    describe('sin id, con las citas lejos', () => {
+      const FAR_1 = '2026-10-26T14:00:00.000Z'
+      const FAR_2 = '2026-10-27T14:00:00.000Z'
+
+      it('con dos citas a más de 72 h pregunta cuál, en vez de confirmar la primera', async () => {
+        const db = twoAppointments({
+          booking_appointments: [
+            appointment('ap-1', 'pat-1', FAR_1),
+            appointment('ap-2', 'pat-2', FAR_2),
+          ],
+        })
+        const rec = makeRecorder()
+
+        const result = await send(db, rec, { replyId: remId('confirm') })
+
+        expect(result).toEqual({ consumed: true })
+        expect(last(rec).ids).toEqual(BOTH)
+        expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'pending' })
+
+        await send(db, rec, { replyId: apptId('ap-2') })
+        expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'confirmed' })
+      })
+
+      it('con una sola cita, aunque quede lejos, es esa', async () => {
+        const db = twoAppointments({ booking_appointments: [appointment('ap-1', 'pat-1', FAR_1)] })
+        const rec = makeRecorder()
+
+        await send(db, rec, { replyId: remId('confirm') })
+
+        expect(statuses(db)).toEqual({ 'ap-1': 'confirmed' })
+      })
+
+      it('con una cercana y una lejana, la cercana es la del toque', async () => {
+        const db = twoAppointments({
+          booking_appointments: [appointment('ap-1', 'pat-1', FAR_1), appointment('ap-2', 'pat-2', FIRST)],
+        })
+        const rec = makeRecorder()
+
+        await send(db, rec, { replyId: remId('confirm') })
+
+        // La cercana, aunque la lista la traiga en otro orden.
+        expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'confirmed' })
+      })
+
+      it('Cancelar y Reprogramar también preguntan', async () => {
+        for (const action of ['cancel', 'reschedule'] as const) {
+          const db = twoAppointments({
+            booking_appointments: [
+              appointment('ap-1', 'pat-1', FAR_1),
+              appointment('ap-2', 'pat-2', FAR_2),
+            ],
+          })
+          const rec = makeRecorder()
+          await send(db, rec, { replyId: remId(action) })
+          expect(last(rec).ids).toEqual(BOTH)
+          expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'pending' })
+        }
+      })
+    })
+
+    describe('si la lectura de la cita falla', () => {
+      it('al tocar Confirmar con el id lanza, en vez de decir que la cita ya no está activa', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {})
+        const db = twoAppointments()
+        const rec = makeRecorder()
+        db._failNext('select', 'booking_appointments', { message: 'timeout' })
+
+        await expect(send(db, rec, { replyId: remId('confirm', 'ap-1') })).rejects.toThrow('timeout')
+
+        // La cita sigue viva y el paciente no recibió un "ya no está activo" falso.
+        expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'pending' })
+        expect(rec.calls.some((c) => c.bodyText.includes('ya no está activo'))).toBe(false)
+      })
+
+      it('una cita que de verdad no existe sí dice que ya no está activa', async () => {
+        const db = twoAppointments()
+        const rec = makeRecorder()
+        await send(db, rec, { replyId: remId('confirm', 'ap-ajena') })
+        expect(last(rec).bodyText).toContain('ya no está activo')
+      })
+
+      it('al elegir de la lista también lanza', async () => {
+        const db = twoAppointments()
+        const rec = makeRecorder()
+        await send(db, rec, { replyId: remId('confirm') })
+        db._failNext('select', 'booking_appointments', { message: 'timeout' })
+
+        await expect(send(db, rec, { replyId: apptId('ap-2') })).rejects.toThrow()
+        expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'pending' })
+      })
     })
 
     it('Cancelar sin id pregunta cuál y solo cancela la que se elige', async () => {
@@ -13175,6 +13451,32 @@ describe('varias citas en un número', () => {
       expect(last(rec).bodyText).toContain('Queda confirmado')
     })
 
+    it('instrucciones y dirección con solo espacios no mandan un mensaje vacío', async () => {
+      const db = twoAppointments({
+        booking_appointments: [appointment('ap-1', 'pat-1', FIRST, { service_id: SERVICE_URGENCIA })],
+        clinic_locations: [
+          {
+            id: 'loc-1',
+            account_id: ACCOUNT,
+            name: 'Centro',
+            address: '   ',
+            latitude: null,
+            longitude: null,
+            on_call_phone: null,
+            is_active: true,
+            created_at: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+      })
+      db._tables.booking_services.find((s) => s.id === SERVICE_URGENCIA)!.prep_instructions = '  \n '
+      const rec = makeRecorder()
+
+      await send(db, rec, { replyId: remId('confirm', 'ap-1') })
+
+      expect(rec.calls).toHaveLength(1)
+      expect(last(rec).bodyText).toContain('Queda confirmado')
+    })
+
     it('confirmar al elegir de la lista también las manda', async () => {
       const db = twoAppointments()
       const rec = makeRecorder()
@@ -13191,6 +13493,97 @@ describe('varias citas en un número', () => {
       expect(rec.calls).toHaveLength(1)
       expect(last(rec).bodyText).toContain('Queda confirmado')
       expect(rec.calls.some((c) => c.bodyText.includes('Cepíllate'))).toBe(false)
+    })
+  })
+
+  // El teléfono puede ser compartido: lo que se le responde a un toque de Confirmar
+  // nombra al paciente, pero no el procedimiento.
+  describe('la respuesta a Confirmar no nombra el procedimiento', () => {
+    const confirmedFor = (patient: string | null) =>
+      texts.reminderConfirmed({
+        patient,
+        staff: 'Dra. Ana',
+        date: 'martes 20 de octubre de 2026',
+        time: '9:00 a. m.',
+      })
+
+    it('dice paciente, doctor, fecha y hora', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm', 'ap-1') })
+      expect(rec.calls.at(-2)?.bodyText).toBe(confirmedFor('Marta Ruiz'))
+      expect(rec.calls.some((c) => c.bodyText.includes('Limpieza'))).toBe(false)
+    })
+
+    it('es el paciente de esa cita, no el de la otra', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm', 'ap-2') })
+      expect(rec.calls.at(-2)?.bodyText).toContain('Tomás Gil')
+      expect(rec.calls.at(-2)?.bodyText).not.toContain('Marta Ruiz')
+      expect(rec.calls.at(-2)?.bodyText).toContain('10:00 a. m.')
+    })
+
+    it('al elegir la cita de la lista también', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm') })
+      await send(db, rec, { replyId: apptId('ap-2') })
+      expect(rec.calls.at(-2)?.bodyText).toContain('Queda confirmado')
+      expect(rec.calls.some((c) => c.bodyText.includes('Limpieza'))).toBe(false)
+    })
+
+    it('con la etiqueta de la plantilla clínica también', async () => {
+      const db = clinicDb({
+        clinic_consents: [grantedConsent()],
+        clinic_patients: family(),
+        booking_appointments: [appointment('ap-1', 'pat-1', FIRST)],
+      })
+      const rec = makeRecorder()
+      const replyTo = seedTemplateMessage(db, 'recordatorio_cita_clinica')
+      await send(db, rec, { replyId: 'Confirmar', replyTo })
+      expect(rec.calls.at(-2)?.bodyText).toBe(confirmedFor('Marta Ruiz'))
+    })
+
+    it('una cita sin paciente se confirma sin esa línea', async () => {
+      const db = twoAppointments({
+        booking_appointments: [appointment('ap-1', 'pat-borrado', FIRST, { patient_id: null })],
+      })
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm', 'ap-1') })
+      expect(rec.calls.at(-2)?.bodyText).toBe(confirmedFor(null))
+    })
+
+    it('si no se pueden leer los pacientes, se confirma igual y sin el nombre', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      const failing = {
+        ...db,
+        from(table: string) {
+          if (table === 'clinic_patients') throw new Error('boom')
+          return db.from(table)
+        },
+      } as typeof db
+      await send(failing, rec, { replyId: remId('confirm', 'ap-1') })
+      expect(statuses(db)['ap-1']).toBe('confirmed')
+      expect(rec.calls.at(-2)?.bodyText).toBe(confirmedFor(null))
+    })
+
+    it('con el módulo activo pero sin su configuración tampoco', async () => {
+      const db = twoAppointments({ clinic_settings: [] })
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm', 'ap-1') })
+      expect(statuses(db)['ap-1']).toBe('confirmed')
+      expect(last(rec).bodyText).toContain('Queda confirmado')
+      expect(rec.calls.some((c) => c.bodyText.includes('Limpieza'))).toBe(false)
+    })
+
+    it('una cuenta sin clínica sigue con el servicio en la respuesta', async () => {
+      const db = twoAppointments()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: remId('confirm') }, { modules: ['agenda'] })
+      expect(last(rec).bodyText).toContain('📌 Limpieza')
+      expect(last(rec).bodyText).not.toContain('Paciente')
     })
   })
 
@@ -13547,6 +13940,61 @@ const UPCOMING = {
   })
 ```
 
+5. En `src/verticals/agenda/agent/state.test.ts`, importa `matchAppointmentOption` y agrega, antes de
+   `describe('matchAnswerOption', ...)`:
+
+```ts
+describe('matchAppointmentOption', () => {
+  const citas: OfferedOption[] = [
+    { id: apptId('a1'), title: '20 oct Marta' },
+    { id: apptId('a2'), title: '21 oct Marta' },
+    { id: apptId('a3'), title: '21 oct Tomás' },
+  ]
+  const pick = (text: string, options = citas) => matchAppointmentOption({ text, options })
+
+  it('el toque manda por id y un id que no se ofreció no empareja', () => {
+    expect(matchAppointmentOption({ text: '', replyId: apptId('a2'), options: citas })).toBe(apptId('a2'))
+    expect(matchAppointmentOption({ text: '', replyId: apptId('zz'), options: citas })).toBeNull()
+  })
+
+  it('un texto que coincide con una sola cita la elige', () => {
+    expect(pick('Tomás')).toBe(apptId('a3'))
+    expect(pick('tomas')).toBe(apptId('a3'))
+    expect(pick('20 oct')).toBe(apptId('a1'))
+    expect(pick('20 oct Marta')).toBe(apptId('a1'))
+  })
+
+  it('un texto que coincide con varias es un fallo, no la primera', () => {
+    expect(pick('Marta')).toBeNull()
+    expect(pick('21 oct')).toBeNull()
+    expect(pick('oct')).toBeNull()
+  })
+
+  it('el número es la posición, también con varias coincidencias', () => {
+    expect(pick('2')).toBe(apptId('a2'))
+    expect(pick('3.')).toBe(apptId('a3'))
+    expect(pick('4')).toBeNull()
+  })
+
+  it('el título entero gana sobre otra cita que lo contiene', () => {
+    const options: OfferedOption[] = [
+      { id: apptId('a1'), title: 'Marta' },
+      { id: apptId('a2'), title: 'Marta Gil' },
+    ]
+    expect(pick('Marta', options)).toBe(apptId('a1'))
+  })
+
+  it('lo que no coincide con ninguna no elige nada', () => {
+    expect(pick('Pedro')).toBeNull()
+    expect(pick('')).toBeNull()
+  })
+
+  it('no toca los demás menús: matchChoice sigue eligiendo la primera coincidencia', () => {
+    expect(matchChoice({ text: 'Marta', options: citas })).toBe(apptId('a1'))
+  })
+})
+```
+
 - [ ] **Step 2: Córrelas y verifica que fallan**
 
 Run: `npx vitest run src/verticals/agenda/agent/clinic-appointments.test.ts`
@@ -13686,7 +14134,7 @@ Y sus pruebas, al final de `src/verticals/agenda/agent/internal-backend.test.ts`
 
 En `src/verticals/agenda/agent/steps/clinic-steps.ts`:
 
-1. Amplía los imports: `formatDayLabel` y `formatTimeLabel` de `'../format'`, `apptId` de `'../state'` y
+1. Amplía los imports: `formatDayLabel`, `formatTimeLabel` y `truncate` de `'../format'`, `apptId` de `'../state'` y
    `zonedParts` de `'../time'` (junto a `zonedDateKey`).
 
 2. `ClinicRoute` suma `'mine'`:
@@ -13796,7 +14244,53 @@ async function myAppointments(ctx: ClinicStepCtx): Promise<ClinicOutcome> {
 }
 ```
 
-5. En `renderClinicStep`, antes de `urgency`:
+5. Antes de `renderClinicStep`, las filas de la lista de citas. Los títulos nunca se repiten: llevan la fecha
+   corta y el nombre de pila, y si aun recortados al tope de 20 dos quedan iguales, se numeran todos (en el
+   título y en el cuerpo):
+
+```ts
+/** Lo que admite un botón; una lista admite 24, pero con 3 o menos citas van botones. */
+const APPOINTMENT_TITLE_MAX = 20
+
+/**
+ * Las filas de la lista de citas. Una lista admite 10 filas. Con 3 o menos van
+ * botones, que no llevan descripción: el título lleva la fecha corta y el nombre de
+ * pila ("20 oct Marta"), o la fecha y la hora si la cita no tiene paciente, y el
+ * cuerpo las dice completas. Los títulos nunca se repiten: si aun recortados al
+ * tope de 20 dos quedan iguales (la misma persona dos veces el mismo día, dos con el
+ * mismo nombre de pila), se numeran todas, en el título y en el cuerpo.
+ */
+function appointmentRows(
+  upcoming: { id: string; startsAt: Date; patientName: string | null }[],
+): { id: string; title: string; description: string; line: string }[] {
+  const base = upcoming.map((appt) => {
+    const parts = zonedParts(appt.startsAt)
+    const day = formatDayLabel(parts.dateKey).split(' ').slice(1).join(' ')
+    const firstName = appt.patientName?.split(' ')[0]
+    return {
+      id: apptId(appt.id),
+      raw: firstName ? `${day} ${firstName}` : `${day} ${formatTimeLabel(parts)}`,
+      when: `${formatDayLabel(parts.dateKey)}, ${formatTimeLabel(parts)}`,
+      patientName: appt.patientName,
+    }
+  })
+  const distinct = new Set(base.map((r) => truncate(r.raw, APPOINTMENT_TITLE_MAX))).size === base.length
+  return base.map((r, index) => {
+    const prefix = `${index + 1}. `
+    const who = r.patientName ? `${r.patientName}: ${r.when}` : r.when
+    return {
+      id: r.id,
+      title: distinct
+        ? truncate(r.raw, APPOINTMENT_TITLE_MAX)
+        : `${prefix}${truncate(r.raw, APPOINTMENT_TITLE_MAX - prefix.length)}`,
+      description: r.when,
+      line: distinct ? `• ${who}` : `${prefix}${who}`,
+    }
+  })
+}
+```
+
+   Y en `renderClinicStep`, antes de `urgency`:
 
 ```ts
     case 'pick_appointment': {
@@ -13808,20 +14302,7 @@ async function myAppointments(ctx: ClinicStepCtx): Promise<ClinicOutcome> {
         await ctx.sender.sendText({ text: texts.noUpcoming })
         return { state, closed: true }
       }
-      // Una lista admite 10 filas. Con 3 o menos van botones, que no llevan
-      // descripción: el nombre del paciente tiene que caber en el título y estar
-      // también en el cuerpo, donde cabe completo.
-      const rows = upcoming.slice(0, 10).map((appt) => {
-        const parts = zonedParts(appt.startsAt)
-        const when = `${formatDayLabel(parts.dateKey)}, ${formatTimeLabel(parts)}`
-        const firstName = appt.patientName?.split(' ')[0]
-        return {
-          id: apptId(appt.id),
-          title: firstName ? `${formatTimeLabel(parts)} ${firstName}` : when,
-          description: when,
-          line: appt.patientName ? `• ${appt.patientName}: ${when}` : `• ${when}`,
-        }
-      })
+      const rows = appointmentRows(upcoming.slice(0, 10))
       await ctx.sendOptions({
         bodyText: `${texts.pickAppointmentBody}\n\n${rows.map((r) => r.line).join('\n')}`,
         buttonLabel: texts.pickAppointmentButton,
@@ -13871,9 +14352,9 @@ En `src/verticals/agenda/agent/controller.ts`:
 
 ```ts
 /**
- * Si un número tiene más de una cita activa que empieza en menos de esto, un
- * toque de recordatorio sin id de cita no dice a cuál se refiere: se pregunta,
- * no se adivina.
+ * Un toque de recordatorio sin id de cita se refiere a la única cita que empieza
+ * en menos de esto. Con más de una cita activa y ninguna o varias tan cercanas no
+ * dice a cuál se refiere: se pregunta, no se adivina.
  */
 const TAP_AMBIGUITY_MS = 72 * 60 * 60 * 1000
 ```
@@ -13919,12 +14400,18 @@ function isSystemTap(session: VerticalSession | null, replyId: string | null): b
   return replyId === actId('cancel_yes') || replyId === actId('back')
 }
 
-/** La cita, solo si es de este contacto y de esta cuenta, está activa y es futura. */
+/**
+ * La cita, solo si es de este contacto y de esta cuenta, está activa y es futura.
+ * Lanza si la lectura falla (como `listUpcoming`): un error no es "esa cita ya no
+ * está activa", y decírselo a un paciente con la cita viva es peor que fallar.
+ */
 async function loadUpcomingAppointment(
   dialog: Dialog,
   appointmentId: string,
 ): Promise<AppointmentInfo | null> {
-  const appt = await loadAppointment(dialog.db, dialog.accountId, dialog.contactId, appointmentId)
+  const appt = await loadAppointment(dialog.db, dialog.accountId, dialog.contactId, appointmentId, {
+    strict: true,
+  })
   if (!appt) return null
   if (appt.status !== 'pending' && appt.status !== 'confirmed') return null
   return appt.startsAt > dialog.now ? appt : null
@@ -13953,7 +14440,9 @@ async function resolveTapAppointment(
   })
   const limit = dialog.now.getTime() + TAP_AMBIGUITY_MS
   const near = upcoming.filter((a) => a.startsAt.getTime() <= limit)
-  if (near.length > 1) {
+  // Una sola cercana es la del recordatorio. Con más de una cita activa y ninguna o
+  // varias cercanas no se adivina: ni la primera ni la más próxima.
+  if (upcoming.length > 1 && near.length !== 1) {
     // Sin la configuración de la clínica no hay lista que ofrecer, y adivinar
     // podría confirmar o cancelar la cita de otro paciente: lo atiende una persona.
     if (!dialog.clinic) {
@@ -13965,7 +14454,8 @@ async function resolveTapAppointment(
     await conclude(dialog, sessionId, state)
     return 'handled'
   }
-  return upcoming[0] ? loadUpcomingAppointment(dialog, upcoming[0].id) : null
+  const chosen = near[0] ?? upcoming[0]
+  return chosen ? loadUpcomingAppointment(dialog, chosen.id) : null
 }
 
 async function handleReminderTap(
@@ -14165,6 +14655,68 @@ async function sendPrepInfo(dialog: Dialog, appt: AppointmentInfo): Promise<void
   }
 ```
 
+5. En `src/verticals/agenda/agent/db.ts`, `loadAppointment` gana la opción `strict` (un error de la base lanza en
+   vez de leerse como "no existe"; las demás llamadas no cambian):
+
+```ts
+export async function loadAppointment(
+  db: SupabaseClient,
+  accountId: string,
+  contactId: string,
+  appointmentId: string,
+  /** Con `strict`, un error de la base lanza en vez de leerse como "no existe". */
+  opts: { strict?: boolean } = {},
+): Promise<AppointmentInfo | null> {
+  const { data, error } = await db
+    .from('booking_appointments')
+    .select(APPOINTMENT_COLS)
+    .eq('id', appointmentId)
+    .eq('account_id', accountId)
+    .eq('contact_id', contactId)
+    .maybeSingle()
+  if (error && opts.strict) throw new Error(`No se pudo leer la cita: ${error.message}`)
+  return data ? mapAppointment(data as Record<string, unknown>) : null
+}
+```
+
+6. En `src/verticals/agenda/agent/state.ts`, después de `matchAnswerOption`:
+
+```ts
+/**
+ * Respuesta a la lista de citas. Como `matchChoice`, pero un texto escrito que
+ * coincide con VARIAS citas ("Marta" cuando hay dos de Marta) no elige la primera:
+ * no empareja, y cuenta como fallo. Primero manda el título entero; después, la
+ * única cita que lo contiene. El toque y el número de posición no cambian. Solo
+ * esta lista lo usa: los demás menús siguen con `matchChoice`.
+ */
+export function matchAppointmentOption(args: MatchChoiceArgs): string | null {
+  const typed = normalizeText(args.text)
+  if (args.replyId || !typed || /^(\d+)[.)]?$/.test(typed)) return matchChoice(args)
+
+  const squashed = squash(args.text)
+  if (!squashed) return null
+  const exact = args.options.filter((o) => squash(o.title) === squashed)
+  if (exact.length) return exact.length === 1 ? exact[0].id : null
+
+  const hits = args.options.filter((o) => matchChoice({ text: args.text, options: [o] }) !== null)
+  return hits.length === 1 ? hits[0].id : null
+}
+```
+
+7. En `src/verticals/agenda/agent/controller.ts`, importa `matchAppointmentOption` de `./state` y, en
+   `advanceSession`, reemplaza el `matchChoice` del emparejamiento general por:
+
+```ts
+  // En la lista de citas, un texto que coincide con varias ("Marta" con dos citas de
+  // Marta) no elige la primera: cuenta como fallo. Los demás menús no cambian.
+  const match = state.step === 'pick_appointment' ? matchAppointmentOption : matchChoice
+  const choice = match({
+    text: input.text,
+    replyId: input.replyId,
+    options: state.options,
+  })
+```
+
 - [ ] **Step 6: Corre las pruebas**
 
 Run: `npx vitest run src/verticals/agenda && npx tsc --noEmit`
@@ -14195,6 +14747,9 @@ Reglas que esta tarea deja fijas:
 - Si no se puede leer al paciente o la sede, el recordatorio no sale y la señal **no se reclama**: la próxima
   corrida lo reintenta. Un error de lectura no es "la cita no tiene paciente", y mandar otro nombre u otra
   sede es peor que mandarlo después. El error lleva la cita y el mensaje de la base, nunca el nombre.
+- Una cita sin paciente (anterior al módulo) toma el nombre del contacto, solo si es un nombre (con letras). Si
+  leer el contacto falla, también lanza (`loadContact` con `strict`): se reintenta en la próxima corrida en vez de
+  mandar "tu familiar" a quien sí tiene nombre.
 - Una cita sin sede dice `Principal` (`DEFAULT_LOCATION_NAME`, la misma que se crea sola): el mensaje dice
   "sede {nombre}", y "Sede principal" saldría como "sede Sede principal".
 - Los botones de la plantilla son fijos. Los tres payloads salen siempre, en el orden de los botones aprobados
@@ -14565,6 +15120,35 @@ Dentro de `describe('runAgendaReminders', ...)`, después de la última prueba:
       expect(JSON.stringify(summary)).not.toContain('Tomás')
     })
 
+    it('si no se puede leer el contacto de una cita sin paciente, no se envía ni se reclama', async () => {
+      const seed = clinicSeed()
+      seed.booking_appointments[0].patient_id = null
+      const db = makeFakeDb(seed)
+      const spy = instrument(db, 'contacts')
+      const rec = makeRecorder()
+
+      const summary = await runAgendaReminders({ db: asClient(spy.db), now: NOW, send: rec.send })
+
+      // Otro nombre ("tu familiar") o ninguno sería peor que mandarlo en la próxima corrida.
+      expect(summary.failed).toBe(1)
+      expect(rec.deliveries).toHaveLength(0)
+      expect(appointmentRow(db).reminder_sent_at).toBeNull()
+      expect(summary.errors).toHaveLength(1)
+      expect(summary.errors[0]).toContain(APPT)
+      expect(JSON.stringify(summary)).not.toContain('Laura')
+    })
+
+    it('con paciente no hace falta leer el contacto: un fallo ahí no frena el envío', async () => {
+      const db = makeFakeDb(clinicSeed())
+      const spy = instrument(db, 'contacts')
+      const rec = makeRecorder()
+
+      const summary = await runAgendaReminders({ db: asClient(spy.db), now: NOW, send: rec.send })
+
+      expect(summary.sent).toBe(1)
+      expect(rec.deliveries[0].clinic?.patientName).toBe('Tomás Gil')
+    })
+
     it('si no puede leer la sede tampoco envía una sede inventada', async () => {
       const db = makeFakeDb(clinicSeed())
       const spy = instrument(db, 'clinic_locations')
@@ -14849,6 +15433,28 @@ Agrégalo a la desestructuración de `sendTemplateMessage`, y reemplaza la rama 
 
 - [ ] **Step 4: Lee paciente y sede**
 
+En `src/verticals/agenda/agent/db.ts`, `loadContact` gana la opción `strict` (un error de la base lanza en vez de
+leerse como "no hay contacto"; las demás llamadas no cambian):
+
+```ts
+export async function loadContact(
+  db: SupabaseClient,
+  accountId: string,
+  contactId: string,
+  /** Con `strict`, un error de la base lanza en vez de leerse como "no hay contacto". */
+  opts: { strict?: boolean } = {},
+): Promise<{ name: string | null; phone: string | null } | null> {
+  const { data, error } = await db
+    .from('contacts')
+    .select('name, phone')
+    .eq('id', contactId)
+    .eq('account_id', accountId)
+    .maybeSingle()
+  if (error && opts.strict) throw new Error(`No se pudo leer el contacto: ${error.message}`)
+  if (!data) return null
+  // …lo demás, igual
+```
+
 Crea `src/modules/clinica/reminder-info.ts`. Reutiliza `loadAppointmentClinicLinks` (Tarea 8) y `loadContact`,
 **lanza** si una lectura falla, y su respaldo de sede es `DEFAULT_LOCATION_NAME` (Tarea 5):
 
@@ -14931,8 +15537,11 @@ export async function loadClinicReminderInfo(
     : null
   if (!patientName) {
     // Una cita de antes del módulo: el nombre del contacto, si es un nombre
-    // (no un número ni un símbolo).
-    const contactName = tidy((await loadContact(db, args.accountId, args.contactId))?.name)
+    // (no un número ni un símbolo). Si no se puede leer, lanza: sin él se mandaría
+    // "tu familiar" a quien sí tiene nombre, y la próxima corrida lo reintenta.
+    const contactName = tidy(
+      (await loadContact(db, args.accountId, args.contactId, { strict: true }))?.name,
+    )
     patientName = contactName && HAS_LETTER.test(contactName) ? contactName : null
   }
 
@@ -15406,6 +16015,15 @@ Reglas que esta tarea deja fijas:
   equipo porque así la persona recibe ya los signos de alarma, y lo peor que puede pasar es una respuesta cruzada
   con el otro mensaje; avisar sin responder la dejaría esperando a que alguien mire. Si no se puede leer el
   mensaje, falla cerrado (alerta) en vez de dar por hecho que no era urgente.
+- **"No acepto" y los botones del recordatorio tampoco se descartan.** Retirar la autorización (`act:consent_no`) y
+  tocar un recordatorio (`rem:*`, también la etiqueta) son decisiones de la persona sobre un mensaje del sistema, y
+  se procesan igual que una urgencia.
+- **Todo descarte avisa.** Cualquier otro mensaje que se descarta por no tener el candado llama a `notifyAlert` con
+  la cuenta y la conversación, nunca con el texto del paciente.
+- **`released`.** El dispatcher lee la sesión ANTES de llamar al bot y, si el mensaje no se consume y el bot no dice
+  que soltó la sesión, lo reclama por esa sesión vieja y nadie contesta. Si el dispatcher trajo una sesión que ya no
+  existe tras esperar (otro mensaje la cerró), el handler devuelve `released: true` cuando el mensaje no se
+  consumió. La prueba pasa por `dispatchInboundToVertical` (Task 14, paso 7).
 
 **Files:**
 - Create: `src/verticals/agenda/agent/bot-lock.ts`, `src/verticals/agenda/agent/bot-lock.test.ts`
@@ -15586,6 +16204,35 @@ describe('withBotLock', () => {
       expect(work).not.toHaveBeenCalled()
     })
 
+    it('avisa cuando descarta un mensaje, y solo entonces', async () => {
+      const dropped = vi.fn(async () => {})
+      const work = async () => ({ consumed: false })
+
+      // Descartado: avisa una vez.
+      await withBotLock(asClient(seed(FAR_FUTURE)), args, work, { waitMs: 0, onDropped: dropped })
+      expect(dropped).toHaveBeenCalledTimes(1)
+
+      // Procesado sin candado, o con candado: no avisa.
+      await withBotLock(asClient(seed(FAR_FUTURE)), args, work, {
+        waitMs: 0,
+        runWithoutLockWhen: async () => true,
+        onDropped: dropped,
+      })
+      await withBotLock(asClient(seed()), args, work, { onDropped: dropped })
+      expect(dropped).toHaveBeenCalledTimes(1)
+    })
+
+    it('si el aviso del descarte falla, el error sube (quien llama falla cerrado)', async () => {
+      await expect(
+        withBotLock(asClient(seed(FAR_FUTURE)), args, async () => ({ consumed: false }), {
+          waitMs: 0,
+          onDropped: async () => {
+            throw new Error('el aviso falló')
+          },
+        }),
+      ).rejects.toThrow('el aviso falló')
+    })
+
     it('solo pregunta si es urgente cuando no consiguió el candado', async () => {
       const urgent = vi.fn(async () => true)
       await withBotLock(asClient(seed()), args, async () => ({ consumed: false }), {
@@ -15697,7 +16344,7 @@ describe('loadHumanOwned', () => {
 })
 ```
 
-En `src/verticals/agenda/agent/index.test.ts`, al final del archivo (`context`, `mocks` y `clinicDb` ya existen ahí):
+En `src/verticals/agenda/agent/index.test.ts`, agrega `grantedConsent` al import del arnés y, al final del archivo (`context`, `mocks` y `clinicDb` ya existen ahí):
 
 ```ts
 // ------------------------------------------------------------
@@ -15881,6 +16528,94 @@ describe('agendaInboundHandler — candado por conversación', () => {
       expect(lockOf(db)).toBe(BUSY)
     })
 
+    it('descartar un mensaje avisa al equipo técnico, sin el texto del paciente', async () => {
+      const db = withInbound(clinicDb(), 'quiero una cita para mi hijo Tomás')
+      db._tables.conversations[0].bot_lock_until = BUSY
+
+      await runWaiting(ctx(db))
+
+      expect(mocks.notifyAlert).toHaveBeenCalledTimes(1)
+      const text = mocks.notifyAlert.mock.calls[0][0]
+      expect(text).toContain(ACCOUNT)
+      expect(text).toContain(CONVERSATION)
+      expect(text).not.toContain('Tomás')
+      expect(text).not.toContain('quiero una cita')
+    })
+
+    it('lo que sí se procesa no avisa de ningún descarte', async () => {
+      const db = withInbound(clinicDb(), 'tengo mucho dolor')
+      db._tables.conversations[0].bot_lock_until = BUSY
+
+      await runWaiting(ctx(db))
+
+      expect(mocks.notifyAlert).not.toHaveBeenCalled()
+    })
+
+    it('"No acepto" retira la autorización aunque el candado esté ocupado', async () => {
+      const db = withInbound(clinicDb({ clinic_consents: [grantedConsent()] }), '', 'act:consent_no')
+      db._tables.conversations[0].bot_lock_until = BUSY
+
+      const result = await runWaiting(ctx(db))
+
+      expect(result).toEqual({ consumed: true })
+      // El retiro queda en el registro, y el candado sigue siendo del otro.
+      expect(db._tables.clinic_consents.at(-1)).toMatchObject({
+        kind: 'datos_sensibles',
+        granted: false,
+      })
+      expect(lockOf(db)).toBe(BUSY)
+      expect(mocks.notifyAlert).not.toHaveBeenCalled()
+    })
+
+    it.each(['rem:confirm:ap-1', 'rem:cancel:ap-1', 'rem:reschedule'])(
+      'el toque de un recordatorio (%s) se atiende aunque el candado esté ocupado',
+      async (replyId) => {
+        const db = withInbound(
+          clinicDb({
+            clinic_consents: [grantedConsent()],
+            booking_appointments: [
+              {
+                id: 'ap-1',
+                account_id: ACCOUNT,
+                contact_id: CONTACT,
+                service_id: 'svc-limpieza',
+                staff_id: 'st-ana',
+                starts_at: '2026-10-20T14:00:00.000Z',
+                ends_at: '2026-10-20T14:30:00.000Z',
+                status: 'pending',
+                answers: {},
+              },
+            ],
+          }),
+          '',
+          replyId,
+        )
+        db._tables.conversations[0].bot_lock_until = BUSY
+
+        const result = await runWaiting(ctx(db))
+
+        expect(result).toEqual({ consumed: true })
+        // El bot contestó el toque (no se descartó) y no soltó el candado de otro.
+        expect(
+          mocks.sendText.mock.calls.length +
+            mocks.sendButtons.mock.calls.length +
+            mocks.sendList.mock.calls.length,
+        ).toBeGreaterThan(0)
+        expect(lockOf(db)).toBe(BUSY)
+        expect(mocks.notifyAlert).not.toHaveBeenCalled()
+      },
+    )
+
+    it('un toque de otro menú, con el candado ocupado, se descarta y avisa', async () => {
+      const db = withInbound(clinicDb(), '', 'act:book')
+      db._tables.conversations[0].bot_lock_until = BUSY
+
+      await runWaiting(ctx(db))
+
+      expect(mocks.sendButtons).not.toHaveBeenCalled()
+      expect(mocks.notifyAlert).toHaveBeenCalledTimes(1)
+    })
+
     it('el toque de "Tengo una urgencia" también', async () => {
       const db = withInbound(clinicDb(), '', 'act:urgent')
       db._tables.conversations[0].bot_lock_until = BUSY
@@ -16043,16 +16778,21 @@ async function releaseBotLock(db: SupabaseClient, args: LockArgs, held: string):
 
 /**
  * Corre `work` con el candado. Espera hasta `waitMs` a que se libere. Si sigue
- * ocupado, el mensaje se consume sin responder (se registra), salvo que
- * `runWithoutLockWhen` diga que no puede perderse (una urgencia): entonces el
- * trabajo corre igual, sin candado y sin soltar el de otro. Si esa pregunta
- * lanza, el error sube.
+ * ocupado, el mensaje se consume sin responder (se registra y se llama a
+ * `onDropped`), salvo que `runWithoutLockWhen` diga que no puede perderse (una
+ * urgencia): entonces el trabajo corre igual, sin candado y sin soltar el de
+ * otro. Si esa pregunta o el aviso lanzan, el error sube.
  */
 export async function withBotLock(
   db: SupabaseClient,
   args: LockArgs,
   work: () => Promise<VerticalDispatchResult>,
-  opts: { waitMs?: number; runWithoutLockWhen?: () => Promise<boolean> } = {},
+  opts: {
+    waitMs?: number
+    runWithoutLockWhen?: () => Promise<boolean>
+    /** Se llama cuando el mensaje se descarta por no tener el candado: que alguien se entere. */
+    onDropped?: () => Promise<void>
+  } = {},
 ): Promise<VerticalDispatchResult> {
   const deadline = Date.now() + (opts.waitMs ?? DEFAULT_WAIT_MS)
   let held = await acquireBotLock(db, { ...args, now: new Date() })
@@ -16068,6 +16808,7 @@ export async function withBotLock(
       return work()
     }
     console.warn(`[agenda] mensaje sin candado en la conversación ${args.conversationId}`)
+    await opts.onDropped?.()
     return { consumed: true }
   }
   try {
@@ -16176,26 +16917,35 @@ import { DEFAULT_URGENCY_WORDS } from '@/modules/clinica/texts'
 import { withBotLock } from './bot-lock'
 import { handleAgendaInbound, type AgendaSender } from './controller'
 import { loadActiveSession, loadHumanOwned, loadInboundMessage } from './db'
-import { actId, detectsUrgency } from './state'
+import { actId, detectsUrgency, parseReminderTap } from './state'
 ```
 
 ```ts
 /**
- * ¿Este mensaje no puede perderse aunque el candado esté ocupado? Un toque de
- * urgencia ("Tengo una urgencia", "Sí, tengo alguno") o un texto con una palabra
- * de urgencia de la clínica o del piso fijo (`detectsUrgency`). Si la
- * configuración de la clínica no se puede leer valen las palabras de siempre:
- * un fallo de lectura nunca esconde una urgencia. Un mensaje que no se
- * encuentra no se da por urgente; uno que no se puede leer lanza.
+ * ¿Este mensaje no puede esperar ni perderse aunque el candado esté ocupado?
+ *   - Una urgencia: el toque de "Tengo una urgencia" o "Sí, tengo alguno", o un
+ *     texto con una palabra de la clínica o del piso fijo (`detectsUrgency`). Si
+ *     la configuración no se puede leer valen las palabras de siempre: un fallo
+ *     de lectura nunca esconde una urgencia.
+ *   - "No acepto": retirar la autorización es una decisión de la persona y queda
+ *     en un registro; no puede descartarse.
+ *   - El toque de un recordatorio (`rem:*`): es la respuesta a un mensaje que mandó
+ *     el sistema, con la hora de una cita de por medio.
+ * Un mensaje que no se encuentra no cuenta; uno que no se puede leer lanza.
  */
-async function isUrgentInbound(ctx: VerticalInboundContext): Promise<boolean> {
+async function mustNotBeDropped(ctx: VerticalInboundContext): Promise<boolean> {
   if (!ctx.inboundMessageId) return false
   const inbound = await loadInboundMessage(ctx.db, ctx.conversationId, ctx.inboundMessageId, {
     strict: true,
   })
   if (!inbound) return false
   if (inbound.replyId !== null) {
-    return inbound.replyId === actId('urgent') || inbound.replyId === actId('alarm_yes')
+    return (
+      inbound.replyId === actId('urgent') ||
+      inbound.replyId === actId('alarm_yes') ||
+      inbound.replyId === actId('consent_no') ||
+      parseReminderTap(inbound.replyId) !== null
+    )
   }
   const clinic = await loadClinicContext(ctx.db, ctx.accountId).catch(() => null)
   const words = clinic?.status === 'ok' ? clinic.clinic.urgencyWords : DEFAULT_URGENCY_WORDS
@@ -16211,8 +16961,9 @@ async function isUrgentInbound(ctx: VerticalInboundContext): Promise<boolean> {
  * Con el módulo clínica, el mensaje se atiende con el candado de la
  * conversación (ver `withBotLock`), y lo que pudo cambiar mientras se esperaba
  * se lee de nuevo: la sesión y quién lleva el hilo. Si el candado no se
- * consigue, el mensaje se consume sin responder, salvo una urgencia, que se
- * procesa igual. Las demás cuentas siguen igual que siempre.
+ * consigue, el mensaje se consume sin responder y se avisa al equipo técnico,
+ * salvo una urgencia, un "No acepto" o el toque de un recordatorio, que se
+ * procesan igual. Las demás cuentas siguen igual que siempre.
  */
 export const agendaInboundHandler: VerticalInboundHandler = async (ctx) => {
   const run = (session: VerticalInboundContext['session'], humanOwned: boolean) =>
@@ -16247,9 +16998,22 @@ export const agendaInboundHandler: VerticalInboundHandler = async (ctx) => {
           }),
           loadHumanOwned(ctx.db, ctx.accountId, ctx.conversationId).catch(() => false),
         ])
-        return run(session, (ctx.humanOwned ?? false) || humanNow)
+        const result = await run(session, (ctx.humanOwned ?? false) || humanNow)
+        // El dispatcher trajo una sesión que ya no existe (otro mensaje la cerró mientras
+        // este esperaba). Si el mensaje no se consumió, hay que decir que se soltó: si no,
+        // el dispatcher lo reclamaría por la sesión vieja y nadie lo contestaría.
+        return !result.consumed && ctx.session && !session ? { ...result, released: true } : result
       },
-      { runWithoutLockWhen: () => isUrgentInbound(ctx) },
+      {
+        runWithoutLockWhen: () => mustNotBeDropped(ctx),
+        // Cualquier otro mensaje que se descarta: que alguien mire ese chat. Sin el
+        // texto del paciente, solo dónde mirar.
+        onDropped: () =>
+          notifyAlert(
+            `Clínica: un mensaje de un paciente se descartó porque la conversación estaba ocupada y no se lo pasó a la IA (cuenta ${ctx.accountId}, conversación ${ctx.conversationId}). ` +
+              'El paciente puede haberse quedado sin respuesta; hay que revisar el chat.',
+          ),
+      },
     )
   } catch (err) {
     return failClosed(ctx, err)
@@ -16279,7 +17043,12 @@ control. La respuesta es una autorización aparte (`mercadeo`), distinta de la d
 Reglas que esta tarea deja fijas:
 
 - **`mkt_yes` solo por toque.** Ningún texto acepta (`state.ts` no lo empareja: ni "sí", ni "acepto", ni un
-  número). Un "no" sí puede escribirse. Un toque viejo, sin la pregunta abierta, no autoriza nada.
+  número). Un toque viejo, sin la pregunta abierta, no autoriza nada.
+- **Solo un "no" completo rechaza.** El rechazo queda registrado y la pregunta no se vuelve a hacer, así que solo
+  un mensaje que ES un "no" lo registra: "no", "no gracias", "mejor no", "no señor", "no señora" (`MKT_NO_WHOLE`,
+  sin emojis ni signos de pregunta). Una negación dentro de otra frase ("no voy a poder asistir a la cita",
+  "¿no hay parqueadero?") no registra nada y sigue su camino. La regla de la autorización de datos
+  (`consent_*`) no cambia.
 - **Qué queda guardado:** `kind: 'mercadeo'`, la decisión, `textSnapshot: texts.marketingBody` (el texto exacto
   que vio la persona), la versión del texto de la clínica y `contact_ref` (lo pone `recordConsent`).
 - **No se pregunta** en una reserva de urgencia (`state.urgent`: primero la urgencia), ni tras reprogramar, ni si
@@ -16289,7 +17058,8 @@ Reglas que esta tarea deja fijas:
 - **Si la pregunta no se puede enviar**, la cita sigue y no queda una sesión abierta sin menú.
 - **Es opcional:** quien escribe otra cosa ("gracias", una duda, un "sí" escrito) no recibe un "no entendí" ni,
   a la segunda, pasa a una persona. La pregunta se cierra sin registrar nada y el mensaje sigue su camino como si
-  no hubiera sesión (paso 6).
+  no hubiera sesión (paso 6), y devuelve `released: true` si no lo consumió: sin eso el dispatcher lo reclamaría
+  por la sesión que leyó antes y nadie lo contestaría (paso 7).
 
 **Files:**
 - Create: `src/verticals/agenda/agent/clinic-marketing.test.ts`
@@ -16763,8 +17533,48 @@ una persona. Agrega a `src/verticals/agenda/agent/clinic-marketing.test.ts`, ant
         expect(marketingRows(db)).toHaveLength(0)
         expect(activeSteps(db)).toEqual([])
         expect(rec.calls).toHaveLength(callsBefore)
-        // No lo contesta el bot: el mensaje sigue su camino (a la IA).
-        expect(result).toEqual({ consumed: false })
+        // No lo contesta el bot: el mensaje sigue su camino (a la IA), y se avisa que la
+        // sesión se soltó. Sin `released` el despachador lo reclamaría por la sesión
+        // que leyó antes y nadie lo contestaría.
+        expect(result).toEqual({ consumed: false, released: true })
+      },
+    )
+
+    it.each([
+      'no voy a poder asistir a la cita',
+      'no puedo ir a la cita',
+      '¿no hay parqueadero?',
+      'no sé',
+      'no, gracias por todo',
+    ])('una negación dentro de otra frase (%j) no registra un rechazo', async (text) => {
+      const { db, rec } = await afterQuestion()
+
+      await send(db, rec, { text })
+
+      // Registrarlo perdería el aviso para siempre: la pregunta no se vuelve a hacer.
+      expect(marketingRows(db)).toHaveLength(0)
+      expect(activeSteps(db)).not.toContain('marketing_consent')
+      expect(rec.calls.some((c) => c.bodyText === texts.marketingThanksNo)).toBe(false)
+    })
+
+    it('"no voy a poder asistir a la cita" sigue su camino: se le muestran sus citas', async () => {
+      const { db, rec } = await afterQuestion()
+
+      const result = await send(db, rec, { text: 'no voy a poder asistir a la cita' })
+
+      expect(result).toEqual({ consumed: true })
+      expect(rec.calls.some((c) => c.bodyText.includes('Marta') || c.bodyText === texts.noUpcoming)).toBe(true)
+    })
+
+    it.each(['no', 'No.', 'no gracias', 'Mejor no', 'no señor', 'no señora'])(
+      'un no completo (%j) sí es el rechazo',
+      async (text) => {
+        const { db, rec } = await afterQuestion()
+
+        const result = await send(db, rec, { text })
+
+        expect(result).toEqual({ consumed: true })
+        expect(marketingRows(db)).toMatchObject([{ granted: false }])
       },
     )
 
@@ -16784,7 +17594,7 @@ una persona. Agrega a `src/verticals/agenda/agent/clinic-marketing.test.ts`, ant
 
       const result = await send(db, rec, { text: '¿a qué hora debo llegar?' })
 
-      expect(result.consumed).toBe(false)
+      expect(result).toEqual({ consumed: false, released: true })
       expect(rec.calls).toHaveLength(callsBefore)
       expect(activeSteps(db)).toEqual([])
     })
@@ -16865,7 +17675,10 @@ del bloque `if (session && state)`:
         status: 'completed',
         updatedAtIso: dialog.nowIso,
       })
-      return handleClinicInbound(dialog, null, null, input)
+      const result = await handleClinicInbound(dialog, null, null, input)
+      // El despachador leyó esa sesión antes de llamarnos y, si el mensaje no se
+      // consumió, la reclamaría por ella: nadie lo contestaría. Se avisa que se soltó.
+      return result.consumed ? result : { ...result, released: true }
     }
 ```
 
@@ -16880,6 +17693,316 @@ git add src/verticals/agenda/agent
 git commit -m "fix(clinica): an unanswered check-up question does not pause the bot"
 ```
 
+- [ ] **Step 7: Prueba por el despachador de verdad**
+
+El despachador lee la sesión ANTES de llamar al bot. Si el bot cierra la sesión y no consume el mensaje, hay que
+decirlo con `released: true` (el bloque del paso 6 ya lo hace): sin eso el despachador lo reclama por la sesión
+vieja y nadie contesta ("¿tienen parqueadero?", "gracias", "sí"). Lo mismo tras esperar el candado (Task 13). La
+prueba pasa por `dispatchInboundToVertical` con el handler real; en el controlador solo no se ve.
+
+Crea `src/verticals/agenda/agent/clinic-dispatch.test.ts`:
+
+```ts
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// ============================================================
+// El bot de la clínica detrás del despachador de verticales, de verdad.
+//
+// El despachador lee la sesión ANTES de llamar al bot, y si el bot no consume
+// el mensaje y no avisa que soltó la sesión (`released`), reclama el mensaje
+// por esa sesión vieja: nadie contesta. Estas pruebas pasan por
+// `dispatchInboundToVertical`, no solo por el controlador, porque ahí es donde
+// se pierde el mensaje.
+// ============================================================
+
+const mocks = vi.hoisted(() => ({
+  db: null as unknown,
+  notifyAlert: vi.fn<(text: string) => Promise<void>>(async () => {}),
+  sendText: vi.fn<(args: unknown) => Promise<void>>(async () => {}),
+  sendButtons: vi.fn<(args: unknown) => Promise<void>>(async () => {}),
+  sendList: vi.fn<(args: unknown) => Promise<void>>(async () => {}),
+  loadAiConfig: vi.fn(),
+}))
+
+vi.mock('@/lib/verticals/admin-client', () => ({ supabaseAdmin: () => mocks.db }))
+vi.mock('@/lib/ops/alert', () => ({ notifyAlert: mocks.notifyAlert }))
+vi.mock('@/lib/ai/config', () => ({ loadAiConfig: mocks.loadAiConfig }))
+vi.mock('@/lib/flows/meta-send', () => ({
+  engineSendText: mocks.sendText,
+  engineSendInteractiveButtons: mocks.sendButtons,
+  engineSendInteractiveList: mocks.sendList,
+}))
+
+import { dispatchInboundToVertical } from '@/lib/verticals/dispatch'
+
+import {
+  ACCOUNT,
+  CONTACT,
+  CONVERSATION,
+  OWNER,
+  clinicDb,
+  grantedConsent,
+} from './testing/clinic-harness'
+import type { FakeDb } from './testing/fake-db'
+
+const NOW = new Date('2026-10-19T13:00:00.000Z')
+const BUSY = '2099-01-01T00:00:00.000Z'
+
+const MARKETING_SESSION = {
+  id: 'ses-mkt',
+  account_id: ACCOUNT,
+  contact_id: CONTACT,
+  status: 'active',
+  expires_at: '2026-10-19T13:10:00.000Z',
+  state: {
+    step: 'marketing_consent',
+    mode: 'book',
+    options: [
+      { id: 'act:mkt_yes', title: 'Sí, avísame' },
+      { id: 'act:mkt_no', title: 'No, gracias' },
+    ],
+    fails: 0,
+  },
+}
+
+const MENU_SESSION = {
+  id: 'ses-menu',
+  account_id: ACCOUNT,
+  contact_id: CONTACT,
+  status: 'active',
+  expires_at: '2026-10-19T13:10:00.000Z',
+  state: {
+    step: 'clinic_menu',
+    mode: 'book',
+    options: [
+      { id: 'act:book', title: 'Agendar cita' },
+      { id: 'act:mine', title: 'Mis citas' },
+      { id: 'act:faq', title: 'Precios y dudas' },
+      { id: 'act:urgent', title: 'Tengo una urgencia' },
+      { id: 'act:human', title: 'Hablar con una persona' },
+    ],
+    fails: 0,
+  },
+}
+
+/** Una clínica de verdad para el despachador: con módulos, autorización y un mensaje entrante. */
+function clinicWith(session: typeof MARKETING_SESSION, text: string): FakeDb {
+  const db = clinicDb({
+    accounts: [
+      {
+        id: ACCOUNT,
+        default_currency: 'COP',
+        owner_user_id: OWNER,
+        modules: ['agenda', 'clinica'],
+        vertical_key: 'odontologia',
+      },
+    ],
+    clinic_consents: [grantedConsent()],
+    booking_sessions: [{ ...session }],
+    messages: [
+      {
+        id: 'msg-in',
+        conversation_id: CONVERSATION,
+        message_id: 'wamid-in',
+        content_text: text,
+        interactive_reply_id: null,
+        reply_to_message_id: null,
+      },
+    ],
+  })
+  mocks.db = db
+  return db
+}
+
+const dispatch = () =>
+  dispatchInboundToVertical({
+    accountId: ACCOUNT,
+    conversationId: CONVERSATION,
+    contactId: CONTACT,
+    configOwnerUserId: OWNER,
+    inboundMessageId: 'wamid-in',
+  })
+
+const sessionStatus = (db: FakeDb, id: string) =>
+  db._tables.booking_sessions.find((s) => s.id === id)?.status
+
+const nothingSent = () =>
+  mocks.sendText.mock.calls.length + mocks.sendButtons.mock.calls.length + mocks.sendList.mock.calls.length === 0
+
+beforeEach(() => {
+  vi.useFakeTimers()
+  vi.setSystemTime(NOW)
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
+  mocks.loadAiConfig.mockResolvedValue({ autoReplyEnabled: true, autoReplyMaxPerConversation: 3 })
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+  vi.clearAllMocks()
+})
+
+describe('el mensaje de un paciente no se pierde por una sesión que el bot soltó', () => {
+  describe('tras la pregunta de avisos de control', () => {
+    it.each([
+      '¿tienen parqueadero?',
+      'gracias',
+      'sí',
+      'gracias, ¿dónde queda la clínica?',
+    ])('%j llega a la IA: el despachador no lo da por consumido', async (text) => {
+      const db = clinicWith(MARKETING_SESSION, text)
+
+      const result = await dispatch()
+
+      // La IA lo contesta: nadie lo reclamó, y la sesión de la pregunta ya se cerró.
+      expect(result).toEqual({ consumed: false })
+      expect(sessionStatus(db, 'ses-mkt')).toBe('completed')
+      expect(nothingSent()).toBe(true)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    })
+
+    it('un "no" completo sí lo contesta el bot, y el despachador lo da por consumido', async () => {
+      const db = clinicWith(MARKETING_SESSION, 'no gracias')
+
+      const result = await dispatch()
+
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.clinic_consents.filter((c) => c.kind === 'mercadeo')).toMatchObject([
+        { granted: false },
+      ])
+    })
+
+    it('si la IA no va a contestar, la duda pasa a una persona y se consume', async () => {
+      mocks.loadAiConfig.mockResolvedValue({ autoReplyEnabled: false, autoReplyMaxPerConversation: 3 })
+      const db = clinicWith(MARKETING_SESSION, '¿tienen parqueadero?')
+
+      const result = await dispatch()
+
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    })
+  })
+
+  describe('tras esperar el candado', () => {
+    it('con el menú abierto, dos dudas seguidas: la segunda tampoco se pierde', async () => {
+      const db = clinicWith(MENU_SESSION as typeof MARKETING_SESSION, '¿tienen parqueadero?')
+      // La primera duda sigue en proceso: tiene el candado.
+      db._tables.conversations[0].bot_lock_until = BUSY
+
+      const pending = dispatch()
+      await vi.advanceTimersByTimeAsync(300)
+      // La primera termina: pasó a la IA y cerró la sesión; suelta el candado.
+      db._tables.booking_sessions[0].status = 'completed'
+      db._tables.conversations[0].bot_lock_until = null
+      await vi.advanceTimersByTimeAsync(300)
+
+      // La segunda ya no ve sesión, pero el despachador la leyó antes: sin `released`
+      // la reclamaría por la sesión vieja.
+      expect(await pending).toEqual({ consumed: false })
+      expect(nothingSent()).toBe(true)
+    })
+
+    it('si la sesión sigue abierta, el bot sigue siendo dueño del mensaje', async () => {
+      const db = clinicWith(MENU_SESSION as typeof MARKETING_SESSION, 'Hola')
+      db._tables.conversations[0].bot_lock_until = BUSY
+
+      const pending = dispatch()
+      await vi.advanceTimersByTimeAsync(300)
+      db._tables.conversations[0].bot_lock_until = null
+      await vi.advanceTimersByTimeAsync(300)
+
+      expect(await pending).toEqual({ consumed: true })
+      expect(sessionStatus(db, 'ses-menu')).toBe('active')
+    })
+  })
+})
+```
+
+Run: `npx vitest run src/verticals/agenda/agent/clinic-dispatch.test.ts`
+Expected: PASS (sin `released: true` en la pregunta y en `index.ts`, fallan cinco).
+
+```bash
+git add src/verticals/agenda/agent
+git commit -m "fix(clinica): a message the bot releases is not claimed by the old session"
+```
+
+- [ ] **Step 8: Solo un "no" completo rechaza**
+
+"no voy a poder asistir a la cita" o "¿no hay parqueadero?" se leían como "no", registraban el rechazo y el aviso
+se perdía para siempre. Las pruebas de flujo ya están en el bloque del paso 6 ("una negación dentro de otra frase"
+y "un no completo"). En `src/verticals/agenda/agent/state.test.ts`, dentro de `describe('aviso de marketing escrito', ...)`,
+reemplaza la prueba de "un no nunca se lee como aceptación" por:
+
+```ts
+  // La pregunta es opcional y el rechazo queda en un registro: solo un mensaje que ES
+  // un "no" lo registra. Una negación dentro de otra frase ("no voy a poder asistir a la
+  // cita", "¿no hay parqueadero?") no es la respuesta, y registrarla perdería el aviso.
+  it.each([
+    'no',
+    'No.',
+    'no, gracias',
+    'No gracias',
+    'mejor no',
+    'Mejor no.',
+    'no señor',
+    'no, señora',
+  ])('un no completo es el rechazo: %j', (text) => {
+    expect(choice(text)).toBe('act:mkt_no')
+  })
+
+  it.each([
+    'no voy a poder asistir a la cita',
+    'no puedo ir a la cita',
+    '¿no hay parqueadero?',
+    'no sé',
+    'no estoy segura',
+    'no, gracias por todo',
+    'no avísame',
+    'noo',
+    'nunca',
+    'tampoco',
+    '❌ no',
+    'no 🤔',
+    '¿no?',
+    'no, ¿dónde queda?',
+  ])('una negación dentro de otra frase no es la respuesta: %j', (text) => {
+    expect(choice(text)).toBeNull()
+  })
+```
+
+En `src/verticals/agenda/agent/state.ts`, antes de `NEGATION`, la lista:
+
+```ts
+/** Mensajes completos que rechazan los avisos de control, ya en forma `squash`. */
+const MKT_NO_WHOLE: readonly string[] = ['no', 'no gracias', 'mejor no', 'no senor', 'no senora']
+```
+
+Y en `matchDecision`, la autorización y el aviso de marketing dejan de compartir el bucle:
+
+```ts
+  if (offered.has('act:consent_yes') || offered.has('act:consent_no')) {
+    return offered.has('act:consent_no') && NEGATION.test(squashed) ? 'act:consent_no' : null
+  }
+
+  // Los avisos de control son opcionales y el rechazo queda registrado: solo un mensaje
+  // que ES un "no" lo registra. Una negación dentro de otra frase ("no voy a poder
+  // asistir a la cita", "¿no hay parqueadero?") sigue su camino sin registrar nada.
+  if (offered.has('act:mkt_yes') || offered.has('act:mkt_no')) {
+    return offered.has('act:mkt_no') && PLAIN_TEXT.test(text) && MKT_NO_WHOLE.includes(squashed)
+      ? 'act:mkt_no'
+      : null
+  }
+```
+
+Run: `npx vitest run src/verticals/agenda && npx tsc --noEmit`
+Expected: PASS.
+
+```bash
+git add src/verticals/agenda/agent
+git commit -m "fix(clinica): the check-up question only takes a whole "no" as a refusal"
+```
+
 ---
 
 ### Task 15: Guía de montaje y verificación final
@@ -16890,7 +18013,12 @@ git commit -m "fix(clinica): an unanswered check-up question does not pause the 
 
 - [ ] **Step 1: Crea la guía**
 
-Crea `docs/clinica-montaje.md`:
+Crea `docs/clinica-montaje.md`. Lo que ya no vale de la primera versión y se corrigió: la activación pone `agenda` y
+`clinica` juntos (`clinica` sola deja los chats sin respuesta); antes de aplicar la 055, `show server_version` debe dar
+15 o más; la autorización solo se acepta con el botón; la sede se llama `Principal`; `urgency_service_id`, la lista de
+palabras y el piso fijo; el prompt del agente de IA se revisa a mano (el instalador no pisa uno guardado, el bloque
+fijo se aplica igual); con la IA apagada las dudas pasan a una persona; falta comprobar con un toque real que Meta
+devuelve `context.id` y el payload; los avisos de urgencia solo se ven en la app; y los pendientes del abogado.
 
 ````markdown
 # Montaje de una clínica odontológica
@@ -16898,12 +18026,39 @@ Crea `docs/clinica-montaje.md`:
 Guía para Shift. Aplica a una clínica con la Agenda de Shift. Diseño:
 `docs/superpowers/specs/2026-11-02-odontologia-design.md`.
 
-Antes de la primera clínica real, el abogado revisa la autorización de
-datos y el director de la clínica aprueba los signos de alarma.
+Antes de la primera clínica real, el abogado revisa lo de la sección 11
+(la autorización de datos, entre otras cosas) y el director de la clínica
+aprueba los signos de alarma.
 
-## 1. Activar los módulos
+Dos palabras que se repiten:
 
-Solo lo hace Shift, en el SQL Editor:
+- **Autorización de datos:** el permiso que la persona da, con un botón,
+  para que la clínica guarde sus datos (algunos son de salud). Sin ella
+  el bot no sigue y la IA no ve el chat.
+- **Aviso de urgencia:** el mensaje que ve el equipo en la app cuando una
+  persona dice que le duele o toca "Tengo una urgencia".
+
+## 1. Aplicar la migración 055
+
+Solo con el OK de quien despliega, en el SQL Editor de Supabase y **antes**
+de desplegar el código. Es aditiva (solo crea tablas, columnas y reglas) y
+se puede correr de nuevo.
+
+Antes de aplicarla, comprueba la versión de Postgres:
+
+```sql
+show server_version;
+```
+
+Tiene que dar **15 o más**. Con una versión menor, la migración falla (usa
+una sintaxis de Postgres 15). Como corre en una sola transacción, no queda
+nada a medias, pero tampoco queda aplicada: hay que subir la versión del
+proyecto primero.
+
+## 2. Activar los módulos
+
+Solo lo hace Shift, en el SQL Editor. Se activan **los dos módulos
+juntos**:
 
 ```sql
 update public.accounts
@@ -16911,37 +18066,132 @@ set modules = array(select distinct unnest(array_cat(modules, array['agenda', 'c
 where id = '<uuid-de-la-cuenta>';
 ```
 
-## 2. Instalar la plantilla
+`clinica` sola no sirve: el bot de la clínica vive dentro del de la agenda,
+y sin `agenda` nadie atiende el chat. Los mensajes de los pacientes
+quedarían sin respuesta (y la IA no los vería, porque la cuenta es una
+clínica). Si por error quedó solo `clinica`, vuelve a correr la consulta de
+arriba.
 
-`/agenda` → tipo de negocio **Clínica odontológica**. Crea el catálogo, un
-doctor de ejemplo, la configuración de la clínica y una sede.
+## 3. Instalar la plantilla
 
-## 3. Ajustar la configuración
+`/agenda` → tipo de negocio **Clínica odontológica**. Crea el catálogo
+(Valoración, Limpieza, Control, Control de ortodoncia, Urgencia), un doctor
+de ejemplo, la configuración de la clínica y una sede.
+
+La instalación no pisa nada que la cuenta ya tenga: ni el catálogo, ni el
+prompt del agente de IA (ver la sección 7).
+
+## 4. Ajustar la configuración
 
 Doctores, horarios y atenciones se editan en `/agenda/configuracion`. Lo
-demás va por SQL en esta fase:
+demás va por SQL en esta fase.
+
+### 4.1 La autorización de datos
+
+El texto que ve la persona está en `clinic_settings.consent_text` (hasta 900
+caracteres). El que trae por defecto es una propuesta: **el abogado lo
+revisa antes de la primera clínica real**.
 
 ```sql
 update public.clinic_settings
 set consent_text = '<texto revisado por el abogado>',
-    consent_version = consent_version + 1,
-    urgency_alarm_text = '<texto aprobado por el director>',
-    reception_consent_declared_at = now()
+    consent_version = consent_version + 1
 where account_id = '<uuid-de-la-cuenta>';
+```
 
+Sube `consent_version` cada vez que cambie el texto. Cada respuesta guarda
+el texto exacto que la persona vio y su versión, en un registro que solo
+se agrega (nada se edita ni se borra). Subir la versión **no vuelve a
+pedir** la autorización a quien ya aceptó.
+
+Cómo se acepta:
+
+- **Solo con el botón "Sí, acepto".** Escribir "sí", "acepto" o un número
+  no acepta nada: el bot vuelve a mostrar los botones y, a la segunda, el
+  chat pasa a una persona.
+- Escribir una negación ("no acepto", "no") cuenta como rechazo. Quien no
+  acepta queda con una persona, y el bot no sigue.
+- Tocar "No acepto" después de haber aceptado **revoca** la autorización:
+  queda registrado y el chat pasa a una persona.
+
+Pregunta aparte, después de agendar: "¿Quieres que te avisemos cuando te
+toque tu próximo control?". Es otra autorización (`mercadeo`), solo se
+pregunta una vez y solo la da el botón "Sí, avísame". Hoy solo se guarda la
+respuesta: **todavía no se envía ningún aviso de control**.
+
+### 4.2 Signos de alarma y urgencias
+
+```sql
+update public.clinic_settings
+set urgency_alarm_text = '<texto aprobado por el director>',
+    urgency_words = array['urgencia', 'dolor', 'hinchazon', 'sangrado'],
+    offer_days = 30
+where account_id = '<uuid-de-la-cuenta>';
+```
+
+- `urgency_alarm_text` (hasta 900 caracteres): los signos de alarma que el
+  bot le muestra a quien dice que le duele. Los aprueba el director.
+- `urgency_words`: palabras que abren los signos de alarma. En minúsculas y
+  **sin tildes**, y se comparan como palabra entera ("dolor" no se activa
+  con "Dolores", que es un nombre).
+- **El piso fijo.** Además de esa lista, el código trae un piso de palabras
+  que siempre abren los signos de alarma (hinchazón, sangrado, "respirar",
+  "golpe", dientes rotos o que se cayeron...). No se edita desde la base:
+  una lista vacía o un fallo de lectura no dejan a nadie sin detectar. La
+  lista de la clínica solo agrega.
+- `urgency_service_id`: la atención con la que el bot ofrece la hora de
+  hoy a quien no tiene signos de alarma. El instalador enlaza sola la
+  atención que se llame **Urgencia** (sin importar mayúsculas), y solo la
+  primera vez que crea la configuración. Si la atención se llama distinto o
+  se creó después, enlázala:
+
+  ```sql
+  update public.clinic_settings
+  set urgency_service_id = (
+    select id from public.booking_services
+    where account_id = '<uuid-de-la-cuenta>' and name = '<atención de urgencia>'
+  )
+  where account_id = '<uuid-de-la-cuenta>';
+  ```
+
+  Sin esa atención, o sin cupo hoy, la urgencia pasa a una persona con el
+  aviso de urgencia (ver la sección 9) y, si hay, el teléfono de turno.
+- `offer_days`: cuántos días hacia adelante ofrece horas el bot ("Ver más
+  días" muestra más).
+
+### 4.3 La sede
+
+La sede se crea sola y se llama **Principal**. El recordatorio dice "sede
+Principal": por eso el nombre va **sin** la palabra "sede". Cámbiala por el
+nombre real de la clínica ("Centro", "Chapinero"):
+
+```sql
 update public.clinic_locations
-set name = '<sede>', address = '<dirección>', latitude = 0, longitude = 0,
+set name = '<nombre de la sede>', address = '<dirección>',
+    latitude = 0, longitude = 0,
     on_call_phone = '<teléfono de turno>'
 where account_id = '<uuid-de-la-cuenta>';
+```
 
+Las coordenadas arman el mapa que llega al confirmar. El teléfono de turno
+es el que recibe quien tiene una urgencia fuera de horario. Una cita sin
+sede (por ejemplo, una anterior al módulo) se recuerda como "sede
+Principal", aunque la sede real se llame distinto.
+
+### 4.4 Instrucciones previas
+
+Lo que se le manda a quien confirma una cita, por atención:
+
+```sql
 update public.booking_services
 set prep_instructions = '<qué llevar o cómo prepararse>'
 where account_id = '<uuid-de-la-cuenta>' and name = '<atención>';
 ```
 
-Sube `consent_version` cada vez que cambie el texto.
+Hasta 900 caracteres. Solo texto de la clínica: ni procedimiento ni
+consejo médico. Un texto de solo espacios no manda nada.
 
-## 4. Crear la plantilla en Meta
+## 5. Crear la plantilla en Meta
 
 WhatsApp Manager → Plantillas → Crear:
 
@@ -16954,7 +18204,7 @@ WhatsApp Manager → Plantillas → Crear:
 Cuerpo:
 
 ```
-¡Hola! 👋 Te recordamos la cita de {{1}} en {{2}}, sede {{3}}:
+¡Hola! 👋 Te recordamos que {{1}} tiene cita en {{2}}, sede {{3}}:
 
 👤 {{4}}
 📅 {{5}}
@@ -16963,47 +18213,183 @@ Cuerpo:
 ¿Nos confirmas?
 ```
 
-Las variables son: paciente, clínica, sede, doctor, fecha y hora. **No
-agregues el procedimiento**: el teléfono puede ser compartido.
+Las variables son, en este orden: paciente, clínica, sede, doctor, fecha y
+hora. **No agregues el procedimiento**: el teléfono puede ser compartido,
+y el recordatorio, lo que se guarda del mensaje y la respuesta a
+"Confirmar" nunca lo nombran.
 
 Botones de respuesta rápida, en este orden: `Confirmar`, `Reprogramar`,
-`Cancelar`.
+`Cancelar`. Los botones de la plantilla son fijos: aunque la cuenta tenga
+apagada la pieza de reprogramar, la plantilla muestra los tres.
 
-Antes de la primera clínica, envía una plantilla real y toca un botón.
-En `messages.interactive_reply_id` debe quedar `rem:confirm:<id>`. Si queda
-`Confirmar`, Meta ignoró el payload: el bot lo resuelve igual y pregunta cuál
-cita si hay dos.
+El nombre y el idioma tienen que coincidir exactamente con
+`CLINIC_REMINDER_TEMPLATE` en `src/verticals/agenda/agent/reminders.ts`.
 
-## 5. Revisar Meta
+**Falta comprobarlo con un toque real.** El código manda en cada botón un
+payload con la cita (`rem:<acción>:<cita>`) y espera que Meta lo devuelva
+junto con `context.id` (el mensaje al que responde el toque). No se ha
+probado con Meta. Antes de la primera clínica, envía un recordatorio real a
+un celular de prueba, toca un botón y revisa:
+
+```sql
+select m.interactive_reply_id, m.reply_to_message_id, p.template_name
+from public.messages m
+left join public.messages p on p.id = m.reply_to_message_id
+where m.conversation_id = '<uuid-de-la-conversación>' and m.sender_type = 'customer'
+order by m.created_at desc
+limit 3;
+```
+
+- `interactive_reply_id` debe ser `rem:confirm:<id de la cita>`. Si es
+  `Confirmar`, Meta ignoró el payload: el bot lo resuelve igual (es la
+  próxima cita activa y, si hay más de una, pregunta cuál), pero hay que
+  anotarlo.
+- `reply_to_message_id` no debe ser nulo y `template_name` debe ser
+  `recordatorio_cita_clinica`. Si queda vacío, el toque que llega solo con
+  la etiqueta ("Confirmar") **no se reconoce** como respuesta a un
+  recordatorio y el bot no lo atiende: no se puede abrir la clínica así.
+
+## 6. Revisar Meta
 
 - Medio de pago en Billing Hub: sin él, Meta deja de entregar los mensajes
-  del bot después de 1.000 al mes por número.
-- Agente de IA con los documentos de la clínica, para Precios y dudas.
+  del bot después de 1.000 al mes por número. Las plantillas de recordatorio
+  también se cobran: revisa la tarifa vigente para Colombia.
 
-## 6. Probar
+## 7. El agente de IA
+
+El agente contesta "Precios y dudas". Se configura en **Agentes de IA** →
+pestaña **Configuración**, con los documentos de la clínica.
+
+- **Revisa el prompt.** La instalación solo escribe el prompt si estaba
+  vacío; si la cuenta ya tenía uno, queda como estaba. Compara el que
+  quedó guardado con el de la plantilla (`src/verticals/agenda/presets/odontologia.ts`)
+  y asegúrate de que tenga las **reglas de salud**: nunca dar diagnósticos,
+  nunca recomendar medicamentos ni dosis, y mandar a "urgencia" a quien
+  describa dolor fuerte, sangrado, hinchazón o un golpe.
+- **El bloque fijo se aplica igual.** Aunque el prompt no las tenga, el
+  código agrega al final unas reglas de seguridad que no se pueden editar
+  (no diagnosticar, no mencionar medicamentos, pasar a una persona todo lo
+  que hable de síntomas). El prompt es para el tono, no para la seguridad.
+- **La IA no ve el chat de nadie que no haya aceptado la autorización de
+  datos.** Ni la respuesta automática ni "Sugerir con IA".
+- **Si la IA está apagada, las dudas pasan a una persona.** Cuenta como
+  apagada: la respuesta automática desactivada, una automatización activa
+  que contesta primero, el tope de respuestas de la conversación alcanzado
+  o una llave que no se puede leer. En esos casos el bot no invita a
+  escribir la duda: pasa el chat a una persona.
+- Al activar la IA, los chats con datos de salud viajan al proveedor de IA
+  que la clínica eligió: es un tema del abogado (sección 11).
+
+## 8. Lo que el bot hace por su cuenta
+
+- Si el paciente manda dos mensajes seguidos, el bot atiende uno a la vez.
+  Si no logra atender uno en 5 segundos, lo descarta y avisa al equipo
+  técnico de Shift (sin el texto del paciente). Las urgencias, el "No
+  acepto" y los botones del recordatorio se atienden siempre.
+- Una cita se recuerda 24 h antes (y 2 h antes si la cuenta lo activa).
+  Ver `docs/agenda-recordatorios.md`.
+- Un número puede tener varios pacientes (una mamá agenda a sus hijos). La
+  cita es del paciente; la autorización la da el número.
+
+## 9. Los avisos de urgencia
+
+Hoy los avisos de urgencia **solo se ven dentro de la app** (la campana de
+notificaciones y la página de Notificaciones), para el agente asignado y el
+dueño. No hay aviso por WhatsApp, correo ni mensaje de texto al doctor o a
+la recepción, y **no se le debe prometer eso a la clínica**. Dile que
+alguien del equipo tiene que mirar la app, o la bandeja, durante el horario
+de atención.
+
+Fuera de la app, solo Shift recibe una alerta cuando algo falla (por la
+variable `ALERT_WEBHOOK_URL`, si está definida).
+
+## 10. Probar
 
 Desde un celular externo, sobre una cuenta de prueba:
 
-1. Escribe `Hola`: pide autorización. Acepta: abre el menú.
+1. Escribe `Hola`: pide la autorización. Acepta con el botón: abre el menú.
 2. Agenda para ti y para otra persona desde el mismo número.
-3. Escribe `tengo dolor`: muestra los signos de alarma.
-4. Prueba `Ver más días`.
-5. Dispara el recordatorio: no nombra el procedimiento.
-6. Toca Confirmar: llegan las instrucciones y el mapa.
+3. Después de agendar llega la pregunta de avisos de control. Responde
+   "Sí, avísame" con el botón; la siguiente cita ya no la pregunta.
+4. Escribe `tengo dolor`: muestra los signos de alarma. Revisa que el
+   aviso de urgencia aparezca en la app.
+5. Prueba `Ver más días`.
+6. Con la IA prendida, escribe una duda ("¿tienen parqueadero?"): la
+   contesta la IA. Apágala y repite: el chat pasa a una persona.
+7. Dispara el recordatorio (sección 5): no nombra el procedimiento.
+8. Toca Confirmar: responde con paciente, doctor, fecha y hora (sin el
+   procedimiento) y llegan las instrucciones y el mapa.
+9. Con dos citas del mismo número, toca el botón de un recordatorio y
+   comprueba que confirma la cita correcta (o pregunta cuál).
+10. Toca "No acepto" en el menú: queda registrado y el chat pasa a una
+    persona.
 
 Los datos de prueba se marcan y se limpian al terminar.
+
+## 11. Pendientes del abogado
+
+Nada de esto lo decide Shift. Hay que revisarlo con un abogado antes de la
+primera clínica real:
+
+- **El texto de la autorización de datos** (el que viene por defecto es una
+  propuesta) y si hay que volver a pedirla cuando el texto cambia.
+- **La revocación:** qué texto ve la persona al revocar y cómo debe
+  quedar registrada (hoy se guarda el texto vigente).
+- **El permiso declarado en recepción:** si la clínica dice que obtiene el
+  permiso en recepción, `clinic_settings.reception_consent_declared_at`
+  deja la constancia, pero hoy el bot no la lee ni copia esa autorización
+  a las citas que crea recepción.
+- **El envío de chats al proveedor de IA:** que los datos de salud viajen
+  al proveedor de IA que la clínica elija, y qué debe decir la autorización
+  sobre eso.
+
+Shift no es una empresa registrada: los temas legales y de impuestos se
+revisan con abogado y contador, no se afirman aquí.
 ````
 
 - [ ] **Step 2: Corrige la documentación vieja**
 
-En `docs/agenda-recordatorios.md`, reemplaza el párrafo que empieza con "Los botones llevan ids **estáticos**" por:
+En `docs/agenda-recordatorios.md`, reemplaza el párrafo que empieza con "Los botones llevan ids **estáticos**" por (los
+botones no son solo estáticos: una plantilla sin payload devuelve la etiqueta, y las clínicas mandan el id de la cita):
 
 ```markdown
-Los botones llevan ids `rem:confirm`, `rem:reschedule` y `rem:cancel`. Una
-plantilla enviada sin payload devuelve la etiqueta del botón (`Confirmar`),
-y el bot también la entiende. Sin id de cita, resuelve la **próxima cita
-activa** del contacto. Las clínicas envían `rem:<acción>:<cita>`: ver
-`docs/clinica-montaje.md`.
+Los botones llevan ids `rem:confirm`, `rem:reschedule` y `rem:cancel`.
+Una plantilla enviada sin payload devuelve la **etiqueta** del botón
+(`Confirmar`), y el bot también la entiende, pero solo si el toque
+responde a una plantilla de recordatorio (`recordatorio_cita` o
+`recordatorio_cita_clinica`): la etiqueta de cualquier otra plantilla no se
+toca. Sin id de cita, el bot resuelve la **próxima cita activa** del
+contacto. Las clínicas envían además el id de la cita en el payload
+(`rem:<acción>:<cita>`), y con más de una cita activa pueden preguntar
+cuál: ver `docs/clinica-montaje.md`.
+```
+
+La tabla de quick replies describe lo que llega al tocar, no un payload que se defina al crear la plantilla:
+
+```markdown
+| Texto del botón | Lo que llega al tocarlo |
+| --- | --- |
+| `Confirmar` | la etiqueta `Confirmar` (el id `rem:confirm` viaja en el mensaje libre) |
+| `Reprogramar` | la etiqueta `Reprogramar` (`rem:reschedule` en el mensaje libre) |
+| `Cancelar` | la etiqueta `Cancelar` (`rem:cancel` en el mensaje libre) |
+
+Meta no pide un payload al crear la plantilla: se manda al enviarla.
+`recordatorio_cita` se envía sin él, por eso el toque llega con la
+etiqueta.
+
+El cuerpo de la plantilla dice «cita» para todos los negocios: Meta no
+admite palabras que cambien por cuenta, así que un negocio de clases
+también verá «tu cita» aquí aunque su bot diga «sesión».
+```
+
+Y, después de la nota del nombre y el idioma:
+
+```markdown
+>
+> Las **clínicas** usan otra plantilla, `recordatorio_cita_clinica`
+> (`CLINIC_REMINDER_TEMPLATE`): nombra al paciente y la sede, nunca el
+> procedimiento, y envía el id de la cita en el payload. Se crea según
+> `docs/clinica-montaje.md`.
 ```
 
 En `src/verticals/agenda/agent/reminders-send.ts`, actualiza el comentario de `sendReminderTemplate`:
@@ -17011,11 +18397,22 @@ En `src/verticals/agenda/agent/reminders-send.ts`, actualiza el comentario de `s
 ```ts
 /**
  * Fuera de la ventana de 24 h: plantilla aprobada con sus variables y los
- * quick replies Confirmar / Reprogramar / Cancelar. Las clínicas mandan
- * además el id de la cita en el payload; sin él, Meta devuelve la etiqueta
+ * quick replies Confirmar / Reprogramar / Cancelar. `recordatorio_cita`
+ * lleva las cinco variables documentadas (negocio, servicio, barbero,
+ * fecha, hora) y se envía sin payload: Meta devuelve la etiqueta del botón
  * y la cita se resuelve en el controlador.
+ *
+ * Una clínica usa `recordatorio_cita_clinica` (paciente y sede, nunca el
+ * procedimiento) y manda además el id de la cita en el payload de cada botón
+ * (`rem:<acción>:<cita>`). Los botones de la plantilla son fijos: los tres
+ * payloads salen siempre, en el orden de los botones aprobados, aunque la
+ * cuenta tenga apagada la pieza de reprogramar (quitar uno correría los
+ * índices).
  */
 ```
+
+No debe quedar ninguna afirmación de que los recordatorios por plantilla no cuestan: Meta cobra las plantillas de utilidad
+(`docs/superpowers/specs/2026-11-02-odontologia-design.md`, precios vigentes desde el 01/10/2026).
 
 - [ ] **Step 3: Verificación completa**
 
@@ -17039,7 +18436,12 @@ git commit -m "docs(clinica): add the clinic setup guide"
 
 No hagas esto sin su OK explícito:
 
-1. Aplicar `055_clinica_base.sql` en el SQL Editor, antes de desplegar.
+1. Comprobar `show server_version` (15 o más) y aplicar `055_clinica_base.sql` en el SQL Editor, antes de desplegar.
 2. Abrir el PR hacia `main`.
-3. Probar en una cuenta de prueba, siguiendo `docs/clinica-montaje.md` §6.
-4. Armar la demo con una clínica ficticia en esa cuenta. Siempre se presenta como ficticia, y sus datos se marcan y se limpian al terminar.
+3. Activar `agenda` y `clinica` juntos en la cuenta de prueba, y probar siguiendo `docs/clinica-montaje.md` §10.
+4. Enviar un recordatorio real y tocar un botón: comprobar que Meta devuelve `context.id` y el payload
+   (`docs/clinica-montaje.md` §5).
+5. Armar la demo con una clínica ficticia en esa cuenta. Siempre se presenta como ficticia, y sus datos se marcan y se
+   limpian al terminar.
+6. Con el abogado: el texto de la autorización, la revocación, el permiso declarado en recepción y el envío de chats
+   al proveedor de IA (`docs/clinica-montaje.md` §11).
