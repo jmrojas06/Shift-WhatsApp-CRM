@@ -30,7 +30,11 @@ mensajes, «cita» y «barbero» siguen el vocabulario del negocio.
   dos corridas simultáneas del cron no mandan dos veces. Si el envío
   falla, la marca se revierte y la próxima corrida reintenta.
 - **Nunca se recuerdan** citas canceladas, completadas, no-show, ni
-  citas que ya empezaron.
+  citas que ya empezaron. Una **clínica** (módulo `clinica`) tampoco
+  recuerda a quien tiene la etiqueta `baja-envios` ni a quien revocó la
+  autorización de datos: la señal no se gasta y sale en la siguiente
+  corrida si cambia (`skipped` en la respuesta). Las demás cuentas no
+  cambian.
 - Zona horaria del negocio: America/Bogota (fija para todas las cuentas).
 
 Los botones llevan ids `rem:confirm`, `rem:reschedule` y `rem:cancel`.

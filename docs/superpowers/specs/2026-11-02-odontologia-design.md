@@ -201,21 +201,24 @@ De las 32 funciones de `agent/db.ts`, 12 tocan citas o catálogo. El catálogo s
 interfaz se reduce a lo que de verdad cambia según quién manda:
 
 ```ts
+// Fase 1 (src/verticals/agenda/agent/backend.ts), tal como quedó:
 interface ClinicBackend {
-  capabilities: { locations: boolean; chairs: boolean; intakeForm: boolean }
-  getDaySlots(args: SlotQuery): Promise<ClinicSlot[]>
-  getDaysWithSlots(args: SlotRangeQuery): Promise<string[]>
-  isStaffFree(args: StaffFreeQuery): Promise<boolean>
-  findPatients(phone: string): Promise<ClinicPatient[]>
-  createPatient(args: NewPatient): Promise<ClinicPatient>
-  listUpcoming(patientIds: string[]): Promise<AppointmentSnapshot[]>
+  getDaySlots(query: SlotQuery): Promise<MergedSlot[]>
+  getDaysWithSlots(query: DayRangeQuery): Promise<string[]>
+  isStaffFree(args: { staffId: string; startIso: string; endIso: string }): Promise<boolean>
+  findPatients(args: { contactId: string }): Promise<ClinicPatient[]>
+  createPatient(args: { contactId: string; fullName: string }): Promise<ClinicPatient>
+  listUpcoming(args: { contactId: string; nowIso: string }): Promise<AppointmentSnapshot[]>
   book(args: BookArgs): Promise<BookResult>
-  move(args: MoveArgs): Promise<BookResult>
-  cancel(args: AppointmentRef): Promise<void>
-  confirm(args: AppointmentRef): Promise<void>
-  refresh(args: AppointmentRef): Promise<AppointmentSnapshot | null>
+  cancel(args: { id: string; reason: string; cancelledAtIso: string }): Promise<void>
+  confirm(args: { id: string; confirmedAtIso: string }): Promise<void>
 }
 ```
+
+El paciente se busca por el contacto (`contactId`), no por el teléfono, y `listUpcoming` devuelve las
+citas del contacto con el nombre de su paciente. `capabilities`, `move` y `refresh` entran con el
+conector (Fase 4): hasta entonces no hacen falta y no existen.
+
 
 `BookResult` distingue `ok`, `slot_taken` y `failed`. Con el conector se suma `unknown`, que significa
 que no se sabe si la cita quedó creada (§8). `move` y `unknown` entran en la Fase 4: hasta entonces,
@@ -279,10 +282,12 @@ no se interpreta: la cita conserva su estado, se guarda el valor recibido y se a
 Un contacto (número de WhatsApp) tiene uno o varios pacientes. La autorización la da el contacto,
 incluido el acudiente en el caso de menores.
 
-Los botones del recordatorio llevan el id de la cita (`rem:confirm:<uuid>`) si una prueba real
-confirma que Meta lo respeta. **Esto se contradice con la nota de `state.ts`**, que dice que
-no se puede, mientras `template-send-builder.ts` ya tiene el campo. Se construye en todo caso el
-respaldo: si el contacto tiene más de una cita activa en 72 h, el bot pregunta cuál con una lista.
+Los botones del recordatorio llevan el id de la cita (`rem:confirm:<uuid>`): la plantilla clínica lo
+manda en el payload de cada botón (`quickReplyPayloads`). La nota de `state.ts` que decía que no se
+podía ya se corrigió. **Falta comprobar con un toque real que Meta lo devuelve**, junto con `context.id`
+(`docs/clinica-montaje.md`). Hay respaldo: sin el id, el bot lee la etiqueta ("Confirmar") si responde a una
+plantilla de recordatorio, y con más de una cita activa y sin exactamente una en 72 h pregunta cuál con
+una lista.
 
 ### 6.6 Autorizaciones
 
@@ -296,6 +301,20 @@ Esta solución se revisa con el abogado antes de la primera clínica real.
 
 Sin autorización de datos sensibles la IA no ve la conversación: el bot la consume y, si la respuesta
 es No acepto, la deja con una persona.
+
+**Revocar escribiendo.** No solo el botón "No acepto" revoca: también un mensaje completo ("no acepto",
+"ya no autorizo") o una frase que junte un verbo de retirar (revoco, retiro, quiten, borren, eliminen, "no
+quiero que usen") con "autorización" o "mis datos". "No acepto esa hora" o "borré el mensaje" no lo son. Con
+la autorización vigente vale en cualquier paso, menos mientras la persona responde los signos de alarma:
+registra `granted: false` y pasa a una persona con una nota; si pidió borrar sus datos, la nota dice que se
+atiende a mano (el bot no borra nada). En un hilo que lleva una persona solo registra y le avisa. El detector
+es estrecho a propósito: una revocación pausa el bot. No se agregó "Mis datos" al menú ni se cambió el texto
+legal; cómo revocar y el borrado de datos quedan para el abogado.
+
+**Recordatorios.** En una cuenta con `clinica`, una cita no recibe recordatorio si el contacto tiene la
+etiqueta `baja-envios` o si su última autorización de datos es un no. Sin ninguna fila de autorización sí se
+envía (las citas anteriores al módulo no la tienen). No se reclama la señal: si cambia de idea, la siguiente
+corrida lo envía. Las demás cuentas no cambian. Un "Reprogramar" de quien revocó lo atiende una persona.
 
 ### 6.7 Orden dentro del bot (cuentas con `clinica`)
 
@@ -422,7 +441,15 @@ fases 2 y 3 son independientes entre sí. La Fase 0 ya no bloquea a la primera c
 aparezca una que no quiera dejar su software.
 
 Todo sale en ramas desde `main`, con PR por fase. Cada módulo se activa solo para cuentas de clínica:
-ningún negocio actual cambia de conducta.
+ningún negocio actual cambia de conducta, con **dos excepciones** que también tocan a las cuentas actuales:
+
+1. **Los botones de `recordatorio_cita` ahora funcionan.** Antes, una plantilla enviada sin payload devolvía
+   la etiqueta del botón ("Confirmar") y el bot no la entendía: el toque no hacía nada. Ahora la etiqueta se
+   lee, pero solo si el mensaje responde a una plantilla de recordatorio; la de cualquier otra plantilla o
+   difusión no se toca.
+2. **"Atención" ya no abre el flujo de reservas.** Las palabras propias del negocio abren el flujo salvo que
+   sean muy comunes; "atención" ("gracias por la atención") se agregó a esa lista. Un negocio que use
+   "atención" como su palabra para la cita deja de abrir el flujo con ella.
 
 ## 10. Fase 0: preguntas por responder
 
