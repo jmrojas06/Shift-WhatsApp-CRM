@@ -63,6 +63,7 @@ const activeStates = (db: FakeDb) =>
 
 const activeSteps = (db: FakeDb) => activeStates(db).map((s) => s.step)
 
+/** Los avisos de confirmación (más graves). El primero, al abrir los signos, es de clinic-urgency-notice.test.ts. */
 const priorityNotifications = (db: FakeDb) =>
   db._tables.notifications.filter((n) => n.title === texts.urgencyNotificationTitle)
 
@@ -102,7 +103,7 @@ describe('urgencias', () => {
     expect(last(rec).bodyText).toBe(texts.urgencyGoEr)
     expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
     expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.urgencyNote)
-    expect(db._tables.notifications).toMatchObject([
+    expect(priorityNotifications(db)).toMatchObject([
       {
         user_id: OWNER,
         conversation_id: CONVERSATION,
@@ -169,7 +170,7 @@ describe('urgencias', () => {
       expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
       expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.urgencyConsentDeclinedNote)
       expect(last(rec).bodyText).toBe(texts.consentDeclined)
-      expect(db._tables.notifications).toMatchObject([
+      expect(priorityNotifications(db)).toMatchObject([
         {
           user_id: OWNER,
           title: texts.urgencyNotificationTitle,
@@ -186,13 +187,13 @@ describe('urgencias', () => {
       await send(db, rec, { replyId: 'act:alarm_no' })
       await send(db, rec, { text: 'ok' })
       expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
-      expect(db._tables.notifications).toHaveLength(0)
+      expect(priorityNotifications(db)).toHaveLength(0)
       await send(db, rec, { text: 'ok' })
       expect(db._tables.clinic_consents).toHaveLength(0)
       expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
       expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.urgencyConsentUnansweredNote)
       expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
-      expect(db._tables.notifications).toMatchObject([
+      expect(priorityNotifications(db)).toMatchObject([
         { user_id: OWNER, title: texts.urgencyNotificationTitle },
       ])
     })
@@ -534,7 +535,7 @@ describe('urgencias', () => {
       expect(last(rec).ids).toEqual(ALARM_BUTTONS)
       expect(activeStates(db)).toMatchObject([{ step: 'urgency', fails: 1 }])
       expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
-      expect(db._tables.notifications).toHaveLength(0)
+      expect(priorityNotifications(db)).toHaveLength(0)
     })
 
     it('dos respuestas que no se entienden terminan con aviso prioritario y los signos de alarma', async () => {
@@ -547,7 +548,7 @@ describe('urgencias', () => {
       expect(last(rec).bodyText).toBe(texts.urgencyPending(ALARM_TEXT))
       expect(last(rec).bodyText).toContain(ALARM_TEXT)
       expect(last(rec).bodyText).not.toBe(AGENDA_AGENT_TEXTS.handoff)
-      expect(db._tables.notifications).toMatchObject([
+      expect(priorityNotifications(db)).toMatchObject([
         {
           user_id: OWNER,
           conversation_id: CONVERSATION,
@@ -577,7 +578,7 @@ describe('urgencias', () => {
         const { db, rec } = await withAlarmQuestion(clinicDb({ clinic_consents: [grantedConsent()] }))
         await send(db, rec, { text })
         expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
-        expect(db._tables.notifications).toHaveLength(0)
+        expect(priorityNotifications(db)).toHaveLength(0)
       },
     )
 
@@ -658,7 +659,7 @@ describe('urgencias', () => {
       db._failNext('insert', 'notifications', { message: 'boom' })
       await send(db, rec, { replyId: 'act:alarm_yes' })
       expect(last(rec).bodyText).toBe(texts.urgencyGoEr)
-      expect(db._tables.notifications).toHaveLength(0)
+      expect(priorityNotifications(db)).toHaveLength(0)
       expect(notifyAlert).toHaveBeenCalledTimes(1)
       const alert = vi.mocked(notifyAlert).mock.calls[0][0]
       expect(alert).toContain(CONVERSATION)

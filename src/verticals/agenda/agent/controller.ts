@@ -537,7 +537,7 @@ async function notifyThreadHuman(
   build: (texts: ClinicTexts, who: string) => { title: string; body: string },
   /** Con `onceInMinutes`, no repite un aviso igual de esta conversación en ese tiempo. */
   repeat?: { onceInMinutes: number; now: Date },
-): Promise<void> {
+): Promise<'sent' | 'repeated' | 'nobody'> {
   const [settings, account, assignee, who] = await Promise.all([
     loadBotSettings(args.db, args.accountId).catch(() => null),
     loadAccount(args.db, args.accountId).catch(() => null),
@@ -545,7 +545,7 @@ async function notifyThreadHuman(
     contactLabel(args.db, args.accountId, args.contactId, 'Un paciente'),
   ])
   const userId = assignee ?? account?.ownerUserId ?? null
-  if (!userId) return
+  if (!userId) return 'nobody'
   const texts = buildClinicTexts(settings?.labels ?? DEFAULT_LABELS)
   const notice = build(texts, who)
   if (repeat) {
@@ -558,7 +558,7 @@ async function notifyThreadHuman(
         sinceIso: since,
       })
     ) {
-      return
+      return 'repeated'
     }
   }
   await insertNotification(args.db, {
@@ -569,6 +569,38 @@ async function notifyThreadHuman(
     ...notice,
     createdAtIso: (repeat?.now ?? new Date()).toISOString(),
   })
+  return 'sent'
+}
+
+/**
+ * La persona abrió los signos de alarma (escribió algo que puede ser una urgencia o
+ * tocó "Tengo una urgencia"): el aviso prioritario en la app sale YA, sin esperar a
+ * que conteste. Uno por conversación cada 10 minutos (por su propio título, así el
+ * aviso de confirmación, más grave, nunca se pierde por este límite). Si el aviso
+ * falla, o no hay a quién avisar, se avisa al equipo técnico con la cuenta y la
+ * conversación, nunca con el texto del paciente: los signos de alarma salen igual.
+ */
+async function announceUrgencyOpened(dialog: Dialog): Promise<void> {
+  let problem: string | null = null
+  try {
+    const result = await notifyThreadHuman(
+      dialog,
+      (texts, who) => ({
+        title: texts.urgencyOpenedNotificationTitle,
+        body: texts.urgencyOpenedNotificationBody(who),
+      }),
+      { onceInMinutes: URGENCY_NOTICE_EVERY_MINUTES, now: dialog.now },
+    )
+    if (result === 'nobody') problem = 'avisar al equipo en la app: no hay a quién'
+  } catch (err) {
+    console.error('[agenda] el aviso de urgencia al abrir los signos de alarma falló:', err)
+    problem = 'avisar al equipo en la app'
+  }
+  if (problem) {
+    await notifyAlert(
+      `Urgencia: no se pudo ${problem} (cuenta ${dialog.accountId}, conversación ${dialog.conversationId}). Revisa ese chat ya.`,
+    ).catch(() => undefined)
+  }
 }
 
 /**
@@ -2440,6 +2472,11 @@ async function conclude(
   sessionId: string,
   state: BookingState,
 ): Promise<void> {
+  // Al entrar a los signos de alarma (no al repetir la pregunta, que lleva fallos) el
+  // equipo se entera ya: el aviso no espera a que la persona conteste.
+  if (dialog.clinic && state.step === 'urgency' && state.fails === 0) {
+    await announceUrgencyOpened(dialog)
+  }
   const { state: effective, closed, handoff } = await renderStep(dialog, state)
   if (handoff) {
     await performHandoff(dialog, sessionId, handoff)

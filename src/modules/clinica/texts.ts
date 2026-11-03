@@ -252,6 +252,14 @@ export function buildClinicTexts(l: AgendaLabels) {
       'Paciente: escribió una posible urgencia y no aceptó la autorización de datos (bot en pausa). Comunícate con esa persona ya.',
     urgencyConsentUnansweredNote:
       'Paciente: escribió una posible urgencia y dejó la autorización de datos sin responder (bot en pausa). Comunícate con esa persona ya.',
+    /**
+     * El primer aviso: la persona abrió los signos de alarma (escribió algo que puede ser
+     * una urgencia o tocó "Tengo una urgencia") y todavía no ha contestado. Sale ya, sin
+     * esperar; el de abajo es el de confirmación, que dice algo más grave.
+     */
+    urgencyOpenedNotificationTitle: '⚠️ Revisa este chat: posible urgencia',
+    urgencyOpenedNotificationBody: (who: string) =>
+      `${who} escribió algo que puede ser una urgencia y el bot le está mostrando los signos de alarma. Mira el chat ya.`,
     urgencyNotificationTitle: '🚨 Posible urgencia',
     urgencyNotificationBody: (who: string) =>
       `${who} reportó una posible urgencia por WhatsApp. Comunícate con esa persona ya.`,
