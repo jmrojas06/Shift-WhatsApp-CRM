@@ -411,6 +411,16 @@ describe('el piso fijo de urgencias', () => {
     'me están saliendo flemones',
     'tiene una hinchazón enorme',
     'se le está hinchando',
+    // Las palabras de siempre: la clínica puede dejar su lista vacía y se detectan igual.
+    'me duele una muela',
+    'me duelen las muelas',
+    'tengo dolor',
+    'Tengo MUCHO DOLOR!',
+    'es urgente',
+    'tengo una urgencia',
+    'esto es una emergencia',
+    'no puedo tragar',
+    'me cuesta tragar',
   ])('abre los signos aunque la clínica no tenga lista: %j', (text) => {
     expect(containsUrgencyFloor(text)).toBe(true)
     expect(detectsUrgency(text, [])).toBe(true)
@@ -425,6 +435,9 @@ describe('el piso fijo de urgencias', () => {
     'tengo una cita el martes',
     'la roturación del terreno',
     'xhinchado',
+    // "dolor" es una palabra entera: Dolores es un nombre, no una urgencia.
+    'Dolores Ruiz pide una cita',
+    'Hola, soy Dolores',
   ])('no confunde un mensaje normal: %j', (text) => {
     expect(containsUrgencyFloor(text)).toBe(false)
     expect(detectsUrgency(text, [])).toBe(false)

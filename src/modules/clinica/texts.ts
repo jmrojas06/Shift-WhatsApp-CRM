@@ -79,7 +79,11 @@ export const DEFAULT_URGENCY_WORDS: readonly string[] = [
  *
  * Las raíces valen al inicio de una palabra ("hinch" es "hinchada", "hinchando"
  * y "hinchazón"; "inch" es "inchado", sin la h). Las palabras valen enteras:
- * "rota" no es "rotación", y "dolor" ni está aquí, porque "Dolores" es un nombre.
+ * "rota" no es "rotación", y "dolor" no es "Dolores", que es un nombre.
+ *
+ * Incluye las palabras de siempre (dolor, duele, urgente...): una clínica que
+ * deja su lista vacía, o que la reemplaza por otra, sigue detectando "me duele una
+ * muela", "no puedo tragar" y "es urgente".
  */
 export const URGENCY_FLOOR_STEMS: readonly string[] = [
   'inch',
@@ -94,6 +98,14 @@ export const URGENCY_FLOOR_STEMS: readonly string[] = [
 ]
 
 export const URGENCY_FLOOR_WORDS: readonly string[] = [
+  'dolor',
+  'duele',
+  'duelen',
+  'urgencia',
+  'urgente',
+  'emergencia',
+  'tragar',
+  'tragando',
   'rota',
   'rotas',
   'roto',

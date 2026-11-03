@@ -384,7 +384,7 @@ describe('con el menú abierto', () => {
     '¿Cuánto vale una limpieza?',
     'qué precio tiene la limpieza',
     'cuánto vale una cita',
-    'me duele una muela y no sé qué hacer',
+    'me arde la encía desde ayer y no sé qué hacer',
   ])('lo demás se suelta a la IA y cierra la sesión: %j', async (text) => {
     const { db, rec, sent } = await withMenuOpen()
     const result = await send(db, rec, { text })
@@ -426,7 +426,7 @@ describe('esperando la duda ("Precios y dudas")', () => {
     '¿Puedo pagar con tarjeta?',
     'no tengo ninguna queja',
     'gracias por la factura',
-    'me duele una muela y no sé qué hacer',
+    'me arde la encía desde ayer y no sé qué hacer',
   ])('el siguiente texto, si es la duda, se suelta a la IA: %j', async (text) => {
     const { db, rec, sent } = await withFaqOpen()
     const result = await send(db, rec, { text })

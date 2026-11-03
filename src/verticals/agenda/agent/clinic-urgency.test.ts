@@ -1119,6 +1119,14 @@ describe('urgencias', () => {
       'mi hijo se golpeó la boca',
       'a mi hijo se le partió un diente',
       'tengo una muela rota',
+      // Las palabras de siempre ya no dependen de la lista de la clínica.
+      'me duele una muela',
+      'me duelen las muelas',
+      'tengo mucho dolor',
+      'no puedo tragar',
+      'es urgente',
+      'tengo una urgencia',
+      'esto es una emergencia',
     ])('abre los signos aunque la clínica deje su lista vacía: %j', async (text) => {
       const db = clinicDb()
       db._tables.clinic_settings[0].urgency_words = []
@@ -1142,7 +1150,7 @@ describe('urgencias', () => {
       const db = clinicDb()
       db._tables.clinic_settings[0].urgency_words = ['ayuda']
       const rec = makeRecorder()
-      await send(db, rec, { text: 'me duele' })
+      await send(db, rec, { text: 'tengo una fractura' })
       expect(last(rec).ids).toEqual(['act:consent_yes', 'act:consent_no'])
       await send(db, rec, { text: 'ayuda' })
       expect(last(rec).ids).toEqual(ALARM_BUTTONS)
