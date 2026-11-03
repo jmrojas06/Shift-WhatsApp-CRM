@@ -13,6 +13,7 @@ import {
 } from '@/lib/flows/meta-send'
 import { sendTypingIndicator } from '@/lib/whatsapp/meta-api'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
+import { announceAiHandoff } from '@/modules/clinica/ai-handoff'
 import { clinicAiGate } from '@/modules/clinica/ai-gate'
 import { hasActiveAutoResponder, replyCapReached } from './eligibility'
 
@@ -181,6 +182,18 @@ export async function dispatchInboundToAiReply(
         update.assigned_agent_id = config.handoffAgentId
       }
       await db.from('conversations').update(update).eq('id', conversationId)
+      // En una clínica el paciente no se queda en silencio ni el equipo sin saberlo:
+      // un texto fijo con los signos de alarma y un aviso en la app (ver ai-handoff).
+      // Va después de la pausa, y no lanza.
+      if (gate.clinic) {
+        await announceAiHandoff(db, {
+          accountId,
+          conversationId,
+          contactId,
+          configOwnerUserId,
+          handoffAgentId: config.handoffAgentId ?? null,
+        })
+      }
       return
     }
 

@@ -233,6 +233,17 @@ export function buildClinicTexts(l: AgendaLabels) {
     urgencyNotificationBody: (who: string) =>
       `${who} reportó una posible urgencia por WhatsApp. Comunícate con esa persona ya.`,
 
+    /**
+     * La IA no contesta nada de salud y pasa el chat a una persona. Sin esto el
+     * paciente se queda sin respuesta y nadie se entera: un texto fijo (nada de
+     * diagnóstico) con los signos de alarma de la clínica, y un aviso en la app.
+     */
+    aiHandoffNotice: (alarmText: string) =>
+      `Esto lo debe revisar una persona de la clínica. Ya le avisé y te escribe por este chat. Si aparece uno de estos signos, ve a urgencias sin esperar respuesta:\n\n${alarmText}`,
+    aiHandoffNotificationTitle: 'Un paciente necesita a una persona',
+    aiHandoffNotificationBody: (who: string) =>
+      `${who} escribió algo sobre su salud que el asistente no contesta. Respóndele por este chat.`,
+
     moreDays: 'Ver más días',
 
     marketingBody: '¿Quieres que te avisemos cuando te toque tu próximo control o limpieza?',

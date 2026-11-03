@@ -136,6 +136,26 @@ describe('palabras de urgencia por defecto', () => {
   )
 })
 
+describe('pase de la IA a una persona', () => {
+  it('el texto al paciente es fijo: lo revisa una persona, ya se avisó, y los signos de alarma', () => {
+    expect(texts.aiHandoffNotice('Ve a urgencias si sangra.')).toBe(
+      'Esto lo debe revisar una persona de la clínica. Ya le avisé y te escribe por este chat. Si aparece uno de estos signos, ve a urgencias sin esperar respuesta:\n\nVe a urgencias si sangra.',
+    )
+  })
+
+  it('no diagnostica ni recomienda nada', () => {
+    const notice = texts.aiHandoffNotice(DEFAULT_URGENCY_ALARM_TEXT)
+    expect(notice).not.toMatch(/medicamento|tratamiento|diagn[oó]stic|normal/i)
+  })
+
+  it('el aviso en la app nombra a la persona y manda a responderle', () => {
+    expect(texts.aiHandoffNotificationTitle).toBe('Un paciente necesita a una persona')
+    expect(texts.aiHandoffNotificationBody('Marta Ruiz')).toBe(
+      'Marta Ruiz escribió algo sobre su salud que el asistente no contesta. Respóndele por este chat.',
+    )
+  })
+})
+
 describe('instrucciones previas', () => {
   it('instrucciones o dirección con solo espacios no mandan un mensaje vacío', () => {
     expect(texts.prepInfo({ prep: '   ', address: '\n ', mapUrl: ' ' })).toBeNull()

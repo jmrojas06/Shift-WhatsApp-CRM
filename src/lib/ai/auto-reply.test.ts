@@ -10,6 +10,7 @@ const h = vi.hoisted(() => ({
   engineSendText: vi.fn(),
   loadAccountMetaCredentials: vi.fn(),
   sendTypingIndicator: vi.fn(),
+  announceAiHandoff: vi.fn(),
   state: {
     conv: null as Record<string, unknown> | null,
     autoResponders: [] as { id: string }[],
@@ -28,6 +29,7 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('./config', () => ({ loadAiConfig: h.loadAiConfig }))
+vi.mock('@/modules/clinica/ai-handoff', () => ({ announceAiHandoff: h.announceAiHandoff }))
 vi.mock('./context', () => ({ buildConversationContext: h.buildConversationContext }))
 vi.mock('./knowledge', () => ({ retrieveKnowledge: h.retrieveKnowledge }))
 vi.mock('./generate', () => ({ generateReply: h.generateReply }))
@@ -430,5 +432,77 @@ describe('dispatchInboundToAiReply — handoff', () => {
       ai_autoreply_disabled: true,
       assigned_agent_id: 'agent-7',
     })
+  })
+})
+
+describe('dispatchInboundToAiReply — handoff in a clinic', () => {
+  const clinic = { modules: ['agenda', 'clinica'], vertical_key: 'agenda' }
+
+  beforeEach(() => {
+    h.state.account = clinic
+    h.state.consents = [{ granted: true }]
+    h.generateReply.mockResolvedValue({ text: '', handoff: true })
+    h.announceAiHandoff.mockReset()
+    h.announceAiHandoff.mockResolvedValue(undefined)
+  })
+
+  it('tells the patient and the team: a symptom without an urgency word is not silence', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ handoffAgentId: 'agent-7' }))
+
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+    expect(h.announceAiHandoff).toHaveBeenCalledTimes(1)
+    expect(h.announceAiHandoff.mock.calls[0][1]).toEqual({
+      accountId: 'acct-1',
+      conversationId: 'conv-1',
+      contactId: 'contact-1',
+      configOwnerUserId: 'user-1',
+      handoffAgentId: 'agent-7',
+    })
+  })
+
+  it('passes a null agent when none is configured (the owner gets the notice)', async () => {
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.announceAiHandoff.mock.calls[0][1]).toMatchObject({ handoffAgentId: null })
+  })
+
+  it('also when the model answers nothing', async () => {
+    h.generateReply.mockResolvedValue({ text: '', handoff: false })
+
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.announceAiHandoff).toHaveBeenCalledTimes(1)
+  })
+
+  it('announces after pausing the chat, so the bot cannot answer in between', async () => {
+    const order: string[] = []
+    h.announceAiHandoff.mockImplementation(async () => {
+      order.push(h.state.updatePayload ? 'after the pause' : 'before the pause')
+    })
+
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(order).toEqual(['after the pause'])
+  })
+
+  it('does not announce when the AI answers normally', async () => {
+    h.generateReply.mockResolvedValue({ text: 'La limpieza dura 45 minutos.', handoff: false })
+
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.announceAiHandoff).not.toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalledTimes(1)
+  })
+
+  it('an account without the clinic module hands off exactly as before', async () => {
+    h.state.account = { modules: ['agenda'], vertical_key: 'agenda' }
+
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+    expect(h.announceAiHandoff).not.toHaveBeenCalled()
+    expect(h.engineSendText).not.toHaveBeenCalled()
   })
 })
