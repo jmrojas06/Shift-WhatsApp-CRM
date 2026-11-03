@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { buildClinicTexts } from '@/modules/clinica/texts'
 
@@ -387,6 +387,98 @@ describe('varias citas en un número', () => {
       const rec = makeRecorder()
       await send(db, rec, { replyId: remId('confirm') })
       expect(statuses(db)).toEqual({ 'ap-1': 'confirmed', 'ap-2': 'pending' })
+    })
+
+    describe('sin id, con las citas lejos', () => {
+      const FAR_1 = '2026-10-26T14:00:00.000Z'
+      const FAR_2 = '2026-10-27T14:00:00.000Z'
+
+      it('con dos citas a más de 72 h pregunta cuál, en vez de confirmar la primera', async () => {
+        const db = twoAppointments({
+          booking_appointments: [
+            appointment('ap-1', 'pat-1', FAR_1),
+            appointment('ap-2', 'pat-2', FAR_2),
+          ],
+        })
+        const rec = makeRecorder()
+
+        const result = await send(db, rec, { replyId: remId('confirm') })
+
+        expect(result).toEqual({ consumed: true })
+        expect(last(rec).ids).toEqual(BOTH)
+        expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'pending' })
+
+        await send(db, rec, { replyId: apptId('ap-2') })
+        expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'confirmed' })
+      })
+
+      it('con una sola cita, aunque quede lejos, es esa', async () => {
+        const db = twoAppointments({ booking_appointments: [appointment('ap-1', 'pat-1', FAR_1)] })
+        const rec = makeRecorder()
+
+        await send(db, rec, { replyId: remId('confirm') })
+
+        expect(statuses(db)).toEqual({ 'ap-1': 'confirmed' })
+      })
+
+      it('con una cercana y una lejana, la cercana es la del toque', async () => {
+        const db = twoAppointments({
+          booking_appointments: [appointment('ap-1', 'pat-1', FAR_1), appointment('ap-2', 'pat-2', FIRST)],
+        })
+        const rec = makeRecorder()
+
+        await send(db, rec, { replyId: remId('confirm') })
+
+        // La cercana, aunque la lista la traiga en otro orden.
+        expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'confirmed' })
+      })
+
+      it('Cancelar y Reprogramar también preguntan', async () => {
+        for (const action of ['cancel', 'reschedule'] as const) {
+          const db = twoAppointments({
+            booking_appointments: [
+              appointment('ap-1', 'pat-1', FAR_1),
+              appointment('ap-2', 'pat-2', FAR_2),
+            ],
+          })
+          const rec = makeRecorder()
+          await send(db, rec, { replyId: remId(action) })
+          expect(last(rec).ids).toEqual(BOTH)
+          expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'pending' })
+        }
+      })
+    })
+
+    describe('si la lectura de la cita falla', () => {
+      it('al tocar Confirmar con el id lanza, en vez de decir que la cita ya no está activa', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {})
+        const db = twoAppointments()
+        const rec = makeRecorder()
+        db._failNext('select', 'booking_appointments', { message: 'timeout' })
+
+        await expect(send(db, rec, { replyId: remId('confirm', 'ap-1') })).rejects.toThrow('timeout')
+
+        // La cita sigue viva y el paciente no recibió un "ya no está activo" falso.
+        expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'pending' })
+        expect(rec.calls.some((c) => c.bodyText.includes('ya no está activo'))).toBe(false)
+      })
+
+      it('una cita que de verdad no existe sí dice que ya no está activa', async () => {
+        const db = twoAppointments()
+        const rec = makeRecorder()
+        await send(db, rec, { replyId: remId('confirm', 'ap-ajena') })
+        expect(last(rec).bodyText).toContain('ya no está activo')
+      })
+
+      it('al elegir de la lista también lanza', async () => {
+        const db = twoAppointments()
+        const rec = makeRecorder()
+        await send(db, rec, { replyId: remId('confirm') })
+        db._failNext('select', 'booking_appointments', { message: 'timeout' })
+
+        await expect(send(db, rec, { replyId: apptId('ap-2') })).rejects.toThrow()
+        expect(statuses(db)).toEqual({ 'ap-1': 'pending', 'ap-2': 'pending' })
+      })
     })
 
     it('Cancelar sin id pregunta cuál y solo cancela la que se elige', async () => {

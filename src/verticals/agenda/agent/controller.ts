@@ -835,7 +835,8 @@ async function openSession(dialog: Dialog, state: BookingState): Promise<string>
  *     este contacto y de esta cuenta, está activa y es futura.
  *   - Sin id (los botones de una plantilla de Meta pueden devolver solo la etiqueta),
  *     la PRÓXIMA cita activa del contacto. En una clínica, con más de una cita
- *     activa en las próximas 72 horas no se adivina: se pregunta cuál.
+ *     activa y sin exactamente una en las próximas 72 horas (ninguna o varias) no
+ *     se adivina: se pregunta cuál.
  *
  *   - Confirmar: marca la cita y responde; no toca la sesión.
  *   - Reprogramar: retoma el flujo existente (`pick_day` en modo
@@ -861,12 +862,18 @@ function isSystemTap(session: VerticalSession | null, replyId: string | null): b
   return replyId === actId('cancel_yes') || replyId === actId('back')
 }
 
-/** La cita, solo si es de este contacto y de esta cuenta, está activa y es futura. */
+/**
+ * La cita, solo si es de este contacto y de esta cuenta, está activa y es futura.
+ * Lanza si la lectura falla (como `listUpcoming`): un error no es "esa cita ya no
+ * está activa", y decírselo a un paciente con la cita viva es peor que fallar.
+ */
 async function loadUpcomingAppointment(
   dialog: Dialog,
   appointmentId: string,
 ): Promise<AppointmentInfo | null> {
-  const appt = await loadAppointment(dialog.db, dialog.accountId, dialog.contactId, appointmentId)
+  const appt = await loadAppointment(dialog.db, dialog.accountId, dialog.contactId, appointmentId, {
+    strict: true,
+  })
   if (!appt) return null
   if (appt.status !== 'pending' && appt.status !== 'confirmed') return null
   return appt.startsAt > dialog.now ? appt : null
@@ -895,7 +902,9 @@ async function resolveTapAppointment(
   })
   const limit = dialog.now.getTime() + TAP_AMBIGUITY_MS
   const near = upcoming.filter((a) => a.startsAt.getTime() <= limit)
-  if (near.length > 1) {
+  // Una sola cercana es la del recordatorio. Con más de una cita activa y ninguna o
+  // varias cercanas no se adivina: ni la primera ni la más próxima.
+  if (upcoming.length > 1 && near.length !== 1) {
     // Sin la configuración de la clínica no hay lista que ofrecer, y adivinar
     // podría confirmar o cancelar la cita de otro paciente: lo atiende una persona.
     if (!dialog.clinic) {
@@ -907,7 +916,8 @@ async function resolveTapAppointment(
     await conclude(dialog, sessionId, state)
     return 'handled'
   }
-  return upcoming[0] ? loadUpcomingAppointment(dialog, upcoming[0].id) : null
+  const chosen = near[0] ?? upcoming[0]
+  return chosen ? loadUpcomingAppointment(dialog, chosen.id) : null
 }
 
 async function handleReminderTap(

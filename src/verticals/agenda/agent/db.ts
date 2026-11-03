@@ -548,14 +548,17 @@ export async function loadAppointment(
   accountId: string,
   contactId: string,
   appointmentId: string,
+  /** Con `strict`, un error de la base lanza en vez de leerse como "no existe". */
+  opts: { strict?: boolean } = {},
 ): Promise<AppointmentInfo | null> {
-  const { data } = await db
+  const { data, error } = await db
     .from('booking_appointments')
     .select(APPOINTMENT_COLS)
     .eq('id', appointmentId)
     .eq('account_id', accountId)
     .eq('contact_id', contactId)
     .maybeSingle()
+  if (error && opts.strict) throw new Error(`No se pudo leer la cita: ${error.message}`)
   return data ? mapAppointment(data as Record<string, unknown>) : null
 }
 
