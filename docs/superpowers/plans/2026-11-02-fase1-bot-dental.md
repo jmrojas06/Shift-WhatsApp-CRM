@@ -12759,6 +12759,7 @@ Reglas que esta tarea deja fijas:
 - La lista de citas nunca repite títulos: lleva la fecha corta y el nombre de pila, y si aun recortados al tope de
   20 dos quedan iguales se numeran todos. En esa lista, un texto escrito que coincide con VARIAS citas ("Marta" con
   dos citas de Marta) no elige la primera: cuenta como fallo (`matchAppointmentOption`). Los demás menús no cambian.
+  La regla de los títulos pasó a una función común, `distinctTitles`, que también usa el menú de pacientes (Task 16).
 - El mensaje de instrucciones es solo texto de la clínica (lo que escribió para el servicio, la
   dirección y el mapa). Ningún consejo médico, y sin nada que decir no manda nada.
 - En una clínica, "Nueva cita" desde la gestión de una cita empieza por el paciente (`pick_patient`);
@@ -14983,6 +14984,9 @@ function instrument(db: FakeDb, failTable?: string) {
     }
     if (table === failTable) {
       api.maybeSingle = async () => ({ data: null, error: { message: 'boom' } })
+      // Las lecturas de lista (sin maybeSingle) también fallan.
+      ;(api as unknown as { then: unknown }).then = (resolve: (v: unknown) => unknown) =>
+        Promise.resolve(resolve({ data: null, error: { message: 'boom' } }))
     }
     return api
   }
@@ -15160,6 +15164,144 @@ Dentro de `describe('runAgendaReminders', ...)`, después de la última prueba:
       expect(rec.deliveries).toHaveLength(0)
       expect(appointmentRow(db).reminder_sent_at).toBeNull()
     })
+
+    describe('bajas y revocaciones', () => {
+      const OPT_OUT = 'baja-envios'
+
+      /** La clínica, con la etiqueta de baja puesta. */
+      function withTag(seed: Record<string, Row[]>, contactId = CONTACT): Record<string, Row[]> {
+        seed.tags = [{ id: 'tag-baja', account_id: ACCOUNT, name: OPT_OUT }]
+        seed.contact_tags = [{ contact_id: contactId, tag_id: 'tag-baja' }]
+        return seed
+      }
+
+      const consent = (granted: boolean, at: string, over: Row = {}): Row => ({
+        id: `cons-${at}`,
+        account_id: ACCOUNT,
+        contact_id: CONTACT,
+        kind: 'datos_sensibles',
+        granted,
+        created_at: at,
+        ...over,
+      })
+
+      async function run(seed: Record<string, Row[]>, failTable?: string) {
+        const db = makeFakeDb(seed)
+        const spy = instrument(db, failTable)
+        const rec = makeRecorder()
+        const summary = await runAgendaReminders({ db: asClient(spy.db), now: NOW, send: rec.send })
+        return { db, spy, rec, summary }
+      }
+
+      it('con la etiqueta de baja no se envía, y la señal no se reclama', async () => {
+        const { db, rec, summary } = await run(withTag(clinicSeed()))
+
+        expect(rec.deliveries).toHaveLength(0)
+        expect(summary).toMatchObject({ sent: 0, skipped: 1, failed: 0, errors: [] })
+        // Sin reclamar: si se la quitan, la próxima corrida lo envía.
+        expect(appointmentRow(db).reminder_sent_at).toBeNull()
+      })
+
+      it('quitada la etiqueta, el recordatorio sale', async () => {
+        const seed = withTag(clinicSeed())
+        const first = await run(seed)
+        expect(first.rec.deliveries).toHaveLength(0)
+
+        seed.contact_tags = []
+        const second = await run(seed)
+        expect(second.rec.deliveries).toHaveLength(1)
+      })
+
+      it('la etiqueta de otro contacto no frena este recordatorio', async () => {
+        const { rec } = await run(withTag(clinicSeed(), CONTACT_2))
+        expect(rec.deliveries).toHaveLength(1)
+      })
+
+      it('si su última autorización de datos es un no, no se envía', async () => {
+        const seed = clinicSeed()
+        seed.clinic_consents = [consent(true, '2026-10-01T00:00:00.000Z'), consent(false, '2026-10-10T00:00:00.000Z')]
+
+        const { db, rec, summary } = await run(seed)
+
+        expect(rec.deliveries).toHaveLength(0)
+        expect(summary).toMatchObject({ sent: 0, skipped: 1, failed: 0 })
+        expect(appointmentRow(db).reminder_sent_at).toBeNull()
+      })
+
+      it('manda la más reciente: si volvió a autorizar, se envía', async () => {
+        const seed = clinicSeed()
+        seed.clinic_consents = [consent(false, '2026-10-01T00:00:00.000Z'), consent(true, '2026-10-10T00:00:00.000Z')]
+
+        const { rec } = await run(seed)
+
+        expect(rec.deliveries).toHaveLength(1)
+      })
+
+      it('sin ninguna autorización registrada sí se envía (citas anteriores al módulo)', async () => {
+        const seed = clinicSeed()
+        seed.clinic_consents = []
+        const { rec } = await run(seed)
+        expect(rec.deliveries).toHaveLength(1)
+      })
+
+      it('solo cuenta la autorización de datos de este contacto en esta cuenta', async () => {
+        const seed = clinicSeed()
+        seed.clinic_consents = [
+          consent(false, '2026-10-10T00:00:00.000Z', { kind: 'mercadeo' }),
+          consent(false, '2026-10-11T00:00:00.000Z', { contact_id: CONTACT_2 }),
+          consent(false, '2026-10-12T00:00:00.000Z', { account_id: OTHER_ACCOUNT }),
+        ]
+        const { rec } = await run(seed)
+        expect(rec.deliveries).toHaveLength(1)
+      })
+
+      it('si no se puede saber, no se envía ni se reclama: falla y se reintenta', async () => {
+        const cases: [string, Record<string, Row[]>][] = [
+          ['tags', clinicSeed()],
+          ['contact_tags', withTag(clinicSeed())],
+          ['clinic_consents', clinicSeed()],
+        ]
+        for (const [table, seed] of cases) {
+          const { db, rec, summary } = await run(seed, table)
+
+          expect(rec.deliveries).toHaveLength(0)
+          expect(summary.failed).toBe(1)
+          expect(summary.errors).toHaveLength(1)
+          expect(summary.errors[0]).toContain(APPT)
+          expect(appointmentRow(db).reminder_sent_at).toBeNull()
+        }
+      })
+
+      it('salta solo esa cita y sigue con las demás', async () => {
+        const seed = withTag(clinicSeed())
+        seed.booking_appointments.push({
+          id: 'ap-2',
+          account_id: ACCOUNT,
+          contact_id: CONTACT_2,
+          conversation_id: 'cv-2',
+          service_id: SERVICE,
+          staff_id: STAFF,
+          starts_at: '2026-10-20T12:30:00.000Z',
+          status: 'confirmed',
+          reminder_sent_at: null,
+          reminder_2h_sent_at: null,
+          patient_id: null,
+          location_id: null,
+        })
+        seed.conversations.push({
+          id: 'cv-2',
+          account_id: ACCOUNT,
+          contact_id: CONTACT_2,
+          created_at: '2026-10-18T00:00:00.000Z',
+        })
+        seed.contacts.push({ id: CONTACT_2, account_id: ACCOUNT, name: 'Pedro Gil' })
+
+        const { rec, summary } = await run(seed)
+
+        expect(rec.deliveries.map((d) => d.appointmentId)).toEqual(['ap-2'])
+        expect(summary).toMatchObject({ sent: 1, skipped: 1 })
+      })
+    })
   })
 
   describe('cuentas sin clínica', () => {
@@ -15171,6 +15313,30 @@ Dentro de `describe('runAgendaReminders', ...)`, después de la última prueba:
       expect(rec.deliveries[0].clinic).toBeUndefined()
       expect('clinic' in rec.deliveries[0]).toBe(false)
       expect(rec.deliveries[0].serviceName).toBe('Corte clásico')
+    })
+
+    it('la baja y la revocación solo valen en clínicas: aquí se envía igual, sin mirar esas tablas', async () => {
+      const seed = baseSeed()
+      seed.tags = [{ id: 'tag-baja', account_id: ACCOUNT, name: 'baja-envios' }]
+      seed.contact_tags = [{ contact_id: CONTACT, tag_id: 'tag-baja' }]
+      seed.clinic_consents = [
+        {
+          id: 'cons-1',
+          account_id: ACCOUNT,
+          contact_id: CONTACT,
+          kind: 'datos_sensibles',
+          granted: false,
+          created_at: '2026-10-10T00:00:00.000Z',
+        },
+      ]
+      const spy = instrument(makeFakeDb(seed))
+      const rec = makeRecorder()
+
+      const summary = await runAgendaReminders({ db: asClient(spy.db), now: NOW, send: rec.send })
+
+      expect(summary.sent).toBe(1)
+      expect(rec.deliveries).toHaveLength(1)
+      expect(spy.reads.filter((r) => ['tags', 'contact_tags', 'clinic_consents'].includes(r.table))).toEqual([])
     })
 
     it('no tocan las tablas ni las columnas de la clínica', async () => {
@@ -16344,7 +16510,7 @@ describe('loadHumanOwned', () => {
 })
 ```
 
-En `src/verticals/agenda/agent/index.test.ts`, agrega `grantedConsent` al import del arnés y, al final del archivo (`context`, `mocks` y `clinicDb` ya existen ahí):
+En `src/verticals/agenda/agent/index.test.ts`, al final del archivo (`context`, `mocks` y `clinicDb` ya existen ahí):
 
 ```ts
 // ------------------------------------------------------------
@@ -16605,6 +16771,31 @@ describe('agendaInboundHandler — candado por conversación', () => {
         expect(mocks.notifyAlert).not.toHaveBeenCalled()
       },
     )
+
+    it('revocar la autorización escribiendo también se atiende con el candado ocupado', async () => {
+      const db = withInbound(
+        clinicDb({ clinic_consents: [grantedConsent()] }),
+        'ya no autorizo el uso de mis datos',
+      )
+      db._tables.conversations[0].bot_lock_until = BUSY
+
+      const result = await runWaiting(ctx(db))
+
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.clinic_consents.at(-1)).toMatchObject({ kind: 'datos_sensibles', granted: false })
+      expect(lockOf(db)).toBe(BUSY)
+      expect(mocks.notifyAlert).not.toHaveBeenCalled()
+    })
+
+    it('"no acepto esa hora" no es una revocación: con el candado ocupado se descarta y avisa', async () => {
+      const db = withInbound(clinicDb({ clinic_consents: [grantedConsent()] }), 'no acepto esa hora')
+      db._tables.conversations[0].bot_lock_until = BUSY
+
+      await runWaiting(ctx(db))
+
+      expect(db._tables.clinic_consents).toHaveLength(1)
+      expect(mocks.notifyAlert).toHaveBeenCalledTimes(1)
+    })
 
     it('un toque de otro menú, con el candado ocupado, se descarta y avisa', async () => {
       const db = withInbound(clinicDb(), '', 'act:book')
@@ -16911,6 +17102,7 @@ En `src/verticals/agenda/agent/index.ts`, los imports y el handler (`isUrgentInb
 `agendaInboundHandler`, que se reemplaza):
 
 ```ts
+import { consentRevocation } from '@/modules/clinica/revocation'
 import { loadClinicContext } from '@/modules/clinica/settings'
 import { DEFAULT_URGENCY_WORDS } from '@/modules/clinica/texts'
 
@@ -16927,8 +17119,9 @@ import { actId, detectsUrgency, parseReminderTap } from './state'
  *     texto con una palabra de la clínica o del piso fijo (`detectsUrgency`). Si
  *     la configuración no se puede leer valen las palabras de siempre: un fallo
  *     de lectura nunca esconde una urgencia.
- *   - "No acepto": retirar la autorización es una decisión de la persona y queda
- *     en un registro; no puede descartarse.
+ *   - "No acepto", o revocar escribiendo ("ya no autorizo el uso de mis datos"):
+ *     retirar la autorización es una decisión de la persona y queda en un
+ *     registro; no puede descartarse.
  *   - El toque de un recordatorio (`rem:*`): es la respuesta a un mensaje que mandó
  *     el sistema, con la hora de una cita de por medio.
  * Un mensaje que no se encuentra no cuenta; uno que no se puede leer lanza.
@@ -16947,6 +17140,7 @@ async function mustNotBeDropped(ctx: VerticalInboundContext): Promise<boolean> {
       parseReminderTap(inbound.replyId) !== null
     )
   }
+  if (consentRevocation(inbound.text)) return true
   const clinic = await loadClinicContext(ctx.db, ctx.accountId).catch(() => null)
   const words = clinic?.status === 'ok' ? clinic.clinic.urgencyWords : DEFAULT_URGENCY_WORDS
   return detectsUrgency(inbound.text, words)
@@ -18009,16 +18203,20 @@ git commit -m "fix(clinica): the check-up question only takes a whole "no" as a 
 
 **Files:**
 - Create: `docs/clinica-montaje.md`
-- Modify: `docs/agenda-recordatorios.md`, `src/verticals/agenda/agent/reminders-send.ts`
+- Modify: `docs/agenda-recordatorios.md`, `docs/superpowers/specs/2026-11-02-odontologia-design.md`, `src/verticals/agenda/agent/reminders-send.ts`
 
 - [ ] **Step 1: Crea la guía**
 
-Crea `docs/clinica-montaje.md`. Lo que ya no vale de la primera versión y se corrigió: la activación pone `agenda` y
-`clinica` juntos (`clinica` sola deja los chats sin respuesta); antes de aplicar la 055, `show server_version` debe dar
-15 o más; la autorización solo se acepta con el botón; la sede se llama `Principal`; `urgency_service_id`, la lista de
-palabras y el piso fijo; el prompt del agente de IA se revisa a mano (el instalador no pisa uno guardado, el bloque
-fijo se aplica igual); con la IA apagada las dudas pasan a una persona; falta comprobar con un toque real que Meta
-devuelve `context.id` y el payload; los avisos de urgencia solo se ven en la app; y los pendientes del abogado.
+Crea `docs/clinica-montaje.md`. Debe poder seguirse al pie de la letra. Lo que cambió respecto a la primera versión:
+dice claro que esta fase no basta para una clínica real (la recepción no puede crear citas hasta la Fase 2; los
+cuidados y la calificación son de la Fase 3); conectar el número y configurar el agente de pase ("Derivar a");
+"Reanudar bot" / "Reanudar IA" en los pasos que dejan el chat en pausa; el comando exacto del recordatorio y que para
+probar la plantilla el celular no debe haber escrito en 24 h; "ya no autorizo" en vez de tocar "No acepto" en el
+menú; `<latitud>` y `<longitud>` en vez de 0; el SQL de `urgency_words` AGREGA con `||`; el piso fijo; el playground de
+IA no lleva el bloque fijo; la activación pone `agenda` y `clinica` juntos; `show server_version` de 15 o más; la
+autorización solo se acepta con el botón; revocar escribiendo; la sede `Principal`; el prompt del agente se revisa a
+mano; con la IA apagada las dudas pasan a una persona; falta comprobar con un toque real que Meta devuelve
+`context.id` y el payload; los avisos de urgencia solo se ven en la app; y los pendientes del abogado.
 
 ````markdown
 # Montaje de una clínica odontológica
@@ -18026,9 +18224,27 @@ devuelve `context.id` y el payload; los avisos de urgencia solo se ven en la app
 Guía para Shift. Aplica a una clínica con la Agenda de Shift. Diseño:
 `docs/superpowers/specs/2026-11-02-odontologia-design.md`.
 
-Antes de la primera clínica real, el abogado revisa lo de la sección 11
-(la autorización de datos, entre otras cosas) y el director de la clínica
-aprueba los signos de alarma.
+## Qué cubre esta fase (y qué no)
+
+Esta fase deja listo por WhatsApp lo que el paciente hace solo: pedir una
+cita, agendar para él o para otra persona, recibir el recordatorio,
+confirmar, reprogramar, cancelar, preguntar dudas y avisar de una urgencia.
+
+**No basta para operar una clínica real.** Faltan, y no se deben
+prometer:
+
+- **La recepción no puede crear citas hasta la Fase 2.** Hoy las citas
+  entran por el bot.
+- **Los cuidados después de la visita y la calificación son de la Fase 3.**
+  No existen todavía.
+- **Los avisos de control** (la pregunta "¿quieres que te avisemos cuando te
+  toque tu próximo control?") solo guardan la respuesta; no se envía ningún
+  aviso.
+- **Los avisos de urgencia solo se ven en la app** (sección 10).
+
+Úsala como piloto, en una cuenta de prueba. Antes de la primera clínica
+real, el abogado revisa lo de la sección 12 (la autorización de datos,
+entre otras cosas) y el director de la clínica aprueba los signos de alarma.
 
 Dos palabras que se repiten:
 
@@ -18072,21 +18288,39 @@ quedarían sin respuesta (y la IA no los vería, porque la cuenta es una
 clínica). Si por error quedó solo `clinica`, vuelve a correr la consulta de
 arriba.
 
-## 3. Instalar la plantilla
+## 3. Conectar el número de WhatsApp
+
+Sin esto el bot no recibe ni envía nada. En la app:
+**Configuración → pestaña WhatsApp** (`/settings?tab=whatsapp`):
+
+1. Phone Number ID, WABA ID, token y verify token del número de la clínica.
+2. Botón **Verificar con Meta**: tiene que salir bien.
+3. En Meta → App → WhatsApp → Configuration: la Callback URL
+   (`https://<dominio>/api/whatsapp/webhook`), el mismo verify token y la
+   suscripción al campo `messages`.
+4. Desde un celular de prueba, escribe al número: el mensaje tiene que
+   aparecer en la **Bandeja de entrada** en segundos.
+
+Los pasos completos y los errores comunes están en
+`docs/onboarding-cliente.md` (pasos 5 y 6), en
+`docs/whatsapp-connection-troubleshooting.md` y, con varios números, en
+`docs/multi-waba.md`.
+
+## 4. Instalar la plantilla
 
 `/agenda` → tipo de negocio **Clínica odontológica**. Crea el catálogo
 (Valoración, Limpieza, Control, Control de ortodoncia, Urgencia), un doctor
 de ejemplo, la configuración de la clínica y una sede.
 
 La instalación no pisa nada que la cuenta ya tenga: ni el catálogo, ni el
-prompt del agente de IA (ver la sección 7).
+prompt del agente de IA (ver la sección 8).
 
-## 4. Ajustar la configuración
+## 5. Ajustar la configuración
 
 Doctores, horarios y atenciones se editan en `/agenda/configuracion`. Lo
 demás va por SQL en esta fase.
 
-### 4.1 La autorización de datos
+### 5.1 La autorización de datos
 
 El texto que ve la persona está en `clinic_settings.consent_text` (hasta 900
 caracteres). El que trae por defecto es una propuesta: **el abogado lo
@@ -18111,20 +18345,45 @@ Cómo se acepta:
   chat pasa a una persona.
 - Escribir una negación ("no acepto", "no") cuenta como rechazo. Quien no
   acepta queda con una persona, y el bot no sigue.
-- Tocar "No acepto" después de haber aceptado **revoca** la autorización:
-  queda registrado y el chat pasa a una persona.
+
+Cómo se revoca (con la autorización vigente, en cualquier paso, menos
+mientras la persona responde los signos de alarma):
+
+- Tocando "No acepto" en un menú que lo tenga.
+- **Escribiendo:** "no acepto" o "ya no autorizo" (el mensaje completo), o
+  una frase que junte un verbo (revoco, retiro, quiten, borren, eliminen,
+  "no quiero que usen"...) con "autorización" o "mis datos": "ya no autorizo
+  el uso de mis datos", "revoco mi autorización", "quiero que borren mis
+  datos". "No acepto esa hora" o "borré el mensaje" **no** son revocaciones.
+- Queda registrado (`granted: false`) y el chat pasa a una persona, con una
+  nota. **Si pidió borrar sus datos, la nota lo dice: el bot no borra
+  nada, hay que atenderlo a mano.**
+- En un chat que ya lleva una persona, solo se registra y se avisa a quien
+  lo lleva; el bot no le escribe al paciente.
+- Quien revocó deja de recibir recordatorios, y su "Reprogramar" lo atiende
+  una persona.
+
+El texto por defecto no explica cómo revocar ni menciona el borrado de
+datos, y no se cambió para no tocar el texto legal: es parte de lo que
+revisa el abogado (sección 12).
 
 Pregunta aparte, después de agendar: "¿Quieres que te avisemos cuando te
 toque tu próximo control?". Es otra autorización (`mercadeo`), solo se
-pregunta una vez y solo la da el botón "Sí, avísame". Hoy solo se guarda la
+pregunta una vez y solo la da el botón "Sí, avísame". Solo un "no" completo
+("no", "no gracias", "mejor no") la rechaza. Hoy solo se guarda la
 respuesta: **todavía no se envía ningún aviso de control**.
 
-### 4.2 Signos de alarma y urgencias
+### 5.2 Signos de alarma y urgencias
+
+La instalación deja una lista de palabras de urgencia en
+`clinic_settings.urgency_words`. **Agrégale las de la clínica con `||`; no
+la reemplaces**, porque trae palabras (fiebre, absceso, fractura...) que el
+piso fijo no tiene:
 
 ```sql
 update public.clinic_settings
 set urgency_alarm_text = '<texto aprobado por el director>',
-    urgency_words = array['urgencia', 'dolor', 'hinchazon', 'sangrado'],
+    urgency_words = urgency_words || array['sangrado', 'se me cayo'],
     offer_days = 30
 where account_id = '<uuid-de-la-cuenta>';
 ```
@@ -18135,10 +18394,11 @@ where account_id = '<uuid-de-la-cuenta>';
   **sin tildes**, y se comparan como palabra entera ("dolor" no se activa
   con "Dolores", que es un nombre).
 - **El piso fijo.** Además de esa lista, el código trae un piso de palabras
-  que siempre abren los signos de alarma (hinchazón, sangrado, "respirar",
-  "golpe", dientes rotos o que se cayeron...). No se edita desde la base:
-  una lista vacía o un fallo de lectura no dejan a nadie sin detectar. La
-  lista de la clínica solo agrega.
+  que siempre abren los signos de alarma, aunque la lista esté vacía:
+  dolor, duele, duelen, urgencia, urgente, emergencia, "tragar",
+  hinchazón, sangrado, "respirar", "golpe", dientes rotos o que se
+  cayeron... No se edita desde la base. La lista de la clínica **se suma**
+  al piso; no lo reemplaza ni lo reduce.
 - `urgency_service_id`: la atención con la que el bot ofrece la hora de
   hoy a quien no tiene signos de alarma. El instalador enlaza sola la
   atención que se llame **Urgencia** (sin importar mayúsculas), y solo la
@@ -18155,11 +18415,11 @@ where account_id = '<uuid-de-la-cuenta>';
   ```
 
   Sin esa atención, o sin cupo hoy, la urgencia pasa a una persona con el
-  aviso de urgencia (ver la sección 9) y, si hay, el teléfono de turno.
+  aviso de urgencia (ver la sección 10) y, si hay, el teléfono de turno.
 - `offer_days`: cuántos días hacia adelante ofrece horas el bot ("Ver más
   días" muestra más).
 
-### 4.3 La sede
+### 5.3 La sede
 
 La sede se crea sola y se llama **Principal**. El recordatorio dice "sede
 Principal": por eso el nombre va **sin** la palabra "sede". Cámbiala por el
@@ -18168,17 +18428,23 @@ nombre real de la clínica ("Centro", "Chapinero"):
 ```sql
 update public.clinic_locations
 set name = '<nombre de la sede>', address = '<dirección>',
-    latitude = 0, longitude = 0,
+    latitude = <latitud>, longitude = <longitud>,
     on_call_phone = '<teléfono de turno>'
 where account_id = '<uuid-de-la-cuenta>';
 ```
+
+Reemplaza `<latitud>` y `<longitud>` por las coordenadas reales de la sede
+(por ejemplo `4.711000` y `-74.072100`: salen del enlace de Google Maps).
+**Un 0 literal deja el mapa mal**: 0, 0 es un punto en medio del océano,
+y el bot lo manda tal cual. Si no tienes las coordenadas, pon
+`latitude = null, longitude = null` y el bot no manda mapa.
 
 Las coordenadas arman el mapa que llega al confirmar. El teléfono de turno
 es el que recibe quien tiene una urgencia fuera de horario. Una cita sin
 sede (por ejemplo, una anterior al módulo) se recuerda como "sede
 Principal", aunque la sede real se llame distinto.
 
-### 4.4 Instrucciones previas
+### 5.4 Instrucciones previas
 
 Lo que se le manda a quien confirma una cita, por atención:
 
@@ -18191,7 +18457,7 @@ where account_id = '<uuid-de-la-cuenta>' and name = '<atención>';
 Hasta 900 caracteres. Solo texto de la clínica: ni procedimiento ni
 consejo médico. Un texto de solo espacios no manda nada.
 
-## 5. Crear la plantilla en Meta
+## 6. Crear la plantilla en Meta
 
 WhatsApp Manager → Plantillas → Crear:
 
@@ -18228,8 +18494,9 @@ El nombre y el idioma tienen que coincidir exactamente con
 **Falta comprobarlo con un toque real.** El código manda en cada botón un
 payload con la cita (`rem:<acción>:<cita>`) y espera que Meta lo devuelva
 junto con `context.id` (el mensaje al que responde el toque). No se ha
-probado con Meta. Antes de la primera clínica, envía un recordatorio real a
-un celular de prueba, toca un botón y revisa:
+probado con Meta. Antes de la primera clínica, envía un recordatorio real
+por plantilla (ver la sección 11, paso 9) a un celular de prueba, toca un
+botón y revisa:
 
 ```sql
 select m.interactive_reply_id, m.reply_to_message_id, p.template_name
@@ -18249,92 +18516,184 @@ limit 3;
   la etiqueta ("Confirmar") **no se reconoce** como respuesta a un
   recordatorio y el bot no lo atiende: no se puede abrir la clínica así.
 
-## 6. Revisar Meta
+## 7. Revisar Meta
 
 - Medio de pago en Billing Hub: sin él, Meta deja de entregar los mensajes
   del bot después de 1.000 al mes por número. Las plantillas de recordatorio
   también se cobran: revisa la tarifa vigente para Colombia.
 
-## 7. El agente de IA
+## 8. El agente de IA y el agente de pase
 
 El agente contesta "Precios y dudas". Se configura en **Agentes de IA** →
 pestaña **Configuración**, con los documentos de la clínica.
 
+- **Activa la IA y la respuesta automática.** "Activar asistente de IA" y
+  "Responder automáticamente a mensajes entrantes", con la clave del
+  proveedor.
+- **Configura el agente de pase.** En la misma pestaña, **"Derivar a"**: la
+  persona a la que la IA pasa un chat cuando no puede contestar. Elige a
+  alguien de la recepción. Si lo dejas en "Cola sin asignar", el chat queda
+  sin dueño y el aviso en la app le llega al dueño de la cuenta.
 - **Revisa el prompt.** La instalación solo escribe el prompt si estaba
   vacío; si la cuenta ya tenía uno, queda como estaba. Compara el que
   quedó guardado con el de la plantilla (`src/verticals/agenda/presets/odontologia.ts`)
   y asegúrate de que tenga las **reglas de salud**: nunca dar diagnósticos,
   nunca recomendar medicamentos ni dosis, y mandar a "urgencia" a quien
   describa dolor fuerte, sangrado, hinchazón o un golpe.
-- **El bloque fijo se aplica igual.** Aunque el prompt no las tenga, el
-  código agrega al final unas reglas de seguridad que no se pueden editar
-  (no diagnosticar, no mencionar medicamentos, pasar a una persona todo lo
-  que hable de síntomas). El prompt es para el tono, no para la seguridad.
+- **El bloque fijo.** Aunque el prompt no tenga esas reglas, el código
+  agrega al final unas reglas de seguridad que no se pueden editar (no
+  diagnosticar, no mencionar medicamentos, pasar a una persona todo lo que
+  hable de síntomas). Se aplican a la **respuesta automática** y a
+  **"Redactar con IA"** de la bandeja. **El Playground NO las lleva**: lo que
+  contesta ahí no es lo que recibirá el paciente, así que no sirve para
+  juzgar la seguridad. El prompt es para el tono, no para la seguridad.
+- **Cuando la IA pasa un chat de salud a una persona** (un síntoma sin
+  palabra de urgencia: "me arde la encía desde ayer, ¿es normal?"), el
+  paciente recibe un texto fijo: "Esto lo debe revisar una persona de la
+  clínica. Ya le avisé y te escribe por este chat. Si aparece uno de estos
+  signos, ve a urgencias sin esperar respuesta:", seguido de los signos de
+  alarma de la clínica. Además el agente de pase (o el dueño) recibe un
+  aviso en la app, y el chat queda en pausa (ver la sección 10).
 - **La IA no ve el chat de nadie que no haya aceptado la autorización de
-  datos.** Ni la respuesta automática ni "Sugerir con IA".
+  datos.** Ni la respuesta automática ni "Redactar con IA".
 - **Si la IA está apagada, las dudas pasan a una persona.** Cuenta como
   apagada: la respuesta automática desactivada, una automatización activa
   que contesta primero, el tope de respuestas de la conversación alcanzado
   o una llave que no se puede leer. En esos casos el bot no invita a
   escribir la duda: pasa el chat a una persona.
 - Al activar la IA, los chats con datos de salud viajan al proveedor de IA
-  que la clínica eligió: es un tema del abogado (sección 11).
+  que la clínica eligió: es un tema del abogado (sección 12).
 
-## 8. Lo que el bot hace por su cuenta
+## 9. Lo que el bot hace por su cuenta
 
 - Si el paciente manda dos mensajes seguidos, el bot atiende uno a la vez.
   Si no logra atender uno en 5 segundos, lo descarta y avisa al equipo
   técnico de Shift (sin el texto del paciente). Las urgencias, el "No
-  acepto" y los botones del recordatorio se atienden siempre.
+  acepto" o la revocación escrita, y los botones del recordatorio se
+  atienden siempre.
 - Una cita se recuerda 24 h antes (y 2 h antes si la cuenta lo activa).
-  Ver `docs/agenda-recordatorios.md`.
+  Ver `docs/agenda-recordatorios.md`. **No se recuerda a quien escribió
+  "baja" o "stop"** (tiene la etiqueta `baja-envios`) **ni a quien revocó la
+  autorización**: la señal no se gasta, y si vuelve a autorizar o le quitan
+  la etiqueta, el recordatorio sale en la siguiente corrida.
 - Un número puede tener varios pacientes (una mamá agenda a sus hijos). La
-  cita es del paciente; la autorización la da el número.
+  cita es del paciente; la autorización la da el número. Si dos pacientes
+  tienen nombres parecidos, los botones salen numerados y los nombres
+  completos van en el mensaje.
 
-## 9. Los avisos de urgencia
+## 10. Los avisos y los pases
 
-Hoy los avisos de urgencia **solo se ven dentro de la app** (la campana de
+Hoy los avisos **solo se ven dentro de la app** (la campana de
 notificaciones y la página de Notificaciones), para el agente asignado y el
 dueño. No hay aviso por WhatsApp, correo ni mensaje de texto al doctor o a
 la recepción, y **no se le debe prometer eso a la clínica**. Dile que
 alguien del equipo tiene que mirar la app, o la bandeja, durante el horario
 de atención.
 
+Los avisos que existen:
+
+- **"Revisa este chat: posible urgencia"**: sale **de inmediato**, con el
+  primer mensaje que abre los signos de alarma (aunque la persona no los
+  haya contestado). Uno por chat cada 10 minutos.
+- **"Posible urgencia"**: cuando la persona confirma que tiene signos de
+  alarma, o el bot no pudo seguir. Es el más grave y no se pierde por el
+  límite de 10 minutos.
+- **"Un paciente necesita a una persona"**: la IA no contestó algo de
+  salud y pasó el chat.
+- **"Un paciente pidió borrar sus datos"**: solo en un chat que ya lleva
+  una persona. En los demás, la nota del chat lo dice.
+
 Fuera de la app, solo Shift recibe una alerta cuando algo falla (por la
-variable `ALERT_WEBHOOK_URL`, si está definida).
+variable `ALERT_WEBHOOK_URL`, si está definida), sin el texto del
+paciente.
 
-## 10. Probar
+**Los chats que el bot pasa a una persona quedan en pausa.** Para devolver
+el chat al bot, en la **Bandeja** abre el chat y usa **"Reanudar bot"** (y
+**"Reanudar IA"** para la respuesta automática), en el aviso de arriba del
+chat. Hazlo después de cada paso de prueba que lo deje en pausa.
 
-Desde un celular externo, sobre una cuenta de prueba:
+## 11. Probar
+
+Desde un celular externo, sobre una cuenta de prueba, con WhatsApp conectado
+(sección 3) y el agente de pase configurado (sección 8):
 
 1. Escribe `Hola`: pide la autorización. Acepta con el botón: abre el menú.
-2. Agenda para ti y para otra persona desde el mismo número.
+2. Agenda para ti y para otra persona desde el mismo número. La cita debe
+   empezar en **menos de 24 horas** (para el paso 9).
 3. Después de agendar llega la pregunta de avisos de control. Responde
    "Sí, avísame" con el botón; la siguiente cita ya no la pregunta.
-4. Escribe `tengo dolor`: muestra los signos de alarma. Revisa que el
-   aviso de urgencia aparezca en la app.
-5. Prueba `Ver más días`.
-6. Con la IA prendida, escribe una duda ("¿tienen parqueadero?"): la
-   contesta la IA. Apágala y repite: el chat pasa a una persona.
-7. Dispara el recordatorio (sección 5): no nombra el procedimiento.
-8. Toca Confirmar: responde con paciente, doctor, fecha y hora (sin el
-   procedimiento) y llegan las instrucciones y el mapa.
-9. Con dos citas del mismo número, toca el botón de un recordatorio y
-   comprueba que confirma la cita correcta (o pregunta cuál).
-10. Toca "No acepto" en el menú: queda registrado y el chat pasa a una
-    persona.
+4. Escribe `tengo dolor`: muestra los signos de alarma y, **sin contestar**,
+   en la app aparece el aviso "Revisa este chat: posible urgencia". Toca
+   "Sí, tengo alguno": llega "Posible urgencia" y el chat **queda en
+   pausa** (usa "Reanudar bot" en la Bandeja).
+5. Con la IA prendida, escribe `me arde la encía desde ayer, ¿es normal?`:
+   el paciente recibe el texto fijo con los signos de alarma, el agente de
+   pase recibe "Un paciente necesita a una persona" y el chat **queda en
+   pausa** (usa "Reanudar IA" en la Bandeja).
+6. Prueba `Ver más días`.
+7. Con la IA prendida, escribe una duda ("¿tienen parqueadero?"): la
+   contesta la IA. Apágala y repite: el chat pasa a una persona (**en
+   pausa**: "Reanudar bot").
+8. Revisa lo que se mandó al confirmar la cita: el nombre del paciente, no
+   el procedimiento.
+9. **Dispara el recordatorio.** La cita tiene que empezar en menos de 24 h.
+   Con la cuenta de prueba, desde una terminal:
+
+   ```bash
+   curl -s -H "x-cron-secret: $AUTOMATION_CRON_SECRET" \
+     https://<tu-dominio>/api/verticals/agenda/reminders/run
+   ```
+
+   `$AUTOMATION_CRON_SECRET` es el secreto del entorno (ver
+   `docs/agenda-recordatorios.md`). Mira la respuesta: `sent: 1` y, en
+   `byChannel`, `template` o `text`.
+
+   **Para probar la plantilla, el celular no debe haber escrito al número
+   en las últimas 24 horas.** Si escribió, el recordatorio sale como un
+   mensaje con botones (`text`), no como la plantilla de Meta. Para
+   probarla ya, en la cuenta de prueba envejece sus mensajes:
+
+   ```sql
+   update public.messages
+   set created_at = created_at - interval '2 days'
+   where conversation_id = '<uuid-de-la-conversación>' and sender_type = 'customer';
+   ```
+
+   Para repetir el recordatorio de la misma cita:
+
+   ```sql
+   update public.booking_appointments
+   set reminder_sent_at = null, reminder_2h_sent_at = null
+   where id = '<uuid-de-la-cita>';
+   ```
+
+   El mensaje no nombra el procedimiento. Si `skipped` sube y no sale
+   nada, la persona tiene la etiqueta `baja-envios` o revocó la
+   autorización.
+10. Toca Confirmar: responde con paciente, doctor, fecha y hora (sin el
+    procedimiento) y llegan las instrucciones y el mapa. Revisa la
+    consulta de la sección 6.
+11. Con dos citas del mismo número, toca el botón de un recordatorio y
+    comprueba que confirma la cita correcta (o pregunta cuál).
+12. **Revocar:** escribe `ya no autorizo`. Queda registrado, el chat pasa a
+    una persona y queda **en pausa** (devuélvelo con "Reanudar bot" solo
+    si vas a seguir probando). Comprueba que ya no sale el recordatorio de
+    esa persona (`skipped`) y que su "Reprogramar" lo atiende una persona.
+    Para seguir probando, vuelve a aceptar la autorización con el botón.
 
 Los datos de prueba se marcan y se limpian al terminar.
 
-## 11. Pendientes del abogado
+## 12. Pendientes del abogado
 
 Nada de esto lo decide Shift. Hay que revisarlo con un abogado antes de la
 primera clínica real:
 
 - **El texto de la autorización de datos** (el que viene por defecto es una
-  propuesta) y si hay que volver a pedirla cuando el texto cambia.
-- **La revocación:** qué texto ve la persona al revocar y cómo debe
-  quedar registrada (hoy se guarda el texto vigente).
+  propuesta), si hay que volver a pedirla cuando el texto cambia, y si debe
+  explicar cómo revocarla.
+- **La revocación:** qué texto ve la persona al revocar (hoy se guarda el
+  texto vigente), cómo debe quedar registrada y qué se hace con quien pide
+  borrar sus datos (el bot no borra nada: se atiende a mano).
 - **El permiso declarado en recepción:** si la clínica dice que obtiene el
   permiso en recepción, `clinic_settings.reception_consent_declared_at`
   deja la constancia, pero hoy el bot no la lee ni copia esa autorización
@@ -18392,6 +18751,9 @@ Y, después de la nota del nombre y el idioma:
 > `docs/clinica-montaje.md`.
 ```
 
+En el punto "Nunca se recuerdan" agrega que una clínica tampoco recuerda a quien tiene la etiqueta `baja-envios` ni a
+quien revocó la autorización (Task 16).
+
 En `src/verticals/agenda/agent/reminders-send.ts`, actualiza el comentario de `sendReminderTemplate`:
 
 ```ts
@@ -18411,6 +18773,11 @@ En `src/verticals/agenda/agent/reminders-send.ts`, actualiza el comentario de `s
  */
 ```
 
+En el diseño (`docs/superpowers/specs/2026-11-02-odontologia-design.md`): la interfaz `ClinicBackend` de la Fase 1 tal
+como quedó (§6.2), la nota de `state.ts` corregida (§6.5), las decisiones de revocar escribiendo y de saltar
+recordatorios (§6.6), y las dos excepciones para las cuentas actuales (§9): los botones de `recordatorio_cita`
+ahora funcionan, y "atención" ya no abre el flujo.
+
 No debe quedar ninguna afirmación de que los recordatorios por plantilla no cuestan: Meta cobra las plantillas de utilidad
 (`docs/superpowers/specs/2026-11-02-odontologia-design.md`, precios vigentes desde el 01/10/2026).
 
@@ -18419,7 +18786,7 @@ No debe quedar ninguna afirmación de que los recordatorios por plantilla no cue
 Run: `npx tsc --noEmit`
 Expected: sin errores.
 
-Run: `npx eslint src/modules/clinica src/verticals/agenda src/lib/verticals src/lib/whatsapp/meta-api.ts`
+Run: `npx eslint src/lib src/modules src/verticals`
 Expected: 0 errores.
 
 Run: `npx vitest run`
@@ -18438,10 +18805,1126 @@ No hagas esto sin su OK explícito:
 
 1. Comprobar `show server_version` (15 o más) y aplicar `055_clinica_base.sql` en el SQL Editor, antes de desplegar.
 2. Abrir el PR hacia `main`.
-3. Activar `agenda` y `clinica` juntos en la cuenta de prueba, y probar siguiendo `docs/clinica-montaje.md` §10.
-4. Enviar un recordatorio real y tocar un botón: comprobar que Meta devuelve `context.id` y el payload
-   (`docs/clinica-montaje.md` §5).
+3. Activar `agenda` y `clinica` juntos en la cuenta de prueba, y probar siguiendo `docs/clinica-montaje.md` §11.
+4. Enviar un recordatorio real por plantilla y tocar un botón: comprobar que Meta devuelve `context.id` y el payload
+   (`docs/clinica-montaje.md` §6).
 5. Armar la demo con una clínica ficticia en esa cuenta. Siempre se presenta como ficticia, y sus datos se marcan y se
    limpian al terminar.
-6. Con el abogado: el texto de la autorización, la revocación, el permiso declarado en recepción y el envío de chats
-   al proveedor de IA (`docs/clinica-montaje.md` §11).
+6. Con el abogado: el texto de la autorización (y cómo revocarla), la revocación y el borrado de datos, el permiso
+   declarado en recepción y el envío de chats al proveedor de IA (`docs/clinica-montaje.md` §12).
+
+### Task 16: Bloqueos de la primera clínica
+
+La revisión final de la rama dejó siete bloqueos antes de la primera clínica real, y una limpieza. Cada uno se
+corrigió con la prueba primero y su propio commit. Las cuentas sin `clinica` no cambian.
+
+**1. Un síntoma sin palabra de urgencia dejaba al paciente en silencio.** "me arde la encía desde ayer, ¿es normal?" hace
+que la regla fija de la IA pase el chat a una persona, pero el paciente no recibía nada, no había avisos y el chat
+quedaba en pausa. En una clínica, cuando la IA hace ese pase, `announceAiHandoff` (1) crea un aviso en la app al agente
+de pase, o al dueño, y (2) le manda al paciente un texto fijo (`aiHandoffNotice`: lo revisa una persona, ya se avisó,
+y los signos de alarma de la clínica). El aviso va primero, para que "ya le avisé" sea verdad. Nunca lanza: si falla
+el envío o el aviso, `notifyAlert` con la cuenta y la conversación, sin el texto del paciente.
+
+- Create: `src/modules/clinica/ai-handoff.ts`, `src/modules/clinica/ai-handoff.test.ts`
+- Modify: `src/lib/ai/auto-reply.ts` (+ prueba), `src/modules/clinica/texts.ts` (+ prueba)
+
+En `texts.ts` (`buildClinicTexts`):
+
+```ts
+    /**
+     * La IA no contesta nada de salud y pasa el chat a una persona. Sin esto el
+     * paciente se queda sin respuesta y nadie se entera: un texto fijo (nada de
+     * diagnóstico) con los signos de alarma de la clínica, y un aviso en la app.
+     */
+    aiHandoffNotice: (alarmText: string) =>
+      `Esto lo debe revisar una persona de la clínica. Ya le avisé y te escribe por este chat. Si aparece uno de estos signos, ve a urgencias sin esperar respuesta:\n\n${alarmText}`,
+    aiHandoffNotificationTitle: 'Un paciente necesita a una persona',
+    aiHandoffNotificationBody: (who: string) =>
+      `${who} escribió algo sobre su salud que el asistente no contesta. Respóndele por este chat.`,
+```
+
+`src/modules/clinica/ai-handoff.ts`:
+
+```ts
+// ============================================================
+// Cuando la IA de una clínica pasa un chat a una persona.
+//
+// La regla fija del prompt hace que la IA no conteste nada de salud (un
+// síntoma sin palabra de urgencia: "me arde la encía, ¿es normal?"): pausa el
+// chat y lo pasa. Sin lo de aquí, el paciente no recibía nada, nadie recibía un
+// aviso y el chat quedaba en pausa en silencio.
+//
+// Qué se hace: (1) un aviso en la app al agente de pase, o al dueño si no hay;
+// (2) un texto fijo al paciente (nada de diagnóstico): lo revisa una persona, ya
+// se le avisó, y los signos de alarma de la clínica por si empeora.
+// El aviso va primero, para que "ya le avisé" sea verdad.
+//
+// Nunca lanza: el pase ya ocurrió. Lo que falle se registra y se avisa al equipo
+// técnico con `notifyAlert`, sin el texto del paciente.
+// ============================================================
+
+import type { SupabaseClient } from '@supabase/supabase-js'
+
+import { engineSendText } from '@/lib/flows/meta-send'
+import { notifyAlert } from '@/lib/ops/alert'
+import {
+  insertNotification,
+  loadAccount,
+  loadBotSettings,
+  loadContact,
+} from '@/verticals/agenda/agent/db'
+
+import { loadClinicContext } from './settings'
+import { buildClinicTexts, DEFAULT_URGENCY_ALARM_TEXT } from './texts'
+
+export interface AiHandoffArgs {
+  accountId: string
+  conversationId: string
+  contactId: string
+  /** Dueño de la configuración de WhatsApp: columnas de auditoría del envío. */
+  configOwnerUserId: string
+  /** Agente al que la IA pasa los chats (`ai_configs.handoff_agent_id`). */
+  handoffAgentId: string | null
+}
+
+export async function announceAiHandoff(db: SupabaseClient, args: AiHandoffArgs): Promise<void> {
+  const failed: string[] = []
+  try {
+    const [settings, account, contact, clinic] = await Promise.all([
+      loadBotSettings(db, args.accountId),
+      loadAccount(db, args.accountId).catch(() => null),
+      loadContact(db, args.accountId, args.contactId).catch(() => null),
+      loadClinicContext(db, args.accountId).catch(() => null),
+    ])
+    const texts = buildClinicTexts(settings.labels)
+    const alarmText = clinic?.status === 'ok' ? clinic.clinic.urgencyAlarmText : DEFAULT_URGENCY_ALARM_TEXT
+
+    // 1) El aviso en la app: al agente de pase, o al dueño.
+    const userId = args.handoffAgentId ?? account?.ownerUserId ?? null
+    if (!userId) {
+      failed.push('avisar al equipo en la app: no hay a quién')
+    } else {
+      try {
+        await insertNotification(db, {
+          accountId: args.accountId,
+          userId,
+          conversationId: args.conversationId,
+          contactId: args.contactId,
+          title: texts.aiHandoffNotificationTitle,
+          body: texts.aiHandoffNotificationBody(contact?.name?.trim() || contact?.phone || 'Un paciente'),
+        })
+      } catch (err) {
+        console.error('[clinica] no se pudo crear el aviso del pase de la IA:', err)
+        failed.push('crear el aviso en la app')
+      }
+    }
+
+    // 2) El texto al paciente. Sale aunque el aviso haya fallado: lo peor es el silencio.
+    try {
+      await engineSendText({
+        accountId: args.accountId,
+        userId: args.configOwnerUserId,
+        conversationId: args.conversationId,
+        contactId: args.contactId,
+        text: texts.aiHandoffNotice(alarmText),
+      })
+    } catch (err) {
+      console.error('[clinica] no se pudo escribirle al paciente tras el pase de la IA:', err)
+      failed.push('escribirle al paciente')
+    }
+  } catch (err) {
+    console.error('[clinica] el pase de la IA falló:', err)
+    failed.push('avisar del pase de la IA')
+  }
+
+  if (failed.length) {
+    await notifyAlert(
+      `Clínica: la IA pasó un chat a una persona y no se pudo ${[...new Set(failed)].join(', ')} ` +
+        `(cuenta ${args.accountId}, conversación ${args.conversationId}). Revisa ese chat.`,
+    ).catch(() => undefined)
+  }
+}
+```
+
+En `src/lib/ai/auto-reply.ts`, en la rama `if (handoff || !text)`, después de pausar el chat:
+
+```ts
+      // En una clínica el paciente no se queda en silencio ni el equipo sin saberlo:
+      // un texto fijo con los signos de alarma y un aviso en la app (ver ai-handoff).
+      // Va después de la pausa, y no lanza.
+      if (gate.clinic) {
+        await announceAiHandoff(db, {
+          accountId,
+          conversationId,
+          contactId,
+          configOwnerUserId,
+          handoffAgentId: config.handoffAgentId ?? null,
+        })
+      }
+      return
+```
+
+Pruebas: `ai-handoff.test.ts`:
+
+```ts
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { buildClinicTexts, DEFAULT_URGENCY_ALARM_TEXT } from './texts'
+
+const mocks = vi.hoisted(() => ({
+  engineSendText: vi.fn<(args: Record<string, unknown>) => Promise<unknown>>(async () => ({})),
+  notifyAlert: vi.fn<(text: string) => Promise<void>>(async () => {}),
+}))
+
+vi.mock('@/lib/flows/meta-send', () => ({ engineSendText: mocks.engineSendText }))
+vi.mock('@/lib/ops/alert', () => ({ notifyAlert: mocks.notifyAlert }))
+
+import { DEFAULT_LABELS } from '@/verticals/agenda/labels'
+import {
+  ACCOUNT,
+  CONTACT,
+  CONVERSATION,
+  OWNER,
+  clinicDb,
+} from '@/verticals/agenda/agent/testing/clinic-harness'
+import { asClient } from '@/verticals/agenda/agent/testing/fake-db'
+
+import { announceAiHandoff } from './ai-handoff'
+
+const texts = buildClinicTexts(DEFAULT_LABELS)
+const AGENT = 'user-agent'
+
+const args = (over: Partial<Parameters<typeof announceAiHandoff>[1]> = {}) => ({
+  accountId: ACCOUNT,
+  conversationId: CONVERSATION,
+  contactId: CONTACT,
+  configOwnerUserId: OWNER,
+  handoffAgentId: null,
+  ...over,
+})
+
+const sentText = () => mocks.engineSendText.mock.calls[0]?.[0] as Record<string, unknown> | undefined
+
+beforeEach(() => {
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.clearAllMocks()
+})
+
+describe('el pase de la IA en una clínica', () => {
+  it('le dice al paciente que una persona lo revisa, con los signos de alarma de la clínica', async () => {
+    const db = clinicDb()
+
+    await announceAiHandoff(asClient(db), args())
+
+    expect(mocks.engineSendText).toHaveBeenCalledTimes(1)
+    expect(sentText()).toMatchObject({
+      accountId: ACCOUNT,
+      userId: OWNER,
+      conversationId: CONVERSATION,
+      contactId: CONTACT,
+      text: texts.aiHandoffNotice('Signos de alarma'),
+    })
+    // El texto es el de siempre: la persona lo revisa, ya se le avisó, y los signos de alarma.
+    expect(sentText()?.text).toContain('Esto lo debe revisar una persona de la clínica')
+    expect(sentText()?.text).toContain('te escribe por este chat')
+    expect(sentText()?.text).toContain('ve a urgencias sin esperar respuesta')
+    expect(sentText()?.text).toContain('Signos de alarma')
+  })
+
+  it('crea un aviso en la app para el agente de pase', async () => {
+    const db = clinicDb()
+
+    await announceAiHandoff(asClient(db), args({ handoffAgentId: AGENT }))
+
+    expect(db._tables.notifications).toHaveLength(1)
+    expect(db._tables.notifications[0]).toMatchObject({
+      account_id: ACCOUNT,
+      user_id: AGENT,
+      conversation_id: CONVERSATION,
+      contact_id: CONTACT,
+      title: texts.aiHandoffNotificationTitle,
+      body: texts.aiHandoffNotificationBody('Marta Ruiz'),
+    })
+  })
+
+  it('sin agente de pase, el aviso es para el dueño', async () => {
+    const db = clinicDb()
+
+    await announceAiHandoff(asClient(db), args())
+
+    expect(db._tables.notifications).toMatchObject([{ user_id: OWNER }])
+  })
+
+  it('el aviso se crea antes de decirle al paciente que ya se avisó', async () => {
+    const db = clinicDb()
+    const order: string[] = []
+    mocks.engineSendText.mockImplementationOnce(async () => {
+      order.push(`texto con ${db._tables.notifications.length} aviso(s)`)
+    })
+
+    await announceAiHandoff(asClient(db), args())
+
+    expect(order).toEqual(['texto con 1 aviso(s)'])
+  })
+
+  it('sin la configuración de la clínica usa los signos de alarma de siempre', async () => {
+    const db = clinicDb({ clinic_settings: [] })
+
+    await announceAiHandoff(asClient(db), args())
+
+    expect(sentText()?.text).toBe(texts.aiHandoffNotice(DEFAULT_URGENCY_ALARM_TEXT))
+  })
+
+  it('si no puede enviarle el texto, avisa al equipo técnico sin el texto del paciente, y el aviso en la app sale igual', async () => {
+    const db = clinicDb()
+    mocks.engineSendText.mockRejectedValueOnce(new Error('Meta rechazó el envío'))
+
+    await announceAiHandoff(asClient(db), args())
+
+    expect(db._tables.notifications).toHaveLength(1)
+    expect(mocks.notifyAlert).toHaveBeenCalledTimes(1)
+    const alert = mocks.notifyAlert.mock.calls[0][0]
+    expect(alert).toContain(ACCOUNT)
+    expect(alert).toContain(CONVERSATION)
+    expect(alert).not.toContain('Marta')
+  })
+
+  it('si no puede crear el aviso en la app, igual le escribe al paciente y avisa al equipo técnico', async () => {
+    const db = clinicDb()
+    db._failNext('insert', 'notifications', { message: 'timeout' })
+
+    await announceAiHandoff(asClient(db), args())
+
+    expect(mocks.engineSendText).toHaveBeenCalledTimes(1)
+    expect(mocks.notifyAlert).toHaveBeenCalledTimes(1)
+    expect(mocks.notifyAlert.mock.calls[0][0]).toContain(CONVERSATION)
+  })
+
+  it('sin a quién avisar (ni agente ni dueño) lo dice al equipo técnico', async () => {
+    const db = clinicDb({ accounts: [{ id: ACCOUNT, default_currency: 'COP', owner_user_id: null }] })
+
+    await announceAiHandoff(asClient(db), args())
+
+    expect(db._tables.notifications).toHaveLength(0)
+    expect(mocks.engineSendText).toHaveBeenCalledTimes(1)
+    expect(mocks.notifyAlert).toHaveBeenCalledTimes(1)
+  })
+
+  it('nunca lanza, ni con la base caída', async () => {
+    const broken = {
+      from() {
+        throw new Error('base caída')
+      },
+    }
+
+    await expect(
+      announceAiHandoff(broken as unknown as Parameters<typeof announceAiHandoff>[0], args()),
+    ).resolves.toBeUndefined()
+    expect(mocks.notifyAlert).toHaveBeenCalled()
+  })
+})
+```
+
+y en `auto-reply.test.ts` el bloque `dispatchInboundToAiReply — handoff in a clinic` (se llama una vez, después de la
+pausa, con `handoffAgentId`; no se llama si la IA contesta normal ni en una cuenta sin la clínica).
+
+```bash
+git commit -m "fix(clinica): when the AI hands a health chat to a person, the patient is told"
+```
+
+**2. Revocar escribiendo.** "no acepto", "ya no autorizo el uso de mis datos", "revoco mi autorización" y "quiero que
+borren mis datos" llegaban a la IA y no registraban nada. `consentRevocation(text)` es un detector puro y estrecho:
+el mensaje completo (`no acepto`, `ya no acepto`, `no autorizo`, `ya no autorizo`) o una frase que combina un verbo
+(`revoc*`, `retir*`, `quit*`, `borr*`, `elimin*`, `suprim*`, `no autorizo`, `no quiero que usen`, `no usen`) con
+`autorizacion`, `autorizo` o `mis datos`. "no acepto esa hora", "no acepto tarjeta" y "borré el mensaje" no lo son.
+Con la autorización vigente funciona en cualquier paso, menos mientras responde los signos de alarma: registra
+`granted: false` y pasa a una persona con una nota (reutiliza `handleConsentRevoked`, que gana la opción
+`deleteData`: la nota dice que hay que atenderlo a mano). En un hilo de una persona solo registra y avisa a quien lo
+lleva, sin escribirle al paciente. También se atiende con el candado ocupado. No se agregó "Mis datos" al menú ni se
+cambió el texto legal.
+
+- Create: `src/modules/clinica/revocation.ts`, `src/modules/clinica/revocation.test.ts`, `src/verticals/agenda/agent/clinic-revocation.test.ts`
+- Modify: `src/modules/clinica/texts.ts`, `src/verticals/agenda/agent/steps/clinic-steps.ts`, `src/verticals/agenda/agent/controller.ts`, `src/verticals/agenda/agent/index.ts`
+
+`src/modules/clinica/revocation.ts`:
+
+```ts
+// ============================================================
+// ¿El mensaje revoca la autorización de datos?
+//
+// Quien toca "No acepto" revoca con el botón, pero muchos lo escriben: "ya no
+// autorizo el uso de mis datos", "revoco mi autorización", "quiero que borren
+// mis datos". Sin leerlo, esos mensajes llegaban a la IA y no quedaba nada
+// registrado.
+//
+// Es un detector puro y de dos reglas, a propósito estrecho: una revocación
+// pausa el bot y pasa el chat a una persona, y "no acepto esa hora" o "borré el
+// mensaje" no lo son.
+//   1. El mensaje COMPLETO es "no acepto", "ya no acepto", "no autorizo" o "ya
+//      no autorizo".
+//   2. Una frase que combina un verbo de retirar o no dar el permiso (revoc*,
+//      retir*, quit*, borr*, elimin*, suprim*, "no autorizo", "no quiero que
+//      usen", "no usen"...) con lo que se retira: "autorización", "autorizo" o
+//      "mis datos".
+// Si lo que pide es borrar los datos (un verbo de borrar con "mis datos"), se
+// avisa: la clínica tiene que atenderlo a mano, el bot no borra nada.
+// ============================================================
+
+import { normalizeText } from '@/verticals/agenda/agent/state'
+
+export interface ConsentRevocation {
+  /** Pidió que borren sus datos: hay que atenderlo a mano. */
+  deleteData: boolean
+}
+
+/** Sin tildes, mayúsculas, signos ni espacios de más. */
+function plain(text: string): string {
+  return normalizeText(text)
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** Mensajes completos que revocan (en forma `plain`). */
+const WHOLE_MESSAGES: readonly string[] = ['no acepto', 'ya no acepto', 'no autorizo', 'ya no autorizo']
+
+/** Verbos de retirar el permiso o los datos. */
+const WITHDRAW_VERB = /(?<![a-z0-9])(revoc|retir|quit|borr|elimin|suprim)[a-z]*/
+/** Verbos de borrar: pedir que desaparezcan los datos. */
+const DELETE_VERB = /(?<![a-z0-9])(borr|elimin|suprim|quit|retir)[a-z]*/
+/** "No autorizo", "no quiero que usen", "no usen"... */
+const DENY_PHRASE =
+  /(?<![a-z0-9])(no autorizo|no quiero que (usen|utilicen|guarden)|no (usen|utilicen|guarden))(?![a-z0-9])/
+
+const MY_DATA = /(?<![a-z0-9])mis datos(?![a-z0-9])/
+const AUTHORIZATION = /(?<![a-z0-9])autorizacion(?![a-z0-9])/
+const AUTHORIZE = /(?<![a-z0-9])autorizo(?![a-z0-9])/
+
+export function consentRevocation(text: string): ConsentRevocation | null {
+  const message = plain(text)
+  if (!message) return null
+  if (WHOLE_MESSAGES.includes(message)) return { deleteData: false }
+
+  const data = MY_DATA.test(message)
+  // "autorizo" suelto es el sustantivo; el de "no autorizo" ya es el verbo.
+  const noun = AUTHORIZATION.test(message) || data || AUTHORIZE.test(message.replace(/no autorizo/g, ' '))
+  const denies = DENY_PHRASE.test(message)
+  const withdraws = WITHDRAW_VERB.test(message)
+
+  // "no autorizo ese cobro": el verbo es el mismo "no autorizo", así que pide algo más
+  // que la propia palabra: la autorización o los datos.
+  const revokes = withdraws ? noun : denies && (AUTHORIZATION.test(message) || data)
+  if (!revokes) return null
+
+  return { deleteData: data && DELETE_VERB.test(message) }
+}
+
+export function isConsentRevocation(text: string): boolean {
+  return consentRevocation(text) !== null
+}
+```
+
+`src/modules/clinica/revocation.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+
+import { consentRevocation, isConsentRevocation } from './revocation'
+
+describe('revocar la autorización escribiendo', () => {
+  describe('un mensaje completo', () => {
+    it.each([
+      'no acepto',
+      'No acepto',
+      'NO ACEPTO.',
+      'ya no acepto',
+      'Ya no acepto!',
+      'no autorizo',
+      'ya no autorizo',
+      '  no   acepto  ',
+    ])('%j revoca', (text) => {
+      expect(isConsentRevocation(text)).toBe(true)
+    })
+
+    it('sin pedir que borren nada', () => {
+      expect(consentRevocation('no acepto')).toEqual({ deleteData: false })
+      expect(consentRevocation('ya no autorizo')).toEqual({ deleteData: false })
+    })
+  })
+
+  describe('una frase con un verbo y la autorización o los datos', () => {
+    it.each([
+      'ya no autorizo el uso de mis datos',
+      'revoco mi autorización',
+      'Quiero revocar la autorización que di',
+      'retiro mi autorización',
+      'quiero que borren mis datos',
+      'por favor eliminen mis datos',
+      'suprima mis datos de su sistema',
+      'quiten mis datos',
+      'no quiero que usen mis datos',
+      'no usen mis datos, por favor',
+      'no autorizo que guarden mis datos',
+      'no autorizo el tratamiento de mis datos',
+      'revoco la autorización de mis datos',
+      'Ya no autorizo, borren mis datos',
+      '¿cómo borro mis datos?',
+    ])('%j revoca', (text) => {
+      expect(isConsentRevocation(text)).toBe(true)
+    })
+
+    it.each([
+      'quiero que borren mis datos',
+      'por favor eliminen mis datos',
+      'suprima mis datos de su sistema',
+      'quiten mis datos',
+      'Ya no autorizo, borren mis datos',
+      '¿cómo borro mis datos?',
+    ])('y %j pide borrar los datos: hay que atenderlo a mano', (text) => {
+      expect(consentRevocation(text)).toEqual({ deleteData: true })
+    })
+
+    it.each([
+      'ya no autorizo el uso de mis datos',
+      'revoco mi autorización',
+      'retiro mi autorización',
+      'no quiero que usen mis datos',
+    ])('pero %j solo revoca', (text) => {
+      expect(consentRevocation(text)).toEqual({ deleteData: false })
+    })
+  })
+
+  describe('lo que NO es una revocación', () => {
+    it.each([
+      'no acepto esa hora',
+      'no acepto tarjeta',
+      'no acepto el precio',
+      'no acepto, gracias',
+      'borré el mensaje',
+      'borre el mensaje por error',
+      'quiero borrar mi cita',
+      'elimina el último mensaje',
+      'quiero quitar la cita de mi hijo',
+      'no autorizo ese cobro',
+      'no autorizo a mi hijo a ir solo',
+      'autorizo',
+      'acepto',
+      'sí acepto',
+      'mis datos son Marta Ruiz',
+      'quiero actualizar mis datos',
+      '¿qué hacen con mis datos?',
+      'envío mis datos por aquí',
+      'la autorización',
+      'retiro mi hijo del colegio a las 3',
+      'no quiero que usen la sala de espera',
+      '',
+      '   ',
+      '😀',
+    ])('%j no revoca', (text) => {
+      expect(isConsentRevocation(text)).toBe(false)
+      expect(consentRevocation(text)).toBeNull()
+    })
+  })
+
+  it('no se confunde por mayúsculas, tildes ni signos', () => {
+    expect(isConsentRevocation('¡REVOCO MI AUTORIZACIÓN!')).toBe(true)
+    expect(isConsentRevocation('Ya no autorizó el uso de mis datos')).toBe(true)
+    expect(isConsentRevocation('Quiero que BORREN mis datos...')).toBe(true)
+  })
+})
+```
+
+En `texts.ts`: `consentRevokedDeleteNote`, `consentRevokedDeleteUnsavedNote`, `consentDeletionRequestTitle` y
+`consentDeletionRequestBody(who)`. En `clinic-steps.ts`, `handleConsentRevoked(ctx, { deleteData })` elige la nota. En
+`controller.ts`: `handleAgendaInbound` calcula `textRevocation` (solo con la autorización vigente y fuera del paso
+`urgency`), la cuenta como `revokesConsent` para el hilo de una persona (`revokeConsentInHumanThread` registra y, si
+pidió borrar, avisa a quien lo lleva) y, antes de "pedir un humano", la atiende con `performHandoff(handleConsentRevoked)`.
+En `index.ts`, `mustNotBeDropped` también deja pasar `consentRevocation(text)`. Las pruebas de flujo
+(`clinic-revocation.test.ts`) cubren: cada frase, cualquier paso, la excepción de los signos de alarma, lo que no es
+revocación, sin autorización vigente, el hilo de una persona, el fallo al registrar y las cuentas sin clínica.
+
+```bash
+git commit -m "fix(clinica): revoking the authorization by text is registered"
+```
+
+**3. Baja y revocación en los recordatorios.** En una cuenta con `clinica`, una cita no recibe recordatorio si el
+contacto tiene la etiqueta `OPT_OUT_TAG` (`baja-envios`) o si su última autorización `datos_sensibles` es
+`granted: false`. Sin ninguna fila sí se envía. No se reclama la señal: cuenta `skipped`. Si las lecturas fallan,
+cuenta `failed` y se reintenta. Las demás cuentas no hacen consultas nuevas. Además, en `applyReminderAction`, un toque
+de Reprogramar de quien revocó no abre el flujo: lo atiende una persona (`handoffRescheduleRequest`).
+
+- Create: `src/modules/clinica/reminder-skip.ts`
+- Modify: `src/verticals/agenda/agent/reminders.ts`, `src/verticals/agenda/agent/reminders.test.ts`, `src/verticals/agenda/agent/controller.ts`, `src/verticals/agenda/agent/clinic-revocation.test.ts`, `src/lib/contacts/opt-out.ts` (comentario)
+
+`src/modules/clinica/reminder-skip.ts`:
+
+```ts
+// ============================================================
+// ¿A este contacto se le debe recordar la cita?
+//
+// En una clínica, un recordatorio sale a nombre de un paciente, y no puede salir
+// a quien pidió que no le escriban:
+//   - la baja de envíos (la etiqueta `OPT_OUT_TAG`: quien escribe "baja" o "stop"), o
+//   - su última autorización de datos es un no (la rechazó o la revocó).
+// Sin ninguna fila de autorización sí se envía: las citas de antes del módulo no
+// la tienen. En las demás cuentas no se usa: la baja solo cubría las difusiones.
+//
+// Cualquier lectura que falle LANZA: no saber no es "puede recibirlo", y quien
+// llama deja la señal sin reclamar para reintentarla en la próxima corrida.
+// ============================================================
+
+import type { SupabaseClient } from '@supabase/supabase-js'
+
+import { OPT_OUT_TAG } from '@/lib/contacts/opt-out'
+
+export type ReminderBlock = 'opt_out' | 'consent_revoked'
+
+export async function clinicReminderBlock(
+  db: SupabaseClient,
+  args: { accountId: string; contactId: string },
+): Promise<ReminderBlock | null> {
+  const { data: tag, error: tagError } = await db
+    .from('tags')
+    .select('id')
+    .eq('account_id', args.accountId)
+    .eq('name', OPT_OUT_TAG)
+    .maybeSingle()
+  if (tagError) throw new Error(`No se pudo leer la etiqueta de baja: ${tagError.message}`)
+  const tagId = (tag as { id?: string } | null)?.id
+  if (tagId) {
+    const { data, error } = await db
+      .from('contact_tags')
+      .select('contact_id')
+      .eq('contact_id', args.contactId)
+      .eq('tag_id', tagId)
+      .limit(1)
+    if (error) throw new Error(`No se pudo leer la baja del contacto: ${error.message}`)
+    if (((data ?? []) as unknown[]).length > 0) return 'opt_out'
+  }
+
+  const { data: consents, error: consentError } = await db
+    .from('clinic_consents')
+    .select('granted')
+    .eq('account_id', args.accountId)
+    .eq('contact_id', args.contactId)
+    .eq('kind', 'datos_sensibles')
+    .order('created_at', { ascending: false })
+    .limit(1)
+  if (consentError) throw new Error(`No se pudo leer la autorización: ${consentError.message}`)
+  const latest = ((consents ?? []) as { granted: boolean }[])[0]
+  return latest && latest.granted === false ? 'consent_revoked' : null
+}
+```
+
+En `runAgendaReminders`, después de decidir la señal y antes de buscar la conversación:
+
+```ts
+    // Una clínica no le recuerda la cita a quien pidió la baja de envíos ni a quien
+    // revocó la autorización de datos. No se reclama la señal: si cambia de idea, la
+    // próxima corrida lo envía. Si no se puede saber, falla y se reintenta. Las demás
+    // cuentas no hacen esta lectura.
+    const isClinic = clinicAccounts.has(appt.account_id)
+    if (isClinic) {
+      try {
+        if (await clinicReminderBlock(args.db, { accountId: appt.account_id, contactId: appt.contact_id })) {
+          summary.skipped++
+          continue
+        }
+      } catch (err) {
+        summary.failed++
+        summary.errors.push(`cita ${appt.id}: ${err instanceof Error ? err.message : String(err)}`)
+        continue
+      }
+    }
+```
+
+En `applyReminderAction`:
+
+```ts
+  // Reprogramar con un humano a cargo: el bot NO abre su flujo encima
+  // del agente. Avisa al agente (o al dueño), deja rastro y le dice al
+  // cliente que una persona sigue. Lo mismo si en una clínica la persona revocó
+  // su autorización de datos: reprogramar es agendar otra cita con sus datos, y
+  // eso lo atiende una persona.
+  if (action === 'reschedule' && (humanOwned || (await consentWithdrawn(dialog)))) {
+    await handoffRescheduleRequest(dialog, appt)
+    return
+  }
+
+/**
+ * ¿La última autorización de datos de esta persona es un no? Solo en una clínica
+ * (con su configuración o sin ella); sin ninguna fila (citas de antes del módulo)
+ * no. Si no se puede leer cuenta como que no: no decide nada por sí sola.
+ */
+async function consentWithdrawn(dialog: Dialog): Promise<boolean> {
+  if (!dialog.clinic && !dialog.clinicUnavailable) return false
+  const consent = await latestConsent(dialog.db, {
+    accountId: dialog.accountId,
+    contactId: dialog.contactId,
+    kind: 'datos_sensibles',
+  })
+  return consent !== null && !consent.granted
+}
+```
+
+```bash
+git commit -m "fix(clinica): no reminder for who opted out or revoked the authorization"
+```
+
+**4. Títulos repetidos en "¿Quién va a asistir?".** "Carlos Andrés Gómez Pérez" y "Carlos Andrés Gómez Ruiz" quedaban
+iguales al recortar a 20 y Meta exige títulos únicos. `appointmentRows` y el menú de pacientes comparten
+`distinctTitles`: si dos títulos recortados quedan iguales, se numeran todos y los nombres completos van en el cuerpo.
+Con botones (hasta 3 opciones, 20 caracteres) y con lista (24).
+
+- Modify: `src/verticals/agenda/agent/steps/clinic-steps.ts`, `src/verticals/agenda/agent/clinic-patients.test.ts`
+
+```ts
+/** Lo que admite un botón de WhatsApp; una lista admite 24. */
+const BUTTON_TITLE_MAX = 20
+const LIST_TITLE_MAX = 24
+
+/**
+ * Títulos que Meta acepta: nunca se repiten. Un título se recorta al tope del botón
+ * o de la fila (el controlador lo recorta igual), y dos nombres largos que empiezan
+ * igual ("Carlos Andrés Gómez Pérez" y "Carlos Andrés Gómez Ruiz") quedan iguales al
+ * recortarse. Si pasa, se numeran todos ("1. ...", "2. ...") y quien llama pone los
+ * textos completos en el cuerpo (`numbered` lo avisa). El prefijo es único, así que
+ * el título no puede volver a chocar.
+ */
+function distinctTitles(
+  raws: readonly string[],
+  max: number,
+): { titles: string[]; numbered: boolean } {
+  const cut = raws.map((raw) => truncate(raw, max))
+  if (new Set(cut).size === cut.length) return { titles: cut, numbered: false }
+  return {
+    titles: raws.map((raw, index) => {
+      const prefix = `${index + 1}. `
+      return `${prefix}${truncate(raw, max - prefix.length)}`
+    }),
+    numbered: true,
+  }
+}
+
+/**
+ * Las filas de la lista de citas. Una lista admite 10 filas. Con 3 o menos van
+ * botones, que no llevan descripción: el título lleva la fecha corta y el nombre de
+ * pila ("20 oct Marta"), o la fecha y la hora si la cita no tiene paciente, y el
+ * cuerpo las dice completas. Los títulos nunca se repiten: si aun recortados al
+ * tope de 20 dos quedan iguales (la misma persona dos veces el mismo día, dos con el
+ * mismo nombre de pila), se numeran todas, en el título y en el cuerpo.
+ */
+function appointmentRows(
+  upcoming: { id: string; startsAt: Date; patientName: string | null }[],
+): { id: string; title: string; description: string; line: string }[] {
+  const base = upcoming.map((appt) => {
+    const parts = zonedParts(appt.startsAt)
+    const day = formatDayLabel(parts.dateKey).split(' ').slice(1).join(' ')
+    const firstName = appt.patientName?.split(' ')[0]
+    return {
+      id: apptId(appt.id),
+      raw: firstName ? `${day} ${firstName}` : `${day} ${formatTimeLabel(parts)}`,
+      when: `${formatDayLabel(parts.dateKey)}, ${formatTimeLabel(parts)}`,
+      patientName: appt.patientName,
+    }
+  })
+  const { titles, numbered } = distinctTitles(
+    base.map((r) => r.raw),
+    BUTTON_TITLE_MAX,
+  )
+  return base.map((r, index) => {
+    const who = r.patientName ? `${r.patientName}: ${r.when}` : r.when
+    return {
+      id: r.id,
+      title: titles[index],
+      description: r.when,
+      line: numbered ? `${index + 1}. ${who}` : `• ${who}`,
+    }
+  })
+}
+```
+
+Y en el caso `pick_patient` de `renderClinicStep`:
+
+```ts
+    case 'pick_patient': {
+      const patients = await ctx.backend.findPatients({ contactId: ctx.contactId })
+      // Sin pacientes registrados no hay a quién elegir: se pide el nombre.
+      if (!patients.length) {
+        return renderClinicStep(ctx, { ...state, step: 'new_patient_name', fails: 0 })
+      }
+      // Una lista admite 10 filas: 9 pacientes y "Otra persona". Con 3 o menos van
+      // botones (20 caracteres); con más, una lista (24).
+      const shown = patients.slice(0, 9)
+      const { titles, numbered } = distinctTitles(
+        shown.map((p) => p.fullName),
+        shown.length + 1 <= 3 ? BUTTON_TITLE_MAX : LIST_TITLE_MAX,
+      )
+      const options: OfferedOption[] = [
+        ...shown.map((p, index) => ({ id: patId(p.id), title: titles[index] })),
+        { id: patId('new'), title: texts.patientOther },
+      ]
+      await ctx.sendOptions({
+        // Con títulos numerados los nombres completos van en el cuerpo, donde caben.
+        bodyText: numbered
+          ? `${texts.patientMenuBody}\n\n${shown.map((p, index) => `${index + 1}. ${p.fullName}`).join('\n')}`
+          : texts.patientMenuBody,
+        buttonLabel: texts.patientMenuButton,
+        options,
+      })
+      return { state: { ...state, options }, closed: false }
+    }
+```
+
+```bash
+git commit -m "fix(clinica): \"Quien va a asistir?\" never offers two equal titles"
+```
+
+**5. Palabras de urgencia.** El piso fijo incluye `dolor`, `duele`, `duelen`, `urgencia`, `urgente`, `emergencia`,
+`tragar` y `tragando` (palabras enteras: "Dolores" sigue siendo un nombre), para que "me duele una muela", "no puedo
+tragar" y "es urgente" abran los signos aunque `urgency_words` esté vacío. En la guía, el SQL AGREGA con `||` y no
+reemplaza.
+
+- Modify: `src/modules/clinica/texts.ts` (`URGENCY_FLOOR_WORDS`), `src/verticals/agenda/agent/state.test.ts`, `src/verticals/agenda/agent/clinic-urgency.test.ts`, `src/verticals/agenda/agent/clinic-routing.test.ts`
+
+```ts
+/**
+ * Piso fijo de la detección de urgencias, en código y no en `clinic_settings`:
+ * lo que SIEMPRE abre los signos de alarma, aunque la clínica deje su lista
+ * vacía o se le olvide una forma de decirlo. Se suma a la lista de la clínica,
+ * no la reemplaza. Sin tildes: se comparan contra el texto normalizado.
+ *
+ * Las raíces valen al inicio de una palabra ("hinch" es "hinchada", "hinchando"
+ * y "hinchazón"; "inch" es "inchado", sin la h). Las palabras valen enteras:
+ * "rota" no es "rotación", y "dolor" no es "Dolores", que es un nombre.
+ *
+ * Incluye las palabras de siempre (dolor, duele, urgente...): una clínica que
+ * deja su lista vacía, o que la reemplaza por otra, sigue detectando "me duele una
+ * muela", "no puedo tragar" y "es urgente".
+ */
+export const URGENCY_FLOOR_STEMS: readonly string[] = [
+  'inch',
+  'hinch',
+  'hemorrag',
+  'flemon',
+  'infeccion',
+  'ahog',
+  'golpe',
+  'sangr',
+  'respir',
+]
+
+export const URGENCY_FLOOR_WORDS: readonly string[] = [
+  'dolor',
+  'duele',
+  'duelen',
+  'urgencia',
+  'urgente',
+  'emergencia',
+  'tragar',
+  'tragando',
+  'rota',
+  'rotas',
+  'roto',
+  'rotos',
+  'partio',
+  'partieron',
+  'quebro',
+  'quebraron',
+  'rompio',
+  'rompieron',
+  // Dicho de otra persona ("a mi hijo se le partió un diente").
+  'se le cayo',
+  'se le cayeron',
+  'se le inflamo',
+]
+```
+
+```bash
+git commit -m "fix(clinica): the fixed urgency floor includes the everyday words"
+```
+
+**6. Aviso desde el primer mensaje.** Al entrar al paso `urgency` (por texto, por el toque o desde el menú) sale de
+inmediato un aviso en la app, sin esperar respuesta: `urgencyOpenedNotificationTitle`. Uno por conversación cada 10
+minutos, por su propio título: el aviso de confirmación (`urgencyNotificationTitle`, más grave) nunca se pierde por ese
+límite. Si falla, o no hay a quién avisar, `notifyAlert` sin el texto del paciente; los signos de alarma salen igual.
+
+- Create: `src/verticals/agenda/agent/clinic-urgency-notice.test.ts`
+- Modify: `src/modules/clinica/texts.ts`, `src/verticals/agenda/agent/controller.ts`, `src/verticals/agenda/agent/clinic-urgency.test.ts` (las pruebas que contaban todos los avisos cuentan los de confirmación)
+
+```ts
+/**
+ * La persona abrió los signos de alarma (escribió algo que puede ser una urgencia o
+ * tocó "Tengo una urgencia"): el aviso prioritario en la app sale YA, sin esperar a
+ * que conteste. Uno por conversación cada 10 minutos (por su propio título, así el
+ * aviso de confirmación, más grave, nunca se pierde por este límite). Si el aviso
+ * falla, o no hay a quién avisar, se avisa al equipo técnico con la cuenta y la
+ * conversación, nunca con el texto del paciente: los signos de alarma salen igual.
+ */
+async function announceUrgencyOpened(dialog: Dialog): Promise<void> {
+  let problem: string | null = null
+  try {
+    const result = await notifyThreadHuman(
+      dialog,
+      (texts, who) => ({
+        title: texts.urgencyOpenedNotificationTitle,
+        body: texts.urgencyOpenedNotificationBody(who),
+      }),
+      { onceInMinutes: URGENCY_NOTICE_EVERY_MINUTES, now: dialog.now },
+    )
+    if (result === 'nobody') problem = 'avisar al equipo en la app: no hay a quién'
+  } catch (err) {
+    console.error('[agenda] el aviso de urgencia al abrir los signos de alarma falló:', err)
+    problem = 'avisar al equipo en la app'
+  }
+  if (problem) {
+    await notifyAlert(
+      `Urgencia: no se pudo ${problem} (cuenta ${dialog.accountId}, conversación ${dialog.conversationId}). Revisa ese chat ya.`,
+    ).catch(() => undefined)
+  }
+}
+```
+
+En `conclude`, antes de `renderStep`:
+
+```ts
+  // Al entrar a los signos de alarma (no al repetir la pregunta, que lleva fallos) el
+  // equipo se entera ya: el aviso no espera a que la persona conteste.
+  if (dialog.clinic && state.step === 'urgency' && state.fails === 0) {
+    await announceUrgencyOpened(dialog)
+  }
+```
+
+`clinic-urgency-notice.test.ts`:
+
+```ts
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { notifyAlert } from '@/lib/ops/alert'
+import { buildClinicTexts } from '@/modules/clinica/texts'
+
+import { DEFAULT_LABELS } from '../labels'
+import {
+  ACCOUNT,
+  CONVERSATION,
+  OWNER,
+  clinicDb,
+  grantedConsent,
+  last,
+  makeRecorder,
+  send,
+} from './testing/clinic-harness'
+import type { FakeDb } from './testing/fake-db'
+
+// ============================================================
+// El aviso prioritario sale desde el PRIMER mensaje de una urgencia, sin esperar
+// a que la persona conteste los signos de alarma.
+// ============================================================
+
+vi.mock('@/lib/ops/alert', () => ({ notifyAlert: vi.fn(async () => {}) }))
+
+beforeEach(() => {
+  vi.mocked(notifyAlert).mockClear()
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+})
+
+const texts = buildClinicTexts(DEFAULT_LABELS)
+const AGENT = 'user-agent'
+const NOW = new Date('2026-10-19T13:00:00Z')
+
+const opened = (db: FakeDb) =>
+  db._tables.notifications.filter((n) => n.title === texts.urgencyOpenedNotificationTitle)
+const confirmed = (db: FakeDb) =>
+  db._tables.notifications.filter((n) => n.title === texts.urgencyNotificationTitle)
+
+describe('el aviso al abrir los signos de alarma', () => {
+  it('por texto: sale ya, antes de que conteste', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+
+    await send(db, rec, { text: 'me duele una muela' })
+
+    expect(last(rec).ids).toEqual(['act:alarm_yes', 'act:alarm_no'])
+    expect(opened(db)).toMatchObject([
+      {
+        user_id: OWNER,
+        conversation_id: CONVERSATION,
+        title: texts.urgencyOpenedNotificationTitle,
+        body: texts.urgencyOpenedNotificationBody('Marta Ruiz'),
+      },
+    ])
+    // Todavía no confirmó nada: el aviso de confirmación no existe.
+    expect(confirmed(db)).toHaveLength(0)
+  })
+
+  it('por toque ("Tengo una urgencia"): también', async () => {
+    const db = clinicDb({ clinic_consents: [grantedConsent()] })
+    const rec = makeRecorder()
+
+    await send(db, rec, { replyId: 'act:urgent' })
+
+    expect(opened(db)).toHaveLength(1)
+  })
+
+  it('desde el menú principal: también', async () => {
+    const db = clinicDb({ clinic_consents: [grantedConsent()] })
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    expect(opened(db)).toHaveLength(0)
+
+    await send(db, rec, { replyId: 'act:urgent' })
+
+    expect(opened(db)).toHaveLength(1)
+    expect(last(rec).ids).toEqual(['act:alarm_yes', 'act:alarm_no'])
+  })
+
+  it('con un agente asignado, le llega a él', async () => {
+    const db = clinicDb()
+    db._tables.conversations[0].assigned_agent_id = AGENT
+
+    await send(db, makeRecorder(), { text: 'tengo mucho dolor' })
+
+    expect(opened(db)).toMatchObject([{ user_id: AGENT }])
+  })
+
+  it('el mensaje de signos de alarma sale igual', async () => {
+    const rec = makeRecorder()
+    await send(clinicDb(), rec, { text: 'me duele una muela' })
+    expect(last(rec).bodyText).toBe(texts.urgencyBody('Signos de alarma'))
+  })
+
+  describe('uno por conversación cada 10 minutos', () => {
+    it('quien escribe "me duele" varias veces no llena la bandeja', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+
+      await send(db, rec, { text: 'me duele una muela' })
+      await send(db, rec, { text: 'me duele mucho' })
+      await send(db, rec, { replyId: 'act:urgent' })
+
+      expect(opened(db)).toHaveLength(1)
+    })
+
+    it('pasados 10 minutos vuelve a avisar', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'me duele una muela' }, { now: NOW })
+
+      await send(db, rec, { replyId: 'act:urgent' }, { now: new Date(NOW.getTime() + 11 * 60_000) })
+
+      expect(opened(db)).toHaveLength(2)
+    })
+
+    it('otra conversación no comparte el límite', async () => {
+      const db = clinicDb()
+      db._tables.notifications.push({
+        id: 'n-otra',
+        account_id: ACCOUNT,
+        user_id: OWNER,
+        conversation_id: 'cv-otra',
+        title: texts.urgencyOpenedNotificationTitle,
+        created_at: NOW.toISOString(),
+      })
+
+      await send(db, makeRecorder(), { text: 'me duele una muela' }, { now: NOW })
+
+      expect(opened(db)).toHaveLength(2)
+    })
+
+    it('el aviso de confirmación no se pierde por ese límite: dice algo más grave', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'me duele una muela' })
+      expect(opened(db)).toHaveLength(1)
+
+      // Confirma que tiene signos de alarma, dentro de los 10 minutos.
+      await send(db, rec, { replyId: 'act:alarm_yes' })
+
+      expect(opened(db)).toHaveLength(1)
+      expect(confirmed(db)).toMatchObject([
+        { user_id: OWNER, body: texts.urgencyNotificationBody('Marta Ruiz') },
+      ])
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    })
+
+    it('tampoco el de quien no confirma ("no, solo me duele")', async () => {
+      const db = clinicDb({ clinic_consents: [grantedConsent()] })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'me duele una muela' })
+
+      await send(db, rec, { text: 'no, solo me duele' })
+
+      expect(opened(db)).toHaveLength(1)
+      expect(confirmed(db)).toHaveLength(1)
+    })
+  })
+
+  describe('si el aviso falla', () => {
+    it('avisa al equipo técnico sin el texto del paciente, y los signos de alarma salen igual', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      db._failNext('insert', 'notifications', { message: 'timeout' })
+
+      await send(db, rec, { text: 'me duele una muela de Marta' })
+
+      expect(last(rec).bodyText).toBe(texts.urgencyBody('Signos de alarma'))
+      expect(notifyAlert).toHaveBeenCalledTimes(1)
+      const alert = vi.mocked(notifyAlert).mock.calls[0][0]
+      expect(alert).toContain(ACCOUNT)
+      expect(alert).toContain(CONVERSATION)
+      expect(alert).not.toContain('muela')
+    })
+
+    it('sin a quién avisar (ni agente ni dueño) también lo dice', async () => {
+      const db = clinicDb({ accounts: [{ id: ACCOUNT, default_currency: 'COP', owner_user_id: null }] })
+
+      await send(db, makeRecorder(), { text: 'me duele una muela' })
+
+      expect(db._tables.notifications).toHaveLength(0)
+      expect(notifyAlert).toHaveBeenCalledTimes(1)
+    })
+
+    it('si ya había un aviso reciente no es un fallo: alguien ya sabe', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'me duele una muela' })
+
+      await send(db, rec, { replyId: 'act:urgent' })
+
+      expect(notifyAlert).not.toHaveBeenCalled()
+    })
+  })
+
+  it('un mensaje que no es una urgencia no avisa de nada', async () => {
+    const db = clinicDb({ clinic_consents: [grantedConsent()] })
+    await send(db, makeRecorder(), { text: 'Hola' })
+    await send(db, makeRecorder(), { text: 'quiero agendar una limpieza' })
+    expect(db._tables.notifications).toHaveLength(0)
+  })
+
+  it('una cuenta sin clínica no cambia: no abre los signos ni avisa', async () => {
+    const db = clinicDb()
+    await send(db, makeRecorder(), { text: 'me duele una muela' }, { modules: ['agenda'] })
+    expect(db._tables.notifications).toHaveLength(0)
+  })
+})
+```
+
+```bash
+git commit -m "fix(clinica): the urgency notice goes out with the first message"
+```
+
+**7. La guía.** `docs/clinica-montaje.md` debe poder seguirse al pie de la letra (ver la Task 15).
+
+**Limpieza antes del PR.** Se quitaron `canUseAi` y `autoReplyEnabled` (`ai-gate.ts`), que solo usaban sus pruebas (ahora
+`clinicAiGate(...).allowed`). Comentarios corregidos: el toque del recordatorio en el controlador, el texto del
+recordatorio, `loadAppointmentClinicLinks`, "un toque siempre vale" en los menús de decisión y el pase de la IA. El
+diseño y la guía se corrigieron con la Task 15.
+
+```bash
+git commit -m "chore(clinica): remove two unused helpers and fix comments that no longer match"
+```
