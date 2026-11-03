@@ -83,10 +83,14 @@ export async function loadInboundMessage(
   db: SupabaseClient,
   conversationId: string,
   messageId: string,
-): Promise<{ text: string; replyId: string | null } | null> {
+): Promise<{
+  text: string
+  replyId: string | null
+  replyToMessageId: string | null
+} | null> {
   const { data } = await db
     .from('messages')
-    .select('content_text, interactive_reply_id')
+    .select('content_text, interactive_reply_id, reply_to_message_id')
     .eq('conversation_id', conversationId)
     .eq('message_id', messageId)
     .maybeSingle()
@@ -95,7 +99,25 @@ export async function loadInboundMessage(
   return {
     text: (row.content_text as string | null) ?? '',
     replyId: (row.interactive_reply_id as string | null) ?? null,
+    replyToMessageId: (row.reply_to_message_id as string | null) ?? null,
   }
+}
+
+/** Plantilla con la que se envió un mensaje de la conversación, si la hubo. */
+export async function loadMessageTemplateName(
+  db: SupabaseClient,
+  conversationId: string,
+  messageRowId: string,
+): Promise<string | null> {
+  const { data } = await db
+    .from('messages')
+    .select('template_name')
+    .eq('conversation_id', conversationId)
+    .eq('id', messageRowId)
+    .maybeSingle()
+  if (!data) return null
+  const row = data as Record<string, unknown>
+  return (row.template_name as string | null) ?? null
 }
 
 export async function loadContact(

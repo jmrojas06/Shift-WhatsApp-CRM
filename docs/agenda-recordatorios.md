@@ -36,9 +36,13 @@ mensajes, «cita» y «barbero» siguen el vocabulario del negocio.
 En el mensaje libre los botones llevan ids **estáticos** (`rem:confirm`,
 `rem:reschedule`, `rem:cancel`). La plantilla se envía sin payload en los
 botones, así que Meta devuelve el **texto del botón** y el bot lee las
-tres etiquetas exactas (`Confirmar`, `Reprogramar`, `Cancelar`). En
-ninguno de los dos casos viaja el id de la cita: el bot la resuelve al
-tocarlos, y es la **próxima cita activa** del contacto.
+tres etiquetas exactas (`Confirmar`, `Reprogramar`, `Cancelar`). Como
+cualquier otra plantilla o difusión puede traer esos textos, la etiqueta
+solo vale si el toque responde a un recordatorio: el mensaje al que
+responde (`reply_to_message_id`) debe tener `template_name` igual a
+`recordatorio_cita`. En ninguno de los dos casos viaja el id de la cita:
+el bot la resuelve al tocarlos, y es la **próxima cita activa** del
+contacto.
 
 ## Plantilla de Meta (`recordatorio_cita`)
 
@@ -229,6 +233,10 @@ where id = '<uuid-de-la-cita>';
 - **¿Qué pasa si el cliente toca un botón viejo?** Si al tocarlo ya no
   tiene una cita activa, el bot responde que la cita ya no está activa y
   no crea nada.
+- **¿Y si otra plantilla o difusión tiene un botón «Confirmar»?** El bot
+  no toca la cita ni responde: el toque sigue a las automatizaciones como
+  cualquier otro. Si el contacto tiene un diálogo del bot a medias, ese
+  diálogo sigue dueño del mensaje.
 - **¿Y si toca «Reprogramar» o «Cancelar»?** El bot abre el mismo flujo
   de gestión que existe dentro del chat (elegir día/hora, o confirmar la
   cancelación). Al confirmar la cancelación, se aplica la etiqueta

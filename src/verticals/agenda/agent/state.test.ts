@@ -8,6 +8,7 @@ import {
   containsHandoffWord,
   containsIntentWord,
   isHandoffOnly,
+  isReminderLabel,
   isSkipAnswer,
   dayId,
   matchAnswerOption,
@@ -252,6 +253,15 @@ describe('ids del recordatorio', () => {
     expect(parseReminderId('constructor')).toBeNull()
     expect(parseReminderId('toString')).toBeNull()
     expect(parseReminderId('__proto__')).toBeNull()
+  })
+
+  it('distingue las etiquetas de la plantilla de los ids rem:*', () => {
+    expect(isReminderLabel('Confirmar')).toBe(true)
+    expect(isReminderLabel('Reprogramar')).toBe(true)
+    expect(isReminderLabel('Cancelar')).toBe(true)
+    expect(isReminderLabel('rem:confirm')).toBe(false)
+    expect(isReminderLabel('confirmar')).toBe(false)
+    expect(isReminderLabel('constructor')).toBe(false)
   })
 })
 

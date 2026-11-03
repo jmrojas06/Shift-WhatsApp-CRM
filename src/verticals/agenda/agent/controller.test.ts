@@ -4,6 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { VerticalSession } from '@/lib/verticals/types'
 
 import { handleAgendaInbound, type AgendaSender } from './controller'
+import { AGENDA_REMINDER_TEMPLATE } from './reminders'
 import { ansId, ansSkipId, dayId, slotId, staffId, svcId } from './state'
 import { AGENDA_AGENT_TEXTS } from '../texts'
 
@@ -436,10 +437,14 @@ function appointmentRow(overrides: Row = {}): Row {
 
 let msgCounter = 0
 
-function seedInbound(
-  db: FakeDb,
-  input: { text?: string; replyId?: string | null },
-): string {
+interface InboundInput {
+  text?: string
+  replyId?: string | null
+  /** Id interno del mensaje al que responde, como lo guarda el webhook. */
+  replyToMessageId?: string | null
+}
+
+function seedInbound(db: FakeDb, input: InboundInput): string {
   msgCounter += 1
   const messageId = `wamid-${msgCounter}`
   db._tables.messages.push({
@@ -450,8 +455,29 @@ function seedInbound(
     content_text: input.text ?? '',
     content_type: input.replyId ? 'interactive' : 'text',
     interactive_reply_id: input.replyId ?? null,
+    reply_to_message_id: input.replyToMessageId ?? null,
   })
   return messageId
+}
+
+/** Saliente ya enviado, como lo guarda el envío. Devuelve su id interno. */
+function seedSentMessage(
+  db: FakeDb,
+  templateName: string | null,
+  conversationId: string = CONVERSATION,
+): string {
+  msgCounter += 1
+  const id = `msg-${msgCounter}`
+  db._tables.messages.push({
+    id,
+    account_id: ACCOUNT,
+    conversation_id: conversationId,
+    message_id: `wamid-${msgCounter}`,
+    sender_type: 'bot',
+    content_type: templateName ? 'template' : 'text',
+    template_name: templateName,
+  })
+  return id
 }
 
 /** Lo que el dispatcher pasaría: solo la sesión activa y vigente. */
@@ -508,7 +534,7 @@ type Recorder = ReturnType<typeof makeRecorder>
 async function send(
   db: FakeDb,
   rec: Recorder,
-  input: { text?: string; replyId?: string | null },
+  input: InboundInput,
   now: Date = NOW,
   opts: { humanOwned?: boolean } = {},
 ) {
@@ -528,11 +554,8 @@ async function send(
 }
 
 /** Como lo llama el dispatcher cuando un humano es dueño del hilo (D1). */
-const sendHuman = (
-  db: FakeDb,
-  rec: Recorder,
-  input: { text?: string; replyId?: string | null },
-) => send(db, rec, input, NOW, { humanOwned: true })
+const sendHuman = (db: FakeDb, rec: Recorder, input: InboundInput) =>
+  send(db, rec, input, NOW, { humanOwned: true })
 
 function last(rec: Recorder): SenderCall {
   const call = rec.calls.at(-1)
@@ -1564,15 +1587,46 @@ describe('botones del recordatorio (rem:*)', () => {
 // envía sin payload: Meta devuelve la etiqueta del botón en
 // `button.payload` y el webhook la guarda como `interactive_reply_id`.
 describe('botones del recordatorio enviado como plantilla (etiquetas)', () => {
-  it('"Confirmar" confirma la cita, sin abrir sesión', async () => {
+  const LABELS = ['Confirmar', 'Reprogramar', 'Cancelar']
+
+  /** El toque responde al recordatorio que se envió por plantilla. */
+  const reminderTap = (db: FakeDb, label: string): InboundInput => ({
+    text: label,
+    replyId: label,
+    replyToMessageId: seedSentMessage(db, AGENDA_REMINDER_TEMPLATE.name),
+  })
+
+  /** El toque responde a otra plantilla o difusión con el mismo texto. */
+  const foreignTap = (db: FakeDb, label: string): InboundInput => ({
+    text: label,
+    replyId: label,
+    replyToMessageId: seedSentMessage(db, 'promo_del_mes'),
+  })
+
+  function pendingDb() {
     const seed = baseSeed()
     seed.booking_appointments = [
       appointmentRow({ status: 'pending', confirmed_at: null }),
     ]
-    const db = makeFakeDb(seed)
+    return makeFakeDb(seed)
+  }
+
+  function expectIgnored(
+    db: FakeDb,
+    rec: Recorder,
+    res: { consumed: boolean },
+  ) {
+    expect(res.consumed).toBe(false)
+    expect(db._tables.booking_appointments[0].status).toBe('pending')
+    expect(rec.calls).toHaveLength(0)
+    expect(sessionRow(db)).toBeUndefined()
+  }
+
+  it('"Confirmar" confirma la cita, sin abrir sesión', async () => {
+    const db = pendingDb()
     const rec = makeRecorder()
 
-    const res = await send(db, rec, { text: 'Confirmar', replyId: 'Confirmar' })
+    const res = await send(db, rec, reminderTap(db, 'Confirmar'))
 
     expect(res.consumed).toBe(true)
     expect(db._tables.booking_appointments[0].status).toBe('confirmed')
@@ -1586,7 +1640,7 @@ describe('botones del recordatorio enviado como plantilla (etiquetas)', () => {
     const db = makeFakeDb(seed)
     const rec = makeRecorder()
 
-    const res = await send(db, rec, { text: 'Reprogramar', replyId: 'Reprogramar' })
+    const res = await send(db, rec, reminderTap(db, 'Reprogramar'))
 
     expect(res.consumed).toBe(true)
     const state = sessionRow(db)?.state as Record<string, unknown>
@@ -1601,7 +1655,7 @@ describe('botones del recordatorio enviado como plantilla (etiquetas)', () => {
     const db = makeFakeDb(seed)
     const rec = makeRecorder()
 
-    const res = await send(db, rec, { text: 'Cancelar', replyId: 'Cancelar' })
+    const res = await send(db, rec, reminderTap(db, 'Cancelar'))
 
     expect(res.consumed).toBe(true)
     expect((sessionRow(db)?.state as Record<string, unknown>).step).toBe(
@@ -1612,22 +1666,118 @@ describe('botones del recordatorio enviado como plantilla (etiquetas)', () => {
   })
 
   it('con un humano a cargo, "Confirmar" también confirma', async () => {
-    const seed = baseSeed()
-    seed.booking_appointments = [
-      appointmentRow({ status: 'pending', confirmed_at: null }),
-    ]
-    seed.conversations[0].assigned_agent_id = HANDOFF_AGENT
-    const db = makeFakeDb(seed)
+    const db = pendingDb()
+    db._tables.conversations[0].assigned_agent_id = HANDOFF_AGENT
     const rec = makeRecorder()
 
-    const res = await sendHuman(db, rec, {
-      text: 'Confirmar',
-      replyId: 'Confirmar',
-    })
+    const res = await sendHuman(db, rec, reminderTap(db, 'Confirmar'))
 
     expect(res.consumed).toBe(true)
     expect(db._tables.booking_appointments[0].status).toBe('confirmed')
     expect(last(rec).bodyText).toContain('Queda confirmado')
+  })
+
+  it('un id rem:* no necesita referencia al recordatorio', async () => {
+    const db = pendingDb()
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, { replyId: 'rem:confirm' })
+
+    expect(res.consumed).toBe(true)
+    expect(db._tables.booking_appointments[0].status).toBe('confirmed')
+  })
+
+  it.each(LABELS)('"%s" de otra plantilla no toca la cita ni se consume', async (label) => {
+    const db = pendingDb()
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, foreignTap(db, label))
+
+    expectIgnored(db, rec, res)
+  })
+
+  it.each(LABELS)('"%s" sin referencia no toca la cita ni se consume', async (label) => {
+    const db = pendingDb()
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, { text: label, replyId: label })
+
+    expectIgnored(db, rec, res)
+  })
+
+  it('una etiqueta que responde a un mensaje sin plantilla se ignora', async () => {
+    const db = pendingDb()
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, {
+      text: 'Confirmar',
+      replyId: 'Confirmar',
+      replyToMessageId: seedSentMessage(db, null),
+    })
+
+    expectIgnored(db, rec, res)
+  })
+
+  it('un recordatorio de otra conversación no valida la etiqueta', async () => {
+    const db = pendingDb()
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, {
+      text: 'Confirmar',
+      replyId: 'Confirmar',
+      replyToMessageId: seedSentMessage(
+        db,
+        AGENDA_REMINDER_TEMPLATE.name,
+        'otra-conversacion',
+      ),
+    })
+
+    expectIgnored(db, rec, res)
+  })
+
+  it('sin cita, una etiqueta ajena no responde "ya no está activo"', async () => {
+    const db = makeFakeDb(baseSeed())
+    const rec = makeRecorder()
+
+    const res = await send(db, rec, foreignTap(db, 'Confirmar'))
+
+    expect(res.consumed).toBe(false)
+    expect(rec.calls).toHaveLength(0)
+  })
+
+  it('con un humano a cargo, una etiqueta de otra plantilla es del humano', async () => {
+    const db = pendingDb()
+    db._tables.conversations[0].assigned_agent_id = HANDOFF_AGENT
+    const rec = makeRecorder()
+
+    const res = await sendHuman(db, rec, foreignTap(db, 'Confirmar'))
+
+    expectIgnored(db, rec, res)
+  })
+
+  it('con un humano a cargo, una etiqueta sin referencia es del humano', async () => {
+    const db = pendingDb()
+    db._tables.conversations[0].assigned_agent_id = HANDOFF_AGENT
+    const rec = makeRecorder()
+
+    const res = await sendHuman(db, rec, {
+      text: 'Cancelar',
+      replyId: 'Cancelar',
+    })
+
+    expectIgnored(db, rec, res)
+  })
+
+  it('con una sesión a medias, una etiqueta ajena no toca la cita', async () => {
+    const db = pendingDb()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'quiero una cita' })
+    expect(sessionRow(db)).toBeDefined()
+
+    const res = await send(db, rec, foreignTap(db, 'Confirmar'))
+
+    expect(res.consumed).toBe(true)
+    expect(db._tables.booking_appointments[0].status).toBe('pending')
   })
 
   it('una etiqueta que no es del recordatorio sigue sin consumirse', async () => {

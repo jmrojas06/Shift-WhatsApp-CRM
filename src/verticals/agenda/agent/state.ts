@@ -110,9 +110,11 @@ export function parseAnswerId(
 // En el mensaje libre los tres botones del recordatorio viajan con
 // id estático `rem:<acción>`. La plantilla de Meta se envía sin
 // payload, así que su tap devuelve la ETIQUETA del botón
-// ("Confirmar"): por eso también se leen las etiquetas. La cita sobre
-// la que se actúa se resuelve en el controlador (próxima cita activa
-// del contacto).
+// ("Confirmar"): por eso también se leen las etiquetas. Esas etiquetas
+// las puede traer cualquier otra plantilla o difusión, así que el
+// controlador solo las acepta si el tap responde a un recordatorio.
+// La cita sobre la que se actúa se resuelve en el controlador (próxima
+// cita activa del contacto).
 // ------------------------------------------------------------
 
 export const REMINDER_ACTIONS = ['confirm', 'reschedule', 'cancel'] as const
@@ -127,9 +129,14 @@ const REMINDER_LABELS: Readonly<Record<string, ReminderAction>> = {
   Cancelar: 'cancel',
 }
 
+/** ¿Es una de las tres etiquetas exactas de la plantilla? */
+export function isReminderLabel(id: string): boolean {
+  return Object.hasOwn(REMINDER_LABELS, id)
+}
+
 /** 'rem:confirm' o la etiqueta 'Confirmar' → 'confirm'; todo lo demás → null. */
 export function parseReminderId(id: string): ReminderAction | null {
-  if (Object.hasOwn(REMINDER_LABELS, id)) return REMINDER_LABELS[id]
+  if (isReminderLabel(id)) return REMINDER_LABELS[id]
   const prefix = 'rem:'
   if (!id.startsWith(prefix)) return null
   const action = id.slice(prefix.length)

@@ -62,6 +62,7 @@ import {
   loadConversationOwnership,
   loadHandoffAgentId,
   loadInboundMessage,
+  loadMessageTemplateName,
   loadStaffName,
   markAppointmentConfirmed,
   markConversationHandoff,
@@ -77,6 +78,7 @@ import {
   type WorkBlockRow,
 } from './db'
 import { formatDayLabel, formatLongDate, formatPrice, formatTimeLabel, truncate } from './format'
+import { AGENDA_REMINDER_TEMPLATE } from './reminders'
 import {
   actId,
   ansId,
@@ -85,6 +87,7 @@ import {
   containsIntentWord,
   dayId,
   isHandoffOnly,
+  isReminderLabel,
   isSkipAnswer,
   matchAnswerOption,
   matchChoice,
@@ -174,7 +177,14 @@ export async function handleAgendaInbound(
     : null
   const text = inbound?.text ?? ''
   const replyId = inbound?.replyId ?? null
-  const reminderAction = replyId ? parseReminderId(replyId) : null
+  const reminderAction = replyId
+    ? await readReminderAction(
+        args.db,
+        args.conversationId,
+        replyId,
+        inbound?.replyToMessageId ?? null,
+      )
+    : null
   const humanOwned = args.humanOwned === true
 
   // Hilo de un humano: antes de cargar nada más, soltar todo lo que no
@@ -306,6 +316,29 @@ async function openSession(dialog: Dialog, state: BookingState): Promise<string>
 // ------------------------------------------------------------
 // Recordatorios (taps rem:*) — Fase 3
 // ------------------------------------------------------------
+
+/**
+ * Acción del recordatorio que trae el tap, si la trae. Un id `rem:*`
+ * solo sale de nuestro mensaje libre y vale por sí mismo. Una etiqueta
+ * la puede traer cualquier plantilla o difusión con ese botón, así que
+ * solo vale si el tap responde a un recordatorio enviado por plantilla.
+ */
+async function readReminderAction(
+  db: SupabaseClient,
+  conversationId: string,
+  replyId: string,
+  replyToMessageId: string | null,
+): Promise<ReminderAction | null> {
+  const action = parseReminderId(replyId)
+  if (!action || !isReminderLabel(replyId)) return action
+  if (!replyToMessageId) return null
+  const templateName = await loadMessageTemplateName(
+    db,
+    conversationId,
+    replyToMessageId,
+  )
+  return templateName === AGENDA_REMINDER_TEMPLATE.name ? action : null
+}
 
 /**
  * Acciones Confirmar / Reprogramar / Cancelar del recordatorio.

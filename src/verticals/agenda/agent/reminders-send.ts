@@ -150,6 +150,8 @@ async function sendReminderTemplate(delivery: ReminderDelivery): Promise<void> {
 
   // Persistencia del saliente: se guarda el texto equivalente al
   // cuerpo de la plantilla para que la bandeja muestre el contenido.
+  // `template_name` y `message_id` son los que validan después el tap
+  // de sus botones: sin esta fila, el tap se ignora.
   const contentText = buildReminderBody(delivery)
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: delivery.conversationId,
