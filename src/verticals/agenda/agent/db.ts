@@ -136,13 +136,16 @@ export async function loadContact(
   db: SupabaseClient,
   accountId: string,
   contactId: string,
+  /** Con `strict`, un error de la base lanza en vez de leerse como "no hay contacto". */
+  opts: { strict?: boolean } = {},
 ): Promise<{ name: string | null; phone: string | null } | null> {
-  const { data } = await db
+  const { data, error } = await db
     .from('contacts')
     .select('name, phone')
     .eq('id', contactId)
     .eq('account_id', accountId)
     .maybeSingle()
+  if (error && opts.strict) throw new Error(`No se pudo leer el contacto: ${error.message}`)
   if (!data) return null
   const row = data as Record<string, unknown>
   return {

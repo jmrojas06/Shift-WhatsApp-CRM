@@ -274,12 +274,18 @@ export function buildClinicTexts(l: AgendaLabels) {
         '¡Te esperamos! 🙌',
       ].join('\n'),
 
-    /** Mapa e instrucciones previas tras confirmar; null si no hay nada que decir. */
+    /**
+     * Mapa e instrucciones previas tras confirmar; null si no hay nada que decir. Lo
+     * que solo tiene espacios no cuenta: no se manda un mensaje vacío.
+     */
     prepInfo: (a: { prep: string | null; address: string | null; mapUrl: string | null }) => {
+      const prep = a.prep?.trim()
+      const address = a.address?.trim()
+      const mapUrl = a.mapUrl?.trim()
       const lines: string[] = []
-      if (a.prep) lines.push(`Para tu ${l.cita}:\n${a.prep}`)
-      if (a.address) lines.push(`📍 ${a.address}`)
-      if (a.mapUrl) lines.push(a.mapUrl)
+      if (prep) lines.push(`Para tu ${l.cita}:\n${prep}`)
+      if (address) lines.push(`📍 ${address}`)
+      if (mapUrl) lines.push(mapUrl)
       return lines.length ? lines.join('\n\n') : null
     },
   }

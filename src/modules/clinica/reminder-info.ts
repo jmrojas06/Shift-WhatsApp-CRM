@@ -76,8 +76,11 @@ export async function loadClinicReminderInfo(
     : null
   if (!patientName) {
     // Una cita de antes del módulo: el nombre del contacto, si es un nombre
-    // (no un número ni un símbolo).
-    const contactName = tidy((await loadContact(db, args.accountId, args.contactId))?.name)
+    // (no un número ni un símbolo). Si no se puede leer, lanza: sin él se mandaría
+    // "tu familiar" a quien sí tiene nombre, y la próxima corrida lo reintenta.
+    const contactName = tidy(
+      (await loadContact(db, args.accountId, args.contactId, { strict: true }))?.name,
+    )
     patientName = contactName && HAS_LETTER.test(contactName) ? contactName : null
   }
 

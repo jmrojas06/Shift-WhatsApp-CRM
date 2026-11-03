@@ -136,6 +136,21 @@ describe('palabras de urgencia por defecto', () => {
   )
 })
 
+describe('instrucciones previas', () => {
+  it('instrucciones o dirección con solo espacios no mandan un mensaje vacío', () => {
+    expect(texts.prepInfo({ prep: '   ', address: '\n ', mapUrl: ' ' })).toBeNull()
+    expect(texts.prepInfo({ prep: '', address: '', mapUrl: null })).toBeNull()
+  })
+
+  it('recorta los espacios de lo que sí dice', () => {
+    expect(texts.prepInfo({ prep: '  Cepíllate antes.  ', address: ' Calle 1 ', mapUrl: null })).toBe(
+      'Para tu cita:\nCepíllate antes.\n\n📍 Calle 1',
+    )
+    // Una de las dos vacía: solo sale la otra.
+    expect(texts.prepInfo({ prep: '  ', address: 'Calle 1', mapUrl: null })).toBe('📍 Calle 1')
+  })
+})
+
 describe('respuesta a tocar Confirmar', () => {
   const when = { staff: 'Dra. Ana', date: 'martes 20 de octubre de 2026', time: '9:00 a. m.' }
 

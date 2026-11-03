@@ -1396,6 +1396,35 @@ describe('runAgendaReminders', () => {
       expect(JSON.stringify(summary)).not.toContain('Tomás')
     })
 
+    it('si no se puede leer el contacto de una cita sin paciente, no se envía ni se reclama', async () => {
+      const seed = clinicSeed()
+      seed.booking_appointments[0].patient_id = null
+      const db = makeFakeDb(seed)
+      const spy = instrument(db, 'contacts')
+      const rec = makeRecorder()
+
+      const summary = await runAgendaReminders({ db: asClient(spy.db), now: NOW, send: rec.send })
+
+      // Otro nombre ("tu familiar") o ninguno sería peor que mandarlo en la próxima corrida.
+      expect(summary.failed).toBe(1)
+      expect(rec.deliveries).toHaveLength(0)
+      expect(appointmentRow(db).reminder_sent_at).toBeNull()
+      expect(summary.errors).toHaveLength(1)
+      expect(summary.errors[0]).toContain(APPT)
+      expect(JSON.stringify(summary)).not.toContain('Laura')
+    })
+
+    it('con paciente no hace falta leer el contacto: un fallo ahí no frena el envío', async () => {
+      const db = makeFakeDb(clinicSeed())
+      const spy = instrument(db, 'contacts')
+      const rec = makeRecorder()
+
+      const summary = await runAgendaReminders({ db: asClient(spy.db), now: NOW, send: rec.send })
+
+      expect(summary.sent).toBe(1)
+      expect(rec.deliveries[0].clinic?.patientName).toBe('Tomás Gil')
+    })
+
     it('si no puede leer la sede tampoco envía una sede inventada', async () => {
       const db = makeFakeDb(clinicSeed())
       const spy = instrument(db, 'clinic_locations')

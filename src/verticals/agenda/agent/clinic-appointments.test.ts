@@ -644,6 +644,32 @@ describe('varias citas en un número', () => {
       expect(last(rec).bodyText).toContain('Queda confirmado')
     })
 
+    it('instrucciones y dirección con solo espacios no mandan un mensaje vacío', async () => {
+      const db = twoAppointments({
+        booking_appointments: [appointment('ap-1', 'pat-1', FIRST, { service_id: SERVICE_URGENCIA })],
+        clinic_locations: [
+          {
+            id: 'loc-1',
+            account_id: ACCOUNT,
+            name: 'Centro',
+            address: '   ',
+            latitude: null,
+            longitude: null,
+            on_call_phone: null,
+            is_active: true,
+            created_at: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+      })
+      db._tables.booking_services.find((s) => s.id === SERVICE_URGENCIA)!.prep_instructions = '  \n '
+      const rec = makeRecorder()
+
+      await send(db, rec, { replyId: remId('confirm', 'ap-1') })
+
+      expect(rec.calls).toHaveLength(1)
+      expect(last(rec).bodyText).toContain('Queda confirmado')
+    })
+
     it('confirmar al elegir de la lista también las manda', async () => {
       const db = twoAppointments()
       const rec = makeRecorder()
