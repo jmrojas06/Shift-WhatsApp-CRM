@@ -538,8 +538,32 @@ async function myAppointments(ctx: ClinicStepCtx): Promise<ClinicOutcome> {
   return { kind: 'next', state: newBookingState('pick_appointment') }
 }
 
-/** Lo que admite un botón; una lista admite 24, pero con 3 o menos citas van botones. */
-const APPOINTMENT_TITLE_MAX = 20
+/** Lo que admite un botón de WhatsApp; una lista admite 24. */
+const BUTTON_TITLE_MAX = 20
+const LIST_TITLE_MAX = 24
+
+/**
+ * Títulos que Meta acepta: nunca se repiten. Un título se recorta al tope del botón
+ * o de la fila (el controlador lo recorta igual), y dos nombres largos que empiezan
+ * igual ("Carlos Andrés Gómez Pérez" y "Carlos Andrés Gómez Ruiz") quedan iguales al
+ * recortarse. Si pasa, se numeran todos ("1. ...", "2. ...") y quien llama pone los
+ * textos completos en el cuerpo (`numbered` lo avisa). El prefijo es único, así que
+ * el título no puede volver a chocar.
+ */
+function distinctTitles(
+  raws: readonly string[],
+  max: number,
+): { titles: string[]; numbered: boolean } {
+  const cut = raws.map((raw) => truncate(raw, max))
+  if (new Set(cut).size === cut.length) return { titles: cut, numbered: false }
+  return {
+    titles: raws.map((raw, index) => {
+      const prefix = `${index + 1}. `
+      return `${prefix}${truncate(raw, max - prefix.length)}`
+    }),
+    numbered: true,
+  }
+}
 
 /**
  * Las filas de la lista de citas. Una lista admite 10 filas. Con 3 o menos van
@@ -563,17 +587,17 @@ function appointmentRows(
       patientName: appt.patientName,
     }
   })
-  const distinct = new Set(base.map((r) => truncate(r.raw, APPOINTMENT_TITLE_MAX))).size === base.length
+  const { titles, numbered } = distinctTitles(
+    base.map((r) => r.raw),
+    BUTTON_TITLE_MAX,
+  )
   return base.map((r, index) => {
-    const prefix = `${index + 1}. `
     const who = r.patientName ? `${r.patientName}: ${r.when}` : r.when
     return {
       id: r.id,
-      title: distinct
-        ? truncate(r.raw, APPOINTMENT_TITLE_MAX)
-        : `${prefix}${truncate(r.raw, APPOINTMENT_TITLE_MAX - prefix.length)}`,
+      title: titles[index],
       description: r.when,
-      line: distinct ? `• ${who}` : `${prefix}${who}`,
+      line: numbered ? `${index + 1}. ${who}` : `• ${who}`,
     }
   })
 }
@@ -634,13 +658,22 @@ export async function renderClinicStep(
       if (!patients.length) {
         return renderClinicStep(ctx, { ...state, step: 'new_patient_name', fails: 0 })
       }
-      // Una lista admite 10 filas: 9 pacientes y "Otra persona".
+      // Una lista admite 10 filas: 9 pacientes y "Otra persona". Con 3 o menos van
+      // botones (20 caracteres); con más, una lista (24).
+      const shown = patients.slice(0, 9)
+      const { titles, numbered } = distinctTitles(
+        shown.map((p) => p.fullName),
+        shown.length + 1 <= 3 ? BUTTON_TITLE_MAX : LIST_TITLE_MAX,
+      )
       const options: OfferedOption[] = [
-        ...patients.slice(0, 9).map((p) => ({ id: patId(p.id), title: p.fullName })),
+        ...shown.map((p, index) => ({ id: patId(p.id), title: titles[index] })),
         { id: patId('new'), title: texts.patientOther },
       ]
       await ctx.sendOptions({
-        bodyText: texts.patientMenuBody,
+        // Con títulos numerados los nombres completos van en el cuerpo, donde caben.
+        bodyText: numbered
+          ? `${texts.patientMenuBody}\n\n${shown.map((p, index) => `${index + 1}. ${p.fullName}`).join('\n')}`
+          : texts.patientMenuBody,
         buttonLabel: texts.patientMenuButton,
         options,
       })

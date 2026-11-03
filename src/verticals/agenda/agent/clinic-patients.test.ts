@@ -126,6 +126,103 @@ describe('pacientes por número', () => {
     expect(last(rec).ids).toEqual([patId('pat-1'), patId('pat-2'), patId('new')])
   })
 
+  describe('los títulos de "¿Quién va a asistir?" son siempre distintos', () => {
+    const named = (...names: string[]): Row[] =>
+      names.map((full_name, i) => ({
+        id: `pat-${i + 1}`,
+        account_id: ACCOUNT,
+        contact_id: CONTACT,
+        full_name,
+      }))
+
+    async function menuFor(names: string[]) {
+      const db = clinicDb({ clinic_consents: [grantedConsent()], clinic_patients: named(...names) })
+      const rec = makeRecorder()
+      await send(db, rec, { text: 'Hola' })
+      await send(db, rec, { replyId: 'act:book' })
+      const stored = (sessionState(db) as unknown as { options: { title: string }[] }).options.map((o) => o.title)
+      return { db, rec, shown: last(rec).titles, kind: last(rec).kind, stored, body: last(rec).bodyText }
+    }
+
+    const expectDistinct = (titles: string[], max: number) => {
+      expect(new Set(titles).size).toBe(titles.length)
+      for (const title of titles) expect(title.length).toBeLessThanOrEqual(max)
+    }
+
+    it('con botones (hasta 3): dos nombres que recortados quedan iguales se numeran', async () => {
+      const { shown, stored, kind, body } = await menuFor([
+        'Carlos Andrés Gómez Pérez',
+        'Carlos Andrés Gómez Ruiz',
+      ])
+
+      expect(kind).toBe('buttons')
+      expectDistinct(shown, 20)
+      expect(shown.slice(0, 2).map((t) => t.slice(0, 3))).toEqual(['1. ', '2. '])
+      expect(shown[2]).toBe(texts.patientOther)
+      expect(stored).toEqual(shown)
+      // Los nombres completos van en el cuerpo, que sí los admite.
+      expect(body).toBe(
+        `${texts.patientMenuBody}\n\n1. Carlos Andrés Gómez Pérez\n2. Carlos Andrés Gómez Ruiz`,
+      )
+    })
+
+    it('con lista (4 o más): igual, al tope de 24', async () => {
+      const { shown, stored, kind, body } = await menuFor([
+        'Carlos Andrés Gómez de la Torre Pérez',
+        'Carlos Andrés Gómez de la Torre Ruiz',
+        'Marta Ruiz',
+      ])
+
+      expect(kind).toBe('list')
+      expectDistinct(shown, 24)
+      expect(stored).toEqual(shown)
+      expect(shown[0].startsWith('1. ')).toBe(true)
+      expect(body).toContain('1. Carlos Andrés Gómez de la Torre Pérez')
+      expect(body).toContain('2. Carlos Andrés Gómez de la Torre Ruiz')
+      expect(body).toContain('3. Marta Ruiz')
+      expect(shown[3]).toBe(texts.patientOther)
+    })
+
+    it('dos pacientes con exactamente el mismo nombre también se distinguen', async () => {
+      const { shown, body } = await menuFor(['Marta Ruiz', 'Marta Ruiz'])
+
+      expectDistinct(shown, 20)
+      expect(body).toContain('1. Marta Ruiz\n2. Marta Ruiz')
+    })
+
+    it('el toque elige al paciente exacto aunque los títulos se parezcan', async () => {
+      const { db, rec } = await menuFor(['Carlos Andrés Gómez Pérez', 'Carlos Andrés Gómez Ruiz'])
+
+      await send(db, rec, { replyId: patId('pat-2') })
+
+      expect(sessionState(db)).toMatchObject({ step: 'pick_service', patientId: 'pat-2' })
+    })
+
+    it('el número del título elige a ese paciente', async () => {
+      const { db, rec } = await menuFor(['Carlos Andrés Gómez Pérez', 'Carlos Andrés Gómez Ruiz'])
+
+      await send(db, rec, { text: '2' })
+
+      expect(sessionState(db)).toMatchObject({ patientId: 'pat-2' })
+    })
+
+    it('con nombres distintos nada cambia: sin números y el cuerpo de siempre', async () => {
+      const { shown, body } = await menuFor(['Marta Ruiz', 'Tomás Gil'])
+
+      expect(shown).toEqual(['Marta Ruiz', 'Tomás Gil', texts.patientOther])
+      expect(body).toBe(texts.patientMenuBody)
+    })
+
+    it('un nombre largo que no choca con otro se queda como está', async () => {
+      const { shown, body } = await menuFor(['Carlos Andrés Gómez Pérez', 'Marta Ruiz'])
+
+      expect(shown[1]).toBe('Marta Ruiz')
+      expectDistinct(shown, 20)
+      expect(shown[0].startsWith('1. ')).toBe(false)
+      expect(body).toBe(texts.patientMenuBody)
+    })
+  })
+
   it('solo ofrece los pacientes de este contacto en esta cuenta', async () => {
     const db = clinicDb({
       clinic_consents: [grantedConsent()],
