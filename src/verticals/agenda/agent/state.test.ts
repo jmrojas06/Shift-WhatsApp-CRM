@@ -15,6 +15,7 @@ import {
   isSkipAnswer,
   dayId,
   matchAnswerOption,
+  matchAppointmentOption,
   matchChoice,
   newBookingState,
   normalizeText,
@@ -238,6 +239,56 @@ describe('ids del recordatorio', () => {
     expect(parseReminderTap('rem:')).toBeNull()
     expect(parseReminderTap('')).toBeNull()
     expect(parseReminderTap('constructor')).toBeNull()
+  })
+})
+
+describe('matchAppointmentOption', () => {
+  const citas: OfferedOption[] = [
+    { id: apptId('a1'), title: '20 oct Marta' },
+    { id: apptId('a2'), title: '21 oct Marta' },
+    { id: apptId('a3'), title: '21 oct Tomás' },
+  ]
+  const pick = (text: string, options = citas) => matchAppointmentOption({ text, options })
+
+  it('el toque manda por id y un id que no se ofreció no empareja', () => {
+    expect(matchAppointmentOption({ text: '', replyId: apptId('a2'), options: citas })).toBe(apptId('a2'))
+    expect(matchAppointmentOption({ text: '', replyId: apptId('zz'), options: citas })).toBeNull()
+  })
+
+  it('un texto que coincide con una sola cita la elige', () => {
+    expect(pick('Tomás')).toBe(apptId('a3'))
+    expect(pick('tomas')).toBe(apptId('a3'))
+    expect(pick('20 oct')).toBe(apptId('a1'))
+    expect(pick('20 oct Marta')).toBe(apptId('a1'))
+  })
+
+  it('un texto que coincide con varias es un fallo, no la primera', () => {
+    expect(pick('Marta')).toBeNull()
+    expect(pick('21 oct')).toBeNull()
+    expect(pick('oct')).toBeNull()
+  })
+
+  it('el número es la posición, también con varias coincidencias', () => {
+    expect(pick('2')).toBe(apptId('a2'))
+    expect(pick('3.')).toBe(apptId('a3'))
+    expect(pick('4')).toBeNull()
+  })
+
+  it('el título entero gana sobre otra cita que lo contiene', () => {
+    const options: OfferedOption[] = [
+      { id: apptId('a1'), title: 'Marta' },
+      { id: apptId('a2'), title: 'Marta Gil' },
+    ]
+    expect(pick('Marta', options)).toBe(apptId('a1'))
+  })
+
+  it('lo que no coincide con ninguna no elige nada', () => {
+    expect(pick('Pedro')).toBeNull()
+    expect(pick('')).toBeNull()
+  })
+
+  it('no toca los demás menús: matchChoice sigue eligiendo la primera coincidencia', () => {
+    expect(matchChoice({ text: 'Marta', options: citas })).toBe(apptId('a1'))
   })
 })
 

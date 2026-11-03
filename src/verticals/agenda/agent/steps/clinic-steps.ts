@@ -16,7 +16,7 @@ import { CLINIC_HUMAN_WORDS, type ClinicTexts } from '@/modules/clinica/texts'
 import type { ClinicBackend } from '../backend'
 import type { AgendaSender } from '../controller'
 import type { ServiceInfo } from '../db'
-import { formatDayLabel, formatTimeLabel } from '../format'
+import { formatDayLabel, formatTimeLabel, truncate } from '../format'
 import {
   actId,
   apptId,
@@ -527,6 +527,46 @@ async function myAppointments(ctx: ClinicStepCtx): Promise<ClinicOutcome> {
   return { kind: 'next', state: newBookingState('pick_appointment') }
 }
 
+/** Lo que admite un botón; una lista admite 24, pero con 3 o menos citas van botones. */
+const APPOINTMENT_TITLE_MAX = 20
+
+/**
+ * Las filas de la lista de citas. Una lista admite 10 filas. Con 3 o menos van
+ * botones, que no llevan descripción: el título lleva la fecha corta y el nombre de
+ * pila ("20 oct Marta"), o la fecha y la hora si la cita no tiene paciente, y el
+ * cuerpo las dice completas. Los títulos nunca se repiten: si aun recortados al
+ * tope de 20 dos quedan iguales (la misma persona dos veces el mismo día, dos con el
+ * mismo nombre de pila), se numeran todas, en el título y en el cuerpo.
+ */
+function appointmentRows(
+  upcoming: { id: string; startsAt: Date; patientName: string | null }[],
+): { id: string; title: string; description: string; line: string }[] {
+  const base = upcoming.map((appt) => {
+    const parts = zonedParts(appt.startsAt)
+    const day = formatDayLabel(parts.dateKey).split(' ').slice(1).join(' ')
+    const firstName = appt.patientName?.split(' ')[0]
+    return {
+      id: apptId(appt.id),
+      raw: firstName ? `${day} ${firstName}` : `${day} ${formatTimeLabel(parts)}`,
+      when: `${formatDayLabel(parts.dateKey)}, ${formatTimeLabel(parts)}`,
+      patientName: appt.patientName,
+    }
+  })
+  const distinct = new Set(base.map((r) => truncate(r.raw, APPOINTMENT_TITLE_MAX))).size === base.length
+  return base.map((r, index) => {
+    const prefix = `${index + 1}. `
+    const who = r.patientName ? `${r.patientName}: ${r.when}` : r.when
+    return {
+      id: r.id,
+      title: distinct
+        ? truncate(r.raw, APPOINTMENT_TITLE_MAX)
+        : `${prefix}${truncate(r.raw, APPOINTMENT_TITLE_MAX - prefix.length)}`,
+      description: r.when,
+      line: distinct ? `• ${who}` : `${prefix}${who}`,
+    }
+  })
+}
+
 export async function renderClinicStep(
   ctx: ClinicStepCtx,
   state: BookingState,
@@ -612,20 +652,7 @@ export async function renderClinicStep(
         await ctx.sender.sendText({ text: texts.noUpcoming })
         return { state, closed: true }
       }
-      // Una lista admite 10 filas. Con 3 o menos van botones, que no llevan
-      // descripción: el nombre del paciente tiene que caber en el título y estar
-      // también en el cuerpo, donde cabe completo.
-      const rows = upcoming.slice(0, 10).map((appt) => {
-        const parts = zonedParts(appt.startsAt)
-        const when = `${formatDayLabel(parts.dateKey)}, ${formatTimeLabel(parts)}`
-        const firstName = appt.patientName?.split(' ')[0]
-        return {
-          id: apptId(appt.id),
-          title: firstName ? `${formatTimeLabel(parts)} ${firstName}` : when,
-          description: when,
-          line: appt.patientName ? `• ${appt.patientName}: ${when}` : `• ${when}`,
-        }
-      })
+      const rows = appointmentRows(upcoming.slice(0, 10))
       await ctx.sendOptions({
         bodyText: `${texts.pickAppointmentBody}\n\n${rows.map((r) => r.line).join('\n')}`,
         buttonLabel: texts.pickAppointmentButton,

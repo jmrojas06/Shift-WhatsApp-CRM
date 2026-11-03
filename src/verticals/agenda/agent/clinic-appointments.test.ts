@@ -138,6 +138,164 @@ describe('varias citas en un número', () => {
     expect(last(rec).bodyText).toContain('• mar 20 oct, 10:00 a. m.')
   })
 
+  describe('los títulos de la lista son siempre distintos', () => {
+    const DAY2 = '2026-10-21T14:00:00.000Z'
+    const patientsWith = (...names: string[]): Row[] =>
+      names.map((full_name, i) => ({
+        id: `pat-${i + 1}`,
+        account_id: ACCOUNT,
+        contact_id: CONTACT,
+        full_name,
+      }))
+
+    /** Abre "Mis citas" con estas citas y devuelve lo que se mostró y lo que quedó guardado. */
+    async function listFor(patientNames: string[], appts: Row[]) {
+      const db = clinicDb({
+        clinic_consents: [grantedConsent()],
+        clinic_patients: patientsWith(...patientNames),
+        booking_appointments: appts,
+      })
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: 'act:mine' })
+      const stored = (activeStates(db)[0] as { options: { title: string }[] }).options.map((o) => o.title)
+      return { db, rec, shown: last(rec).titles, stored, body: last(rec).bodyText }
+    }
+
+    const expectDistinct = (titles: string[]) => {
+      expect(new Set(titles).size).toBe(titles.length)
+      for (const title of titles) expect(title.length).toBeLessThanOrEqual(20)
+    }
+
+    it('la misma persona en dos días: se distinguen por la fecha, sin numerar', async () => {
+      const { shown, stored } = await listFor(
+        ['Marta Ruiz'],
+        [appointment('ap-1', 'pat-1', FIRST), appointment('ap-2', 'pat-1', DAY2)],
+      )
+      expect(shown).toEqual(['20 oct Marta', '21 oct Marta'])
+      expect(stored).toEqual(shown)
+    })
+
+    it('la misma persona dos veces el mismo día: se numeran', async () => {
+      const { shown, stored, body } = await listFor(
+        ['Marta Ruiz'],
+        [appointment('ap-1', 'pat-1', FIRST), appointment('ap-2', 'pat-1', SECOND)],
+      )
+      expect(shown).toEqual(['1. 20 oct Marta', '2. 20 oct Marta'])
+      expect(stored).toEqual(shown)
+      // El cuerpo las numera igual, con la hora completa: así se sabe cuál es cuál.
+      expect(body).toContain('1. Marta Ruiz: mar 20 oct, 9:00 a. m.')
+      expect(body).toContain('2. Marta Ruiz: mar 20 oct, 10:00 a. m.')
+    })
+
+    it('dos personas con el mismo nombre de pila el mismo día', async () => {
+      const { shown } = await listFor(
+        ['Marta Ruiz', 'Marta Gil'],
+        [appointment('ap-1', 'pat-1', FIRST), appointment('ap-2', 'pat-2', SECOND)],
+      )
+      expectDistinct(shown)
+      expect(shown[0]).toMatch(/^1\. /)
+    })
+
+    it('un nombre largo no hace chocar dos títulos al recortarse', async () => {
+      const { shown, stored } = await listFor(
+        ['Guillermina-Ana Pérez', 'Guillermina-Eva Gil'],
+        [appointment('ap-1', 'pat-1', FIRST), appointment('ap-2', 'pat-2', FIRST)],
+      )
+      // Distintos sin recortar, pero al tope de 20 los dos quedarían "20 oct Guillermina-…".
+      expectDistinct(shown)
+      expectDistinct(stored)
+      expect(shown[0]).toMatch(/^1\. /)
+    })
+
+    it('citas sin paciente se distinguen por la fecha y la hora', async () => {
+      const { shown } = await listFor(
+        [],
+        [
+          appointment('ap-1', 'pat-x', FIRST, { patient_id: null }),
+          appointment('ap-2', 'pat-x', SECOND, { patient_id: null }),
+          appointment('ap-3', 'pat-x', DAY2, { patient_id: null }),
+        ],
+      )
+      expectDistinct(shown)
+      expect(shown[0]).toBe('20 oct 9:00 a. m.')
+    })
+
+    it('con diez citas de la misma persona siguen siendo distintos', async () => {
+      const many = Array.from({ length: 10 }, (_, i) =>
+        appointment(`ap-${i + 1}`, 'pat-1', new Date(Date.parse(FIRST) + i * 15 * 60_000).toISOString()),
+      )
+      const { shown, stored } = await listFor(['Marta Ruiz'], many)
+      expect(shown).toHaveLength(10)
+      expectDistinct(shown)
+      expectDistinct(stored)
+    })
+
+    it('el número del título elige esa cita', async () => {
+      const { db, rec } = await listFor(
+        ['Marta Ruiz'],
+        [appointment('ap-1', 'pat-1', FIRST), appointment('ap-2', 'pat-1', SECOND)],
+      )
+      await send(db, rec, { text: '2' })
+      expect(activeStates(db)[0]).toMatchObject({ step: 'manage_menu', appointmentId: 'ap-2' })
+    })
+  })
+
+  describe('escribir en la lista de citas', () => {
+    const DAY2 = '2026-10-21T14:00:00.000Z'
+    const open = () =>
+      clinicDb({
+        clinic_consents: [grantedConsent()],
+        clinic_patients: family(),
+        booking_appointments: [
+          appointment('ap-1', 'pat-1', FIRST),
+          appointment('ap-2', 'pat-1', DAY2),
+          appointment('ap-3', 'pat-2', DAY2),
+        ],
+      })
+
+    it('un nombre que es de varias citas no elige la primera: cuenta como fallo', async () => {
+      const db = open()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: 'act:mine' })
+
+      await send(db, rec, { text: 'Marta' })
+
+      expect(activeStates(db)[0]).toMatchObject({ step: 'pick_appointment', fails: 1 })
+      expect(rec.calls.some((c) => c.bodyText.includes('No entendí'))).toBe(true)
+      // Nada se abrió: sigue la lista.
+      expect(last(rec).ids).toEqual([apptId('ap-1'), apptId('ap-2'), apptId('ap-3')])
+    })
+
+    it('a la segunda vez pasa a una persona, como cualquier menú', async () => {
+      const db = open()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: 'act:mine' })
+      await send(db, rec, { text: 'Marta' })
+      await send(db, rec, { text: 'Marta' })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    })
+
+    it('un nombre que es de una sola cita la elige', async () => {
+      const db = open()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: 'act:mine' })
+
+      await send(db, rec, { text: 'Tomás' })
+
+      expect(activeStates(db)[0]).toMatchObject({ step: 'manage_menu', appointmentId: 'ap-3' })
+    })
+
+    it('el toque sigue eligiendo la cita exacta', async () => {
+      const db = open()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: 'act:mine' })
+
+      await send(db, rec, { replyId: apptId('ap-2') })
+
+      expect(activeStates(db)[0]).toMatchObject({ step: 'manage_menu', appointmentId: 'ap-2' })
+    })
+  })
+
   it('elegir una cita de la lista abre su gestión', async () => {
     const db = twoAppointments()
     const rec = makeRecorder()

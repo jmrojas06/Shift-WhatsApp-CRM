@@ -622,3 +622,23 @@ export function matchAnswerOption(args: MatchChoiceArgs): string | null {
   }
   return matchChoice(args)
 }
+
+/**
+ * Respuesta a la lista de citas. Como `matchChoice`, pero un texto escrito que
+ * coincide con VARIAS citas ("Marta" cuando hay dos de Marta) no elige la primera:
+ * no empareja, y cuenta como fallo. Primero manda el título entero; después, la
+ * única cita que lo contiene. El toque y el número de posición no cambian. Solo
+ * esta lista lo usa: los demás menús siguen con `matchChoice`.
+ */
+export function matchAppointmentOption(args: MatchChoiceArgs): string | null {
+  const typed = normalizeText(args.text)
+  if (args.replyId || !typed || /^(\d+)[.)]?$/.test(typed)) return matchChoice(args)
+
+  const squashed = squash(args.text)
+  if (!squashed) return null
+  const exact = args.options.filter((o) => squash(o.title) === squashed)
+  if (exact.length) return exact.length === 1 ? exact[0].id : null
+
+  const hits = args.options.filter((o) => matchChoice({ text: args.text, options: [o] }) !== null)
+  return hits.length === 1 ? hits[0].id : null
+}

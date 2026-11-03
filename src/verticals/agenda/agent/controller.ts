@@ -98,6 +98,7 @@ import {
   isHandoffOnly,
   isSkipAnswer,
   matchAnswerOption,
+  matchAppointmentOption,
   matchChoice,
   newBookingState,
   parseAnswerId,
@@ -1182,7 +1183,10 @@ async function advanceSession(
     await applyClinicOutcome(dialog, session.id, state, outcome)
     return
   }
-  const choice = matchChoice({
+  // En la lista de citas, un texto que coincide con varias ("Marta" con dos citas de
+  // Marta) no elige la primera: cuenta como fallo. Los demás menús no cambian.
+  const match = state.step === 'pick_appointment' ? matchAppointmentOption : matchChoice
+  const choice = match({
     text: input.text,
     replyId: input.replyId,
     options: state.options,
