@@ -138,9 +138,9 @@ import { addDaysToKey, zonedDateKey, zonedParts } from './time'
 export const SESSION_TTL_MS = 15 * 60_000
 
 /**
- * Si un número tiene más de una cita activa que empieza en menos de esto, un
- * toque de recordatorio sin id de cita no dice a cuál se refiere: se pregunta,
- * no se adivina.
+ * Un toque de recordatorio sin id de cita se refiere a la única cita que empieza
+ * en menos de esto. Con más de una cita activa y ninguna o varias tan cercanas no
+ * dice a cuál se refiere: se pregunta, no se adivina.
  */
 const TAP_AMBIGUITY_MS = 72 * 60 * 60 * 1000
 
