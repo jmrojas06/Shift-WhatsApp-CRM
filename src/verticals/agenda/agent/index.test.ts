@@ -380,6 +380,31 @@ describe('agendaInboundHandler — candado por conversación', () => {
       },
     )
 
+    it('revocar la autorización escribiendo también se atiende con el candado ocupado', async () => {
+      const db = withInbound(
+        clinicDb({ clinic_consents: [grantedConsent()] }),
+        'ya no autorizo el uso de mis datos',
+      )
+      db._tables.conversations[0].bot_lock_until = BUSY
+
+      const result = await runWaiting(ctx(db))
+
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.clinic_consents.at(-1)).toMatchObject({ kind: 'datos_sensibles', granted: false })
+      expect(lockOf(db)).toBe(BUSY)
+      expect(mocks.notifyAlert).not.toHaveBeenCalled()
+    })
+
+    it('"no acepto esa hora" no es una revocación: con el candado ocupado se descarta y avisa', async () => {
+      const db = withInbound(clinicDb({ clinic_consents: [grantedConsent()] }), 'no acepto esa hora')
+      db._tables.conversations[0].bot_lock_until = BUSY
+
+      await runWaiting(ctx(db))
+
+      expect(db._tables.clinic_consents).toHaveLength(1)
+      expect(mocks.notifyAlert).toHaveBeenCalledTimes(1)
+    })
+
     it('un toque de otro menú, con el candado ocupado, se descarta y avisa', async () => {
       const db = withInbound(clinicDb(), '', 'act:book')
       db._tables.conversations[0].bot_lock_until = BUSY

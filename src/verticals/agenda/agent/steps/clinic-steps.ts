@@ -334,16 +334,27 @@ function afterGreeting(words: readonly string[]): string[] {
 }
 
 /**
- * Un toque en "No acepto" cuando ya había autorizado: queda registrado como
- * rechazo y el hilo pasa a una persona. Qué texto vio la persona al revocar y
+ * Un toque en "No acepto", o un mensaje que revoca (`consentRevocation`), cuando
+ * ya había autorizado: queda registrado como rechazo y el hilo pasa a una persona. Qué texto vio la persona al revocar y
  * cómo debe revocarse queda para revisarlo con el abogado: aquí se guarda el
  * texto vigente.
  */
-export async function handleConsentRevoked(ctx: ClinicStepCtx): Promise<ClinicHandoff> {
+export async function handleConsentRevoked(
+  ctx: ClinicStepCtx,
+  /** `deleteData`: pidió que borren sus datos; el bot no borra nada, se atiende a mano. */
+  opts: { deleteData?: boolean } = {},
+): Promise<ClinicHandoff> {
   const { texts } = ctx
   // El paciente pidió parar: el hilo pasa a una persona de todos modos, y si no
   // se pudo registrar, la nota le dice que el registro hay que hacerlo a mano.
-  const note = (await recordConsentRevoked(ctx)) ? texts.consentRevokedNote : texts.consentRevokedUnsavedNote
+  const saved = await recordConsentRevoked(ctx)
+  const note = opts.deleteData
+    ? saved
+      ? texts.consentRevokedDeleteNote
+      : texts.consentRevokedDeleteUnsavedNote
+    : saved
+      ? texts.consentRevokedNote
+      : texts.consentRevokedUnsavedNote
   return { kind: 'handoff', message: texts.consentDeclined, note }
 }
 

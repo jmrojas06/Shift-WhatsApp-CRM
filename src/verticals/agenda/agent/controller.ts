@@ -86,6 +86,7 @@ import {
 } from './db'
 import { formatDayLabel, formatLongDate, formatPrice, formatTimeLabel, truncate } from './format'
 import { createInternalBackend } from './internal-backend'
+import { consentRevocation, type ConsentRevocation } from '@/modules/clinica/revocation'
 import { isReminderTemplateName } from './reminders'
 import {
   actId,
@@ -244,9 +245,26 @@ export async function handleAgendaInbound(
   const humanOwned = args.humanOwned === true
   const clinicActive = args.modules?.includes('clinica') === true
 
+  // Revocar escribiendo ("ya no autorizo el uso de mis datos", "revoco mi
+  // autorización", "quiero que borren mis datos"): solo vale con una autorización
+  // vigente y no mientras responde los signos de alarma, donde manda la urgencia.
+  let textRevocation: ConsentRevocation | null = null
+  if (clinicActive && replyId === null) {
+    const detected = consentRevocation(text)
+    if (detected && sessionStep(args.session) !== 'urgency') {
+      const consent = await latestConsent(args.db, {
+        accountId: args.accountId,
+        contactId: args.contactId,
+        kind: 'datos_sensibles',
+      })
+      if (consent?.granted) textRevocation = detected
+    }
+  }
+
   // "No acepto" es la respuesta al mensaje de la autorización, que es del
-  // sistema: retira el permiso aunque el hilo lo lleve una persona.
-  const revokesConsent = clinicActive && replyId === actId('consent_no')
+  // sistema: retira el permiso aunque el hilo lo lleve una persona. Revocar
+  // escribiendo también.
+  const revokesConsent = clinicActive && (replyId === actId('consent_no') || textRevocation !== null)
 
   // Hilo de un humano: antes de cargar nada más, soltar todo lo que no
   // sea respuesta a un mensaje del sistema. El bot no contesta para no pisar a
@@ -305,7 +323,11 @@ export async function handleAgendaInbound(
 
   // Hilo de un humano: el "No acepto" solo se registra, sin tocar el hilo.
   if (humanOwned && revokesConsent) {
-    await revokeConsentInHumanThread(dialog, args.session?.id ?? null)
+    await revokeConsentInHumanThread(dialog, args.session?.id ?? null, {
+      deleteData: textRevocation?.deleteData,
+    })
+    // Un mensaje que revoca puede traer también un dolor: el aviso de urgencia no se pierde.
+    if (textRevocation) await warnHumanOfUrgency(args, { text, replyId })
     return { consumed: true }
   }
 
@@ -343,6 +365,19 @@ export async function handleAgendaInbound(
     const state = newBookingState('urgency')
     const sessionId = args.session?.id ?? (await openSession(dialog, state))
     await conclude(dialog, sessionId, state)
+    return { consumed: true }
+  }
+
+  // Revocar la autorización escribiendo gana sobre cualquier paso (menos los signos
+  // de alarma, ya atendidos arriba) y sobre pedir una persona: queda registrado y el
+  // chat pasa a una persona con una nota clara. Si pidió borrar sus datos, la nota
+  // dice que hay que atenderlo a mano.
+  if (dialog.clinic && textRevocation) {
+    await performHandoff(
+      dialog,
+      args.session?.id ?? null,
+      await handleConsentRevoked(clinicCtx(dialog), textRevocation),
+    )
     return { consumed: true }
   }
 
@@ -544,7 +579,11 @@ async function notifyThreadHuman(
  * se avisa a quien lo lleva para que lo registre a mano. Una revocación que ya
  * estaba registrada no se repite.
  */
-async function revokeConsentInHumanThread(dialog: Dialog, sessionId: string | null): Promise<void> {
+async function revokeConsentInHumanThread(
+  dialog: Dialog,
+  sessionId: string | null,
+  opts: { deleteData?: boolean } = {},
+): Promise<void> {
   // Quien retiró su autorización no sigue agendando: la sesión abierta se cierra.
   if (sessionId) {
     await closeSession(dialog.db, {
@@ -560,13 +599,29 @@ async function revokeConsentInHumanThread(dialog: Dialog, sessionId: string | nu
     kind: 'datos_sensibles',
   })
   if (consent && !consent.granted) return
-  if (dialog.clinic && (await recordConsentRevoked(clinicCtx(dialog)))) return
-  await bestEffort('aviso de revocación sin registrar', () =>
-    notifyThreadHuman(dialog, (texts, who) => ({
-      title: texts.consentRevokeFailedTitle,
-      body: texts.consentRevokeFailedBody(who),
-    })),
-  )
+  const saved = dialog.clinic ? await recordConsentRevoked(clinicCtx(dialog)) : false
+  if (!saved) {
+    await bestEffort('aviso de revocación sin registrar', () =>
+      notifyThreadHuman(dialog, (texts, who) => ({
+        title: texts.consentRevokeFailedTitle,
+        body: texts.consentRevokeFailedBody(who),
+      })),
+    )
+  }
+  // Pidió que borren sus datos: el bot no borra nada y la persona del hilo lo atiende a mano.
+  if (opts.deleteData) {
+    await bestEffort('aviso de datos por borrar', () =>
+      notifyThreadHuman(dialog, (texts, who) => ({
+        title: texts.consentDeletionRequestTitle,
+        body: texts.consentDeletionRequestBody(who),
+      })),
+    )
+  }
+}
+
+/** El paso de una sesión, o null. */
+function sessionStep(session: VerticalSession | null | undefined): BookingStep | null {
+  return session ? coerceState(session.state).step : null
 }
 
 /**

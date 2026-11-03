@@ -163,6 +163,17 @@ export function buildClinicTexts(l: AgendaLabels) {
     consentRevokeFailedTitle: 'No se pudo registrar una revocación',
     consentRevokeFailedBody: (who: string) =>
       `${who} tocó "No acepto" para revocar la autorización de datos, pero no se pudo registrar. Regístralo a mano.`,
+    /**
+     * Revocó escribiendo y además pidió que borren sus datos: el bot no borra nada,
+     * hay que atenderlo a mano. Es la nota del hilo (y, en el hilo de una persona, el aviso).
+     */
+    consentRevokedDeleteNote:
+      'Paciente: revocó la autorización de datos y pidió que borren sus datos (bot en pausa). Hay que atenderlo a mano.',
+    consentRevokedDeleteUnsavedNote:
+      'Paciente: pidió que borren sus datos y revocó la autorización, pero la revocación no se pudo registrar. Regístrala a mano y atiéndelo a mano (bot en pausa).',
+    consentDeletionRequestTitle: 'Un paciente pidió borrar sus datos',
+    consentDeletionRequestBody: (who: string) =>
+      `${who} revocó su autorización y pidió que borren sus datos. El bot no borra nada: hay que atenderlo a mano.`,
     consentError: 'No pude guardar tu respuesta en este momento 😅. Intenta de nuevo, por favor.',
     /** Pase a una persona porque la autorización no se respondió con los botones, o no se pudo guardar. */
     consentUnansweredNote:

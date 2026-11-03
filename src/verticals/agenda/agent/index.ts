@@ -23,6 +23,7 @@ import type {
   VerticalInboundContext,
   VerticalInboundHandler,
 } from '@/lib/verticals/types'
+import { consentRevocation } from '@/modules/clinica/revocation'
 import { loadClinicContext } from '@/modules/clinica/settings'
 import { DEFAULT_URGENCY_WORDS } from '@/modules/clinica/texts'
 
@@ -117,8 +118,9 @@ async function failClosed(
  *     texto con una palabra de la clínica o del piso fijo (`detectsUrgency`). Si
  *     la configuración no se puede leer valen las palabras de siempre: un fallo
  *     de lectura nunca esconde una urgencia.
- *   - "No acepto": retirar la autorización es una decisión de la persona y queda
- *     en un registro; no puede descartarse.
+ *   - "No acepto", o revocar escribiendo ("ya no autorizo el uso de mis datos"):
+ *     retirar la autorización es una decisión de la persona y queda en un
+ *     registro; no puede descartarse.
  *   - El toque de un recordatorio (`rem:*`): es la respuesta a un mensaje que mandó
  *     el sistema, con la hora de una cita de por medio.
  * Un mensaje que no se encuentra no cuenta; uno que no se puede leer lanza.
@@ -137,6 +139,7 @@ async function mustNotBeDropped(ctx: VerticalInboundContext): Promise<boolean> {
       parseReminderTap(inbound.replyId) !== null
     )
   }
+  if (consentRevocation(inbound.text)) return true
   const clinic = await loadClinicContext(ctx.db, ctx.accountId).catch(() => null)
   const words = clinic?.status === 'ok' ? clinic.clinic.urgencyWords : DEFAULT_URGENCY_WORDS
   return detectsUrgency(inbound.text, words)
