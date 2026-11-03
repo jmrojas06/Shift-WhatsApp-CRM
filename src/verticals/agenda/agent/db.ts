@@ -618,8 +618,10 @@ export async function insertAppointment(
 /**
  * Paciente y sede de una cita (módulo clínica). Lectura aparte: `APPOINTMENT_COLS`
  * no cambia porque otros negocios lo leen y las columnas pueden no existir aún.
- * Lanza si no pudo leer: un fallo no es "la cita no tiene paciente", y
- * reprogramar con ese error le quitaría el paciente y la sede a la cita nueva.
+ * Lanza si no pudo leer: un fallo no es "la cita no tiene paciente". Quien llama
+ * decide qué hace con el error: reprogramar no agenda nada (la cita nueva se
+ * quedaría sin paciente ni sede), el recordatorio se reintenta en la próxima
+ * corrida, y la respuesta a Confirmar sigue sin el nombre.
  */
 export async function loadAppointmentClinicLinks(
   db: SupabaseClient,

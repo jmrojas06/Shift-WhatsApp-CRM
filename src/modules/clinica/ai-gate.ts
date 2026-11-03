@@ -13,7 +13,6 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-import { loadAiConfig } from '@/lib/ai/config'
 import { readAccountModules } from '@/lib/modules/read-account-modules'
 import { hasModule } from '@/lib/verticals/registry'
 
@@ -27,10 +26,11 @@ export interface ClinicAiGate {
 }
 
 /**
- * Lo mismo que `canUseAi`, y además si la cuenta es una clínica: quien manda un
- * chat a la IA necesita las dos cosas (la autorización y el bloque fijo de
- * seguridad del prompt) y las dos salen de la misma lectura. Si la cuenta no se
- * puede leer, no se manda y se trata como clínica.
+ * ¿Se puede mandar este chat a la IA, y es una clínica? Quien manda un chat a la
+ * IA necesita las dos cosas (la autorización de datos y el bloque fijo de
+ * seguridad del prompt) y las dos salen de la misma lectura. Una cuenta sin el
+ * módulo clínica puede, sin mirar autorizaciones. Si la cuenta o la autorización
+ * no se pueden leer, no se manda y se trata como clínica.
  */
 export async function clinicAiGate(
   db: SupabaseClient,
@@ -51,28 +51,4 @@ export async function clinicAiGate(
     kind: 'datos_sensibles',
   })
   return { allowed: consent?.granted === true, clinic: true }
-}
-
-export async function canUseAi(
-  db: SupabaseClient,
-  args: { accountId: string; contactId: string },
-): Promise<boolean> {
-  return (await clinicAiGate(db, args)).allowed
-}
-
-/**
- * ¿La cuenta tiene la respuesta automática con IA prendida? Es la misma
- * condición con la que `auto-reply.ts` decide si contesta. El bot la mira antes
- * de decirle a un paciente que escriba su duda: si nadie la va a contestar,
- * mejor que lo atienda una persona. Una configuración que no se puede leer
- * (llave que no descifra, base caída) cuenta como apagada.
- */
-export async function autoReplyEnabled(db: SupabaseClient, accountId: string): Promise<boolean> {
-  try {
-    const config = await loadAiConfig(db, accountId)
-    return config?.autoReplyEnabled === true
-  } catch (err) {
-    console.error('[clinica] no se pudo leer la configuración de la IA:', err)
-    return false
-  }
 }

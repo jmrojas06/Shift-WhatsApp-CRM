@@ -310,12 +310,14 @@ export async function handleAgendaInbound(
   }
 
   // 0) Tap de un recordatorio (Confirmar / Reprogramar / Cancelar).
-  //    Los ids `rem:*` son estáticos, y una plantilla enviada sin payload
-  //    devuelve la etiqueta del botón ("Confirmar"): `parseReminderTap`
-  //    lee las dos formas. Aquí la cita se resuelve
-  //    como la próxima cita activa del contacto. Se atienden aunque
-  //    haya una sesión a medias (y sin abrir una nueva para confirmar),
-  //    y también cuando un humano es dueño del hilo (D1).
+  //    Los botones llevan `rem:<acción>` o, en una clínica, `rem:<acción>:<cita>`;
+  //    una plantilla enviada sin payload devuelve la etiqueta del botón
+  //    ("Confirmar"): `parseReminderTap` lee las tres formas. Con el id de la cita
+  //    se actúa sobre esa. Sin id, una cuenta sin clínica toma la próxima cita
+  //    activa del contacto, y una clínica la única que empieza en 72 h, o pregunta
+  //    cuál (`resolveTapAppointment`). Se atienden aunque haya una sesión a medias
+  //    (y sin abrir una nueva para confirmar), y también cuando un humano es dueño
+  //    del hilo (D1).
   if (reminderTap) {
     await handleReminderTap(dialog, args.session ?? null, reminderTap, humanOwned)
     return { consumed: true }

@@ -48,8 +48,9 @@ export function aiContextMessageLimit(): number {
  * by `buildSystemPrompt`, after the account's own prompt and the knowledge base,
  * so neither can displace them. The model never diagnoses or recommends
  * medication; anything about symptoms goes to a person through the handoff that
- * already exists (the sentinel in auto-reply; a "a person will follow up" draft
- * for the agent).
+ * already exists (the sentinel in auto-reply, which in a clinic also tells the
+ * patient and notifies the team: see `announceAiHandoff`; a "a person will
+ * follow up" draft for the agent).
  */
 export const CLINIC_SAFETY_RULES: Record<'draft' | 'auto_reply', string> = {
   auto_reply:

@@ -654,7 +654,7 @@ export function buildAgentTexts(l: AgendaLabels) {
     //
     // El mismo contenido se envía como mensaje libre (ventana de 24 h
     // abierta) o como plantilla de Meta (ventana cerrada). Los botones
-    // son Confirmar / Reprogramar / Cancelar con ids estáticos rem:*.
+    // son Confirmar / Reprogramar / Cancelar con ids rem:*.
     // ----------------------------------------------------------
     reminderBody: (a: {
       business: string

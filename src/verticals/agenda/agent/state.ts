@@ -414,7 +414,8 @@ const ACTION_SYNONYMS: Record<string, string[]> = {
 //     ("no puedo respirar") o un signo dicho con palabras ("fiebre alta"):
 //     ante la duda, no se agenda. Lo demás ("tengo mucho dolor"), null.
 // Estos botones no muestran números, así que un número tampoco acepta ni
-// descarta nada. Un toque de botón (replyId) no pasa por aquí y siempre vale.
+// descarta nada. Un toque de botón (replyId) no pasa por aquí y vale mientras el
+// botón siga en el menú abierto: uno de un menú que ya venció no empareja.
 // ------------------------------------------------------------
 
 /**

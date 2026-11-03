@@ -2,10 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { asClient, makeFakeDb, type FakeDb, type Row } from '@/verticals/agenda/agent/testing/fake-db'
 
-import { autoReplyEnabled, canUseAi, clinicAiGate } from './ai-gate'
-
-const loadAiConfig = vi.hoisted(() => vi.fn())
-vi.mock('@/lib/ai/config', () => ({ loadAiConfig }))
+import { clinicAiGate } from './ai-gate'
 
 const ACCOUNT = 'acc-1'
 const CONTACT = 'ct-1'
@@ -31,7 +28,9 @@ function dbWith(account: Row | null, consents: Row[] = []): FakeDb {
   })
 }
 
-const can = (db: FakeDb) => canUseAi(asClient(db), { accountId: ACCOUNT, contactId: CONTACT })
+/** ¿Se puede mandar el chat a la IA? */
+const can = async (db: FakeDb) =>
+  (await clinicAiGate(asClient(db), { accountId: ACCOUNT, contactId: CONTACT })).allowed
 
 describe('clinicAiGate', () => {
   beforeEach(() => {
@@ -58,7 +57,7 @@ describe('clinicAiGate', () => {
   })
 })
 
-describe('canUseAi', () => {
+describe('clinicAiGate: ¿se puede mandar el chat a la IA?', () => {
   beforeEach(() => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
   })
@@ -122,35 +121,5 @@ describe('canUseAi', () => {
     const db = dbWith({ modules: ['clinica'] }, [consent()])
     db._failNext('select', 'clinic_consents', { message: 'timeout' })
     expect(await can(db)).toBe(false)
-  })
-})
-
-describe('autoReplyEnabled', () => {
-  const db = () => asClient(makeFakeDb({}))
-
-  beforeEach(() => {
-    loadAiConfig.mockReset()
-    vi.spyOn(console, 'error').mockImplementation(() => {})
-  })
-
-  it('sí cuando la IA está prendida y responde sola', async () => {
-    loadAiConfig.mockResolvedValue({ autoReplyEnabled: true })
-    expect(await autoReplyEnabled(db(), ACCOUNT)).toBe(true)
-    expect(loadAiConfig).toHaveBeenCalledWith(expect.anything(), ACCOUNT)
-  })
-
-  it('no cuando no está configurada o el interruptor general está apagado', async () => {
-    loadAiConfig.mockResolvedValue(null)
-    expect(await autoReplyEnabled(db(), ACCOUNT)).toBe(false)
-  })
-
-  it('no cuando la respuesta automática está apagada', async () => {
-    loadAiConfig.mockResolvedValue({ autoReplyEnabled: false })
-    expect(await autoReplyEnabled(db(), ACCOUNT)).toBe(false)
-  })
-
-  it('no cuando no se pudo leer (llave que no descifra, base caída)', async () => {
-    loadAiConfig.mockRejectedValue(new Error('boom'))
-    expect(await autoReplyEnabled(db(), ACCOUNT)).toBe(false)
   })
 })
