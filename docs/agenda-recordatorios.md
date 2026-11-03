@@ -33,10 +33,15 @@ mensajes, «cita» y «barbero» siguen el vocabulario del negocio.
   citas que ya empezaron.
 - Zona horaria del negocio: America/Bogota (fija para todas las cuentas).
 
-Los botones llevan ids **estáticos** (`rem:confirm`, `rem:reschedule`,
-`rem:cancel`) porque los quick replies de plantilla de Meta no admiten
-payloads dinámicos. Por eso el bot resuelve la cita al tocarlos: es la
-**próxima cita activa** del contacto.
+Los botones llevan ids `rem:confirm`, `rem:reschedule` y `rem:cancel`.
+Una plantilla enviada sin payload devuelve la **etiqueta** del botón
+(`Confirmar`), y el bot también la entiende, pero solo si el toque
+responde a una plantilla de recordatorio (`recordatorio_cita` o
+`recordatorio_cita_clinica`): la etiqueta de cualquier otra plantilla no se
+toca. Sin id de cita, el bot resuelve la **próxima cita activa** del
+contacto. Las clínicas envían además el id de la cita en el payload
+(`rem:<acción>:<cita>`), y con más de una cita activa pueden preguntar
+cuál: ver `docs/clinica-montaje.md`.
 
 ## Plantilla de Meta (`recordatorio_cita`)
 
@@ -87,11 +92,15 @@ Crear en WhatsApp Manager → *Plantillas de mensaje* → **Crear plantilla**:
 
 **Quick replies** (exactamente estos tres):
 
-| Texto del botón | Payload |
+| Texto del botón | Lo que llega al tocarlo |
 | --- | --- |
-| `Confirmar` | `rem:confirm` |
-| `Reprogramar` | `rem:reschedule` |
-| `Cancelar` | `rem:cancel` |
+| `Confirmar` | la etiqueta `Confirmar` (el id `rem:confirm` viaja en el mensaje libre) |
+| `Reprogramar` | la etiqueta `Reprogramar` (`rem:reschedule` en el mensaje libre) |
+| `Cancelar` | la etiqueta `Cancelar` (`rem:cancel` en el mensaje libre) |
+
+Meta no pide un payload al crear la plantilla: se manda al enviarla.
+`recordatorio_cita` se envía sin él, por eso el toque llega con la
+etiqueta.
 
 El cuerpo de la plantilla dice «cita» para todos los negocios: Meta no
 admite palabras que cambien por cuenta, así que un negocio de clases
@@ -109,6 +118,11 @@ atienda por el chat.
 > `AGENDA_REMINDER_TEMPLATE` en
 > `src/verticals/agenda/agent/reminders.ts`. Si hace falta otro idioma
 > o nombre, se cambia en ambos sitios.
+>
+> Las **clínicas** usan otra plantilla, `recordatorio_cita_clinica`
+> (`CLINIC_REMINDER_TEMPLATE`): nombra al paciente y la sede, nunca el
+> procedimiento, y envía el id de la cita en el payload. Se crea según
+> `docs/clinica-montaje.md`.
 
 ## Activar la señal de 2 h
 

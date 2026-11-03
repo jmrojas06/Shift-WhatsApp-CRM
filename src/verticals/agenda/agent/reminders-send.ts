@@ -86,14 +86,14 @@ function logDeliveredButNotLogged(
 }
 
 /**
- * Fuera de la ventana de 24 h: plantilla `recordatorio_cita` con las
- * cinco variables documentadas (negocio, servicio, barbero, fecha,
- * hora) y los quick replies Confirmar / Reprogramar / Cancelar que
- * aprobó Meta. El payload de esos quick replies es estático
- * (`rem:*`), por eso la cita se resuelve en el controlador.
+ * Fuera de la ventana de 24 h: plantilla aprobada con sus variables y los
+ * quick replies Confirmar / Reprogramar / Cancelar. `recordatorio_cita`
+ * lleva las cinco variables documentadas (negocio, servicio, barbero,
+ * fecha, hora) y se envía sin payload: Meta devuelve la etiqueta del botón
+ * y la cita se resuelve en el controlador.
  *
  * Una clínica usa `recordatorio_cita_clinica` (paciente y sede, nunca el
- * procedimiento) y manda el id de la cita en el payload de cada botón
+ * procedimiento) y manda además el id de la cita en el payload de cada botón
  * (`rem:<acción>:<cita>`). Los botones de la plantilla son fijos: los tres
  * payloads salen siempre, en el orden de los botones aprobados, aunque la
  * cuenta tenga apagada la pieza de reprogramar (quitar uno correría los
