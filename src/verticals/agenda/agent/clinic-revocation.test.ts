@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buildClinicTexts } from '@/modules/clinica/texts'
 
 import { DEFAULT_LABELS } from '../labels'
+import { AGENDA_AGENT_TEXTS } from '../texts'
 import {
   ACCOUNT,
   CONTACT,
@@ -276,5 +277,91 @@ describe('revocar la autorización escribiendo', () => {
     db._tables.conversations[0].assigned_agent_id = null
     await send(db, makeRecorder(), { text: 'borren mis datos' }, { humanOwned: true })
     expect(db._tables.notifications).toMatchObject([{ user_id: OWNER }])
+  })
+})
+
+describe('Reprogramar desde un recordatorio, tras revocar la autorización', () => {
+  const appointment = (): Row => ({
+    id: 'ap-1',
+    account_id: ACCOUNT,
+    contact_id: CONTACT,
+    service_id: 'svc-limpieza',
+    staff_id: 'st-ana',
+    patient_id: null,
+    starts_at: '2026-10-20T14:00:00.000Z',
+    ends_at: '2026-10-20T14:30:00.000Z',
+    status: 'pending',
+    answers: {},
+  })
+  const revoked = (): Row => ({
+    ...grantedConsent(),
+    id: 'cons-no',
+    granted: false,
+    created_at: '2026-10-05T00:00:00.000Z',
+  })
+  const activeSteps = (db: FakeDb) =>
+    db._tables.booking_sessions.filter((s) => s.status === 'active').map((s) => (s.state as { step: string }).step)
+
+  it('no abre el flujo: lo atiende una persona, que recibe un aviso', async () => {
+    const db = clinicDb({
+      clinic_consents: [grantedConsent(), revoked()],
+      booking_appointments: [appointment()],
+    })
+    const rec = makeRecorder()
+
+    await send(db, rec, { replyId: 'rem:reschedule:ap-1' })
+
+    expect(activeSteps(db)).toEqual([])
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.rescheduleHandedToHuman)
+    expect(db._tables.notifications).toMatchObject([
+      { user_id: OWNER, title: AGENDA_AGENT_TEXTS.rescheduleRequestNotificationTitle },
+    ])
+    expect(db._tables.booking_appointments[0].status).toBe('pending')
+  })
+
+  it('con la autorización vigente abre el flujo de siempre', async () => {
+    const db = clinicDb({
+      clinic_consents: [grantedConsent()],
+      booking_appointments: [appointment()],
+    })
+
+    await send(db, makeRecorder(), { replyId: 'rem:reschedule:ap-1' })
+
+    expect(activeSteps(db)).toEqual(['pick_day'])
+  })
+
+  it('sin ninguna autorización registrada (cita anterior al módulo) también', async () => {
+    const db = clinicDb({ booking_appointments: [appointment()] })
+
+    await send(db, makeRecorder(), { replyId: 'rem:reschedule:ap-1' })
+
+    expect(activeSteps(db)).toEqual(['pick_day'])
+  })
+
+  it('Confirmar y Cancelar no cambian', async () => {
+    const confirm = clinicDb({
+      clinic_consents: [grantedConsent(), revoked()],
+      booking_appointments: [appointment()],
+    })
+    await send(confirm, makeRecorder(), { replyId: 'rem:confirm:ap-1' })
+    expect(confirm._tables.booking_appointments[0].status).toBe('confirmed')
+
+    const cancel = clinicDb({
+      clinic_consents: [grantedConsent(), revoked()],
+      booking_appointments: [appointment()],
+    })
+    await send(cancel, makeRecorder(), { replyId: 'rem:cancel:ap-1' })
+    expect(activeSteps(cancel)).toEqual(['manage_cancel_confirm'])
+  })
+
+  it('una cuenta sin clínica no mira la autorización', async () => {
+    const db = clinicDb({
+      clinic_consents: [grantedConsent(), revoked()],
+      booking_appointments: [appointment()],
+    })
+
+    await send(db, makeRecorder(), { replyId: 'rem:reschedule' }, { modules: ['agenda'] })
+
+    expect(activeSteps(db)).toEqual(['pick_day'])
   })
 })

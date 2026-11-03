@@ -615,6 +615,9 @@ function instrument(db: FakeDb, failTable?: string) {
     }
     if (table === failTable) {
       api.maybeSingle = async () => ({ data: null, error: { message: 'boom' } })
+      // Las lecturas de lista (sin maybeSingle) también fallan.
+      ;(api as unknown as { then: unknown }).then = (resolve: (v: unknown) => unknown) =>
+        Promise.resolve(resolve({ data: null, error: { message: 'boom' } }))
     }
     return api
   }
@@ -1436,6 +1439,144 @@ describe('runAgendaReminders', () => {
       expect(rec.deliveries).toHaveLength(0)
       expect(appointmentRow(db).reminder_sent_at).toBeNull()
     })
+
+    describe('bajas y revocaciones', () => {
+      const OPT_OUT = 'baja-envios'
+
+      /** La clínica, con la etiqueta de baja puesta. */
+      function withTag(seed: Record<string, Row[]>, contactId = CONTACT): Record<string, Row[]> {
+        seed.tags = [{ id: 'tag-baja', account_id: ACCOUNT, name: OPT_OUT }]
+        seed.contact_tags = [{ contact_id: contactId, tag_id: 'tag-baja' }]
+        return seed
+      }
+
+      const consent = (granted: boolean, at: string, over: Row = {}): Row => ({
+        id: `cons-${at}`,
+        account_id: ACCOUNT,
+        contact_id: CONTACT,
+        kind: 'datos_sensibles',
+        granted,
+        created_at: at,
+        ...over,
+      })
+
+      async function run(seed: Record<string, Row[]>, failTable?: string) {
+        const db = makeFakeDb(seed)
+        const spy = instrument(db, failTable)
+        const rec = makeRecorder()
+        const summary = await runAgendaReminders({ db: asClient(spy.db), now: NOW, send: rec.send })
+        return { db, spy, rec, summary }
+      }
+
+      it('con la etiqueta de baja no se envía, y la señal no se reclama', async () => {
+        const { db, rec, summary } = await run(withTag(clinicSeed()))
+
+        expect(rec.deliveries).toHaveLength(0)
+        expect(summary).toMatchObject({ sent: 0, skipped: 1, failed: 0, errors: [] })
+        // Sin reclamar: si se la quitan, la próxima corrida lo envía.
+        expect(appointmentRow(db).reminder_sent_at).toBeNull()
+      })
+
+      it('quitada la etiqueta, el recordatorio sale', async () => {
+        const seed = withTag(clinicSeed())
+        const first = await run(seed)
+        expect(first.rec.deliveries).toHaveLength(0)
+
+        seed.contact_tags = []
+        const second = await run(seed)
+        expect(second.rec.deliveries).toHaveLength(1)
+      })
+
+      it('la etiqueta de otro contacto no frena este recordatorio', async () => {
+        const { rec } = await run(withTag(clinicSeed(), CONTACT_2))
+        expect(rec.deliveries).toHaveLength(1)
+      })
+
+      it('si su última autorización de datos es un no, no se envía', async () => {
+        const seed = clinicSeed()
+        seed.clinic_consents = [consent(true, '2026-10-01T00:00:00.000Z'), consent(false, '2026-10-10T00:00:00.000Z')]
+
+        const { db, rec, summary } = await run(seed)
+
+        expect(rec.deliveries).toHaveLength(0)
+        expect(summary).toMatchObject({ sent: 0, skipped: 1, failed: 0 })
+        expect(appointmentRow(db).reminder_sent_at).toBeNull()
+      })
+
+      it('manda la más reciente: si volvió a autorizar, se envía', async () => {
+        const seed = clinicSeed()
+        seed.clinic_consents = [consent(false, '2026-10-01T00:00:00.000Z'), consent(true, '2026-10-10T00:00:00.000Z')]
+
+        const { rec } = await run(seed)
+
+        expect(rec.deliveries).toHaveLength(1)
+      })
+
+      it('sin ninguna autorización registrada sí se envía (citas anteriores al módulo)', async () => {
+        const seed = clinicSeed()
+        seed.clinic_consents = []
+        const { rec } = await run(seed)
+        expect(rec.deliveries).toHaveLength(1)
+      })
+
+      it('solo cuenta la autorización de datos de este contacto en esta cuenta', async () => {
+        const seed = clinicSeed()
+        seed.clinic_consents = [
+          consent(false, '2026-10-10T00:00:00.000Z', { kind: 'mercadeo' }),
+          consent(false, '2026-10-11T00:00:00.000Z', { contact_id: CONTACT_2 }),
+          consent(false, '2026-10-12T00:00:00.000Z', { account_id: OTHER_ACCOUNT }),
+        ]
+        const { rec } = await run(seed)
+        expect(rec.deliveries).toHaveLength(1)
+      })
+
+      it('si no se puede saber, no se envía ni se reclama: falla y se reintenta', async () => {
+        const cases: [string, Record<string, Row[]>][] = [
+          ['tags', clinicSeed()],
+          ['contact_tags', withTag(clinicSeed())],
+          ['clinic_consents', clinicSeed()],
+        ]
+        for (const [table, seed] of cases) {
+          const { db, rec, summary } = await run(seed, table)
+
+          expect(rec.deliveries).toHaveLength(0)
+          expect(summary.failed).toBe(1)
+          expect(summary.errors).toHaveLength(1)
+          expect(summary.errors[0]).toContain(APPT)
+          expect(appointmentRow(db).reminder_sent_at).toBeNull()
+        }
+      })
+
+      it('salta solo esa cita y sigue con las demás', async () => {
+        const seed = withTag(clinicSeed())
+        seed.booking_appointments.push({
+          id: 'ap-2',
+          account_id: ACCOUNT,
+          contact_id: CONTACT_2,
+          conversation_id: 'cv-2',
+          service_id: SERVICE,
+          staff_id: STAFF,
+          starts_at: '2026-10-20T12:30:00.000Z',
+          status: 'confirmed',
+          reminder_sent_at: null,
+          reminder_2h_sent_at: null,
+          patient_id: null,
+          location_id: null,
+        })
+        seed.conversations.push({
+          id: 'cv-2',
+          account_id: ACCOUNT,
+          contact_id: CONTACT_2,
+          created_at: '2026-10-18T00:00:00.000Z',
+        })
+        seed.contacts.push({ id: CONTACT_2, account_id: ACCOUNT, name: 'Pedro Gil' })
+
+        const { rec, summary } = await run(seed)
+
+        expect(rec.deliveries.map((d) => d.appointmentId)).toEqual(['ap-2'])
+        expect(summary).toMatchObject({ sent: 1, skipped: 1 })
+      })
+    })
   })
 
   describe('cuentas sin clínica', () => {
@@ -1447,6 +1588,30 @@ describe('runAgendaReminders', () => {
       expect(rec.deliveries[0].clinic).toBeUndefined()
       expect('clinic' in rec.deliveries[0]).toBe(false)
       expect(rec.deliveries[0].serviceName).toBe('Corte clásico')
+    })
+
+    it('la baja y la revocación solo valen en clínicas: aquí se envía igual, sin mirar esas tablas', async () => {
+      const seed = baseSeed()
+      seed.tags = [{ id: 'tag-baja', account_id: ACCOUNT, name: 'baja-envios' }]
+      seed.contact_tags = [{ contact_id: CONTACT, tag_id: 'tag-baja' }]
+      seed.clinic_consents = [
+        {
+          id: 'cons-1',
+          account_id: ACCOUNT,
+          contact_id: CONTACT,
+          kind: 'datos_sensibles',
+          granted: false,
+          created_at: '2026-10-10T00:00:00.000Z',
+        },
+      ]
+      const spy = instrument(makeFakeDb(seed))
+      const rec = makeRecorder()
+
+      const summary = await runAgendaReminders({ db: asClient(spy.db), now: NOW, send: rec.send })
+
+      expect(summary.sent).toBe(1)
+      expect(rec.deliveries).toHaveLength(1)
+      expect(spy.reads.filter((r) => ['tags', 'contact_tags', 'clinic_consents'].includes(r.table))).toEqual([])
     })
 
     it('no tocan las tablas ni las columnas de la clínica', async () => {

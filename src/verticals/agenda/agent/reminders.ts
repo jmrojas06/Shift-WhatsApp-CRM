@@ -29,6 +29,7 @@ import { isUndefinedColumnError } from '@/lib/modules/undefined-column'
 import { hasModule, type AccountModulesSource } from '@/lib/verticals/registry'
 import { AGENDA_VERTICAL_KEYS } from '@/lib/verticals/types'
 import { loadClinicReminderInfo, type ClinicReminderInfo } from '@/modules/clinica/reminder-info'
+import { clinicReminderBlock } from '@/modules/clinica/reminder-skip'
 import { buildClinicTexts } from '@/modules/clinica/texts'
 
 import { DEFAULT_LABELS, readLabels, type AgendaLabels } from '../labels'
@@ -607,6 +608,24 @@ export async function runAgendaReminders(
       continue
     }
 
+    // Una clínica no le recuerda la cita a quien pidió la baja de envíos ni a quien
+    // revocó la autorización de datos. No se reclama la señal: si cambia de idea, la
+    // próxima corrida lo envía. Si no se puede saber, falla y se reintenta. Las demás
+    // cuentas no hacen esta lectura.
+    const isClinic = clinicAccounts.has(appt.account_id)
+    if (isClinic) {
+      try {
+        if (await clinicReminderBlock(args.db, { accountId: appt.account_id, contactId: appt.contact_id })) {
+          summary.skipped++
+          continue
+        }
+      } catch (err) {
+        summary.failed++
+        summary.errors.push(`cita ${appt.id}: ${err instanceof Error ? err.message : String(err)}`)
+        continue
+      }
+    }
+
     const conversationId =
       appt.conversation_id ??
       (await findContactConversationId(args.db, appt.account_id, appt.contact_id))
@@ -624,7 +643,6 @@ export async function runAgendaReminders(
       ? 'text'
       : 'template'
 
-    const isClinic = clinicAccounts.has(appt.account_id)
     // El recordatorio de una clínica nunca nombra el procedimiento: ni
     // siquiera se carga, para que no haya por dónde se cuele.
     const serviceName =

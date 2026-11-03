@@ -1061,8 +1061,10 @@ async function applyReminderAction(
 
   // Reprogramar con un humano a cargo: el bot NO abre su flujo encima
   // del agente. Avisa al agente (o al dueño), deja rastro y le dice al
-  // cliente que una persona sigue.
-  if (action === 'reschedule' && humanOwned) {
+  // cliente que una persona sigue. Lo mismo si en una clínica la persona revocó
+  // su autorización de datos: reprogramar es agendar otra cita con sus datos, y
+  // eso lo atiende una persona.
+  if (action === 'reschedule' && (humanOwned || (await consentWithdrawn(dialog)))) {
     await handoffRescheduleRequest(dialog, appt)
     return
   }
@@ -1073,6 +1075,21 @@ async function applyReminderAction(
       : newBookingState('manage_cancel_confirm', { appointmentId: appt.id })
 
   await conclude(dialog, sessionId ?? (await openSession(dialog, state)), state)
+}
+
+/**
+ * ¿La última autorización de datos de esta persona es un no? Solo en una clínica
+ * (con su configuración o sin ella); sin ninguna fila (citas de antes del módulo)
+ * no. Si no se puede leer cuenta como que no: no decide nada por sí sola.
+ */
+async function consentWithdrawn(dialog: Dialog): Promise<boolean> {
+  if (!dialog.clinic && !dialog.clinicUnavailable) return false
+  const consent = await latestConsent(dialog.db, {
+    accountId: dialog.accountId,
+    contactId: dialog.contactId,
+    kind: 'datos_sensibles',
+  })
+  return consent !== null && !consent.granted
 }
 
 /**

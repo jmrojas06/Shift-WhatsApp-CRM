@@ -9,7 +9,9 @@ import { normalizePhone } from '@/lib/whatsapp/phone-utils'
  *
  * Quien escribe una palabra de baja queda con la etiqueta `OPT_OUT_TAG`
  * y los envíos masivos lo saltan. Solo aplica a difusiones: la bandeja,
- * los recordatorios de citas y los avisos de pedidos siguen funcionando.
+ * los recordatorios de citas y los avisos de pedidos siguen funcionando, con
+ * una excepción: una clínica (módulo `clinica`) tampoco le recuerda la cita a
+ * quien tiene la etiqueta (`clinicReminderBlock`).
  * Para volver a incluirlo, se le quita la etiqueta desde Contactos.
  */
 export const OPT_OUT_TAG = 'baja-envios'
