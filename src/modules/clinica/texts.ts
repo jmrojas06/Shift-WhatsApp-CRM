@@ -120,6 +120,11 @@ export const URGENCY_FLOOR_WORDS: readonly string[] = [
   'se le cayo',
   'se le cayeron',
   'se le inflamo',
+  // Un diente o una muela que se cae, en primera persona o sin decir de quién.
+  'se me cayo',
+  'se cayo',
+  'se me cayeron',
+  'se cayeron',
 ]
 
 /**

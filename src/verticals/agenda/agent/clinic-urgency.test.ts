@@ -1128,6 +1128,8 @@ describe('urgencias', () => {
       'es urgente',
       'tengo una urgencia',
       'esto es una emergencia',
+      'se me cayó un diente',
+      'se cayeron dos muelas',
     ])('abre los signos aunque la clínica deje su lista vacía: %j', async (text) => {
       const db = clinicDb()
       db._tables.clinic_settings[0].urgency_words = []

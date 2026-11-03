@@ -176,7 +176,7 @@ where account_id = '<uuid-de-la-cuenta>';
   que siempre abren los signos de alarma, aunque la lista esté vacía:
   dolor, duele, duelen, urgencia, urgente, emergencia, "tragar",
   hinchazón, sangrado, "respirar", "golpe", dientes rotos o que se
-  cayeron... No se edita desde la base. La lista de la clínica **se suma**
+  cayeron ("se me cayó un diente")... No se edita desde la base. La lista de la clínica **se suma**
   al piso; no lo reemplaza ni lo reduce.
 - `urgency_service_id`: la atención con la que el bot ofrece la hora de
   hoy a quien no tiene signos de alarma. El instalador enlaza sola la

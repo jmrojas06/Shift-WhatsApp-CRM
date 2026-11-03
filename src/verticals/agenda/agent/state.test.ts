@@ -421,6 +421,11 @@ describe('el piso fijo de urgencias', () => {
     'esto es una emergencia',
     'no puedo tragar',
     'me cuesta tragar',
+    // Un diente que se cae, dicho en primera persona o en general.
+    'se me cayó un diente',
+    'se cayó un diente',
+    'se me cayeron los dientes',
+    'se cayeron dos muelas',
   ])('abre los signos aunque la clínica no tenga lista: %j', (text) => {
     expect(containsUrgencyFloor(text)).toBe(true)
     expect(detectsUrgency(text, [])).toBe(true)
