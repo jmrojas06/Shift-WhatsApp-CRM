@@ -183,6 +183,63 @@ describe('pacientes por número', () => {
       expect(shown[3]).toBe(texts.patientOther)
     })
 
+    describe('"Otra persona" es un título reservado', () => {
+      const lower = (titles: string[]) => titles.map((t) => t.toLowerCase())
+
+      it('un paciente que se llama así no choca con el botón fijo', async () => {
+        const { shown, stored, body } = await menuFor(['Otra persona', 'Marta Ruiz'])
+
+        expect(shown[2]).toBe(texts.patientOther)
+        expect(new Set(lower(shown)).size).toBe(shown.length)
+        expect(shown.slice(0, 2).map((t) => t.slice(0, 3))).toEqual(['1. ', '2. '])
+        expect(stored).toEqual(shown)
+        // La lista sale ordenada por nombre: Marta antes que Otra.
+        expect(body).toBe(`${texts.patientMenuBody}\n\n1. Marta Ruiz\n2. Otra persona`)
+        expect(shown[1]).toBe('2. Otra persona')
+      })
+
+      it('"Otra persona" y "otra Persona" juntos: todos distintos, también sin mirar mayúsculas', async () => {
+        const { shown, body } = await menuFor(['Otra persona', 'otra Persona'])
+
+        expect(new Set(lower(shown)).size).toBe(shown.length)
+        expect(shown[2]).toBe(texts.patientOther)
+        expect(body).toContain('1. Otra persona')
+        expect(body).toContain('2. otra Persona')
+      })
+
+      it('uno solo, con otras mayúsculas, también choca', async () => {
+        const { shown } = await menuFor(['otra Persona'])
+
+        expect(new Set(lower(shown)).size).toBe(shown.length)
+        expect(shown[0].startsWith('1. ')).toBe(true)
+      })
+
+      it('con lista (4 o más) también', async () => {
+        const { shown, kind } = await menuFor(['Otra persona', 'Marta Ruiz', 'Tomás Gil'])
+
+        expect(kind).toBe('list')
+        expect(new Set(lower(shown)).size).toBe(shown.length)
+        expect(shown[3]).toBe(texts.patientOther)
+      })
+
+      it('el toque sigue eligiendo al paciente exacto, y "Otra persona" sigue pidiendo un nombre', async () => {
+        const first = await menuFor(['Otra persona', 'Marta Ruiz'])
+        await send(first.db, first.rec, { replyId: patId('pat-1') })
+        expect(sessionState(first.db)).toMatchObject({ step: 'pick_service', patientId: 'pat-1' })
+
+        const other = await menuFor(['Otra persona', 'Marta Ruiz'])
+        await send(other.db, other.rec, { replyId: patId('new') })
+        expect(sessionState(other.db)).toMatchObject({ step: 'new_patient_name' })
+      })
+
+      it('sin ese nombre nada cambia: no se numera', async () => {
+        const { shown, body } = await menuFor(['Marta Ruiz', 'Tomás Gil'])
+
+        expect(shown).toEqual(['Marta Ruiz', 'Tomás Gil', texts.patientOther])
+        expect(body).toBe(texts.patientMenuBody)
+      })
+    })
+
     it('dos pacientes con exactamente el mismo nombre también se distinguen', async () => {
       const { shown, body } = await menuFor(['Marta Ruiz', 'Marta Ruiz'])
 

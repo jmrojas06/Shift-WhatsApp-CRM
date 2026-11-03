@@ -542,6 +542,15 @@ async function myAppointments(ctx: ClinicStepCtx): Promise<ClinicOutcome> {
 const BUTTON_TITLE_MAX = 20
 const LIST_TITLE_MAX = 24
 
+/** Un título para compararlo: sin mayúsculas, tildes ni espacios de más. */
+const titleKey = (title: string): string =>
+  title
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+
 /**
  * Títulos que Meta acepta: nunca se repiten. Un título se recorta al tope del botón
  * o de la fila (el controlador lo recorta igual), y dos nombres largos que empiezan
@@ -549,13 +558,19 @@ const LIST_TITLE_MAX = 24
  * recortarse. Si pasa, se numeran todos ("1. ...", "2. ...") y quien llama pone los
  * textos completos en el cuerpo (`numbered` lo avisa). El prefijo es único, así que
  * el título no puede volver a chocar.
+ *
+ * `reserved` son los títulos que la lista ya trae y no son de quien llama (el botón
+ * fijo "Otra persona"): cuentan en la comparación, o un paciente que se llama así
+ * chocaría con él. Se comparan sin mayúsculas, tildes ni espacios de más.
  */
 function distinctTitles(
   raws: readonly string[],
   max: number,
+  reserved: readonly string[] = [],
 ): { titles: string[]; numbered: boolean } {
   const cut = raws.map((raw) => truncate(raw, max))
-  if (new Set(cut).size === cut.length) return { titles: cut, numbered: false }
+  const keys = [...cut, ...reserved].map(titleKey)
+  if (new Set(keys).size === keys.length) return { titles: cut, numbered: false }
   return {
     titles: raws.map((raw, index) => {
       const prefix = `${index + 1}. `
@@ -664,6 +679,9 @@ export async function renderClinicStep(
       const { titles, numbered } = distinctTitles(
         shown.map((p) => p.fullName),
         shown.length + 1 <= 3 ? BUTTON_TITLE_MAX : LIST_TITLE_MAX,
+        // "Otra persona" es un botón fijo de la misma lista: un paciente que se llame
+        // así no puede repetir su título.
+        [texts.patientOther],
       )
       const options: OfferedOption[] = [
         ...shown.map((p, index) => ({ id: patId(p.id), title: titles[index] })),
