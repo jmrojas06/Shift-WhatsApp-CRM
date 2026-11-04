@@ -62,6 +62,7 @@ import {
   loadConversationOwnership,
   loadHandoffAgentId,
   loadInboundMessage,
+  loadMessageTemplateName,
   loadStaffName,
   markAppointmentConfirmed,
   markConversationHandoff,
@@ -77,6 +78,7 @@ import {
   type WorkBlockRow,
 } from './db'
 import { formatDayLabel, formatLongDate, formatPrice, formatTimeLabel, truncate } from './format'
+import { AGENDA_REMINDER_TEMPLATE } from './reminders'
 import {
   actId,
   ansId,
@@ -85,6 +87,7 @@ import {
   containsIntentWord,
   dayId,
   isHandoffOnly,
+  isReminderLabel,
   isSkipAnswer,
   matchAnswerOption,
   matchChoice,
@@ -174,7 +177,14 @@ export async function handleAgendaInbound(
     : null
   const text = inbound?.text ?? ''
   const replyId = inbound?.replyId ?? null
-  const reminderAction = replyId ? parseReminderId(replyId) : null
+  const reminderAction = replyId
+    ? await readReminderAction(
+        args.db,
+        args.conversationId,
+        replyId,
+        inbound?.replyToMessageId ?? null,
+      )
+    : null
   const humanOwned = args.humanOwned === true
 
   // Hilo de un humano: antes de cargar nada más, soltar todo lo que no
@@ -206,9 +216,9 @@ export async function handleAgendaInbound(
   }
 
   // 0) Tap de un recordatorio (Confirmar / Reprogramar / Cancelar).
-  //    Los ids `rem:*` son estáticos — también viajan como quick
-  //    replies de la plantilla de Meta—, así que la cita se resuelve
-  //    como la próxima cita activa del contacto. Se atienden aunque
+  //    Ni los ids `rem:*` ni las etiquetas de la plantilla de Meta
+  //    llevan la cita, así que se resuelve como la próxima cita
+  //    activa del contacto. Se atienden aunque
   //    haya una sesión a medias (y sin abrir una nueva para confirmar),
   //    y también cuando un humano es dueño del hilo (D1).
   if (reminderAction) {
@@ -308,11 +318,33 @@ async function openSession(dialog: Dialog, state: BookingState): Promise<string>
 // ------------------------------------------------------------
 
 /**
+ * Acción del recordatorio que trae el tap, si la trae. Un id `rem:*`
+ * solo sale de nuestro mensaje libre y vale por sí mismo. Una etiqueta
+ * la puede traer cualquier plantilla o difusión con ese botón, así que
+ * solo vale si el tap responde a un recordatorio enviado por plantilla.
+ */
+async function readReminderAction(
+  db: SupabaseClient,
+  conversationId: string,
+  replyId: string,
+  replyToMessageId: string | null,
+): Promise<ReminderAction | null> {
+  const action = parseReminderId(replyId)
+  if (!action || !isReminderLabel(replyId)) return action
+  if (!replyToMessageId) return null
+  const templateName = await loadMessageTemplateName(
+    db,
+    conversationId,
+    replyToMessageId,
+  )
+  return templateName === AGENDA_REMINDER_TEMPLATE.name ? action : null
+}
+
+/**
  * Acciones Confirmar / Reprogramar / Cancelar del recordatorio.
  *
  * La cita sobre la que se actúa es la PRÓXIMA cita activa del
- * contacto: los botones de la plantilla de Meta no admiten ids
- * dinámicos, así que no viaja el id de la cita en el tap.
+ * contacto: no viaja el id de la cita en el tap.
  *
  *   - Confirmar: marca la cita y responde; no toca la sesión.
  *   - Reprogramar: retoma el flujo existente (`pick_day` en modo

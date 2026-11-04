@@ -492,6 +492,23 @@ describe('inbound webhook: template quick-reply buttons (#478)', () => {
     })
   })
 
+  it('keeps the parent reference when the tap answers a stored template', async () => {
+    // The agenda only trusts a "Confirmar" label that answers its own
+    // reminder, so this parent id is what makes that tap count.
+    h.state.replyContextParent = { id: 'msg-reminder' }
+
+    await runWebhook({
+      ...templateButtonTap,
+      button: { text: 'Confirmar', payload: 'Confirmar' },
+      context: { id: 'wamid.REMINDER1' },
+    })
+
+    expect(h.state.upsertCalls[0].row).toMatchObject({
+      interactive_reply_id: 'Confirmar',
+      reply_to_message_id: 'msg-reminder',
+    })
+  })
+
   it('routes the tap to flows and fires the interactive_reply trigger', async () => {
     await runWebhook(templateButtonTap)
 

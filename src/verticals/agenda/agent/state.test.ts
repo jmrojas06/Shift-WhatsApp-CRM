@@ -8,6 +8,7 @@ import {
   containsHandoffWord,
   containsIntentWord,
   isHandoffOnly,
+  isReminderLabel,
   isSkipAnswer,
   dayId,
   matchAnswerOption,
@@ -233,6 +234,34 @@ describe('ids del recordatorio', () => {
     expect(parseReminderId('rem:')).toBeNull()
     expect(parseReminderId('rem:confirm:extra')).toBeNull()
     expect(parseReminderId('')).toBeNull()
+  })
+
+  it('lee la etiqueta del botón de la plantilla', () => {
+    expect(parseReminderId('Confirmar')).toBe('confirm')
+    expect(parseReminderId('Reprogramar')).toBe('reschedule')
+    expect(parseReminderId('Cancelar')).toBe('cancel')
+  })
+
+  it('solo acepta las etiquetas exactas', () => {
+    expect(parseReminderId('confirmar')).toBeNull()
+    expect(parseReminderId('CANCELAR')).toBeNull()
+    expect(parseReminderId(' Confirmar')).toBeNull()
+    expect(parseReminderId('Confirmar cita')).toBeNull()
+  })
+
+  it('no confunde propiedades heredadas con etiquetas', () => {
+    expect(parseReminderId('constructor')).toBeNull()
+    expect(parseReminderId('toString')).toBeNull()
+    expect(parseReminderId('__proto__')).toBeNull()
+  })
+
+  it('distingue las etiquetas de la plantilla de los ids rem:*', () => {
+    expect(isReminderLabel('Confirmar')).toBe(true)
+    expect(isReminderLabel('Reprogramar')).toBe(true)
+    expect(isReminderLabel('Cancelar')).toBe(true)
+    expect(isReminderLabel('rem:confirm')).toBe(false)
+    expect(isReminderLabel('confirmar')).toBe(false)
+    expect(isReminderLabel('constructor')).toBe(false)
   })
 })
 
