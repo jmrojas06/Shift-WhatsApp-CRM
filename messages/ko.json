@@ -2567,6 +2567,11 @@
       "name": "후속 리마인더",
       "description": "연락처가 24시간 이내에 답장하지 않으면 리마인더를 보냅니다.",
       "text": "다시 연락드립니다 — 다른 궁금한 점이 있으신가요? 기꺼이 도와드리겠습니다!"
+    },
+    "real_estate_qualified": {
+      "name": "부동산: 적격 고객을 파이프라인으로",
+      "description": "고객에게 적격 태그가 추가되면 적격 단계에 거래를 만들고 상담원을 순서대로 배정합니다.",
+      "dealTitle": "적격 고객"
     }
   },
   "StarterFlows": {
@@ -2606,6 +2611,64 @@
       "askEmail": "감사합니다, {name}님! 업무용 이메일 주소를 알려주세요.",
       "askCompany": "거의 끝났습니다 — 회사 이름이 무엇인가요?",
       "handoffNote": "신규 리드 — 이름={name}, 이메일={email}, 회사={company}."
+    },
+    "real_estate": {
+      "name": "부동산: 고객 선별 후 상담원 연결",
+      "description": "활성화하기 전에 예시 매물을 실제 매물로 바꾸세요. 고객을 선별하고 매물을 보여 준 뒤 상담원에게 연결합니다. 태그, 파이프라인, 자동화도 함께 만듭니다.",
+      "pipeline": "부동산",
+      "stages": {
+        "newLead": "신규 리드",
+        "contacted": "연락함",
+        "qualified": "적격",
+        "visitScheduled": "방문 예약",
+        "negotiation": "협상",
+        "won": "성사",
+        "lost": "실패"
+      },
+      "tags": {
+        "buy": "구매",
+        "rent": "임대",
+        "qualified": "적격"
+      },
+      "greeting": "안녕하세요! 👋 부동산 도우미입니다. 무엇을 찾고 계신가요?",
+      "buyButton": "구매",
+      "rentButton": "임대",
+      "agentButton": "상담원 연결",
+      "zonesText": "어느 지역에 살고 싶으신가요?",
+      "zonesLabel": "지역 보기",
+      "zones": {
+        "chapinero": "Chapinero",
+        "usaquen": "Usaquén",
+        "cedritos": "Cedritos",
+        "teusaquillo": "Teusaquillo",
+        "other": "다른 지역"
+      },
+      "budgetLabel": "옵션 보기",
+      "rentBudgetText": "월 예산은 얼마인가요?",
+      "rentBudgets": {
+        "range1": "$1,500,000 이하",
+        "range2": "$1,500,000~$2,500,000",
+        "range3": "$2,500,000~$4,000,000",
+        "range4": "$4,000,000 초과"
+      },
+      "buyBudgetText": "구매 예산은 얼마인가요?",
+      "buyBudgets": {
+        "range1": "$2억 5천만 이하",
+        "range2": "$2억 5천만~$4억",
+        "range3": "$4억~$7억",
+        "range4": "$7억 초과"
+      },
+      "rentListing": "Chapinero에 있는 이 아파트를 확인해 보세요:\n\n방 2개, 욕실 2개\n68 m², 주차 가능\n월 $2,300,000",
+      "rentListing2": "Usaquén에 있는 이 아파트를 확인해 보세요:\n\n방 3개, 욕실 2개\n82 m², 주차 가능\n월 $2,450,000",
+      "buyListing": "Chapinero에 있는 이 아파트를 확인해 보세요:\n\n방 2개, 욕실 2개\n68 m², 주차 가능\n$380,000,000",
+      "buyListing2": "Usaquén에 있는 이 아파트를 확인해 보세요:\n\n방 3개, 욕실 2개\n82 m², 주차 가능\n$520,000,000",
+      "actionsText": "어떻게 하시겠어요?",
+      "visitButton": "방문하고 싶어요",
+      "otherButton": "다른 매물 보기",
+      "visitMessage": "좋아요! 이 채팅에서 방문 일정을 잡을 수 있도록 상담원에게 연결해 드릴게요. 🙌",
+      "visitNote": "적격 고객: 매물 방문을 원합니다. 이 채팅에서 방문 일정을 잡으세요.",
+      "agentMessage": "네! 이 채팅에서 상담원에게 연결해 드릴게요. 🙌",
+      "agentNote": "고객이 상담원 연결을 요청했습니다."
     }
   },
   "LibErrors": {
