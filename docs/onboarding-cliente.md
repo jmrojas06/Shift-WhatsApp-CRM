@@ -1,13 +1,41 @@
-# Onboarding de un negocio nuevo (agenda) — checklist
+# Alta de un cliente nuevo — checklist
 
-Alta de un negocio que agenda citas (barbería, salón, consultorio,
-taller, clases…) en la instancia existente (multi-cliente: cada negocio
-es una `account` con su propio login y datos aislados por RLS).
+Alta de un negocio en la instancia existente (multi-cliente: cada
+negocio es una `account` con su propio login y datos aislados por RLS).
+Sirve para los tres negocios que vende Shift:
+
+| Negocio | Camino | Pasos |
+| --- | --- | --- |
+| Barbería, salón (y cualquier negocio que agenda citas) | Módulo **Agenda**: el bot agenda y manda recordatorios | 0, 1, 2–4, 5–10 |
+| Inmobiliaria | Sin módulo: **flujo** que califica y pasa al asesor + **Embudo** | 0, 1, I, 5, 6, 8–10 |
 
 Requisitos previos: instancia desplegada y sana
-(`docs/despliegue-vps.md`), email del dueño y número de WhatsApp del
-negocio. Tiempo estimado: 45–60 min, más lo que tarde Meta en aprobar la
-plantilla de recordatorio.
+(`docs/despliegue-vps.md`). Tiempo estimado: 45–60 min, más lo que tarde
+Meta en aprobar las plantillas.
+
+## Qué canales se conectan hoy
+
+**Solo WhatsApp** (Cloud API de Meta). Instagram y Facebook Messenger
+**no** están en el CRM todavía: no hay conexión, ni bandeja, ni bot para
+esos canales. No venderlos ni mostrarlos en una demo hasta que existan.
+
+## 0. Qué pedirle al cliente antes de la llamada
+
+- [ ] Email del dueño (será el owner de la cuenta).
+- [ ] El número de WhatsApp que va a usar el bot. Al pasarlo a la API
+      **deja de funcionar en la app de WhatsApp del celular**. La
+      «coexistencia» (app y API en el mismo número) solo se activa con
+      el registro integrado de Meta (*Embedded Signup*), que este CRM no
+      tiene. Si el cliente no quiere perder la app, que use un número
+      nuevo para el bot.
+- [ ] Acceso a su portafolio de Meta Business (o crearlo con él en la
+      llamada) y un **método de pago** en WhatsApp Manager: las
+      plantillas se cobran y, desde octubre de 2026, también los
+      mensajes de servicio después de los 1.000 gratis al mes por
+      número.
+- [ ] Los datos del negocio: servicios, precios, equipo y horarios
+      (agenda) o zonas, rangos de presupuesto, fichas con foto y
+      asesores (inmobiliaria).
 
 ## 1. Crear la cuenta
 
@@ -15,9 +43,21 @@ plantilla de recordatorio.
    dueño (queda como owner de su `account`).
 2. El dueño inicia sesión en `https://<dominio>/login` y cambia la
    contraseña.
-3. (Opcional) Invitar al equipo: Settings → **Members**.
+3. El dueño invita al correo de Shift como **admin**: Configuración →
+   **Miembros del equipo**. Ese correo debe estar en
+   `SHIFT_STAFF_EMAILS`; si no, Shift también ve la vista sencilla y no
+   llega a WhatsApp, Flujos ni Agentes de IA.
+4. (Opcional) Invitar al resto del equipo del negocio.
 
-**Verificación:** el usuario entra y ve el panel general.
+**Verificación:** el dueño ve solo Panel, Bandeja, Agenda o Ventas y
+Contactos; Shift, entrando con su correo, ve todo.
+
+> El registro en `/signup` está abierto a cualquiera. Una cuenta creada
+> por un extraño queda vacía y sin WhatsApp (la pantalla para conectarlo
+> solo la ve Shift), pero conviene revisar de vez en cuando la lista de
+> cuentas.
+
+Barberías y salones siguen en el paso 2. Inmobiliarias saltan al paso I.
 
 ## 2. Activar el vertical y la moneda (COP)
 
@@ -117,6 +157,36 @@ Todo desde `/agenda` → **Configuración** (guía completa:
 
 **Verificación:** la agenda muestra las franjas correctas.
 
+## I. Inmobiliaria: instalar el flujo y el embudo
+
+Una inmobiliaria **no** lleva módulo (no se toca SQL): el bot es un flujo
+y las oportunidades viven en el **Embudo**. Entrando con el correo de
+Shift:
+
+1. **Flujos → Nuevo flujo →** «Inmobiliaria: calificar y pasar a
+   asesor». Un clic crea el flujo en borrador, 7 etiquetas, el embudo
+   «Inmobiliaria» y la automatización «Inmobiliaria: calificado al
+   embudo», que reparte los leads calificados entre los asesores por
+   turnos. Reinstalar no duplica la automatización.
+2. Cambia en el flujo lo que viene de ejemplo **antes de activarlo**:
+   - las zonas (vienen de Bogotá);
+   - los rangos de presupuesto de arriendo y de compra;
+   - las fichas: texto, precio y foto (la de ejemplo dice «Plano de
+     ejemplo»). La ficha no cambia según la zona elegida: el CRM no
+     tiene catálogo de inmuebles, así que pon una ficha que le sirva a
+     cualquiera o una invitación a ver el catálogo.
+3. Invita a los asesores como miembros (Configuración → **Miembros del
+   equipo**): el reparto por turnos solo asigna a miembros.
+4. Activa el flujo **después** del paso 6 (webhook verificado). Arranca
+   con el primer mensaje de cada contacto: quien ya había escrito antes
+   no entra al bot.
+5. El flujo usa el cron de flujos (`/api/flows/cron`). En el VPS ya
+   está en el crontab (`docs/despliegue-vps.md` §6); en Vercel no
+   estaba programado.
+
+**Verificación:** el flujo pasa la validación al activarlo y el embudo
+«Inmobiliaria» aparece en **Embudo** con sus 7 etapas.
+
 ## 5. Conectar WhatsApp Cloud API
 
 Settings → pestaña **WhatsApp** (`/settings?tab=whatsapp`):
@@ -128,6 +198,17 @@ Settings → pestaña **WhatsApp** (`/settings?tab=whatsapp`):
 
 Errores comunes: `docs/whatsapp-connection-troubleshooting.md`. Varios
 WABA/números: `docs/multi-waba.md`.
+
+**Con qué app de Meta.** Lo simple es que el WABA del cliente quede
+suscrito a la app de Meta de Shift (Setup A de `docs/multi-waba.md`).
+Para manejar activos de **otros** negocios, Meta suele exigir que la app
+tenga acceso avanzado (*Advanced Access*, por revisión de la app) y
+verificación del negocio, y Shift no es una empresa registrada (revisar
+con el contador o el abogado qué documento sirve). Si Meta lo bloquea,
+la salida que no depende de eso es el Setup B: el cliente crea su propia
+app en su portafolio, Shift la configura con él y su secreto se suma a
+`META_APP_SECRET` separado por comas. Confirmarlo con el primer cliente
+real antes de prometer tiempos.
 
 ## 6. Verificar el webhook en Meta
 
@@ -173,17 +254,28 @@ pueden enviar (dentro de la ventana salen igual, como mensaje libre).
 5. Si la segunda señal de 2 h está activa, repite la corrida y revisa
    que no se duplique nada.
 
+**Inmobiliaria:** desde un celular externo escribe «Hola» y recorre
+Arrendar → zona → presupuesto → ficha → **Quiero visitarlo**. El contacto
+queda con la etiqueta `calificado`, aparece una oportunidad en la etapa
+Calificado del embudo «Inmobiliaria» y la conversación queda asignada a
+un asesor. Repite con **Hablar con asesor** desde el saludo: llega a la
+Bandeja sin oportunidad (es lo esperado).
+
 ## 9. Confirmar cron y alertas
 
-- [ ] `AUTOMATION_CRON_SECRET` y `CRON_SECRET` definidos en el entorno;
-      el cron corre (Vercel → **Cron Jobs**, o pinger externo).
-- [ ] `/api/health` monitoreado desde afuera
-      (`docs/despliegue-vercel.md` §6).
+- [ ] `AUTOMATION_CRON_SECRET` definido en el entorno y los tres crons
+      corriendo: recordatorios de la agenda, automatizaciones y flujos
+      (`docs/despliegue-vps.md` §6: `journalctl -t shift-crm-cron`).
+- [ ] `/api/health` monitoreado desde afuera (`docs/despliegue-vps.md`
+      §8).
 - [ ] (Opcional) `ALERT_WEBHOOK_URL` para avisos de fallos del runner.
 
 ## 10. Entrega al cliente
 
 - Acceso del dueño (contraseña temporal ya cambiada).
+- Lo que ve: Panel, Bandeja, Agenda o Ventas, Contactos (y Embudo si es
+  inmobiliaria). Si WhatsApp se desconecta, el Panel le dice que le
+  escriba a Shift: el arreglo lo hace Shift.
 - Resumen de uso: agenda, bandeja y recordatorios
   (`docs/agenda-configuracion.md`, `docs/agenda-recordatorios.md`).
 - Operación, respaldos y secretos: `docs/operacion-datos-y-secretos.md`.
@@ -196,8 +288,9 @@ pueden enviar (dentro de la ventana salen igual, como mensaje libre).
 | 2. Vertical | menú **Agenda** visible | SQL (`vertical_key = 'agenda'` y `agenda` en `modules`) aplicado sobre la cuenta correcta |
 | 3. Tipo de negocio | servicios visibles | reintentar el asistente (es idempotente) |
 | 4. Configuración | agenda con horarios reales | `docs/agenda-configuracion.md` |
+| I. Inmobiliaria | flujo validado y embudo con 7 etapas | reinstalar la plantilla (no duplica la automatización) |
 | 5. WhatsApp | «Verificar con Meta» OK | `docs/whatsapp-connection-troubleshooting.md` |
 | 6. Webhook | mensaje en la Bandeja | verify token / firma; `docs/multi-waba.md` |
 | 7. Plantilla Meta | aprobada | nombre/idioma exactos `recordatorio_cita` / `es` |
 | 8. Flujo | cita + recordatorio + Confirmar | `docs/agenda-recordatorios.md` |
-| 9. Cron | corrida OK en Cron Jobs | pinger externo de respaldo |
+| 9. Cron | los tres crons en `journalctl -t shift-crm-cron` | `docs/despliegue-vps.md` §6 |

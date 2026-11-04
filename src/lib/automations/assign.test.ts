@@ -1,6 +1,29 @@
 import { describe, expect, it } from 'vitest'
 
-import { pickLeastLoadedAgent } from './assign'
+import { assignableMemberIds, pickLeastLoadedAgent } from './assign'
+
+describe('assignableMemberIds', () => {
+  const members = [
+    { user_id: 'dueno', email: 'dueno@inmobiliaria.co' },
+    { user_id: 'shift', email: 'Equipo@Shift.co' },
+    { user_id: 'asesora', email: 'asesora@inmobiliaria.co' },
+  ]
+
+  it('deja por fuera al equipo de Shift, que entra a cada cuenta como admin', () => {
+    expect(assignableMemberIds(members, 'equipo@shift.co, otro@shift.co')).toEqual([
+      'dueno',
+      'asesora',
+    ])
+  })
+
+  it('sin lista de Shift reparte entre todos', () => {
+    expect(assignableMemberIds(members, undefined)).toEqual(['dueno', 'shift', 'asesora'])
+  })
+
+  it('si solo queda Shift, no hay a quién asignar', () => {
+    expect(assignableMemberIds([members[1]], 'equipo@shift.co')).toEqual([])
+  })
+})
 
 describe('pickLeastLoadedAgent', () => {
   it('sin miembros no asigna a nadie', () => {
