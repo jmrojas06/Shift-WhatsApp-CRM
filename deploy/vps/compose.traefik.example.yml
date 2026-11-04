@@ -1,0 +1,24 @@
+# Solo si el HTTPS del VPS lo da un Traefik que corre en Docker (el montaje
+# típico de n8n). Copia este archivo a deploy/vps/compose.local.yml (está en
+# .gitignore) y cambia los tres valores marcados; deploy.sh lo suma solo.
+# Cómo sacar los valores: docs/despliegue-vps.md §3, caso D.
+services:
+  app:
+    # Traefik habla con el contenedor por la red de Docker: no hace falta
+    # publicar el puerto en el host.
+    ports: !reset []
+    networks:
+      - proxy
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=CAMBIAR_red_de_traefik
+      - traefik.http.routers.shift-crm.rule=Host(`crm.aishiftdigital.com`)
+      - traefik.http.routers.shift-crm.entrypoints=CAMBIAR_entrypoint_https
+      - traefik.http.routers.shift-crm.tls=true
+      - traefik.http.routers.shift-crm.tls.certresolver=CAMBIAR_certresolver
+      - traefik.http.services.shift-crm.loadbalancer.server.port=3000
+
+networks:
+  proxy:
+    name: CAMBIAR_red_de_traefik
+    external: true

@@ -5,7 +5,7 @@ taller, clases…) en la instancia existente (multi-cliente: cada negocio
 es una `account` con su propio login y datos aislados por RLS).
 
 Requisitos previos: instancia desplegada y sana
-(`docs/despliegue-vercel.md`), email del dueño y número de WhatsApp del
+(`docs/despliegue-vps.md`), email del dueño y número de WhatsApp del
 negocio. Tiempo estimado: 45–60 min, más lo que tarde Meta en aprobar la
 plantilla de recordatorio.
 
