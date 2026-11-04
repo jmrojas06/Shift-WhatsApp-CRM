@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { autoLayout, shouldAutoLayout } from "./layout";
+import { autoLayout, estimateNodeHeight, shouldAutoLayout } from "./layout";
 
 describe("shouldAutoLayout", () => {
   it("returns false for an empty list", () => {
@@ -31,6 +31,29 @@ describe("shouldAutoLayout", () => {
         { position_x: 200, position_y: 50 },
       ]),
     ).toBe(false);
+  });
+});
+
+describe("estimateNodeHeight", () => {
+  it("uses the default height for nodes with one way out or none", () => {
+    expect(estimateNodeHeight(0)).toBe(estimateNodeHeight(1));
+  });
+
+  it("grows with the option rows a multi-slot node renders", () => {
+    expect(estimateNodeHeight(3)).toBeGreaterThan(estimateNodeHeight(2));
+    expect(estimateNodeHeight(5)).toBeGreaterThan(estimateNodeHeight(3));
+  });
+
+  it("keeps a list node clear of the rank below it", () => {
+    // ~226 px is what a five-row list measures in the real canvas.
+    const measured = 226;
+    const positions = autoLayout(
+      [{ id: "list", height: estimateNodeHeight(5) }, { id: "next" }],
+      [{ source: "list", target: "next" }],
+    );
+
+    const list = positions.get("list")!;
+    expect(positions.get("next")!.y).toBeGreaterThan(list.y + measured);
   });
 });
 

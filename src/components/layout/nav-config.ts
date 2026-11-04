@@ -15,6 +15,7 @@ import {
   getModulesNav,
   type AccountModulesSource,
 } from "@/lib/verticals/registry";
+import { isRouteHidden, type ViewContext } from "@/lib/view-mode";
 
 /**
  * Single source of truth for the app navigation, shared by the desktop
@@ -59,8 +60,9 @@ export const SETTINGS_ITEM: NavItem = {
  */
 export function getNavGroups(
   account: AccountModulesSource | null | undefined,
+  view?: ViewContext,
 ): NavGroup[] {
-  return [
+  const groups: NavGroup[] = [
     {
       labelKey: "groupDaily",
       items: [DASHBOARD, INBOX, ...getModulesNav(account), CONTACTS],
@@ -76,6 +78,15 @@ export function getNavGroups(
       ],
     },
   ];
+  if (!view) return groups;
+  // Simple view (lib/view-mode): drop what Shift configures, and any
+  // group left empty.
+  return groups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => !isRouteHidden(item.href, view)),
+    }))
+    .filter((group) => group.items.length > 0);
 }
 
 /**

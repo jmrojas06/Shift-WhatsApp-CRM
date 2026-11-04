@@ -45,7 +45,9 @@
     "groupDaily": "Dia a dia",
     "groupGrowth": "Crescimento",
     "inboxShort": "Caixa",
-    "more": "Mais"
+    "more": "Mais",
+    "menuPreviewAsBusiness": "Ver como o negócio",
+    "menuFullView": "Voltar à visão completa"
   },
   "Header": {
     "dashboard": "Painel",
@@ -65,7 +67,8 @@
     "createDeal": "Negócio",
     "createBroadcast": "Disparo",
     "createAutomation": "Automação",
-    "notificationsWithCount": "Notificações: {count} não lidas"
+    "notificationsWithCount": "Notificações: {count} não lidas",
+    "newContact": "Novo contato"
   },
   "ModeToggle": {
     "toLight": "Mudar para o modo claro",
@@ -173,7 +176,8 @@
       "salesTitle": "A receber",
       "soldThisMonth": "Vendido este mês: {amount}",
       "viewSales": "Ver vendas",
-      "loadError": "Não foi possível carregar. Recarregue a página para tentar de novo."
+      "loadError": "Não foi possível carregar. Recarregue a página para tentar de novo.",
+      "whatsappAskShift": "Enquanto isso, nenhuma mensagem chega nem sai. Fale com seu contato da Shift e nós reconectamos para você."
     },
     "summary": {
       "title": "Resumo de hoje",
@@ -2500,7 +2504,9 @@
   },
   "DashboardShell": {
     "loading": "Carregando…",
-    "skipToContent": "Pular para o conteúdo"
+    "skipToContent": "Pular para o conteúdo",
+    "previewAsBusiness": "Você está vendo o app como o negócio o vê.",
+    "previewExit": "Voltar à visão completa"
   },
   "UiPrimitives": {
     "close": "Fechar"
@@ -2569,6 +2575,11 @@
       "name": "Lembrete de acompanhamento",
       "description": "Envie um lembrete se o contato não responder em 24 horas.",
       "text": "Passando para saber — ficou com mais alguma dúvida? Estamos à disposição!"
+    },
+    "real_estate_qualified": {
+      "name": "Imobiliária: qualificado no funil",
+      "description": "Quando um interessado recebe a etiqueta qualificado, cria a oportunidade na etapa Qualificado e atribui um corretor por rodízio.",
+      "dealTitle": "Interessado qualificado"
     }
   },
   "StarterFlows": {
@@ -2608,6 +2619,64 @@
       "askEmail": "Obrigado, {name}! Qual é o seu e-mail profissional?",
       "askCompany": "Quase lá — qual é o nome da sua empresa?",
       "handoffNote": "Novo lead — nome={name}, e-mail={email}, empresa={company}."
+    },
+    "real_estate": {
+      "name": "Imobiliária: qualificar e passar ao corretor",
+      "description": "Antes de ativar, troque as fichas de exemplo por imóveis reais. Qualifica cada interessado, mostra uma ficha e o passa a um corretor. Cria as etiquetas, o funil e a automação.",
+      "pipeline": "Imobiliária",
+      "stages": {
+        "newLead": "Novo lead",
+        "contacted": "Contatado",
+        "qualified": "Qualificado",
+        "visitScheduled": "Visita agendada",
+        "negotiation": "Negociação",
+        "won": "Fechado ganho",
+        "lost": "Fechado perdido"
+      },
+      "tags": {
+        "buy": "comprar",
+        "rent": "alugar",
+        "qualified": "qualificado"
+      },
+      "greeting": "Olá! 👋 Sou o assistente da imobiliária. O que você está procurando?",
+      "buyButton": "Comprar",
+      "rentButton": "Alugar",
+      "agentButton": "Falar com corretor",
+      "zonesText": "Em qual região você gostaria de morar?",
+      "zonesLabel": "Ver regiões",
+      "zones": {
+        "chapinero": "Chapinero",
+        "usaquen": "Usaquén",
+        "cedritos": "Cedritos",
+        "teusaquillo": "Teusaquillo",
+        "other": "Outra região"
+      },
+      "budgetLabel": "Ver opções",
+      "rentBudgetText": "Qual é o seu orçamento mensal?",
+      "rentBudgets": {
+        "range1": "Até $1.500.000",
+        "range2": "$1.500.000 a $2.500.000",
+        "range3": "$2.500.000 a $4.000.000",
+        "range4": "Mais de $4.000.000"
+      },
+      "buyBudgetText": "Qual é o seu orçamento de compra?",
+      "buyBudgets": {
+        "range1": "Até $250 milhões",
+        "range2": "$250 a $400 milhões",
+        "range3": "$400 a $700 milhões",
+        "range4": "Mais de $700 milhões"
+      },
+      "rentListing": "Veja este apartamento em Chapinero:\n\n2 quartos, 2 banheiros\n68 m², vaga de garagem\n$2.300.000 por mês",
+      "rentListing2": "Veja este apartamento em Usaquén:\n\n3 quartos, 2 banheiros\n82 m², vaga de garagem\n$2.450.000 por mês",
+      "buyListing": "Veja este apartamento em Chapinero:\n\n2 quartos, 2 banheiros\n68 m², vaga de garagem\n$380.000.000",
+      "buyListing2": "Veja este apartamento em Usaquén:\n\n3 quartos, 2 banheiros\n82 m², vaga de garagem\n$520.000.000",
+      "actionsText": "O que você quer fazer?",
+      "visitButton": "Quero visitar",
+      "otherButton": "Ver outro",
+      "visitMessage": "Perfeito! Vou te passar para um corretor combinar a visita por este mesmo chat. 🙌",
+      "visitNote": "Interessado qualificado: quer visitar o imóvel. Combine a visita por este chat.",
+      "agentMessage": "Claro! Vou te passar para um corretor por este mesmo chat. 🙌",
+      "agentNote": "O interessado pediu para falar com um corretor."
     }
   },
   "LibErrors": {
@@ -2932,7 +3001,8 @@
         "saveDocFailed": "Falha ao salvar o documento",
         "savedIndexFailed": "Salvo, mas a indexação semântica falhou ({message}). A busca por palavras-chave continua funcionando; use Reindexar para tentar novamente.",
         "savedKeywordOnly": "Salvo apenas com busca por palavras-chave — não foi possível descriptografar sua chave de embeddings (verifique a ENCRYPTION_KEY e informe a chave novamente)."
-      }
+      },
+      "offTopicReply": "Por aqui eu te ajudo com tudo sobre o negócio: preços, horários, agendamentos e pedidos. Para outra coisa, escreva «atendente» e uma pessoa te atende."
     },
     "automations": {
       "copyName": "{name} (Cópia)",

@@ -62,6 +62,22 @@ const DEFAULTS: Required<LayoutOptions> = {
   defaultHeight: 90,
 };
 
+/** The divider above the option rows of a multi-slot node. */
+const SLOT_SECTION_HEIGHT = 20;
+const SLOT_ROW_HEIGHT = 26;
+
+/**
+ * Approximate rendered height of a node with `slotCount` outgoing slots.
+ * Nodes with several slots list them as rows, so a five-row list is over
+ * twice as tall as a plain message and would cover the rank below it if
+ * dagre laid it out at the default height.
+ */
+export function estimateNodeHeight(slotCount: number): number {
+  return slotCount > 1
+    ? DEFAULTS.defaultHeight + SLOT_SECTION_HEIGHT + slotCount * SLOT_ROW_HEIGHT
+    : DEFAULTS.defaultHeight;
+}
+
 /**
  * True iff every node sits at the origin — the signal that no human
  * has positioned this flow yet and auto-layout is safe to run.

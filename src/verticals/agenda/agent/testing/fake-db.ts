@@ -64,6 +64,9 @@ export interface FakeDb {
 
 type FilterKind = 'eq' | 'in' | 'lt' | 'lte' | 'gt' | 'gte' | 'is'
 
+/** Tablas donde el código deja que Postgres genere el `id` al insertar. */
+const GENERATED_ID_TABLES = new Set(['flows'])
+
 /**
  * Defaults de columna que Postgres aplicaría al insertar. Se replican
  * solo para las tablas donde los tests los pueden observar.
@@ -175,6 +178,7 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
     const insertRow = (row: Row): Row => {
       const defaults = TABLE_DEFAULTS[table] ?? {}
       const merged: Row = { ...defaults, ...row }
+      if (GENERATED_ID_TABLES.has(table)) merged.id ??= crypto.randomUUID()
       ensure(table).push(merged)
       return { ...merged }
     }

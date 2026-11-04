@@ -13,6 +13,7 @@ import type {
 import { AGENDA_TZ } from '@/verticals/agenda/agent/time'
 import { buttonVariants } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { useViewMode } from '@/hooks/use-view-mode'
 import { Skeleton } from './skeleton'
 
 /** `undefined` = still loading, `null` = failed to load. */
@@ -171,6 +172,7 @@ function UnreadCard({ unread }: { unread: Loadable<UnreadSummary> }) {
 
 function WhatsAppCard({ health }: { health: WhatsAppHealth }) {
   const t = useTranslations('Dashboard.attention')
+  const { simple } = useViewMode()
   const needsReconnect = health === 'needs_attention'
   return (
     <Card tone="warning">
@@ -178,15 +180,22 @@ function WhatsAppCard({ health }: { health: WhatsAppHealth }) {
         <AlertTriangle className="size-4" aria-hidden />
         {needsReconnect ? t('whatsappReconnectTitle') : t('whatsappSetupTitle')}
       </span>
-      <p className="text-sm text-muted-foreground">
-        {needsReconnect ? t('whatsappReconnectBody') : t('whatsappSetupBody')}
-      </p>
-      <Link
-        href="/settings?tab=whatsapp"
-        className={cn(buttonVariants({ variant: 'outline' }), 'mt-auto self-start')}
-      >
-        {needsReconnect ? t('reconnect') : t('connect')}
-      </Link>
+      {simple ? (
+        // The business never touches the WhatsApp settings: Shift does.
+        <p className="text-sm text-muted-foreground">{t('whatsappAskShift')}</p>
+      ) : (
+        <>
+          <p className="text-sm text-muted-foreground">
+            {needsReconnect ? t('whatsappReconnectBody') : t('whatsappSetupBody')}
+          </p>
+          <Link
+            href="/settings?tab=whatsapp"
+            className={cn(buttonVariants({ variant: 'outline' }), 'mt-auto self-start')}
+          >
+            {needsReconnect ? t('reconnect') : t('connect')}
+          </Link>
+        </>
+      )}
     </Card>
   )
 }

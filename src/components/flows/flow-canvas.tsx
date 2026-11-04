@@ -76,7 +76,7 @@ import {
   deriveCanvasEdges,
   outgoingSlots,
 } from '@/lib/flows/edges';
-import { autoLayout, shouldAutoLayout } from '@/lib/flows/layout';
+import { autoLayout, estimateNodeHeight, shouldAutoLayout } from '@/lib/flows/layout';
 import {
   NODE_META,
   NodeIconChip,
@@ -309,7 +309,7 @@ function FlowCanvasInner() {
           builderNodes.map((n) => ({
             id: n.node_key,
             width: NODE_WIDTH,
-            height: NODE_HEIGHT,
+            height: estimateNodeHeight(outgoingSlots(n).length),
           })),
           canvasEdges.map((e) => ({ source: e.source, target: e.target })),
           { direction: 'TB' }

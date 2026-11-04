@@ -1,9 +1,12 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { installTagAutomation } from '@/lib/automations/install-template'
+import type { AutomationTemplateDefinition } from '@/lib/automations/templates'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { getFlowTemplate } from '@/lib/flows/templates'
 import { getT } from '@/lib/i18n/translate'
+import { ensureTemplateSetup } from '@/lib/templates/account-setup'
 
 const t = getT('Api')
 
@@ -29,6 +32,11 @@ async function requireUser(): Promise<
     return { ok: false, status: 401, body: { error: t('common.unauthorized') } }
   }
   return { ok: true, userId: user.id, supabase }
+}
+
+function publicBaseUrl(request: Request): string {
+  const configured = process.env.NEXT_PUBLIC_SITE_URL?.trim().replace(/\/+$/, '')
+  return configured || new URL(request.url).origin
 }
 
 export async function GET() {
@@ -110,6 +118,25 @@ export async function POST(request: Request) {
         { status: 400 },
       )
     }
+
+    let nodes = template.nodes
+    let automation: AutomationTemplateDefinition | null = null
+    if (template.install) {
+      try {
+        // RLS reserves tags and pipelines for admins, and the service-role
+        // client below bypasses it, so the role must be enforced here.
+        await requireRole('admin')
+        const resources = await ensureTemplateSetup(admin, {
+          accountId,
+          userId,
+          setup: template.install.setup,
+        })
+        ;({ nodes, automation } = template.install.build(resources, publicBaseUrl(request)))
+      } catch (err) {
+        return toErrorResponse(err)
+      }
+    }
+
     const { data: flow, error: flowErr } = await admin
       .from('flows')
       .insert({
@@ -130,9 +157,9 @@ export async function POST(request: Request) {
         { status: 500 },
       )
     }
-    if (template.nodes.length > 0) {
+    if (nodes.length > 0) {
       const { error: nodesErr } = await admin.from('flow_nodes').insert(
-        template.nodes.map((n) => ({
+        nodes.map((n) => ({
           flow_id: flow.id,
           node_key: n.node_key,
           node_type: n.node_type,
@@ -148,6 +175,13 @@ export async function POST(request: Request) {
           { error: nodesErr.message },
           { status: 500 },
         )
+      }
+    }
+    if (automation) {
+      const automationErr = await installTagAutomation(admin, { accountId, userId, automation })
+      if (automationErr) {
+        await admin.from('flows').delete().eq('id', flow.id)
+        return NextResponse.json({ error: automationErr }, { status: 500 })
       }
     }
     return NextResponse.json({ flow }, { status: 201 })

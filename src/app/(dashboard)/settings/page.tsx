@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 
 import { useAuth } from '@/hooks/use-auth';
+import { useViewMode } from '@/hooks/use-view-mode';
+import { isSettingsSectionHidden } from '@/lib/view-mode';
 import { useTheme } from '@/hooks/use-theme';
 import { SettingsRail } from '@/components/settings/settings-rail';
 import { SettingsOverview } from '@/components/settings/settings-overview';
@@ -50,7 +52,11 @@ function SettingsPageInner() {
   // section — deep-linkable, and it keeps the existing links in the
   // app sidebar/header working. Legacy tab values (tags, custom-fields)
   // resolve onto their new home; unknown/empty → the Overview landing.
-  const section = resolveSection(searchParams.get('tab'));
+  // In the business's simple view, sections Shift configures resolve to
+  // the Overview even from a saved link (lib/view-mode).
+  const { simple } = useViewMode();
+  const requested = resolveSection(searchParams.get('tab'));
+  const section = isSettingsSectionHidden(requested, simple) ? 'overview' : requested;
 
   const go = (next: SettingsSection) => {
     const params = new URLSearchParams(searchParams.toString());
