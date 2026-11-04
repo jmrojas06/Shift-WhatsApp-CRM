@@ -10,6 +10,8 @@ const h = vi.hoisted(() => ({
   engineSendText: vi.fn(),
   loadAccountMetaCredentials: vi.fn(),
   sendTypingIndicator: vi.fn(),
+  loadBusinessVocabulary: vi.fn(),
+  isOnTopic: vi.fn(),
   state: {
     conv: null as Record<string, unknown> | null,
     autoResponders: [] as { id: string }[],
@@ -23,6 +25,10 @@ vi.mock('./config', () => ({ loadAiConfig: h.loadAiConfig }))
 vi.mock('./context', () => ({ buildConversationContext: h.buildConversationContext }))
 vi.mock('./knowledge', () => ({ retrieveKnowledge: h.retrieveKnowledge }))
 vi.mock('./generate', () => ({ generateReply: h.generateReply }))
+vi.mock('./relevance', () => ({
+  loadBusinessVocabulary: h.loadBusinessVocabulary,
+  isOnTopic: h.isOnTopic,
+}))
 vi.mock('@/lib/flows/meta-send', () => ({
   engineSendText: h.engineSendText,
   loadAccountMetaCredentials: h.loadAccountMetaCredentials,
@@ -111,6 +117,8 @@ beforeEach(() => {
     accessToken: 'tok',
   })
   h.sendTypingIndicator.mockResolvedValue(undefined)
+  h.loadBusinessVocabulary.mockResolvedValue(new Set<string>())
+  h.isOnTopic.mockReturnValue(true)
 })
 
 describe('dispatchInboundToAiReply — eligibility gates', () => {
@@ -290,5 +298,35 @@ describe('dispatchInboundToAiReply — handoff', () => {
       ai_autoreply_disabled: true,
       assigned_agent_id: 'agent-7',
     })
+  })
+})
+
+describe('dispatchInboundToAiReply — free off-topic filter', () => {
+  it('checks the latest customer message against the business vocabulary', async () => {
+    const vocab = new Set(['corte'])
+    h.loadBusinessVocabulary.mockResolvedValue(vocab)
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.loadBusinessVocabulary).toHaveBeenCalledWith(expect.anything(), 'acct-1', null)
+    expect(h.isOnTopic).toHaveBeenCalledWith('hi', vocab)
+  })
+
+  it('answers an off-topic message with the fixed reply and never calls the LLM', async () => {
+    h.isOnTopic.mockReturnValue(false)
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.generateReply).not.toHaveBeenCalled()
+    expect(h.retrieveKnowledge).not.toHaveBeenCalled()
+    expect(h.state.rpcCalls.map((c) => c.name)).toEqual(['claim_ai_reply_slot'])
+    expect(h.engineSendText).toHaveBeenCalledTimes(1)
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: 'conv-1', aiGenerated: true }),
+    )
+  })
+
+  it('stays silent on an off-topic message once the reply cap is used up', async () => {
+    h.isOnTopic.mockReturnValue(false)
+    h.state.claim = false
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.engineSendText).not.toHaveBeenCalled()
+    expect(h.generateReply).not.toHaveBeenCalled()
   })
 })
