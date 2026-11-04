@@ -53,6 +53,7 @@ mismo Supabase (§8). La lista completa y comentada está en
 | `META_APP_SECRET` | Sí | Firma HMAC de cada webhook entrante. |
 | `AUTOMATION_CRON_SECRET` | Para el cron | Secreto del runner de recordatorios. |
 | `CRON_SECRET` | Para el cron | **El mismo valor** que `AUTOMATION_CRON_SECRET` (Vercel lo manda como Bearer). |
+| `SHIFT_STAFF_EMAILS` | Sí | Correos del equipo de Shift, separados por comas. Ven todo y pueden alternar «Ver como el negocio»; cualquier otro usuario ve la vista sencilla del local (sin IA, flujos, automatizaciones, difusiones, plantillas, WhatsApp ni API). Sin definir, todos ven la vista sencilla. |
 | `ALERT_WEBHOOK_URL` | Opcional | Webhook Slack-compatible para alertas de fallos del runner. |
 | `META_APP_ID` | Opcional | Solo para plantillas con header de imagen. |
 

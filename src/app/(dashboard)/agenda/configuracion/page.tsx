@@ -30,6 +30,7 @@ import {
   TabsTrigger,
 } from '@/components/ui/tabs'
 import { useAuth } from '@/hooks/use-auth'
+import { useViewMode } from '@/hooks/use-view-mode'
 import { createClient } from '@/lib/supabase/client'
 import { hasModule } from '@/lib/verticals/registry'
 import { capitalize, readLabels } from '@/verticals/agenda/labels'
@@ -61,6 +62,7 @@ import {
 
 export default function AgendaConfiguracionPage() {
   const { account, accountId, canEditSettings } = useAuth()
+  const { simple } = useViewMode()
   const isAgenda = hasModule(account, 'agenda')
 
   const [loading, setLoading] = useState(true)
@@ -286,7 +288,9 @@ export default function AgendaConfiguracionPage() {
               <TabsTrigger value="business">
                 {T.config.tabs.business}
               </TabsTrigger>
-              <TabsTrigger value="type">{T.config.tabs.type}</TabsTrigger>
+              {!simple && (
+                <TabsTrigger value="type">{T.config.tabs.type}</TabsTrigger>
+              )}
               <TabsTrigger value="services">
                 {capitalize(settings.labels.servicios)}
               </TabsTrigger>
@@ -299,11 +303,17 @@ export default function AgendaConfiguracionPage() {
               <TabsTrigger value="timeOff">
                 {T.config.tabs.timeOff}
               </TabsTrigger>
-              <TabsTrigger value="pieces">{T.config.tabs.pieces}</TabsTrigger>
-              <TabsTrigger value="questions">
-                {T.config.tabs.questions}
-              </TabsTrigger>
-              <TabsTrigger value="bot">{T.config.tabs.bot}</TabsTrigger>
+              {/* Tipo de negocio, piezas, preguntas y bot los deja listos
+                  Shift: el local no los ve (lib/view-mode). */}
+              {!simple && (
+                <>
+                  <TabsTrigger value="pieces">{T.config.tabs.pieces}</TabsTrigger>
+                  <TabsTrigger value="questions">
+                    {T.config.tabs.questions}
+                  </TabsTrigger>
+                  <TabsTrigger value="bot">{T.config.tabs.bot}</TabsTrigger>
+                </>
+              )}
             </TabsList>
           </div>
 
@@ -315,13 +325,15 @@ export default function AgendaConfiguracionPage() {
             />
           </TabsContent>
 
-          <TabsContent value="type">
-            <BusinessTypeSection
-              settings={settings}
-              canEdit={canEditSettings}
-              reload={load}
-            />
-          </TabsContent>
+          {!simple && (
+                      <TabsContent value="type">
+                        <BusinessTypeSection
+                          settings={settings}
+                          canEdit={canEditSettings}
+                          reload={load}
+                        />
+                      </TabsContent>
+          )}
 
           <TabsContent value="services">
             <ServicesSection
@@ -363,30 +375,36 @@ export default function AgendaConfiguracionPage() {
             />
           </TabsContent>
 
-          <TabsContent value="pieces">
-            <PiecesSection
-              settings={settings}
-              canEdit={canEditSettings}
-              reload={load}
-            />
-          </TabsContent>
+          {!simple && (
+                      <TabsContent value="pieces">
+                        <PiecesSection
+                          settings={settings}
+                          canEdit={canEditSettings}
+                          reload={load}
+                        />
+                      </TabsContent>
+          )}
 
-          <TabsContent value="questions">
-            <QuestionsSection
-              questions={questions}
-              labels={settings.labels}
-              canEdit={canEditSettings}
-              reload={load}
-            />
-          </TabsContent>
+          {!simple && (
+                      <TabsContent value="questions">
+                        <QuestionsSection
+                          questions={questions}
+                          labels={settings.labels}
+                          canEdit={canEditSettings}
+                          reload={load}
+                        />
+                      </TabsContent>
+          )}
 
-          <TabsContent value="bot">
-            <BotSection
-              settings={settings}
-              canEdit={canEditSettings}
-              reload={load}
-            />
-          </TabsContent>
+          {!simple && (
+                      <TabsContent value="bot">
+                        <BotSection
+                          settings={settings}
+                          canEdit={canEditSettings}
+                          reload={load}
+                        />
+                      </TabsContent>
+          )}
         </Tabs>
       )}
     </div>

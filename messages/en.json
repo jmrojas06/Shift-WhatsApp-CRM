@@ -45,7 +45,9 @@
     "groupDaily": "Day to day",
     "groupGrowth": "Growth",
     "inboxShort": "Inbox",
-    "more": "More"
+    "more": "More",
+    "menuPreviewAsBusiness": "View as the business",
+    "menuFullView": "Back to the full view"
   },
   "Header": {
     "dashboard": "Dashboard",
@@ -65,7 +67,8 @@
     "createDeal": "Deal",
     "createBroadcast": "Broadcast",
     "createAutomation": "Automation",
-    "notificationsWithCount": "Notifications: {count} unread"
+    "notificationsWithCount": "Notifications: {count} unread",
+    "newContact": "New contact"
   },
   "ModeToggle": {
     "toLight": "Switch to light mode",
@@ -173,7 +176,8 @@
       "salesTitle": "To collect",
       "soldThisMonth": "Sold this month: {amount}",
       "viewSales": "View sales",
-      "loadError": "Couldn't load this. Reload the page to try again."
+      "loadError": "Couldn't load this. Reload the page to try again.",
+      "whatsappAskShift": "Until then no messages come in or go out. Message your Shift contact and we will reconnect it for you."
     },
     "summary": {
       "title": "Today at a glance",
@@ -2498,7 +2502,9 @@
   },
   "DashboardShell": {
     "loading": "Loading…",
-    "skipToContent": "Skip to content"
+    "skipToContent": "Skip to content",
+    "previewAsBusiness": "You are seeing the app the way the business sees it.",
+    "previewExit": "Back to the full view"
   },
   "UiPrimitives": {
     "close": "Close"

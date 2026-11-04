@@ -30,6 +30,7 @@ import {
 import { createClient } from '@/lib/supabase/client'
 import { hasModule } from '@/lib/verticals/registry'
 import { useAuth } from '@/hooks/use-auth'
+import { useViewMode } from '@/hooks/use-view-mode'
 import { formatCurrency } from '@/lib/currency'
 import { GatedButton } from '@/components/ui/gated-button'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -176,6 +177,7 @@ const EDITABLE_STATUSES: readonly AppointmentStatus[] = ['pending', 'confirmed']
 export default function AgendaPage() {
   const { account, accountId, canEditSettings, canSendMessages, defaultCurrency } =
     useAuth()
+  const { simple } = useViewMode()
   const supabase = createClient()
 
   const [services, setServices] = useState<BookingServiceRow[]>([])
@@ -666,7 +668,10 @@ export default function AgendaPage() {
   const remindersSent = reminders.filter(
     (r) => r.pendingKind === null && (r.sent24At || r.sent2hAt),
   )
-  const showWizard = !listsLoading && !loadFailed && !installed
+  // Dejar la agenda lista es trabajo de Shift: en la vista sencilla el
+  // local no ve el asistente ni el estado de la plantilla.
+  const notInstalled = !listsLoading && !loadFailed && !installed
+  const showWizard = notInstalled && !simple
 
   return (
     <div className="space-y-6">
@@ -688,6 +693,12 @@ export default function AgendaPage() {
       {loadFailed && (
         <Alert variant="destructive" role="alert">
           <AlertDescription>{loadErrorText}</AlertDescription>
+        </Alert>
+      )}
+
+      {notInstalled && simple && (
+        <Alert role="status">
+          <AlertDescription>{T.preparingByShift}</AlertDescription>
         </Alert>
       )}
 
@@ -1180,7 +1191,7 @@ export default function AgendaPage() {
 
       {/* Estado de la plantilla: información de instalación, no trabajo
           diario. Va al final, sin sombra y con la acción en segundo plano. */}
-      {installed && !loadFailed && (
+      {installed && !loadFailed && !simple && (
         <Card
           size="sm"
           className="bg-muted/40 shadow-none"

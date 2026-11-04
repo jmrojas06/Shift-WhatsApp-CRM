@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslations } from 'next-intl';
 
 import { cn } from '@/lib/utils';
+import { useViewMode } from '@/hooks/use-view-mode';
+import { isSettingsSectionHidden } from '@/lib/view-mode';
 import {
   RAIL_GROUPS,
   SECTION_META,
@@ -35,6 +37,7 @@ export function SettingsRail({
   hints?: Partial<Record<SettingsSection, ReactNode>>;
 }) {
   const t = useTranslations('Settings');
+  const { simple } = useViewMode();
   const activeRef = useRef<HTMLButtonElement>(null);
   const scrollerRef = useRef<HTMLElement>(null);
   const [edges, setEdges] = useState({ moreStart: false, moreEnd: false });
@@ -84,7 +87,9 @@ export function SettingsRail({
       >
         {RAIL_GROUPS.map(({ group }) => {
           const items = SETTINGS_SECTIONS.filter(
-            (s) => SECTION_META[s].group === group,
+            (s) =>
+              SECTION_META[s].group === group &&
+              !isSettingsSectionHidden(s, simple),
           );
           const showLabel = group !== 'top';
           return (

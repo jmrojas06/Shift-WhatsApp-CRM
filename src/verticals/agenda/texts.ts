@@ -55,6 +55,9 @@ export const AGENDA_TEXTS = {
   installing: 'Instalando…',
   gateReason: 'instalar la plantilla',
   installFailed: 'No se pudo completar la instalación. Inténtalo de nuevo.',
+  /** Vista sencilla sin plantilla: la deja lista Shift. */
+  preparingByShift:
+    'Tu agenda la está dejando lista el equipo de Shift. Apenas termine, aquí verás tus citas.',
 
   // ----------------------------------------------------------
   // Asistente de arranque (cuenta sin plantilla)
