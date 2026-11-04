@@ -26,7 +26,7 @@ import { validateInteractivePayload } from '@/lib/whatsapp/interactive'
 import { isDeliverableUrl } from '@/lib/webhooks/ssrf'
 import { getT } from '@/lib/i18n/translate'
 import { minutesOfDayInZone } from '@/lib/time-zone'
-import { ASSIGNABLE_ROLES, pickLeastLoadedAgent } from './assign'
+import { ASSIGNABLE_ROLES, assignableMemberIds, pickLeastLoadedAgent } from './assign'
 
 /** Step errors land in automation_logs and are shown on the logs page. */
 const tErr = getT('LibErrors.engine')
@@ -773,7 +773,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         const accountId = args.automation.account_id
         const { data: members, error: membersErr } = await db
           .from('profiles')
-          .select('user_id')
+          .select('user_id, email')
           .eq('account_id', accountId)
           .in('account_role', ASSIGNABLE_ROLES)
         if (membersErr) throw new Error(membersErr.message)
@@ -786,7 +786,12 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         if (openErr) throw new Error(openErr.message)
         agentId =
           pickLeastLoadedAgent(
-            (members ?? []).map((m) => m.user_id as string),
+            assignableMemberIds(
+              (members ?? []).map((m) => ({
+                user_id: m.user_id as string,
+                email: (m.email as string | null) ?? null,
+              })),
+            ),
             (open ?? []).map((c) => c.assigned_agent_id as string | null),
           ) ?? undefined
       }
