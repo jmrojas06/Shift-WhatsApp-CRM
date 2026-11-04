@@ -1,0 +1,15 @@
+# /etc/cron.d/shift-crm — tareas programadas del CRM (docs/despliegue-vps.md §6).
+# En Vercel solo corría el primero; en el VPS van los tres.
+# Formato de /etc/cron.d: minuto hora día mes día-semana USUARIO comando.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Recordatorios de citas (24 h y 2 h antes). Idempotente: dos corridas no duplican mensajes.
+*/10 * * * * root /usr/local/bin/shift-crm-cron /api/verticals/agenda/reminders/run
+
+# Esperas de las automatizaciones (pasos "Esperar").
+*/5 * * * * root /usr/local/bin/shift-crm-cron /api/automations/cron
+
+# Cierra flujos abandonados. Sin esto, un contacto que deja un flujo a medias
+# no vuelve a entrar a ningún flujo (lo usa la plantilla de inmobiliarias).
+*/5 * * * * root /usr/local/bin/shift-crm-cron /api/flows/cron

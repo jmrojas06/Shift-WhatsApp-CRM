@@ -1,0 +1,15 @@
+# Casos A y C de docs/despliegue-vps.md §3: Caddy instalado en el host.
+# Agrega este bloque a /etc/caddy/Caddyfile y recarga:
+#   sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy
+# Caddy saca y renueva el certificado HTTPS solo (el DNS ya debe apuntar al VPS).
+
+crm.aishiftdigital.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:3000
+	log {
+		output file /var/log/caddy/shift-crm.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}

@@ -1,5 +1,8 @@
 # Despliegue en Vercel — Shift WhatsApp CRM
 
+> **Producción va en el VPS desde noviembre de 2026:** ver
+> `docs/despliegue-vps.md`. Esta guía queda de referencia.
+
 Guía para operar Shift WhatsApp CRM en producción con **Vercel Pro**:
 una sola instancia sirve a varios negocios con agenda (multi-cliente por
 `account`, con RLS por `account_id`).
