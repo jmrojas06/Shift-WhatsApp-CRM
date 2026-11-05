@@ -201,6 +201,47 @@ describe('insertAppointment: paciente y sede', () => {
   })
 })
 
+describe('insertAppointment: citas hechas desde el panel', () => {
+  const base = {
+    id: 'a1',
+    accountId: 'acc-1',
+    contactId: 'ct-1',
+    conversationId: 'cv-1',
+    serviceId: 'svc-1',
+    staffId: 'st-1',
+    startsAtIso: '2026-10-19T14:00:00.000Z',
+    endsAtIso: '2026-10-19T14:30:00.000Z',
+    status: 'confirmed' as const,
+    confirmedAtIso: '2026-10-19T13:00:00.000Z',
+  }
+
+  function recordingClient() {
+    const inserted: Record<string, unknown>[] = []
+    const client = {
+      from: () => ({
+        insert: async (row: Record<string, unknown>) => {
+          inserted.push(row)
+          return { error: null }
+        },
+      }),
+    } as unknown as SupabaseClient
+    return { client, inserted }
+  }
+
+  it('guarda created_via dashboard y quién la creó', async () => {
+    const { client, inserted } = recordingClient()
+    await insertAppointment(client, { ...base, createdVia: 'dashboard', createdBy: 'user-1' })
+    expect(inserted[0]).toMatchObject({ created_via: 'dashboard', created_by: 'user-1' })
+  })
+
+  it('lo que manda el bot no cambia: created_via bot y sin created_by', async () => {
+    const { client, inserted } = recordingClient()
+    await insertAppointment(client, { ...base, createdVia: 'bot' })
+    expect(inserted[0]).toMatchObject({ created_via: 'bot' })
+    expect('created_by' in inserted[0]).toBe(false)
+  })
+})
+
 describe('markAppointmentConfirmed', () => {
   const CONFIRMED_AT = '2026-10-19T13:00:00.000Z'
   const seed = () =>

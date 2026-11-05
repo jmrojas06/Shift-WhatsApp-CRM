@@ -582,7 +582,10 @@ export async function insertAppointment(
     startsAtIso: string
     endsAtIso: string
     status: 'confirmed'
-    createdVia: 'bot'
+    /** 'bot' lo manda el controlador de WhatsApp; 'dashboard', la recepción desde el panel (migración 056). */
+    createdVia: 'bot' | 'dashboard'
+    /** Quién la creó (usuario del panel). Solo se envía si viene. */
+    createdBy?: string | null
     confirmedAtIso: string
     rescheduledFrom?: string | null
     /** Módulo clínica. Solo se envían si vienen: las demás cuentas no tienen estas columnas. */
@@ -604,6 +607,7 @@ export async function insertAppointment(
     ends_at: args.endsAtIso,
     status: args.status,
     created_via: args.createdVia,
+    ...(args.createdBy ? { created_by: args.createdBy } : {}),
     confirmed_at: args.confirmedAtIso,
     ...(args.rescheduledFrom
       ? { rescheduled_from: args.rescheduledFrom }
