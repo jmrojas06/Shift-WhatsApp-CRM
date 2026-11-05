@@ -4,6 +4,10 @@ Guía para montar Shift WhatsApp CRM en el VPS de Shift, el mismo donde
 corre n8n. Reemplaza a `despliegue-vercel.md` como camino de producción;
 esa guía queda de referencia.
 
+**Es el primer despliegue.** Al 05/11/2026 el CRM no corre en ningún lado:
+no hay proyecto en Vercel ni `crm.aishiftdigital.com`. Solo existe la base de
+Supabase, que ya tiene el esquema y las cuentas de prueba de Shift.
+
 **Qué se monta:** la app (Next.js) corre en Docker en el VPS y responde en
 `https://crm.aishiftdigital.com`. La base de datos y los usuarios **siguen en
 Supabase**: no se mueve ningún dato. WhatsApp llega por el webhook de Meta.
@@ -38,16 +42,18 @@ Palabras que aparecen abajo:
 
 ## 0. Antes de empezar
 
-- [ ] **Equipo limpio.** El PC de Daniel quedó comprometido (28/10). Todo esto
-  se hace desde un equipo limpio, y la **llave SSH del VPS se rota primero**
-  (pendiente en `shift-digital-web/docs/contexto-claude/rotacion-claves-jose-2026-10-28.md`).
+- [ ] **Equipo de confianza.** Todo esto se hace desde un equipo limpio y con
+  la **llave SSH del VPS ya rotada** (ver la nota interna de rotación de
+  claves).
 - [ ] **Bitwarden.** Todos los secretos de esta guía se copian de ahí y se
-  guardan ahí. Nunca por chat, correo, capturas ni issues.
+  guardan ahí. Nunca por chat, correo, capturas ni issues. **Este repo es
+  público**: nada de IP, llaves ni valores en commits, issues o PR.
 - [ ] **DNS.** En Cloudflare, registro `A` `crm` → IP del VPS, en modo **DNS
   only** (nube gris) mientras se saca el certificado. Comprobar:
   `dig +short crm.aishiftdigital.com` devuelve la IP del VPS.
-- [ ] **Acceso al repo** `jmrojas06/Shift-WhatsApp-CRM` (privado) desde el
-  VPS con una *deploy key* de solo lectura (§4.1).
+- [ ] **Acceso al repo** `jmrojas06/Shift-WhatsApp-CRM`. Hoy es público, así
+  que se clona por HTTPS sin llave (§4.1). Si se pasa a privado, se usa una
+  *deploy key* de solo lectura (también en §4.1).
 - [ ] **Qué hay unido a `main`.** Revisar con José qué PR entran en este
   despliegue (lista en §11) y qué migraciones piden.
 
@@ -58,7 +64,6 @@ Quién hace qué:
 | VPS, DNS, proxy, Docker, crons (§1 a §6) | Daniel |
 | Copiar los secretos de producción a Bitwarden | José |
 | Supabase (URL de login) y Meta (webhook), §7 | José, con Daniel en llamada |
-| Apagar el cron de Vercel, §7 | José |
 
 ---
 
@@ -194,6 +199,19 @@ Un `server` con `proxy_pass http://127.0.0.1:3000;`, los headers
 
 ### 4.1 Clonar
 
+Mientras el repo sea público:
+
+```bash
+sudo mkdir -p /opt/shift-crm && sudo chown "$USER": /opt/shift-crm
+git clone https://github.com/jmrojas06/Shift-WhatsApp-CRM.git /opt/shift-crm
+```
+
+`deploy.sh` hace `git fetch` del `origin` que quede, así que no hay que
+configurar nada más.
+
+**Si el repo pasa a privado** (o ya lo es cuando leas esto), con una *deploy
+key* de solo lectura:
+
 ```bash
 sudo mkdir -p /opt/shift-crm && sudo chown "$USER": /opt/shift-crm
 ssh-keygen -t ed25519 -f ~/.ssh/shift-crm-deploy -N '' -C 'vps shift-crm (solo lectura)'
@@ -211,6 +229,7 @@ Host github-shift-crm
   IdentitiesOnly yes
 EOF
 git clone git@github-shift-crm:jmrojas06/Shift-WhatsApp-CRM.git /opt/shift-crm
+# Si ya lo clonaste por HTTPS: git -C /opt/shift-crm remote set-url origin git@github-shift-crm:jmrojas06/Shift-WhatsApp-CRM.git
 ```
 
 ### 4.2 `.env.local`
@@ -230,18 +249,19 @@ Valores (los secretos, de Bitwarden):
 | `NEXT_PUBLIC_SITE_URL` | `https://crm.aishiftdigital.com` | Sin barra final |
 | `NEXT_PUBLIC_APP_LOCALE` | `es` | Si falta, la app sale en inglés |
 | `SUPABASE_SERVICE_ROLE_KEY` | la de producción | Nunca sale del servidor |
-| `ENCRYPTION_KEY` | **la misma que usa producción hoy** | Ver aviso abajo |
+| `ENCRYPTION_KEY` | **la misma del `.env.local` de José** | Ver aviso abajo |
 | `META_APP_SECRET` | el de la app de Meta | Si no coincide, el webhook rechaza todo (401) |
 | `AUTOMATION_CRON_SECRET` | uno nuevo: `openssl rand -hex 32` | El mismo va en §6 |
 | `ALLOWED_INVITE_HOSTS` | `crm.aishiftdigital.com` | Fija los links de invitación a este dominio |
-| `SHIFT_STAFF_EMAILS` | correos de José y Daniel, separados por coma | Solo si el PR #7 (vista sencilla) está en `main` |
+| `SHIFT_STAFF_EMAILS` | correos de José y Daniel, separados por coma | Sin ella, Shift también ve la vista sencilla y entra en el reparto de leads |
 | `META_APP_ID` | opcional | Solo para plantillas con imagen |
 | `ALERT_WEBHOOK_URL` | opcional | Webhook tipo Slack para fallos de recordatorios |
 | `CRON_SECRET` | **no se pone** | Solo existe para Vercel |
 
-> **`ENCRYPTION_KEY` tiene que ser la misma de producción.** Con ella están
-> cifrados en Supabase los tokens de WhatsApp y las llaves de IA de cada
-> negocio. Con otra clave, el CRM arranca pero no puede enviar mensajes hasta
+> **`ENCRYPTION_KEY` tiene que ser la misma con la que se guardaron los datos
+> que ya están en Supabase**, es decir, la del `.env.local` con el que José
+> probó en local. Con ella están cifrados en Supabase los tokens de WhatsApp y
+> las llaves de IA de cada negocio. Con otra clave, el CRM arranca pero no puede enviar mensajes hasta
 > que cada negocio vuelva a guardar su conexión. Rotarla tiene su propio
 > procedimiento (`operacion-datos-y-secretos.md` §3.1).
 
@@ -304,7 +324,7 @@ líneas `ok` de las tres rutas. Si cambias el script, repite el primer
 
 ---
 
-## 7. Pasar el tráfico al VPS (José + Daniel, en llamada)
+## 7. Conectar Supabase y Meta al VPS (José + Daniel, en llamada)
 
 1. **Supabase → Authentication → URL Configuration:**
    *Site URL* `https://crm.aishiftdigital.com` y, en *Redirect URLs*,
@@ -315,8 +335,10 @@ líneas `ok` de las tres rutas. Si cambias el script, repite el primer
    `https://crm.aishiftdigital.com/api/whatsapp/webhook` y el mismo *Verify
    token* que ya tiene guardado el CRM. Meta lo comprueba en el momento: si
    falla, revisa `META_APP_SECRET` y el token (`multi-waba.md`).
-3. **Vercel:** desactivar el cron (Project → Settings → Cron Jobs) y pausar o
-   quitar el dominio del proyecto, para que no queden dos copias atendiendo.
+3. **Vercel:** no hay nada que apagar, porque el CRM nunca se publicó ahí
+   (revisado el 04/11). Si aparece un proyecto del CRM en Vercel, desactivar
+   su cron (Project → Settings → Cron Jobs) y quitarle el dominio, para que no
+   queden dos copias atendiendo.
 4. **Prueba de humo** (`despliegue-vercel.md` §7, con el dominio nuevo):
    login, mensaje de prueba que aparece en la Bandeja, una cita de prueba con
    la cuenta Barbería Élite y su recordatorio. Los datos de prueba se marcan y
@@ -378,19 +400,23 @@ cd /opt/shift-crm && bash deploy/vps/deploy.sh
 
 ---
 
-## 11. Estado de `main` al 04/11/2026
+## 11. Estado de `main` al 05/11/2026
 
-Unidos el 04/11 y desplegados en Vercel: PR #7 (vista sencilla), #8 (filtro
-antes de la IA), #9 (plantilla de inmobiliarias) y #10 (botones del
-recordatorio). Con eso, `main` ya tiene lo que muestran las tres demos.
+Unidos el 04/11, todavía **sin desplegar en ningún lado**: PR #7 (vista
+sencilla), #8 (filtro antes de la IA), #9 (plantilla de inmobiliarias), #10
+(botones del recordatorio), #12 (esta guía) y #13 (Shift fuera del reparto de
+leads y guía de alta para los tres negocios). Con eso, `main` ya tiene lo que
+muestran las tres demos. Este despliegue no pide migraciones nuevas.
+
+El CRM sale **solo con WhatsApp**: Instagram y Messenger no están construidos
+(decisión del 04/11).
 
 | Pendiente | Qué falta | Quién |
 | --- | --- | --- |
-| `SHIFT_STAFF_EMAILS` | Ponerla en Vercel (Production) y redesplegar; en el VPS va en `.env.local` (§4.2). Sin ella, Shift también ve la vista sencilla | José |
-| PR #11 (clínicas, fase 1) | Ya mezclado con `main` y en verde. Antes de unirlo: `SHOW server_version;` da 15 o más y aplicar `055_clinica_base.sql` en el SQL Editor | José |
+| `SHIFT_STAFF_EMAILS` | Va en el `.env.local` del VPS (§4.2) | José se la pasa a Daniel |
+| PR #11 (clínicas, fase 1) | Fuera de este despliegue. Antes de unirlo: `SHOW server_version;` da 15 o más y aplicar `055_clinica_base.sql` en el SQL Editor | José |
 | Plantilla de inmobiliarias | Revisar sus textos y montos de ejemplo antes de activarla en un cliente (descripción del PR #9) | José |
-
----
+| Prueba real de WhatsApp | Con un número de prueba de Meta, después del §7 | José + Daniel |
 
 ---
 
