@@ -4,11 +4,19 @@ import { encrypt } from '@/lib/whatsapp/encryption'
 import { makeFakeDb, type FakeDb, type Row } from '@/verticals/agenda/agent/testing/fake-db'
 import { brokenJsonRequest, jsonRequest } from '@/app/api/verticals/agenda/_lib/route-testing'
 
-import { TEST_ACCOUNT, type TestResponse } from '../_lib/route-testing'
+import {
+  TEST_ACCOUNT,
+  jsonResponse,
+  makeFakeGoogle,
+  type FakeGoogleHandler,
+  type TestResponse,
+} from '../_lib/route-testing'
 
 // ============================================================
 // GET/PATCH /api/integrations/google-calendar/settings — estado de
-// la conexión (nunca con el token) y calendario general.
+// la conexión (nunca con el token) y calendario general. El calendario
+// se valida contra la lista de Google, que se simula con un `fetch`
+// falso: no se toca la red.
 // ============================================================
 
 const h = vi.hoisted(() => ({
@@ -31,8 +39,28 @@ vi.mock('@/lib/flows/admin-client', () => ({ supabaseAdmin: () => h.admin }))
 import { GET, PATCH } from './route'
 
 const SECRET = 'refresh-secret-DO-NOT-LEAK'
+const SALA = 'sala-1@group.calendar.google.com'
+const OTRO = 'otro@group.calendar.google.com'
 
 let db: FakeDb
+let googleCalls: ReturnType<typeof makeFakeGoogle>['calls']
+
+const okToken: FakeGoogleHandler = () =>
+  jsonResponse(200, { access_token: 'access-secret', expires_in: 3600, scope: 'openid' })
+const okList: FakeGoogleHandler = () =>
+  jsonResponse(200, {
+    items: [
+      { id: SALA, summary: 'Sala 1' },
+      { id: OTRO, summary: 'Otro' },
+      { id: 'clinica@example.com', summary: 'clinica@example.com', primary: true },
+    ],
+  })
+
+function installGoogle(handlers: Parameters<typeof makeFakeGoogle>[0] = {}) {
+  const fake = makeFakeGoogle({ token: okToken, calendarList: okList, ...handlers })
+  googleCalls = fake.calls
+  vi.stubGlobal('fetch', fake.fetchImpl)
+}
 
 function connectionRow(patch: Row = {}): Row {
   return {
@@ -67,10 +95,14 @@ beforeEach(() => {
   vi.stubEnv('GOOGLE_CLIENT_SECRET', 'client-secret-456')
   vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://crm.example.com')
   seed([connectionRow()])
+  installGoogle()
+  vi.spyOn(console, 'error').mockImplementation(() => {})
 })
 
 afterEach(() => {
   vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 describe('GET /settings', () => {
@@ -168,17 +200,20 @@ describe('GET /settings', () => {
     expect(res.status).toBe(500)
     expect(JSON.stringify(res.body)).not.toContain('secreto interno')
   })
+
+  it('leer el estado no habla con Google', async () => {
+    await get()
+    expect(googleCalls).toHaveLength(0)
+  })
 })
 
 describe('PATCH /settings', () => {
   it('guarda el calendario general y devuelve el estado sin el token', async () => {
-    const res = await patch({ default_calendar_id: '  sala-1@group.calendar.google.com ' })
+    const res = await patch({ default_calendar_id: `  ${SALA} ` })
 
     expect(res.status).toBe(200)
-    expect(res.body.default_calendar_id).toBe('sala-1@group.calendar.google.com')
-    expect(db._tables.agenda_calendar_connections[0].default_calendar_id).toBe(
-      'sala-1@group.calendar.google.com',
-    )
+    expect(res.body.default_calendar_id).toBe(SALA)
+    expect(db._tables.agenda_calendar_connections[0].default_calendar_id).toBe(SALA)
     expect(JSON.stringify(res.body)).not.toContain(SECRET)
     expect(JSON.stringify(res.body)).not.toContain('refresh_token')
   })
@@ -186,7 +221,7 @@ describe('PATCH /settings', () => {
   it('no toca el permiso guardado ni el estado', async () => {
     const before = db._tables.agenda_calendar_connections[0].refresh_token_encrypted
 
-    await patch({ default_calendar_id: 'otro' })
+    await patch({ default_calendar_id: OTRO })
 
     const row = db._tables.agenda_calendar_connections[0]
     expect(row.refresh_token_encrypted).toBe(before)
@@ -196,7 +231,7 @@ describe('PATCH /settings', () => {
   it('solo cambia la conexión de la cuenta de la sesión', async () => {
     seed([connectionRow(), connectionRow({ account_id: 'acc-2', default_calendar_id: 'ajeno' })])
 
-    await patch({ default_calendar_id: 'otro' })
+    await patch({ default_calendar_id: OTRO })
 
     const other = db._tables.agenda_calendar_connections.find((r) => r.account_id === 'acc-2')
     expect(other?.default_calendar_id).toBe('ajeno')
@@ -214,6 +249,8 @@ describe('PATCH /settings', () => {
 
     expect(res.status).toBe(400)
     expect(db._tables.agenda_calendar_connections[0].default_calendar_id).toBe('primary')
+    // Un id mal formado ni siquiera llega a Google.
+    expect(googleCalls).toHaveLength(0)
   })
 
   it('rechaza un cuerpo que no es JSON con 400', async () => {
@@ -228,21 +265,91 @@ describe('PATCH /settings', () => {
 
     expect(res.status).toBe(409)
     expect(db._tables.agenda_calendar_connections).toHaveLength(0)
+    expect(googleCalls).toHaveLength(0)
+  })
+
+  it('con la conexión revocada contesta 409 y no cambia nada', async () => {
+    seed([connectionRow({ status: 'revoked' })])
+
+    const res = await patch({ default_calendar_id: SALA })
+
+    expect(res.status).toBe(409)
+    expect(db._tables.agenda_calendar_connections[0].default_calendar_id).toBe('primary')
+    expect(googleCalls).toHaveLength(0)
+  })
+
+  it('valida el calendario con la lista de Google de la cuenta conectada (solo editables)', async () => {
+    await patch({ default_calendar_id: SALA })
+
+    const refresh = googleCalls.find((c) => c.url.startsWith('https://oauth2.googleapis.com/token'))
+    expect(new URLSearchParams(refresh?.body).get('refresh_token')).toBe(SECRET)
+    const list = googleCalls.find((c) => c.url.includes('/calendarList'))
+    expect(new URL(list?.url ?? '').searchParams.get('minAccessRole')).toBe('writer')
+  })
+
+  it('rechaza con 400 un calendario que no está en la lista de Google y no cambia nada', async () => {
+    const res = await patch({ default_calendar_id: 'ajeno@group.calendar.google.com' })
+
+    expect(res.status).toBe(400)
+    expect(res.body.error).toBe('Elige un calendario de la lista.')
+    expect(db._tables.agenda_calendar_connections[0].default_calendar_id).toBe('primary')
+  })
+
+  it('acepta el alias primary de Google (el calendario principal de la cuenta conectada)', async () => {
+    seed([connectionRow({ default_calendar_id: SALA })])
+
+    const res = await patch({ default_calendar_id: 'primary' })
+
+    expect(res.status).toBe(200)
+    expect(db._tables.agenda_calendar_connections[0].default_calendar_id).toBe('primary')
+  })
+
+  it('si Google no responde contesta 502, no cambia nada y no filtra el permiso', async () => {
+    installGoogle({ calendarList: () => jsonResponse(500, { error: { message: 'boom' } }) })
+
+    const res = await patch({ default_calendar_id: SALA })
+
+    expect(res.status).toBe(502)
+    expect(db._tables.agenda_calendar_connections[0].default_calendar_id).toBe('primary')
+    expect(JSON.stringify(res.body)).not.toContain(SECRET)
+    expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain(SECRET)
+  })
+
+  it('si Google ya no da permiso contesta 409 y marca la conexión como revocada', async () => {
+    installGoogle({ token: () => jsonResponse(400, { error: 'invalid_grant' }) })
+
+    const res = await patch({ default_calendar_id: SALA })
+
+    expect(res.status).toBe(409)
+    expect(db._tables.agenda_calendar_connections[0]).toMatchObject({
+      status: 'revoked',
+      default_calendar_id: 'primary',
+    })
+  })
+
+  it('sin las variables de Google en el servidor contesta 503', async () => {
+    vi.stubEnv('GOOGLE_CLIENT_SECRET', '')
+
+    const res = await patch({ default_calendar_id: SALA })
+
+    expect(res.status).toBe(503)
+    expect(googleCalls).toHaveLength(0)
   })
 
   it.each(['agent', 'viewer'] as const)('%s recibe 403 y no cambia nada', async (role) => {
     h.state.role = role
 
-    const res = await patch({ default_calendar_id: 'otro' })
+    const res = await patch({ default_calendar_id: OTRO })
 
     expect(res.status).toBe(403)
     expect(db._tables.agenda_calendar_connections[0].default_calendar_id).toBe('primary')
+    expect(googleCalls).toHaveLength(0)
   })
 
   it('si falla el guardado contesta 500 y no dice que se guardó', async () => {
     db._failNext('update', 'agenda_calendar_connections', { message: 'boom' })
 
-    const res = await patch({ default_calendar_id: 'otro' })
+    const res = await patch({ default_calendar_id: OTRO })
 
     expect(res.status).toBe(500)
     expect(db._tables.agenda_calendar_connections[0].default_calendar_id).toBe('primary')

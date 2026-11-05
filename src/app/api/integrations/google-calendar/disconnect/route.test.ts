@@ -168,7 +168,7 @@ describe('POST /disconnect', () => {
     expect(calls).toHaveLength(0)
   })
 
-  it('sin conexión no hace nada y contesta ok', async () => {
+  it('sin conexión no habla con Google y contesta ok', async () => {
     seed([])
 
     const res = await post()
@@ -178,6 +178,18 @@ describe('POST /disconnect', () => {
     expect(calls).toHaveLength(0)
   })
 
+  it('sin conexión también suelta los calendarios por profesional de esta cuenta', async () => {
+    seed([])
+
+    await post()
+
+    const staff = db._tables.booking_staff
+    expect(staff.find((r) => r.id === 'st-1')?.google_calendar_id).toBeNull()
+    expect(staff.find((r) => r.id === 'st-other')?.google_calendar_id).toBe(
+      'otro@group.calendar.google.com',
+    )
+  })
+
   it('una conexión ya revocada también se puede quitar', async () => {
     seed([connectionRow({ status: 'revoked' })])
 
@@ -185,14 +197,64 @@ describe('POST /disconnect', () => {
     expect(db._tables.agenda_calendar_connections).toHaveLength(0)
   })
 
-  it('si no se puede borrar la fila contesta 500 y no revoca el permiso', async () => {
+  it('revoca el permiso antes de borrar la fila (después ya no hay de dónde leerlo)', async () => {
+    let rowExistedWhenRevoking: boolean | null = null
+    installGoogle({
+      revoke: () => {
+        rowExistedWhenRevoking = db._tables.agenda_calendar_connections.some(
+          (r) => r.account_id === TEST_ACCOUNT,
+        )
+        return jsonResponse(200, {})
+      },
+    })
+
+    await post()
+
+    expect(rowExistedWhenRevoking).toBe(true)
+  })
+
+  it('si no se pueden soltar los calendarios del equipo, igual revoca el permiso en Google', async () => {
+    db._failNext('update', 'booking_staff', { message: 'boom' })
+
+    const res = await post()
+
+    expect(res.status).toBe(500)
+    const revoke = calls.find((c) => c.url.startsWith('https://oauth2.googleapis.com/revoke'))
+    expect(new URLSearchParams(revoke?.body).get('token')).toBe(REFRESH)
+  })
+
+  it('si no se pudo soltar los calendarios, volver a desconectar termina el trabajo', async () => {
+    db._failNext('update', 'booking_staff', { message: 'boom' })
+    await post()
+    // La fila ya se borró, pero el calendario del profesional quedó.
+    expect(db._tables.agenda_calendar_connections.map((r) => r.account_id)).toEqual(['acc-2'])
+    expect(db._tables.booking_staff.find((r) => r.id === 'st-1')?.google_calendar_id).toBe(
+      'andres@group.calendar.google.com',
+    )
+
+    const retry = await post()
+
+    expect(retry.status).toBe(200)
+    expect(db._tables.booking_staff.find((r) => r.id === 'st-1')?.google_calendar_id).toBeNull()
+    expect(db._tables.booking_staff.find((r) => r.id === 'st-other')?.google_calendar_id).toBe(
+      'otro@group.calendar.google.com',
+    )
+  })
+
+  it('si no se puede borrar la fila contesta 500, la conexión sigue y se puede reintentar', async () => {
     db._failNext('delete', 'agenda_calendar_connections', { message: 'boom' })
 
     const res = await post()
 
     expect(res.status).toBe(500)
     expect(db._tables.agenda_calendar_connections).toHaveLength(2)
-    expect(calls).toHaveLength(0)
+    // Los calendarios del equipo no se sueltan mientras la conexión siga.
+    expect(db._tables.booking_staff.find((r) => r.id === 'st-1')?.google_calendar_id).toBe(
+      'andres@group.calendar.google.com',
+    )
+
+    expect((await post()).status).toBe(200)
+    expect(db._tables.agenda_calendar_connections.map((r) => r.account_id)).toEqual(['acc-2'])
   })
 
   it.each(['owner', 'admin'] as const)('deja pasar a %s', async (role) => {

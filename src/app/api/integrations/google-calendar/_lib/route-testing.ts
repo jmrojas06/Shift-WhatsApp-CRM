@@ -14,7 +14,11 @@
 
 import type { NextRequest } from 'next/server'
 
-import { nextServerMock } from '@/app/api/verticals/agenda/_lib/route-testing'
+import {
+  authMockModule,
+  nextServerMock,
+  type RouteTestState,
+} from '@/app/api/verticals/agenda/_lib/route-testing'
 
 export {
   TEST_ACCOUNT,
@@ -56,6 +60,26 @@ export function nextServerWithRedirectMock() {
           cookies: { set: (cookie) => void cookieCalls.push(cookie) },
         }
       },
+    },
+  }
+}
+
+/**
+ * Igual que `authMockModule`, pero las respuestas de error también anotan las
+ * cookies que se ponen (como el `NextResponse` real): para comprobar que el
+ * callback borra el `state` aunque falle la sesión.
+ */
+export function authMockModuleWithCookies(state: RouteTestState) {
+  const base = authMockModule(state)
+  return {
+    ...base,
+    toErrorResponse: (err: unknown) => {
+      const cookieCalls: CookieCall[] = []
+      return {
+        ...base.toErrorResponse(err),
+        cookieCalls,
+        cookies: { set: (cookie: CookieCall) => void cookieCalls.push(cookie) },
+      }
     },
   }
 }

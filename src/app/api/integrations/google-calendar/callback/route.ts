@@ -99,7 +99,10 @@ export async function GET(request: NextRequest) {
     return finish('ok')
   } catch (err) {
     // Sin sesión o sin permiso (401/403), o una falla inesperada (500 genérico).
-    return toErrorResponse(err)
+    // El state sirve una sola vez: también aquí se borra.
+    const response = toErrorResponse(err)
+    response.cookies.set(stateCookie('', 0))
+    return response
   }
 }
 

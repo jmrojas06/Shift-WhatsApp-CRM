@@ -33,10 +33,10 @@ vi.mock('next/server', async () => {
 })
 
 vi.mock('@/lib/auth/account', async () => {
-  const { authMockModule } = await import(
+  const { authMockModuleWithCookies } = await import(
     '@/app/api/integrations/google-calendar/_lib/route-testing'
   )
-  return authMockModule(h.state)
+  return authMockModuleWithCookies(h.state)
 })
 
 vi.mock('@/lib/flows/admin-client', () => ({ supabaseAdmin: () => h.admin }))
@@ -253,6 +253,45 @@ describe('GET /callback: reconexión', () => {
       'otro@group.calendar.google.com',
     )
   })
+
+  it('si no se pueden soltar los calendarios de la cuenta anterior, no guarda la conexión nueva y un reintento sí los suelta', async () => {
+    seedConnection({ google_email: 'otra@example.com' })
+    db._failNext('update', 'booking_staff', { message: 'boom' })
+
+    const failed = await callback()
+
+    expect(failed.location).toContain('reason=save')
+    expectCookieCleared(failed)
+    // Nada cambió: la conexión sigue siendo la anterior, así el reintento
+    // vuelve a ver que la cuenta de Google cambió.
+    expect(connection()).toMatchObject({
+      google_email: 'otra@example.com',
+      default_calendar_id: 'sala-1@group.calendar.google.com',
+    })
+    expect(decrypt(String(connection().refresh_token_encrypted))).toBe('old-refresh')
+    expect(dirtyIds()).toEqual([])
+
+    db._tables.booking_staff.find((r) => r.id === 'st-1')!.google_calendar_id =
+      'andres@group.calendar.google.com'
+    const retry = await callback()
+
+    expect(retry.location).toContain('google=ok')
+    expect(connection()).toMatchObject({
+      google_email: 'clinica@example.com',
+      default_calendar_id: 'primary',
+    })
+    expect(db._tables.booking_staff.find((r) => r.id === 'st-1')?.google_calendar_id).toBeNull()
+  })
+
+  it('una conexión nueva (sin fila anterior) suelta los calendarios que hubieran quedado de una desconexión a medias', async () => {
+    await callback()
+
+    const staff = db._tables.booking_staff
+    expect(staff.find((r) => r.id === 'st-1')?.google_calendar_id).toBeNull()
+    expect(staff.find((r) => r.id === 'st-other')?.google_calendar_id).toBe(
+      'otro@group.calendar.google.com',
+    )
+  })
 })
 
 describe('GET /callback: state inválido', () => {
@@ -287,11 +326,13 @@ describe('GET /callback: roles', () => {
 
     const res = (await GET(
       getRequest({ query: { code: 'auth-code-1', state: STATE }, cookies: { [STATE_COOKIE]: STATE } }),
-    )) as unknown as TestResponse
+    )) as unknown as TestResponse & RedirectResponse
 
     expect(res.status).toBe(403)
     expect(googleCalls).toHaveLength(0)
     expect(db._tables.agenda_calendar_connections).toHaveLength(0)
+    // El state sirve una sola vez: también se borra cuando falla el permiso.
+    expectCookieCleared(res)
   })
 })
 

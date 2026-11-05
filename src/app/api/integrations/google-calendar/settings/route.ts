@@ -9,6 +9,7 @@ import {
   toSafeSettings,
   type ConnectionRow,
 } from '../_lib/connection'
+import { calendarChoiceErrorResponse, ensureWritableCalendar } from '../_lib/calendar-choice'
 import { GOOGLE_API_TEXTS, readGoogleEnv } from '../_lib/google-env'
 
 // ============================================================
@@ -18,6 +19,8 @@ import { GOOGLE_API_TEXTS, readGoogleEnv } from '../_lib/google-env'
 //           tiene Google configurado, si hay conexión, correo, estado,
 //           último error, última copia y calendario general.
 //   PATCH — guarda el calendario general: body `{ default_calendar_id }`.
+//           Solo vale un calendario de la lista de Google de la conexión
+//           activa (se comprueba aquí, con el permiso guardado).
 //
 // Solo owner/admin. La tabla no tiene políticas para clientes, así que
 // se lee con el service role, siempre acotado a la cuenta de la sesión.
@@ -47,9 +50,9 @@ export async function PATCH(request: Request) {
     }
 
     const db = supabaseAdmin()
-    if (!(await readConnection(db, ctx.accountId))) {
-      return NextResponse.json({ error: GOOGLE_API_TEXTS.notConnected }, { status: 409 })
-    }
+    // Sin conexión activa no se puede elegir ninguno (409); un id que no es de
+    // esa cuenta de Google se rechaza (400).
+    await ensureWritableCalendar(db, ctx.accountId, calendarId)
 
     const { data, error } = await db
       .from('agenda_calendar_connections')
@@ -66,7 +69,7 @@ export async function PATCH(request: Request) {
       toSafeSettings(data as ConnectionRow, readGoogleEnv() !== null),
     )
   } catch (err) {
-    return toErrorResponse(err)
+    return calendarChoiceErrorResponse(err) ?? toErrorResponse(err)
   }
 }
 

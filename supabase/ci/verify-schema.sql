@@ -1124,6 +1124,23 @@ BEGIN
     RAISE EXCEPTION 'booking_staff.google_calendar_id is missing — migration 056 did not apply';
   END IF;
 
+  -- Los ids de calendario de Google (el del profesional y el general de la
+  -- conexión) caben en 300 caracteres, el mismo tope que valida el código.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.booking_staff'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) LIKE '%char_length(google_calendar_id) <= 300%'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.agenda_calendar_connections'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) LIKE '%char_length(default_calendar_id) <= 300%'
+  ) THEN
+    RAISE EXCEPTION
+      'booking_staff.google_calendar_id / agenda_calendar_connections.default_calendar_id have no length limit — migration 056 did not apply';
+  END IF;
+
   -- Las FK compuestas (account_id, appointment_id) de las tablas nuevas
   -- necesitan este UNIQUE sobre las citas.
   IF NOT EXISTS (

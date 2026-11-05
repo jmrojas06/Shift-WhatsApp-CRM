@@ -11,14 +11,18 @@ import { clearStaffCalendars, readConnection } from '../_lib/connection'
 // POST /api/integrations/google-calendar/disconnect
 //
 // Desconecta Google Calendar: solo owner/admin.
-//   1. Borra la fila de la conexión (con eso la sincronización para).
-//   2. Suelta los calendarios por profesional (eran de esa cuenta).
-//   3. Revoca el permiso en Google. Es "lo mejor posible": si Google
+//   1. Revoca el permiso en Google. Es "lo mejor posible": si Google
 //      no responde, la persona queda desconectada igual.
+//   2. Borra la fila de la conexión (con eso la sincronización para).
+//   3. Suelta los calendarios por profesional (eran de esa cuenta).
 // Los eventos que ya están en el calendario se quedan.
 //
-// Se borra primero y se revoca después: así la desconexión no depende
-// de que Google conteste (revocar puede tardar hasta 10 segundos).
+// El orden importa: el permiso solo se puede leer mientras la fila
+// existe, y revocar no puede quedar detrás de un paso que pueda fallar
+// (si no, el permiso seguiría vivo en Google sin que la app pueda
+// quitarlo). Si el borrado o el paso 3 fallan, contesta 500 y volver a
+// desconectar termina el trabajo: revocar dos veces no hace daño, y sin
+// conexión igual se sueltan los calendarios del equipo.
 // ============================================================
 
 export async function POST() {
@@ -27,7 +31,13 @@ export async function POST() {
     const db = supabaseAdmin()
 
     const connection = await readConnection(db, ctx.accountId)
-    if (!connection) return NextResponse.json({ ok: true })
+    if (!connection) {
+      // Ya estaba desconectado, o una desconexión anterior quedó a medias.
+      await clearStaffCalendars(db, ctx.accountId)
+      return NextResponse.json({ ok: true })
+    }
+
+    await revokeBestEffort(connection.refresh_token_encrypted)
 
     const { error } = await db
       .from('agenda_calendar_connections')
@@ -36,7 +46,6 @@ export async function POST() {
     if (error) throw new Error(`No se pudo borrar la conexión de Google: ${error.message}`)
 
     await clearStaffCalendars(db, ctx.accountId)
-    await revokeBestEffort(connection.refresh_token_encrypted)
 
     return NextResponse.json({ ok: true })
   } catch (err) {

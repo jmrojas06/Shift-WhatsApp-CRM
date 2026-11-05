@@ -92,8 +92,14 @@ export function toSafeSettings(row: ConnectionRow | null, configured: boolean): 
  * Guarda (o reemplaza) la conexión de la cuenta, activa y sin errores.
  *
  * Con la misma cuenta de Google se conserva el calendario general elegido.
- * Con otra, vuelve a `primary` y se sueltan los calendarios por profesional
- * (eran de la cuenta anterior y ya no existen).
+ * Con otra (o si no había conexión), vuelve a `primary` y se sueltan los
+ * calendarios por profesional: eran de la cuenta anterior y ya no existen.
+ *
+ * Los calendarios se sueltan ANTES de guardar. Si soltarlos falla, no se
+ * guarda nada y la conexión anterior sigue igual: al reintentar se vuelve a
+ * ver que la cuenta de Google cambió y se vuelve a intentar soltarlos. (Al
+ * revés, la conexión nueva quedaría guardada y el reintento creería que es la
+ * misma cuenta, dejando los calendarios viejos para siempre.)
  */
 export async function saveConnection(
   db: SupabaseClient,
@@ -105,6 +111,8 @@ export async function saveConnection(
     existing.google_email !== null &&
     args.email !== null &&
     existing.google_email.toLowerCase() === args.email.toLowerCase()
+
+  if (!sameGoogleAccount) await clearStaffCalendars(db, args.accountId)
 
   const { error } = await db.from('agenda_calendar_connections').upsert(
     {
@@ -121,8 +129,6 @@ export async function saveConnection(
     { onConflict: 'account_id' },
   )
   if (error) throw new Error(`No se pudo guardar la conexión de Google: ${error.message}`)
-
-  if (existing && !sameGoogleAccount) await clearStaffCalendars(db, args.accountId)
 }
 
 /** Los calendarios por profesional dejan de valer al cambiar o quitar la cuenta de Google. */

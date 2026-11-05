@@ -140,8 +140,9 @@ export default function AgendaConfiguracionPage() {
       timeOffRes.error ||
       questionsRes.error
     ) {
-      // Columnas o tabla de la migración 051 que aún no existen: mensaje claro
-      // en vez del error genérico.
+      // Columnas o tabla de las migraciones 051 y 056 (la columna del
+      // calendario de Google del equipo es de la 056) que aún no existen:
+      // mensaje claro en vez del error genérico.
       setMigrationMissing(
         [settingsRes.error, staffRes.error, questionsRes.error].some((error) =>
           isMissingMigrationError(error),
