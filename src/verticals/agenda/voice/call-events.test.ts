@@ -124,6 +124,20 @@ describe('dial-result', () => {
     expect(callOf(db).outcome).toBe('advisor_connected')
   })
 
+  it.each(['info', 'out_of_hours'] as const)(
+    'una llamada entrante que leyó el menú (%s) y luego pidió un asesor toma el resultado del asesor',
+    async (earlier) => {
+      const connected = seed({ direction: 'inbound', outcome: earlier })
+      await handleDialResult({ db: asDb(connected), callId: CALL_ID, form: { DialCallStatus: 'completed' }, now: NOW })
+      expect(callOf(connected).outcome).toBe('advisor_connected')
+
+      const missed = seed({ direction: 'inbound', outcome: earlier })
+      await handleDialResult({ db: asDb(missed), callId: CALL_ID, form: { DialCallStatus: 'no-answer' }, now: NOW })
+      expect(callOf(missed).outcome).toBe('advisor_missed')
+      expect(missed._tables.notifications).toHaveLength(1)
+    },
+  )
+
   it('no pisa otros resultados (p. ej. una confirmación)', async () => {
     const db = seed({ outcome: 'confirmed' })
     await handleDialResult({ db: asDb(db), callId: CALL_ID, form: { DialCallStatus: 'no-answer' }, now: NOW })

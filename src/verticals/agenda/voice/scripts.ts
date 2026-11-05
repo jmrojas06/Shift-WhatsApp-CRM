@@ -304,6 +304,19 @@ export function noAppointments(): string {
   return 'No encontramos citas con este número. Para agendar, marca 1.'
 }
 
+/** Las teclas del submenú de la cita cuando se repite (sin volver a leer los datos). */
+export function inboundApptReprompt(): string {
+  return 'Para confirmar tu cita, marca 1. Para cancelarla, marca 2. Para volver al menú, marca 0.'
+}
+
+/**
+ * Algo falló por dentro en una llamada entrante. A diferencia de `humanFollowUp`
+ * no promete que alguien llamará: puede que la llamada ni siquiera tenga registro.
+ */
+export function temporaryFailure(): string {
+  return 'En este momento no podemos atender tu llamada. Escríbenos por WhatsApp. Hasta luego.'
+}
+
 /** Opción 3: el texto de horario y dirección del negocio o, si no hay, el horario de atención. */
 export function officeInfo(args: { infoText: string | null | undefined; officeHours: OfficeHours }): string {
   const info = speakable(args.infoText)

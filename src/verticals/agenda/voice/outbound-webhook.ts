@@ -94,7 +94,7 @@ function readLoop(value: string | null): number {
 // Lecturas de la cuenta
 // ------------------------------------------------------------
 
-async function loadAccountFacts(db: SupabaseClient, accountId: string): Promise<{ name: string; clinic: boolean }> {
+export async function loadAccountFacts(db: SupabaseClient, accountId: string): Promise<{ name: string; clinic: boolean }> {
   const [{ data, error }, modules] = await Promise.all([
     db.from('accounts').select('name').eq('id', accountId).maybeSingle(),
     readAccountModules(db, accountId),

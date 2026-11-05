@@ -124,3 +124,78 @@ describe('cierre de la llamada', () => {
     expect(await res.text()).not.toContain('boom')
   })
 })
+
+// ------------------------------------------------------------
+// Llamadas ENTRANTES: la URL de estado de la app de TeXML es una sola para
+// todas las llamadas (`…/status?inbound=1&t=<token de "inbound">`), así que no
+// trae el id de la fila y la llamada se encuentra por su CallSid.
+// ------------------------------------------------------------
+
+describe('llamadas entrantes (inbound=1)', () => {
+  const inboundStatus = (extra: Parameters<typeof webhookRequest>[1] = {}) =>
+    webhookRequest('status', {
+      call: null,
+      query: { inbound: '1' },
+      form: { CallSid: 'CA-IN', CallStatus: 'completed', CallDuration: '61' },
+      ...extra,
+    })
+
+  beforeEach(() => {
+    h.state.db = makeCallDb({
+      accounts: [{ id: 'acc-1', name: 'x', owner_user_id: 'owner-1' }],
+      whatsapp_config: [],
+      contacts: [],
+      contact_notes: [],
+      booking_calls: [
+        callRowSeed({ id: TEST_CALL_ID, direction: 'inbound', status: 'in_progress', provider_call_sid: 'CA-IN', outcome: 'info' }),
+      ],
+    })
+  })
+
+  it('cierra la llamada entrante encontrándola por su CallSid', async () => {
+    const res = await POST(inboundStatus())
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toMatch(/^text\/xml/)
+    expect(callOf(h.state.db as FakeDb)).toMatchObject({ status: 'completed', duration_seconds: 61, outcome: 'info' })
+  })
+
+  it('403 sin token o con el token de una llamada concreta', async () => {
+    const { voiceToken } = await import('@/lib/voice/tokens')
+    expect((await POST(inboundStatus({ token: null }))).status).toBe(403)
+    expect((await POST(inboundStatus({ token: voiceToken(TEST_CALL_ID) }))).status).toBe(403)
+    expect(callOf(h.state.db as FakeDb).status).toBe('in_progress')
+  })
+
+  it('sin inbound=1 y sin call sigue siendo 403 (no se adivina la llamada)', async () => {
+    const res = await POST(inboundStatus({ query: {} }))
+    expect(res.status).toBe(403)
+    expect(callOf(h.state.db as FakeDb).status).toBe('in_progress')
+  })
+
+  it('403 con una firma que no cuadra', async () => {
+    const keys = makeSigningKeys()
+    vi.stubEnv('TELNYX_PUBLIC_KEY', keys.publicKeyB64)
+    const res = await POST(inboundStatus({ headers: () => keys.headersFor('CallStatus=busy') }))
+    expect(res.status).toBe(403)
+    expect(callOf(h.state.db as FakeDb).status).toBe('in_progress')
+  })
+
+  it('un CallSid que no es de ninguna llamada entrante responde 200 sin hacer nada', async () => {
+    const res = await POST(inboundStatus({ form: { CallSid: 'CA-OTRA', CallStatus: 'completed' } }))
+    expect(res.status).toBe(200)
+    expect(callOf(h.state.db as FakeDb).status).toBe('in_progress')
+  })
+
+  it('con la llamada concreta (call=) sigue funcionando como antes', async () => {
+    const res = await POST(webhookRequest('status', { form: { CallStatus: 'completed', CallDuration: '10' } }))
+    expect(res.status).toBe(200)
+    expect(callOf(h.state.db as FakeDb).status).toBe('completed')
+  })
+
+  it('si la base falla responde 500 para que Telnyx pueda reintentar', async () => {
+    ;(h.state.db as FakeDb)._failNext('select', 'booking_calls', { message: 'boom' })
+    const res = await POST(inboundStatus())
+    expect(res.status).toBe(500)
+    expect(await res.text()).not.toContain('boom')
+  })
+})

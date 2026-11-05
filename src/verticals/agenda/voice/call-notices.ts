@@ -19,6 +19,18 @@ export const CALL_NOTICES = {
   failed: (who: string, when: string): string =>
     `${who} contestó la llamada de confirmación de su cita del ${when}, pero no se pudo guardar lo que marcó. Revisa la cita y llámale.`,
 
+  // ---- Llamadas entrantes (T14) ----
+  urgencyTitle: 'Llamada: urgencia sin atender',
+  urgency: (who: string): string =>
+    `${who} llamó con una urgencia y no había a quién pasar la llamada. Escríbele o llámale cuanto antes.`,
+
+  inboundFailed: (who: string, when: string | null): string =>
+    `${who} llamó para confirmar o cancelar su cita${when ? ` del ${when}` : ''}, pero no se pudo guardar. Revisa la cita y llámale.`,
+
+  /** Errores que quedan en la fila de la llamada entrante. */
+  bookingLinkNoNumber: 'No se pudo enviar el WhatsApp para agendar: la llamada no traía un número.',
+  bookingLinkNotSent: (reason: string): string => `No se pudo enviar el WhatsApp para agendar: ${reason}`,
+
   /** Quién, cuando el contacto no tiene nombre ni teléfono. */
   someone: 'Un paciente',
   /** Error que queda en la fila de la llamada. */

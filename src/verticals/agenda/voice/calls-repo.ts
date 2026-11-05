@@ -41,6 +41,14 @@ export type CallOutcome =
   | 'info'
   | 'urgency'
 
+/**
+ * Resultados "de paso" de una llamada entrante: se escriben mientras el
+ * paciente recorre el menú y el que viene después los puede reemplazar
+ * (leer el horario y luego confirmar su cita deja `confirmed`). Cualquier
+ * otro resultado es final: un reintento del webhook no lo repite.
+ */
+export const REPLACEABLE_OUTCOMES: readonly CallOutcome[] = ['no_response', 'info', 'out_of_hours']
+
 /** La llamada ya terminó: no cambia más de estado. */
 export const TERMINAL_STATUSES: readonly CallStatus[] = ['completed', 'no_answer', 'busy', 'failed', 'canceled']
 /** La llamada sigue (o se está armando). */

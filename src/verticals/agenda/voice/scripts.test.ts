@@ -14,6 +14,7 @@ import {
   cancelConfirmAsk,
   goodbye,
   humanFollowUp,
+  inboundApptReprompt,
   inboundGreeting,
   inboundMenu,
   myAppointment,
@@ -29,6 +30,7 @@ import {
   spokenDay,
   spokenStaff,
   spokenWhen,
+  temporaryFailure,
   testCallIntro,
   thanksGoodbye,
   urgencyAlarm,
@@ -246,6 +248,18 @@ describe('guion entrante', () => {
     expect(noAppointments()).toBe('No encontramos citas con este número. Para agendar, marca 1.')
   })
 
+  it('el submenú de la cita repite las teclas, sin los datos de la cita', () => {
+    expect(inboundApptReprompt()).toBe(
+      'Para confirmar tu cita, marca 1. Para cancelarla, marca 2. Para volver al menú, marca 0.',
+    )
+  })
+
+  it('si algo falla por dentro no promete que alguien llamará', () => {
+    expect(temporaryFailure()).toBe(
+      'En este momento no podemos atender tu llamada. Escríbenos por WhatsApp. Hasta luego.',
+    )
+  })
+
   it('horario y dirección: lee el texto del negocio y, si no hay, el horario', () => {
     expect(officeInfo({ infoText: 'Estamos en la Calle 10 # 5-20, Bogotá.', officeHours: HOURS })).toBe(
       'Estamos en la Calle 10 número 5-20, Bogotá.',
@@ -309,6 +323,8 @@ describe('todas las frases', () => {
     bookingLinkFailed: scripts.bookingLinkFailed(),
     myAppointment: scripts.myAppointment(sample),
     noAppointments: scripts.noAppointments(),
+    inboundApptReprompt: scripts.inboundApptReprompt(),
+    temporaryFailure: scripts.temporaryFailure(),
     officeInfo: scripts.officeInfo({ infoText: null, officeHours: HOURS }),
     officeInfoTexto: scripts.officeInfo({ infoText: 'Atendemos de 8 a.m. a 6 p.m.', officeHours: HOURS }),
     advisorMissed: scripts.advisorMissed(),
@@ -348,6 +364,7 @@ describe('todas las frases', () => {
       'appointmentInactive',
       'goodbye',
       'thanksGoodbye',
+      'temporaryFailure',
     ]) {
       expect(phrases[name]).toMatch(/Hasta luego\.$/)
     }

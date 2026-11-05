@@ -130,7 +130,7 @@ export async function describeCaller(
 }
 
 /** "jueves 5 de noviembre de 2026 a las 3:30 p. m." — para texto escrito, no para la voz. */
-function writtenWhen(startsAt: Date): string {
+export function writtenWhen(startsAt: Date): string {
   const parts = zonedParts(startsAt)
   return `${formatLongDate(parts.dateKey)} a las ${formatTimeLabel(parts)}`
 }

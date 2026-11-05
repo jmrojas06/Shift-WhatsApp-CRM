@@ -22,6 +22,7 @@ import {
   claimOutcome,
   IN_FLIGHT_STATUSES,
   loadCallRow,
+  REPLACEABLE_OUTCOMES,
   type CallStatus,
 } from './calls-repo'
 import { describeCaller, notifyCallTeam } from './effects'
@@ -137,8 +138,9 @@ export async function handleDialResult(args: DialResultArgs): Promise<{ xml: str
   const connected = DIAL_CONNECTED.has((form.DialCallStatus ?? '').trim().toLowerCase())
   const outcome = connected ? 'advisor_connected' : 'advisor_missed'
 
-  // La señal final puede llegar primero y dejar no_response: este resultado lo pisa.
-  const won = await claimOutcome(db, call.id, outcome, { from: [null, 'no_response'] })
+  // La señal final puede llegar primero y dejar no_response, y en una llamada entrante
+  // el menú pudo dejar un resultado "de paso" (leyó el horario): este resultado los pisa.
+  const won = await claimOutcome(db, call.id, outcome, { from: [null, ...REPLACEABLE_OUTCOMES] })
 
   if (connected) return { xml: response([hangup()]) }
 
