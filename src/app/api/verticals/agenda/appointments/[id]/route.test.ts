@@ -166,6 +166,25 @@ describe('permisos y cuenta', () => {
     expect(h.afterCallbacks).toHaveLength(0)
   })
 
+  it.each([
+    ['cambio de estado', { status: 'completed' }],
+    ['mover', { action: 'move', starts_at: MON_11 }],
+    ['cancelar', { action: 'cancel' }],
+  ])('un id que no es uuid → 404 (%s) sin llegar a la base', async (_name, payload) => {
+    const db = boot()
+    const before = { ...row(db) }
+    const from = vi.spyOn(db, 'from')
+    for (const id of ['no-es-un-uuid', '123', "77777777-7777-4777-8777-77777777777'", '']) {
+      const res = await patch(payload, id)
+      expect(res.status).toBe(404)
+      expect(res.body.code).toBe('not_found')
+      expect(res.body.error).toBe('La cita no existe.')
+    }
+    expect(from).not.toHaveBeenCalled()
+    expect(row(db)).toEqual(before)
+    expect(h.afterCallbacks).toHaveLength(0)
+  })
+
   it('una acción desconocida → 400', async () => {
     boot()
     const res = await patch({ action: 'borrar' })
@@ -202,6 +221,22 @@ describe('cambio de estado (sin cambios)', () => {
     const res = await patch({ status: 'cancelled' })
     expect(res.status).toBe(200)
     expect(row(db)).toMatchObject({ status: 'cancelled', cancel_reason: 'equipo' })
+  })
+
+  it('{status, action: null} se trata como cambio de estado (null = sin acción)', async () => {
+    const db = boot()
+    const res = await patch({ status: 'completed', action: null, confirm_past: null })
+    expect(res.status).toBe(200)
+    expect(row(db).status).toBe('completed')
+    await drainAfter()
+    expect(h.kick).toHaveBeenCalledWith(TEST_ACCOUNT)
+  })
+
+  it('{action: null} sin estado sigue dando invalid_status', async () => {
+    boot()
+    const res = await patch({ action: null })
+    expect(res.status).toBe(400)
+    expect(res.body.code).toBe('invalid_status')
   })
 
   it('un estado inválido → 400 sin tocar nada ni avisar a Google', async () => {

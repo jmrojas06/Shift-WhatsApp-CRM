@@ -29,7 +29,8 @@ const fail = (message: string): { ok: false; message: string } => ({ ok: false, 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-const isUuid = (value: unknown): value is string => typeof value === 'string' && UUID.test(value)
+export const isUuid = (value: unknown): value is string =>
+  typeof value === 'string' && UUID.test(value)
 
 /** Espacios repetidos o en los bordes fuera. */
 const tidy = (value: string): string => value.replace(/\s+/gu, ' ').trim()

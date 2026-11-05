@@ -54,6 +54,7 @@ const h = vi.hoisted(() => ({
     notify_error?: string
   },
   findOrCreateContact: vi.fn(),
+  findExistingContact: vi.fn(),
 }))
 
 vi.mock('next/server', async () => {
@@ -88,6 +89,12 @@ vi.mock('@/lib/api/v1/contacts', async (importOriginal) => ({
   findOrCreateContact: (...args: unknown[]) => h.findOrCreateContact(...args),
 }))
 
+// La búsqueda de un contacto por teléfono usa `like`, que el fake no tiene.
+vi.mock('@/lib/contacts/dedupe', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/contacts/dedupe')>()),
+  findExistingContact: (...args: unknown[]) => h.findExistingContact(...args),
+}))
+
 import { POST } from './route'
 
 function boot(options: PanelSeedOptions = {}): FakeDb {
@@ -108,6 +115,9 @@ const post = async (payload: unknown) => (await POST(jsonRequest(payload))) as u
 
 const rows = (db: FakeDb, table: string): Row[] => db._tables[table] ?? []
 
+/** Copia de todas las tablas, para comprobar que una petición rechazada no escribió NADA. */
+const snapshot = (db: FakeDb) => structuredClone(db._tables)
+
 /** Corre lo que la ruta dejó para después de responder, como el runtime. */
 const drainAfter = async () => {
   for (const cb of h.afterCallbacks.splice(0)) await cb()
@@ -120,6 +130,8 @@ beforeEach(() => {
   h.afterCallbacks.length = 0
   h.notifyCalls.length = 0
   h.notifyOutcome = { notified: false, notify_error: 'sin aviso' }
+  h.findExistingContact.mockReset()
+  h.findExistingContact.mockResolvedValue(null)
   h.findOrCreateContact.mockReset()
   h.findOrCreateContact.mockImplementation(
     async (db: FakeDb, accountId: string, _userId: string, input: { phone: string; name: string }) => {
@@ -567,6 +579,115 @@ describe('clínica', () => {
     expect(res.status).toBe(400)
     expect(res.body.code).toBe('patient_required')
     expect(rows(db, 'booking_appointments')).toHaveLength(0)
+  })
+
+  describe('el paciente se decide antes de escribir (sin contacto ni conversación sueltos)', () => {
+    const newContact = { name: 'Luis Gómez', phone: '+573001234567' }
+    const newContactBody = (extra: Record<string, unknown> = {}) =>
+      body({ contact_id: undefined, new_contact: newContact, ...extra })
+
+    it('contacto existente con pacientes y sin elegir → patient_required, nada escrito', async () => {
+      const db = clinic({
+        extra: {
+          conversations: [],
+          clinic_patients: [
+            { id: PATIENT, account_id: TEST_ACCOUNT, contact_id: CONTACT, full_name: 'Ana Pérez' },
+          ],
+        },
+      })
+      const before = snapshot(db)
+      const res = await post(body())
+      expect(res.status).toBe(400)
+      expect(res.body.code).toBe('patient_required')
+      expect(db._tables).toEqual(before)
+      expect(rows(db, 'conversations')).toHaveLength(0)
+    })
+
+    it('contacto existente sin conversación y paciente de otro contacto → patient_not_found, nada escrito', async () => {
+      const db = clinic({
+        extra: {
+          conversations: [],
+          clinic_patients: [
+            { id: OTHER_PATIENT, account_id: TEST_ACCOUNT, contact_id: 'otro', full_name: 'Otro Paciente' },
+          ],
+        },
+      })
+      const before = snapshot(db)
+      const res = await post(body({ patient_id: OTHER_PATIENT }))
+      expect(res.status).toBe(404)
+      expect(res.body.code).toBe('patient_not_found')
+      expect(db._tables).toEqual(before)
+    })
+
+    it('contacto nuevo con un patient_id → patient_not_found y no se crea el contacto ni la conversación', async () => {
+      const db = clinic({ extra: { conversations: [] } })
+      const before = snapshot(db)
+      const res = await post(newContactBody({ patient_id: PATIENT }))
+      expect(res.status).toBe(404)
+      expect(res.body.code).toBe('patient_not_found')
+      expect(h.findOrCreateContact).not.toHaveBeenCalled()
+      expect(db._tables).toEqual(before)
+    })
+
+    it('contacto nuevo cuyo nombre no sirve de paciente y sin nombre de paciente → patient_required, nada escrito', async () => {
+      const db = clinic({ extra: { conversations: [] } })
+      const before = snapshot(db)
+      const res = await post(
+        body({ contact_id: undefined, new_contact: { name: '12345', phone: '+573001234567' } }),
+      )
+      expect(res.status).toBe(400)
+      expect(res.body.code).toBe('patient_required')
+      expect(h.findOrCreateContact).not.toHaveBeenCalled()
+      expect(db._tables).toEqual(before)
+    })
+
+    it('contacto nuevo sin nombre de paciente: se crea con el nombre del contacto', async () => {
+      const db = clinic()
+      const res = await post(newContactBody())
+      expect(res.status).toBe(201)
+      expect(rows(db, 'clinic_patients')).toEqual([
+        expect.objectContaining({ contact_id: NEW_CONTACT, full_name: 'Luis Gómez' }),
+      ])
+      expect(rows(db, 'booking_appointments')[0]).toMatchObject({
+        contact_id: NEW_CONTACT,
+        patient_id: rows(db, 'clinic_patients')[0].id,
+      })
+    })
+
+    it('contacto nuevo con nombre de paciente propio: se crea ese paciente', async () => {
+      const db = clinic()
+      const res = await post(newContactBody({ new_patient_name: 'Sofía Gómez' }))
+      expect(res.status).toBe(201)
+      expect(rows(db, 'clinic_patients')).toEqual([
+        expect.objectContaining({ contact_id: NEW_CONTACT, full_name: 'Sofía Gómez' }),
+      ])
+    })
+
+    it('un "contacto nuevo" cuyo teléfono ya existe se decide con los pacientes de ese contacto', async () => {
+      h.findExistingContact.mockResolvedValue({ id: CONTACT, phone: '573001112233', name: 'Ana Pérez' })
+      const db = clinic({
+        extra: {
+          conversations: [],
+          clinic_patients: [
+            { id: PATIENT, account_id: TEST_ACCOUNT, contact_id: CONTACT, full_name: 'Ana Pérez' },
+          ],
+        },
+      })
+      h.findOrCreateContact.mockImplementation(async () => ({ id: CONTACT, created: false }))
+
+      // Sin elegir paciente: ya tiene pacientes → hay que elegir, y no se escribe nada.
+      const before = snapshot(db)
+      const required = await post(newContactBody())
+      expect(required.status).toBe(400)
+      expect(required.body.code).toBe('patient_required')
+      expect(h.findOrCreateContact).not.toHaveBeenCalled()
+      expect(db._tables).toEqual(before)
+
+      // Eligiendo uno de ese contacto: pasa.
+      const ok = await post(newContactBody({ patient_id: PATIENT }))
+      expect(ok.status).toBe(201)
+      expect(rows(db, 'booking_appointments')[0]).toMatchObject({ contact_id: CONTACT, patient_id: PATIENT })
+    })
   })
 
   it('una clínica sin configurar no agenda a ciegas', async () => {

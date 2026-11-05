@@ -9,7 +9,7 @@ import {
   type StatusChangeRejection,
 } from '@/verticals/agenda/appointments'
 import { validatePanelBooking, canMove } from '@/verticals/agenda/panel-booking'
-import { parseCancelBody, parseMoveBody } from '@/verticals/agenda/panel-booking-input'
+import { isUuid, parseCancelBody, parseMoveBody } from '@/verticals/agenda/panel-booking-input'
 import {
   accountHasClinic,
   loadBookableStaff,
@@ -41,6 +41,8 @@ import { panelError, panelRejection, scheduleCalendarKick } from '../../_lib/pan
 // Guardas:
 //   - requireRole('agent'): viewers son solo-lectura (la política
 //     RLS booking_appointments_update exige lo mismo — doble capa).
+//   - El `[id]` debe ser un uuid; si no, 404 "no existe" (nunca llega a
+//     la base).
 //   - La cita SIEMPRE se lee y se escribe acotada por account_id.
 //   - Las reglas de transición y la confirmación de citas pasadas
 //     viven en verticals/agenda/appointments.ts; las de mover, en
@@ -83,6 +85,9 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   try {
     const ctx = await requireRole('agent')
     const { id } = await params
+    // Un id que no es uuid no puede ser una cita: se corta aquí, antes de
+    // llegar a Postgres (que daría 22P02 → 500) y en las tres rutas del PATCH.
+    if (!isUuid(id)) return NextResponse.json(NOT_FOUND, { status: 404 })
 
     const body = (await request.json().catch(() => null)) as {
       status?: unknown
@@ -90,7 +95,8 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       action?: unknown
     } | null
 
-    if (body && body.action !== undefined) {
+    // `action: null` es lo mismo que no mandarla: el cambio de estado de siempre.
+    if (body && body.action != null) {
       if (body.action === 'move') return await moveAppointment(ctx, id, body)
       if (body.action === 'cancel') return await cancelAppointment(ctx, id, body)
       return panelError(400, 'invalid_action', 'La acción pedida no es válida.')

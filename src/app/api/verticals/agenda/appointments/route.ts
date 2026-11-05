@@ -9,16 +9,19 @@ import { parseCreateBody } from '@/verticals/agenda/panel-booking-input'
 import {
   accountHasClinic,
   ensureConversation,
+  findContactByPhone,
   loadBookableService,
   loadBookableStaff,
   loadPanelContact,
   loadPanelLabels,
   loadSlotContext,
   PATIENT_MESSAGES,
+  planPatient,
   recordReceptionConsent,
-  resolvePatient,
+  savePatient,
   staffServesService,
   type PanelContact,
+  type PatientPlan,
 } from '@/verticals/agenda/panel-booking-repo'
 import { validatePanelBooking } from '@/verticals/agenda/panel-booking'
 import { notifyIfRequested } from '@/verticals/agenda/panel-notify'
@@ -35,9 +38,9 @@ import { readJsonBody } from '../_lib/http'
 // fuera de horario si lo confirma (`outside_hours_ok`).
 //
 // Orden: sesión (agent o más) → forma del cuerpo → servicio y
-// profesional de la cuenta → reglas (nada se escribe si fallan) →
-// contacto, conversación y paciente → la cita → autorización de
-// recepción (clínica) → aviso a Google y al paciente.
+// profesional de la cuenta → reglas y paciente (nada se escribe si
+// fallan) → contacto, conversación y paciente → la cita → autorización
+// de recepción (clínica) → aviso a Google y al paciente.
 //
 // El aviso al paciente nunca deshace la cita: si falla, la respuesta
 // trae `notify_error` y la pantalla lo dice. Lo mismo la autorización
@@ -117,7 +120,37 @@ export async function POST(request: Request) {
     })
     if (!check.ok) return panelRejection(check.code, labels)
 
-    // ---- contacto, conversación y paciente ---------------------------------
+    // ---- paciente (clínica): se decide ANTES de escribir -------------------
+    // Así un paciente que falta o que no es del contacto no deja un contacto
+    // ni una conversación sueltos. Un "contacto nuevo" cuyo teléfono ya existe
+    // es ese contacto (`findOrCreateContact` lo reutiliza): cuentan sus pacientes.
+    let patientPlan: Extract<PatientPlan, { ok: true }> | null = null
+    if (clinic) {
+      const known =
+        existingContact ??
+        ('phone' in input.contact
+          ? await findContactByPhone(db, accountId, input.contact.phone)
+          : null)
+      const plan = await planPatient(db, {
+        accountId,
+        contact: known ?? {
+          id: null,
+          name: 'name' in input.contact ? input.contact.name : null,
+        },
+        patientId: input.patientId,
+        newPatientName: input.newPatientName,
+      })
+      if (!plan.ok) {
+        return panelError(
+          plan.code === 'patient_not_found' ? 404 : 400,
+          plan.code,
+          PATIENT_MESSAGES[plan.code],
+        )
+      }
+      patientPlan = plan
+    }
+
+    // ---- contacto y conversación -------------------------------------------
     let contact = existingContact
     if (!contact) {
       if ('id' in input.contact) throw new Error('contacto sin resolver')
@@ -145,23 +178,9 @@ export async function POST(request: Request) {
       userId,
     })
 
-    let patientId: string | null = null
-    if (clinic) {
-      const patient = await resolvePatient(db, {
-        accountId,
-        contact,
-        patientId: input.patientId,
-        newPatientName: input.newPatientName,
-      })
-      if (!patient.ok) {
-        return panelError(
-          patient.code === 'patient_not_found' ? 404 : 400,
-          patient.code,
-          PATIENT_MESSAGES[patient.code],
-        )
-      }
-      patientId = patient.patientId
-    }
+    const patientId = patientPlan
+      ? await savePatient(db, { accountId, contactId: contact.id, plan: patientPlan })
+      : null
 
     // ---- la cita ----------------------------------------------------------
     const appointmentId = crypto.randomUUID()

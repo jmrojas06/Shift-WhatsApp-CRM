@@ -12,9 +12,10 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-import { isUniqueViolation } from '@/lib/contacts/dedupe'
+import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe'
 import { readAccountModules } from '@/lib/modules/read-account-modules'
 import { hasModule } from '@/lib/verticals/registry'
+import { parseInternationalPhone } from '@/lib/whatsapp/phone-utils'
 import { recordConsent } from '@/modules/clinica/consent'
 import { insertPatient, listPatients, PATIENT_NAME_MAX } from '@/modules/clinica/patients'
 
@@ -246,34 +247,76 @@ export const PATIENT_MESSAGES: Record<PatientRejection, string> = {
 }
 
 /**
- * Paciente de la cita (solo clínicas):
- *   - `patientId`: debe ser de ese contacto.
- *   - `newPatientName`: se registra uno nuevo.
- *   - ninguno: si el contacto no tiene pacientes se crea uno con su propio
- *     nombre (la persona que llama es quien va); si ya tiene, hay que elegir.
+ * El contacto que ya existe con ese teléfono, o null. Solo lee: sirve para
+ * saber, antes de escribir nada, si un "contacto nuevo" en realidad ya está
+ * (y entonces cuentan sus pacientes). Usa el mismo criterio que
+ * `findOrCreateContact`, que es quien lo crea o lo reutiliza después.
  */
-export async function resolvePatient(
+export async function findContactByPhone(
+  db: SupabaseClient,
+  accountId: string,
+  phone: string,
+): Promise<PanelContact | null> {
+  const sanitized = parseInternationalPhone(phone)
+  if (!sanitized) return null
+  const found = await findExistingContact(db, accountId, sanitized)
+  return found ? { id: found.id, name: found.name ?? null } : null
+}
+
+/** Lo que se decidió sobre el paciente de la cita (todavía no se escribió nada). */
+export type PatientPlan =
+  | { ok: true; kind: 'existing'; patientId: string }
+  | { ok: true; kind: 'new'; fullName: string }
+  | { ok: false; code: PatientRejection }
+
+/**
+ * Decide el paciente de la cita (solo clínicas) SIN escribir nada, para poder
+ * rechazar antes de crear contacto o conversación:
+ *   - `patientId`: debe ser de ese contacto.
+ *   - `newPatientName`: se registrará uno nuevo.
+ *   - ninguno: si el contacto no tiene pacientes se registrará uno con su
+ *     propio nombre (la persona que llama es quien va); si ya tiene, hay que
+ *     elegir.
+ *
+ * `contact.id` null es un contacto que todavía no existe: no tiene pacientes,
+ * así que un `patientId` nunca puede ser suyo.
+ */
+export async function planPatient(
   db: SupabaseClient,
   args: {
     accountId: string
-    contact: PanelContact
+    contact: { id: string | null; name: string | null }
     patientId: string | null
     newPatientName: string | null
   },
-): Promise<{ ok: true; patientId: string } | { ok: false; code: PatientRejection }> {
+): Promise<PatientPlan> {
   const { accountId, contact } = args
-  const patients = await listPatients(db, { accountId, contactId: contact.id })
+  const patients = contact.id ? await listPatients(db, { accountId, contactId: contact.id }) : []
 
   if (args.patientId) {
     return patients.some((p) => p.id === args.patientId)
-      ? { ok: true, patientId: args.patientId }
+      ? { ok: true, kind: 'existing', patientId: args.patientId }
       : { ok: false, code: 'patient_not_found' }
   }
 
   const name = args.newPatientName ?? (patients.length === 0 ? usableContactName(contact.name) : null)
   if (!name) return { ok: false, code: 'patient_required' }
-  const created = await insertPatient(db, { accountId, contactId: contact.id, fullName: name })
-  return { ok: true, patientId: created.id }
+  return { ok: true, kind: 'new', fullName: name }
+}
+
+/** Ejecuta lo decidido por `planPatient`: el id del paciente de la cita. Lanza si no se pudo guardar. */
+export async function savePatient(
+  db: SupabaseClient,
+  args: { accountId: string; contactId: string; plan: Extract<PatientPlan, { ok: true }> },
+): Promise<string> {
+  const { plan } = args
+  if (plan.kind === 'existing') return plan.patientId
+  const created = await insertPatient(db, {
+    accountId: args.accountId,
+    contactId: args.contactId,
+    fullName: plan.fullName,
+  })
+  return created.id
 }
 
 /**
