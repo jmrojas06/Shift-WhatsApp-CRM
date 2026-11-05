@@ -335,6 +335,38 @@ export function buildClinicTexts(l: AgendaLabels) {
       if (mapUrl) lines.push(mapUrl)
       return lines.length ? lines.join('\n\n') : null
     },
+
+    // ------------------------------------------------------------
+    // Después de la cita (Fase 3, §7). El teléfono puede ser compartido y el
+    // texto pasa por Meta: se nombra al paciente y al negocio, nunca el
+    // procedimiento. Los cuidados (que sí vienen del servicio) solo salen con
+    // la ventana de 24 h abierta; la plantilla solo invita a verlos.
+    // Los cuerpos "...TemplateBody" son los de las plantillas aprobadas en
+    // Meta (variables {{1}} paciente y {{2}} negocio): el mismo texto se
+    // guarda en la bandeja cuando sale la plantilla.
+    // ------------------------------------------------------------
+    followupCareBody: (a: { patient: string; business: string; instructions: string }) =>
+      `¡Hola! 👋 Gracias por venir a ${a.business}. Estos son los cuidados para ${a.patient} después de su ${l.cita}:\n\n${a.instructions.trim()}`,
+    followupCareTemplateBody: (a: { patient: string; business: string }) =>
+      `¡Hola! 👋 Gracias por venir a ${a.business}. Tenemos unas recomendaciones de cuidado para ${a.patient} después de su visita. Toca el botón para verlas.`,
+    followupCareButton: 'Ver recomendaciones',
+
+    followupHowBody: (a: { patient: string; business: string }) =>
+      `¡Hola! 👋 Te escribimos de ${a.business}. ¿Cómo sigue ${a.patient} después de su visita?`,
+    followupHowGood: 'Bien',
+    followupHowTrouble: 'Tengo molestias',
+    followupHowHelp: 'Necesito ayuda',
+
+    followupRatingBody: (a: { patient: string; business: string }) =>
+      `¡Hola! 👋 En ${a.business} queremos saber cómo le fue a ${a.patient} en su visita. ¿Cómo la calificas?`,
+    followupRatingGood: 'Bien',
+    followupRatingRegular: 'Regular',
+    followupRatingBad: 'Mal',
+
+    /** Cierre del día: aviso al dueño de las citas de hoy que nadie marcó como atendidas o no vino. */
+    dayCloseTitle: 'Cierre del día pendiente',
+    dayCloseBody: (count: number) =>
+      `Tienes ${count} ${count === 1 ? l.cita : l.citas} de hoy sin marcar. En la agenda, en "Sin marcar", elige Atendió o No vino.`,
   }
 }
 
