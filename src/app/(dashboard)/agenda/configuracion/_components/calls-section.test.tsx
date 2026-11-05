@@ -65,6 +65,9 @@ function tagWith(html: string, fragment: string): string {
   return html.slice(html.lastIndexOf('<', at), html.indexOf('>', at) + 1)
 }
 
+/** ¿Lleva el atributo aria-invalid? Ignora las clases `aria-invalid:` de Tailwind. */
+const hasInvalidAttr = (html: string): boolean => /\saria-invalid="/.test(html.replace(/class="[^"]*"/g, ''))
+
 /** ¿La etiqueta está desactivada? Ignora las clases `disabled:` de Tailwind. */
 function isDisabled(tag: string): boolean {
   expect(tag).not.toBe('')
@@ -232,6 +235,80 @@ describe('CallsForm', () => {
       'Los intentos por cita no son válidos.',
     )
     expect(render(<CallsForm {...formProps({ saved: true })} />)).toContain(C.saved)
+  })
+
+  describe('accesibilidad de los errores de validación', () => {
+    const MESSAGE = 'Los minutos entre intentos debe ser un número entero entre 1 y 2880.'
+
+    it('el campo con error se marca aria-invalid y apunta al mensaje (además de su ayuda)', () => {
+      const html = render(
+        <CallsForm {...formProps({ formError: MESSAGE, errorFields: ['calls-retry'] })} />,
+      )
+
+      const retry = tagWith(html, 'id="calls-retry"')
+      expect(retry).toContain(' aria-invalid="true"')
+      expect(retry).toContain('aria-describedby="calls-retry-hint calls-form-error"')
+      // El mensaje existe con ese id, así que el aria-describedby no queda colgando.
+      expect(html).toMatch(/id="calls-form-error"[^>]*>[^<]*Los minutos entre intentos/)
+    })
+
+    it('solo se marca el campo que falló: los demás quedan como estaban', () => {
+      const html = render(
+        <CallsForm {...formProps({ formError: MESSAGE, errorFields: ['calls-retry'] })} />,
+      )
+
+      for (const id of ['calls-after', 'calls-lead', 'calls-window-start', 'calls-info']) {
+        expect(hasInvalidAttr(tagWith(html, `id="${id}"`))).toBe(false)
+        expect(tagWith(html, `id="${id}"`)).not.toContain('calls-form-error')
+      }
+      expect(tagWith(html, 'id="calls-after"')).toContain('aria-describedby="calls-after-hint"')
+    })
+
+    it('las horas de la ventana y el texto de horario también se pueden marcar', () => {
+      const html = render(
+        <CallsForm
+          {...formProps({
+            formError: 'La hora de inicio debe ser antes que la de fin.',
+            errorFields: ['calls-window-start', 'calls-window-end', 'calls-info'],
+          })}
+        />,
+      )
+
+      for (const id of ['calls-window-start', 'calls-window-end']) {
+        expect(tagWith(html, `id="${id}"`)).toContain(' aria-invalid="true"')
+        expect(tagWith(html, `id="${id}"`)).toContain('aria-describedby="calls-form-error"')
+      }
+      expect(tagWith(html, 'id="calls-info"')).toContain('aria-describedby="calls-info-hint calls-form-error"')
+    })
+
+    it('sin error, ningún campo se marca ni apunta al mensaje', () => {
+      const html = render(<CallsForm {...formProps()} />)
+
+      expect(hasInvalidAttr(html)).toBe(false)
+      expect(html).not.toContain('calls-form-error')
+    })
+
+    it('un error sin campo propio (el horario) muestra el mensaje y no marca ninguno', () => {
+      const html = render(<CallsForm {...formProps({ formError: MESSAGE, errorFields: [] })} />)
+
+      expect(html).toContain('id="calls-form-error"')
+      expect(hasInvalidAttr(html)).toBe(false)
+    })
+  })
+
+  it('cada campo de minutos tiene su propio mínimo: entre intentos desde 1, los demás desde 0', () => {
+    const html = render(<CallsForm {...formProps()} />)
+
+    expect(tagWith(html, 'id="calls-retry"')).toContain(' min="1"')
+    expect(tagWith(html, 'id="calls-after"')).toContain(' min="0"')
+    expect(tagWith(html, 'id="calls-lead"')).toContain(' min="0"')
+  })
+
+  it('sin el uso del mes (después de guardar) no pinta el medidor y lo explica', () => {
+    const html = render(<CallsForm {...formProps({ data: { ...DATA, usage: null } })} />)
+
+    expect(html).not.toContain('aria-valuenow')
+    expect(html).toContain(C.usageUnavailable)
   })
 
   it('al guardar muestra el estado y bloquea los campos', () => {

@@ -50,7 +50,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
-import type { CallSettingsResponse } from '@/verticals/agenda/voice/call-settings-payload'
+import type { CallSettingsView } from '@/verticals/agenda/call-settings-view'
 import {
   MAX_ADVISOR_PHONES,
   MAX_INFO_TEXT,
@@ -58,7 +58,7 @@ import {
 } from '@/verticals/agenda/voice/settings'
 
 import { callSettingsApi } from './api'
-import { buildPatch, checkPatch, draftFromSettings, type CallsDraft } from './calls-draft'
+import { buildPatch, draftFromSettings, findPatchProblem, type CallsDraft } from './calls-draft'
 import { HoursEditor } from './calls-hours-editor'
 import { CALLS_TEXTS as C } from './calls-texts'
 
@@ -73,7 +73,7 @@ type TestState =
   | { kind: 'error'; message: string }
 
 export function CallsSection() {
-  const [data, setData] = useState<CallSettingsResponse | null>(null)
+  const [data, setData] = useState<CallSettingsView | null>(null)
   const [draft, setDraft] = useState<CallsDraft | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -82,6 +82,8 @@ export function CallsSection() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  // Ids de los campos que el validador señaló (aria-invalid); vacío si el error no es de uno.
+  const [errorFields, setErrorFields] = useState<string[]>([])
 
   const [testPhone, setTestPhone] = useState('')
   const [test, setTest] = useState<TestState>({ kind: 'idle' })
@@ -112,26 +114,31 @@ export function CallsSection() {
     setDraft(next)
     setSaved(false)
     setFormError(null)
+    setErrorFields([])
   }
 
   async function save() {
     if (!data || !dirty) return
     // Mismo validador que el servidor: se avisa antes de salir.
-    const message = checkPatch(patch)
-    if (message) {
-      setFormError(message)
+    const problem = findPatchProblem(patch)
+    if (problem) {
+      setFormError(problem.message)
+      setErrorFields(problem.fieldIds)
       return
     }
     setSaving(true)
     setSaved(false)
     setFormError(null)
+    setErrorFields([])
     const res = await callSettingsApi.save(patch)
     setSaving(false)
     if (!res.ok) {
       setFormError(res.error)
       return
     }
-    setData(res.data)
+    // Si el servidor guardó pero no pudo leer el uso del mes (usage nulo), se
+    // conserva el que ya se tenía.
+    setData({ ...res.data, usage: res.data.usage ?? data.usage })
     setDraft(draftFromSettings(res.data.settings))
     setSaved(true)
   }
@@ -141,6 +148,7 @@ export function CallsSection() {
     setDraft(draftFromSettings(data.settings))
     setSaved(false)
     setFormError(null)
+    setErrorFields([])
   }
 
   async function runTest() {
@@ -160,7 +168,9 @@ export function CallsSection() {
     // el uso, para no pisar lo que la persona esté editando.
     const fresh = await callSettingsApi.get()
     if (fresh.ok) {
-      setData((current) => (current ? { ...current, usage: fresh.data.usage } : current))
+      setData((current) =>
+        current ? { ...current, usage: fresh.data.usage ?? current.usage } : current,
+      )
     }
   }
 
@@ -224,6 +234,7 @@ export function CallsSection() {
             saving={saving}
             saved={saved}
             formError={formError}
+            errorFields={errorFields}
             onSave={() => void save()}
             onDiscard={discard}
             testPhone={testPhone}
@@ -245,13 +256,15 @@ export function CallsSection() {
 // ------------------------------------------------------------
 
 export interface CallsFormProps {
-  data: CallSettingsResponse
+  data: CallSettingsView
   draft: CallsDraft
   onDraftChange: (next: CallsDraft) => void
   dirty: boolean
   saving: boolean
   saved: boolean
   formError: string | null
+  /** Ids de los campos que el validador señaló; se marcan aria-invalid y apuntan al mensaje. */
+  errorFields?: string[]
   onSave: () => void
   onDiscard: () => void
   testPhone: string
@@ -268,6 +281,7 @@ export function CallsForm({
   saving,
   saved,
   formError,
+  errorFields = [],
   onSave,
   onDiscard,
   testPhone,
@@ -277,6 +291,8 @@ export function CallsForm({
 }: CallsFormProps) {
   const { settings, usage, telnyx } = data
   const set = (change: Partial<CallsDraft>) => onDraftChange({ ...draft, ...change })
+  // Un campo señalado se marca inválido y, además de su ayuda, apunta al mensaje de error.
+  const invalid = (id: string): boolean => formError !== null && errorFields.includes(id)
 
   // Apagado y sin lo que hace falta → no se puede prender. Si ya estaba
   // prendido (lo guardado), siempre se puede apagar.
@@ -363,7 +379,8 @@ export function CallsForm({
             rows={3}
             disabled={saving}
             placeholder={C.infoPlaceholder}
-            aria-describedby="calls-info-hint"
+            aria-invalid={invalid('calls-info') ? true : undefined}
+            aria-describedby={describedBy('calls-info-hint', invalid('calls-info'))}
             onChange={(e) => set({ infoText: e.target.value })}
           />
           <p id="calls-info-hint" className="max-w-[65ch] text-xs text-muted-foreground">
@@ -379,6 +396,7 @@ export function CallsForm({
             label={C.windowStart}
             value={draft.windowStart}
             disabled={saving}
+            invalid={invalid('calls-window-start')}
             onChange={(windowStart) => set({ windowStart })}
           />
           <TimeField
@@ -386,6 +404,7 @@ export function CallsForm({
             label={C.windowEnd}
             value={draft.windowEnd}
             disabled={saving}
+            invalid={invalid('calls-window-end')}
             onChange={(windowEnd) => set({ windowEnd })}
           />
         </div>
@@ -435,7 +454,9 @@ export function CallsForm({
             label={C.retryMinutes}
             hint={C.retryHint}
             value={draft.retryMinutes}
+            min={1}
             disabled={saving}
+            invalid={invalid('calls-retry')}
             onChange={(retryMinutes) => set({ retryMinutes })}
           />
           <MinutesField
@@ -444,6 +465,7 @@ export function CallsForm({
             hint={C.callAfterHint}
             value={draft.callAfterMinutes}
             disabled={saving}
+            invalid={invalid('calls-after')}
             onChange={(callAfterMinutes) => set({ callAfterMinutes })}
           />
           <MinutesField
@@ -452,11 +474,16 @@ export function CallsForm({
             hint={C.minLeadHint}
             value={draft.minLeadMinutes}
             disabled={saving}
+            invalid={invalid('calls-lead')}
             onChange={(minLeadMinutes) => set({ minLeadMinutes })}
           />
         </div>
 
-        <UsageMeter used={usage.used} limit={settings.monthly_limit} />
+        {usage ? (
+          <UsageMeter used={usage.used} limit={settings.monthly_limit} />
+        ) : (
+          <p className="rounded-lg bg-muted/60 p-3 text-xs text-muted-foreground">{C.usageUnavailable}</p>
+        )}
       </Group>
 
       <Group titleId="calls-test-title" title={C.testTitle} hint={C.testHint}>
@@ -513,7 +540,9 @@ export function CallsForm({
       <div className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
         <div aria-live="polite" className="min-h-5 text-sm">
           {formError ? (
-            <span className="text-destructive">{formError}</span>
+            <span id={FORM_ERROR_ID} className="text-destructive">
+              {formError}
+            </span>
           ) : saved && !dirty ? (
             <span className="inline-flex items-center gap-1.5 text-success">
               <CircleCheck className="size-4" aria-hidden="true" />
@@ -542,6 +571,15 @@ export function CallsForm({
 // ------------------------------------------------------------
 // Piezas
 // ------------------------------------------------------------
+
+/** Id del mensaje de error del pie: los campos señalados apuntan a él. */
+const FORM_ERROR_ID = 'calls-form-error'
+
+/** `aria-describedby` de un campo: su ayuda y, si falló, también el mensaje de error. */
+function describedBy(hintId: string | undefined, invalid: boolean): string | undefined {
+  const ids = [hintId, invalid ? FORM_ERROR_ID : undefined].filter(Boolean)
+  return ids.length > 0 ? ids.join(' ') : undefined
+}
 
 function Group({
   title,
@@ -687,12 +725,14 @@ function TimeField({
   label,
   value,
   disabled,
+  invalid,
   onChange,
 }: {
   id: string
   label: string
   value: string
   disabled: boolean
+  invalid: boolean
   onChange: (next: string) => void
 }) {
   return (
@@ -704,6 +744,8 @@ function TimeField({
         step={60}
         value={value}
         disabled={disabled}
+        aria-invalid={invalid ? true : undefined}
+        aria-describedby={describedBy(undefined, invalid)}
         className="sm:max-w-40"
         onChange={(e) => onChange(e.target.value)}
       />
@@ -716,14 +758,19 @@ function MinutesField({
   label,
   hint,
   value,
+  min = 0,
   disabled,
+  invalid,
   onChange,
 }: {
   id: string
   label: string
   hint: string
   value: string
+  /** Menor valor que acepta el servidor para este campo. */
+  min?: number
   disabled: boolean
+  invalid: boolean
   onChange: (next: string) => void
 }) {
   return (
@@ -733,11 +780,12 @@ function MinutesField({
         id={id}
         type="number"
         inputMode="numeric"
-        min={0}
+        min={min}
         step={1}
         value={value}
         disabled={disabled}
-        aria-describedby={`${id}-hint`}
+        aria-invalid={invalid ? true : undefined}
+        aria-describedby={describedBy(`${id}-hint`, invalid)}
         className="sm:max-w-40"
         onChange={(e) => onChange(e.target.value)}
       />

@@ -8,6 +8,7 @@ import {
   checkPatch,
   copyDayToWeekdays,
   draftFromSettings,
+  findPatchProblem,
   previewOfficeHours,
   removeHoursBlock,
   setDayOpen,
@@ -151,6 +152,54 @@ describe('buildPatch', () => {
 
   it('prender un interruptor cambia solo ese campo', () => {
     expect(buildPatch(SETTINGS, draft({ outboundEnabled: true }))).toEqual({ outbound_enabled: true })
+  })
+})
+
+describe('findPatchProblem', () => {
+  it('un parche válido no tiene problema', () => {
+    expect(findPatchProblem({ call_saturday: false })).toBeNull()
+  })
+
+  it.each([
+    ['retry_minutes', Number.NaN, 'calls-retry'],
+    ['retry_minutes', 0, 'calls-retry'], // los minutos entre intentos empiezan en 1
+    ['call_after_minutes', Number.NaN, 'calls-after'],
+    ['min_lead_minutes', 99999, 'calls-lead'],
+  ])('%s = %s señala el campo %s', (key, value, fieldId) => {
+    const problem = findPatchProblem({ [key]: value })
+
+    expect(problem?.fieldIds).toEqual([fieldId])
+    expect(problem?.message).toContain('número entero')
+  })
+
+  it('señala el campo que falla aunque el parche lleve otros válidos', () => {
+    const problem = findPatchProblem({ call_saturday: false, call_after_minutes: 60, retry_minutes: 0 })
+
+    expect(problem?.fieldIds).toEqual(['calls-retry'])
+  })
+
+  it('una ventana al revés señala las dos horas', () => {
+    const problem = findPatchProblem({ window_start: '20:00', window_end: '08:00' })
+
+    expect(problem?.message).toContain('antes que la de fin')
+    expect(problem?.fieldIds).toEqual(['calls-window-start', 'calls-window-end'])
+  })
+
+  it('un texto de horario demasiado largo señala su campo', () => {
+    expect(findPatchProblem({ info_text: 'x'.repeat(5000) })?.fieldIds).toEqual(['calls-info'])
+  })
+
+  it('un campo sin casilla propia (el horario) trae el mensaje y ningún campo', () => {
+    const problem = findPatchProblem({ office_hours: { '1': [['18:00', '08:00']] } })
+
+    expect(problem?.message).toContain('lunes')
+    expect(problem?.fieldIds).toEqual([])
+  })
+
+  it('el mensaje es el mismo de checkPatch', () => {
+    const patch = { retry_minutes: 0 }
+
+    expect(findPatchProblem(patch)?.message).toBe(checkPatch(patch))
   })
 })
 

@@ -12,6 +12,7 @@ import type { PresetKey } from '@/verticals/agenda/presets'
 import type { AgendaQuestion, QuestionKind } from '@/verticals/agenda/questions'
 import type { AgendaInstallReport } from '@/verticals/agenda/seed'
 import { AGENDA_TEXTS as T } from '@/verticals/agenda/texts'
+import type { CallSettingsView } from '@/verticals/agenda/call-settings-view'
 import type { CallSettingsResponse } from '@/verticals/agenda/voice/call-settings-payload'
 
 import { CALLS_TEXTS } from './calls-texts'
@@ -324,7 +325,7 @@ export const callSettingsApi = {
 
   /** Solo lo que cambió, con las claves del PATCH (nunca los campos de Shift). */
   save: (patch: Record<string, unknown>) =>
-    request<CallSettingsResponse>(CALL_SETTINGS_API, 'PATCH', patch, CALLS_TEXTS.saveFailed),
+    request<CallSettingsView>(CALL_SETTINGS_API, 'PATCH', patch, CALLS_TEXTS.saveFailed),
 
   /** Llama a `to` (E.164) con un guion de ejemplo marcado como prueba. */
   test: (to: string) =>

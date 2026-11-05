@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { readTelnyxConfig } from '@/lib/voice/telnyx'
+import type { CallSettingsView } from '@/verticals/agenda/call-settings-view'
 import {
   callSettingsToPayload,
   type CallSettingsResponse,
@@ -55,9 +56,11 @@ const TEXTS = {
   saveFailed: 'No se pudo guardar la configuración de llamadas.',
 } as const
 
+type Db = Parameters<typeof countMonthlyRobotCalls>[0]
+
 /** Lo que `usage` y `telnyx` agregan a la configuración en las dos respuestas. */
 async function buildResponse(
-  db: Parameters<typeof countMonthlyRobotCalls>[0],
+  db: Db,
   accountId: string,
   settings: CallSettings,
 ): Promise<CallSettingsResponse> {
@@ -67,6 +70,32 @@ async function buildResponse(
     settings: callSettingsToPayload(settings),
     usage: { month: bogotaMonthRange(now).month, used },
     telnyx: { configured: readTelnyxConfig().ok },
+  }
+}
+
+/**
+ * Como `buildResponse`, pero para después de guardar: si lo único que falla es
+ * leer lo usado del mes, el cambio YA está guardado y decir "no se pudo guardar"
+ * sería mentira (la persona reintentaría algo que ya pasó). Responde éxito con
+ * `usage: null`; la pantalla conserva el último valor que tenía.
+ */
+async function buildResponseAfterSave(
+  db: Db,
+  accountId: string,
+  settings: CallSettings,
+): Promise<CallSettingsView> {
+  try {
+    return await buildResponse(db, accountId, settings)
+  } catch (err) {
+    console.error(
+      '[call-settings] guardado, pero no se pudo leer el uso del mes:',
+      err instanceof Error ? err.message : 'error desconocido',
+    )
+    return {
+      settings: callSettingsToPayload(settings),
+      usage: null,
+      telnyx: { configured: readTelnyxConfig().ok },
+    }
   }
 }
 
@@ -130,7 +159,7 @@ export async function PATCH(request: Request) {
     if (!data) throw new Error(TEXTS.saveFailed)
 
     const saved = callSettingsFromRow(data as unknown as Record<string, unknown>)
-    return NextResponse.json(await buildResponse(ctx.supabase, ctx.accountId, saved))
+    return NextResponse.json(await buildResponseAfterSave(ctx.supabase, ctx.accountId, saved))
   } catch (err) {
     return toErrorResponse(err)
   }

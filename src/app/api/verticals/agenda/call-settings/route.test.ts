@@ -78,7 +78,7 @@ const TELNYX_ENV = {
   TELNYX_TEXML_APP_ID: 'APP-secreto-789',
   TELNYX_PUBLIC_KEY: 'PUB-secreto-000',
   VOICE_WEBHOOK_SECRET: 'WEBHOOK-secreto-111',
-  NEXT_PUBLIC_APP_URL: 'https://crm.example.com',
+  NEXT_PUBLIC_SITE_URL: 'https://crm.example.com',
 }
 
 function setTelnyx(on: boolean) {
@@ -445,6 +445,34 @@ describe('PATCH: guardar', () => {
 
     expect(res.body.usage).toEqual({ month: '2026-11', used: 2 })
     expect(res.body.telnyx).toEqual({ configured: true })
+  })
+
+  it('si ya se guardó y falla leer el uso del mes, responde que se guardó, con el uso nulo', async () => {
+    const db = boot({ booking_call_settings: [settingsRow()] })
+    db._failNext('select', 'booking_calls', { message: 'canceling statement due to statement timeout' })
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    setTelnyx(true)
+
+    const res = await body(PATCH(jsonRequest({ call_saturday: false })))
+
+    expect(res.status).toBe(200)
+    expect(res.body.usage).toBeNull()
+    expect((res.body.settings as Row).call_saturday).toBe(false)
+    expect(res.body.telnyx).toEqual({ configured: true })
+    expect(db._tables.booking_call_settings[0].call_saturday).toBe(false)
+    // Queda el rastro del fallo, sin datos de nadie.
+    expect(consoleError).toHaveBeenCalledTimes(1)
+    consoleError.mockRestore()
+  })
+
+  it('si falla guardar sigue siendo un error (el cambio no se guardó)', async () => {
+    const db = boot({ booking_call_settings: [settingsRow()] })
+    db._failNext('upsert', 'booking_call_settings', { code: 'XX000', message: 'boom' })
+
+    const res = await body(PATCH(jsonRequest({ call_saturday: false })))
+
+    expect(res.status).toBe(500)
+    expect(db._tables.booking_call_settings[0].call_saturday).toBe(true)
   })
 
   it('si la base rechaza por permisos (42501) lo explica sin un 500', async () => {

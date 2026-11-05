@@ -9,7 +9,8 @@
 //     servidor rechaza los campos que fija Shift (`provider`, `monthly_limit`,
 //     `inbound_number`, `caller_id`), así que ni siquiera existen aquí.
 //   - `checkPatch` corre el mismo validador del servidor, para avisar antes
-//     de guardar y con los mismos mensajes.
+//     de guardar y con los mismos mensajes. `findPatchProblem` además dice
+//     cuál campo del formulario falló, para marcarlo (aria-invalid).
 //   - Las funciones de horario no mutan: devuelven un horario nuevo.
 // ============================================================
 
@@ -225,8 +226,55 @@ export function buildPatch(original: CallSettingsPayload, draft: CallsDraft): Re
   return patch
 }
 
+/**
+ * Ids de los campos del formulario que corresponden a cada clave del parche. Las
+ * claves que no están (el horario y los asesores son varias casillas) solo
+ * muestran el mensaje.
+ */
+const PATCH_FIELD_IDS: Record<string, string[]> = {
+  call_after_minutes: ['calls-after'],
+  min_lead_minutes: ['calls-lead'],
+  max_attempts: ['calls-attempts'],
+  retry_minutes: ['calls-retry'],
+  window_start: ['calls-window-start'],
+  window_end: ['calls-window-end'],
+  info_text: ['calls-info'],
+}
+
+/** Las dos horas de la ventana se validan en pareja: una puede quedar al revés de la otra. */
+const WINDOW_KEYS = ['window_start', 'window_end']
+
+export interface PatchProblem {
+  /** El mensaje del validador del servidor. */
+  message: string
+  /** Ids de los campos que fallaron; vacío si el error no es de una casilla en particular. */
+  fieldIds: string[]
+}
+
+/**
+ * El problema del parche (mensaje y campos), o null si está bien. Busca la clave
+ * que falla probando cada una sola; la ventana de llamadas se prueba entera.
+ */
+export function findPatchProblem(patch: Record<string, unknown>): PatchProblem | null {
+  const whole = validateCallSettingsPatch(patch)
+  if (whole.ok) return null
+
+  const keys = Object.keys(patch)
+  const windowKeys = keys.filter((key) => WINDOW_KEYS.includes(key))
+  const groups: string[][] = [
+    ...keys.filter((key) => !windowKeys.includes(key)).map((key) => [key]),
+    ...(windowKeys.length > 0 ? [windowKeys] : []),
+  ]
+  for (const group of groups) {
+    const subset = Object.fromEntries(group.map((key) => [key, patch[key]]))
+    if (!validateCallSettingsPatch(subset).ok) {
+      return { message: whole.message, fieldIds: group.flatMap((key) => PATCH_FIELD_IDS[key] ?? []) }
+    }
+  }
+  return { message: whole.message, fieldIds: [] }
+}
+
 /** El mensaje del validador del servidor para este parche, o null si está bien. */
 export function checkPatch(patch: Record<string, unknown>): string | null {
-  const result = validateCallSettingsPatch(patch)
-  return result.ok ? null : result.message
+  return findPatchProblem(patch)?.message ?? null
 }

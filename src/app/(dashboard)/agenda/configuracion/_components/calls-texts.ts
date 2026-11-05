@@ -101,6 +101,8 @@ export const CALLS_TEXTS = {
     left === 1 ? 'Te queda 1 llamada este mes.' : `Te quedan ${left} llamadas este mes.`,
   usageFull: 'Llegaste al tope del mes: no saldrán más llamadas salientes hasta el mes siguiente.',
   usageAria: 'Llamadas salientes usadas este mes',
+  usageUnavailable:
+    'No pudimos leer cuántas llamadas se han usado este mes. Se actualiza al recargar la página.',
 
   // Prueba
   testTitle: 'Probar una llamada',
