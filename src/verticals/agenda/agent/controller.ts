@@ -104,6 +104,7 @@ import {
   matchChoice,
   newBookingState,
   parseAnswerId,
+  parseFollowupTap,
   parseOptionId,
   parseReminderTap,
   slotId,
@@ -134,6 +135,7 @@ import {
   type ClinicOutcome,
   type ClinicStepCtx,
 } from './steps/clinic-steps'
+import { handleFollowupTap } from './steps/followup-taps'
 import { addDaysToKey, zonedDateKey, zonedParts } from './time'
 
 /** La sesión muere a los 15 minutos sin actividad. */
@@ -250,6 +252,10 @@ export async function handleAgendaInbound(
       : null
   const humanOwned = args.humanOwned === true
   const clinicActive = args.modules?.includes('clinica') === true
+  // Los botones de los seguimientos de después de la cita (`fu:*`, `rt:*`) los pone la
+  // clínica, y solo se leen por su payload. Son la respuesta a un mensaje del sistema,
+  // como los recordatorios: se atienden también en el hilo de una persona.
+  const followupTap = clinicActive && replyId ? parseFollowupTap(replyId) : null
 
   // Revocar escribiendo ("ya no autorizo el uso de mis datos", "revoco mi
   // autorización", "quiero que borren mis datos"): solo vale con una autorización
@@ -278,6 +284,7 @@ export async function handleAgendaInbound(
   if (
     humanOwned &&
     !reminderTap &&
+    !followupTap &&
     !revokesConsent &&
     !isSystemTap(args.session ?? null, replyId)
   ) {
@@ -328,6 +335,20 @@ export async function handleAgendaInbound(
   //    del hilo (D1).
   if (reminderTap) {
     await handleReminderTap(dialog, args.session ?? null, reminderTap, humanOwned)
+    return { consumed: true }
+  }
+
+  // 0b) Botón de un seguimiento de después de la cita (`fu:*`, `rt:*`): también antes del
+  //     hilo de una persona y de cualquier sesión. Un id que no es de este paciente se
+  //     ignora en silencio; molestias o ayuda piden el pase a una persona (steps/followup-taps).
+  if (followupTap) {
+    const outcome = await handleFollowupTap(
+      { ...dialog, alarmText: urgencyAlarmText(dialog) },
+      followupTap,
+    )
+    if (outcome.kind === 'handoff') {
+      await performHandoff(dialog, args.session?.id ?? null, outcome)
+    }
     return { consumed: true }
   }
 

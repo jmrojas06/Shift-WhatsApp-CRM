@@ -14,6 +14,7 @@
 //   4. Sinónimos de acción ('sí', 'cancelar', 'cualquiera'…).
 // ============================================================
 
+import type { FollowupAction, RatingValue } from '@/modules/clinica/followups'
 import { URGENCY_FLOOR_STEMS, URGENCY_FLOOR_WORDS } from '@/modules/clinica/texts'
 
 import type { AnswerMap } from '../questions'
@@ -184,6 +185,52 @@ export function parseReminderTap(id: string): ReminderTap | null {
   if (prefix !== 'rem') return null
   if (!(REMINDER_ACTIONS as readonly string[]).includes(action)) return null
   return { action: action as ReminderAction, appointmentId: appointmentId || null }
+}
+
+// ------------------------------------------------------------
+// Ids de los seguimientos después de la cita (Fase 3)
+//
+//   fu:<acción>:<seguimiento>   cuidados | bien | molestias | ayuda
+//   rt:<valor>:<seguimiento>    bien | regular | mal
+//
+// Los arma `followupPayload` / `ratingPayload` (modules/clinica/followups) y
+// viajan igual en el mensaje libre y en el payload de la plantilla. Solo se
+// leen payloads, nunca etiquetas: "Bien" o "Mal" también las traen otros botones.
+// Las listas son `Record` para que el compilador avise si se agrega una palabra
+// allá y no aquí. Si el seguimiento es de la cuenta y del contacto lo verifica el
+// paso (`steps/followup-taps.ts`), no este lector.
+// ------------------------------------------------------------
+
+const FOLLOWUP_TAP_ACTIONS: Readonly<Record<FollowupAction, true>> = {
+  cuidados: true,
+  bien: true,
+  molestias: true,
+  ayuda: true,
+}
+
+const RATING_TAP_VALUES: Readonly<Record<RatingValue, true>> = {
+  bien: true,
+  regular: true,
+  mal: true,
+}
+
+export type FollowupTap =
+  | { type: 'fu'; action: FollowupAction; followupId: string }
+  | { type: 'rt'; value: RatingValue; followupId: string }
+
+/** 'fu:bien:<id>' o 'rt:mal:<id>'; todo lo demás (etiquetas incluidas) → null. */
+export function parseFollowupTap(id: string): FollowupTap | null {
+  const parts = id.split(':')
+  if (parts.length !== 3) return null
+  const [prefix, word, followupId] = parts
+  if (!followupId) return null
+  if (prefix === 'fu' && Object.hasOwn(FOLLOWUP_TAP_ACTIONS, word)) {
+    return { type: 'fu', action: word as FollowupAction, followupId }
+  }
+  if (prefix === 'rt' && Object.hasOwn(RATING_TAP_VALUES, word)) {
+    return { type: 'rt', value: word as RatingValue, followupId }
+  }
+  return null
 }
 
 // ------------------------------------------------------------

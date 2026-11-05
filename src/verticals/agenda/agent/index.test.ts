@@ -380,6 +380,100 @@ describe('agendaInboundHandler — candado por conversación', () => {
       },
     )
 
+    describe('el botón de un seguimiento de después de la cita', () => {
+      const FU = '22222222-2222-4222-8222-222222222222'
+      const RT = '33333333-3333-4333-8333-333333333333'
+      const CARE = '11111111-1111-4111-8111-111111111111'
+
+      /** Una visita atendida con su seguimiento ya enviado, y un mensaje que lo responde. */
+      function followupInbound(replyId: string) {
+        const db = withInbound(
+          clinicDb({
+            clinic_consents: [grantedConsent()],
+            booking_appointments: [
+              {
+                id: 'ap-1',
+                account_id: ACCOUNT,
+                contact_id: CONTACT,
+                service_id: 'svc-limpieza',
+                staff_id: 'st-ana',
+                location_id: 'loc-1',
+                starts_at: '2026-10-17T15:00:00.000Z',
+                ends_at: '2026-10-17T15:30:00.000Z',
+                status: 'completed',
+                answers: {},
+              },
+            ],
+            clinic_followups: [
+              { id: FU, account_id: ACCOUNT, appointment_id: 'ap-1', contact_id: CONTACT, kind: 'como_sigues', response: null },
+              { id: CARE, account_id: ACCOUNT, appointment_id: 'ap-1', contact_id: CONTACT, kind: 'cuidados', response: null },
+              { id: RT, account_id: ACCOUNT, appointment_id: 'ap-1', contact_id: CONTACT, kind: 'calificacion', response: null },
+            ],
+            clinic_ratings: [],
+          }),
+          '',
+          replyId,
+        )
+        db._tables.conversations[0].bot_lock_until = BUSY
+        return db
+      }
+
+      it.each([
+        ['fu:bien', `fu:bien:${FU}`],
+        ['fu:molestias', `fu:molestias:${FU}`],
+        ['fu:ayuda', `fu:ayuda:${FU}`],
+        ['fu:cuidados', `fu:cuidados:${CARE}`],
+        ['rt:bien', `rt:bien:${RT}`],
+        ['rt:mal', `rt:mal:${RT}`],
+      ])('%s se atiende aunque el candado esté ocupado, sin soltar el de otro', async (_name, replyId) => {
+        const db = followupInbound(replyId)
+
+        const result = await runWaiting(ctx(db))
+
+        expect(result).toEqual({ consumed: true })
+        // El bot contestó el toque (no se descartó, no se avisó de ningún descarte).
+        expect(mocks.sendText.mock.calls.length).toBeGreaterThan(0)
+        expect(lockOf(db)).toBe(BUSY)
+        expect(mocks.notifyAlert).not.toHaveBeenCalled()
+      })
+
+      it('"Tengo molestias" con el candado ocupado igual pasa el hilo y avisa al equipo', async () => {
+        const db = followupInbound(`fu:molestias:${FU}`)
+
+        await runWaiting(ctx(db))
+
+        expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+        expect(db._tables.clinic_followups[0].response).toBe('molestias')
+        expect(db._tables.notifications.length).toBeGreaterThan(0)
+      })
+
+      it('la calificación se guarda aunque el candado esté ocupado', async () => {
+        const db = followupInbound(`rt:regular:${RT}`)
+
+        await runWaiting(ctx(db))
+
+        expect(db._tables.clinic_ratings).toMatchObject([{ value: 'regular', followup_id: RT }])
+      })
+
+      it('"Agendar otra" no cambia: con el candado ocupado se descarta y avisa', async () => {
+        const db = followupInbound('book:again')
+
+        await runWaiting(ctx(db))
+
+        expect(mocks.sendText).not.toHaveBeenCalled()
+        expect(mocks.notifyAlert).toHaveBeenCalledTimes(1)
+      })
+
+      it('una etiqueta suelta ("Bien") no es un toque de seguimiento: se descarta y avisa', async () => {
+        const db = followupInbound('Bien')
+
+        await runWaiting(ctx(db))
+
+        expect(db._tables.clinic_followups[0].response).toBeNull()
+        expect(mocks.notifyAlert).toHaveBeenCalledTimes(1)
+      })
+    })
+
     it('revocar la autorización escribiendo también se atiende con el candado ocupado', async () => {
       const db = withInbound(
         clinicDb({ clinic_consents: [grantedConsent()] }),

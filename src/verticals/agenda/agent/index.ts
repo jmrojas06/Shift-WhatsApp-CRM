@@ -30,7 +30,7 @@ import { DEFAULT_URGENCY_WORDS } from '@/modules/clinica/texts'
 import { withBotLock } from './bot-lock'
 import { handleAgendaInbound, type AgendaSender } from './controller'
 import { loadActiveSession, loadHumanOwned, loadInboundMessage } from './db'
-import { actId, detectsUrgency, parseReminderTap } from './state'
+import { actId, detectsUrgency, parseFollowupTap, parseReminderTap } from './state'
 
 /** Sender real: cada método delega en el sender del motor de flujos. */
 export function createAgendaSender(
@@ -123,6 +123,8 @@ async function failClosed(
  *     registro; no puede descartarse.
  *   - El toque de un recordatorio (`rem:*`): es la respuesta a un mensaje que mandó
  *     el sistema, con la hora de una cita de por medio.
+ *   - El toque de un seguimiento de después de la cita (`fu:*`, `rt:*`): también es la
+ *     respuesta a un mensaje del sistema, y un "tengo molestias" no puede esperar.
  * Un mensaje que no se encuentra no cuenta; uno que no se puede leer lanza.
  */
 async function mustNotBeDropped(ctx: VerticalInboundContext): Promise<boolean> {
@@ -136,7 +138,8 @@ async function mustNotBeDropped(ctx: VerticalInboundContext): Promise<boolean> {
       inbound.replyId === actId('urgent') ||
       inbound.replyId === actId('alarm_yes') ||
       inbound.replyId === actId('consent_no') ||
-      parseReminderTap(inbound.replyId) !== null
+      parseReminderTap(inbound.replyId) !== null ||
+      parseFollowupTap(inbound.replyId) !== null
     )
   }
   if (consentRevocation(inbound.text)) return true
@@ -155,8 +158,8 @@ async function mustNotBeDropped(ctx: VerticalInboundContext): Promise<boolean> {
  * conversación (ver `withBotLock`), y lo que pudo cambiar mientras se esperaba
  * se lee de nuevo: la sesión y quién lleva el hilo. Si el candado no se
  * consigue, el mensaje se consume sin responder y se avisa al equipo técnico,
- * salvo una urgencia, un "No acepto" o el toque de un recordatorio, que se
- * procesan igual. Las demás cuentas siguen igual que siempre.
+ * salvo una urgencia, un "No acepto" o el toque de un recordatorio o de un
+ * seguimiento de después de la cita, que se procesan igual. Las demás cuentas siguen igual que siempre.
  */
 export const agendaInboundHandler: VerticalInboundHandler = async (ctx) => {
   const run = (session: VerticalInboundContext['session'], humanOwned: boolean) =>

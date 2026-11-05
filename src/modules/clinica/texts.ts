@@ -363,6 +363,35 @@ export function buildClinicTexts(l: AgendaLabels) {
     followupRatingRegular: 'Regular',
     followupRatingBad: 'Mal',
 
+    // ------------------------------------------------------------
+    // Respuestas del bot a esos botones (§7.4). Son mensajes libres: el paciente
+    // acaba de escribir, así que la ventana de 24 h está abierta.
+    // ------------------------------------------------------------
+    /** "Ver recomendaciones": las instrucciones del servicio de esa visita. */
+    followupCareReply: (instructions: string) =>
+      `Estas son las recomendaciones de cuidado después de tu ${l.cita}:\n\n${instructions.trim()}`,
+    /** El servicio ya no tiene instrucciones (se borraron después de enviar el botón). */
+    followupCareNone: 'Por ahora no tengo recomendaciones para esa visita. Si tienes dudas, escríbenos por aquí.',
+    followupWellReply: '¡Qué bueno! Cualquier cosa, escríbenos por aquí.',
+    /** Molestias o ayuda: se avisa al equipo y se repiten los signos de alarma de la clínica. */
+    followupTroubleReply: (alarmText: string) =>
+      `Le avisamos al equipo para que te contacten pronto.\n\n${alarmText}`,
+    followupTroubleNote:
+      'Paciente: respondió que tiene molestias o necesita ayuda después de su visita (bot en pausa). Comunícate con esa persona ya.',
+    followupTroubleNotificationTitle: '⚠️ Un paciente tiene molestias después de su visita',
+    followupTroubleNotificationBody: (who: string) =>
+      `${who} respondió que tiene molestias o necesita ayuda después de su visita. Comunícate con esa persona ya.`,
+    /** Va a todos los que califican; el enlace de Google solo si la sede lo tiene. */
+    followupRatingThanks: (reviewUrl: string | null) =>
+      reviewUrl
+        ? `¡Gracias por contarnos! Si quieres, déjanos tu opinión en Google: ${reviewUrl}`
+        : '¡Gracias por contarnos!',
+    /** Regular o Mal: el dueño recibe el aviso para que alguien llame. */
+    followupLowRatingNotificationTitle: (value: 'regular' | 'mal') =>
+      `Calificación ${value === 'mal' ? 'Mal' : 'Regular'}: llama al paciente`,
+    followupLowRatingNotificationBody: (who: string, value: 'regular' | 'mal') =>
+      `${who} calificó su visita como ${value === 'mal' ? 'Mal' : 'Regular'}. Que alguien lo llame para saber qué pasó.`,
+
     /** Cierre del día: aviso al dueño de las citas de hoy que nadie marcó como atendidas o no vino. */
     dayCloseTitle: 'Cierre del día pendiente',
     dayCloseBody: (count: number) =>
