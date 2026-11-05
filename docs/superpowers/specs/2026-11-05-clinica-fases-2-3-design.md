@@ -385,7 +385,8 @@ sin forzar el idioma. Debe salir `es` y el texto exacto; si sale otro idioma, se
 Cron `/api/verticals/clinica/followups/run` cada 10 minutos. Hace tres cosas.
 
 **7.1 Crear seguimientos.** Citas de clínica `completed` con inicio en los últimos 3 días y sin filas:
-- `cuidados`, para ya, solo si el servicio tiene `aftercare_instructions`;
+- `cuidados`, a la hora de fin de la cita (si ya pasó, sale en la siguiente corrida), solo si el
+  servicio tiene `aftercare_instructions`;
 - `como_sigues`, al día siguiente a las 10:00;
 - `calificacion`, a los dos días a las 10:00. Se separa de `como_sigues` para no mandar dos mensajes
   el mismo día.

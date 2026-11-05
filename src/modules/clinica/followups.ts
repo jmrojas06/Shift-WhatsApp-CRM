@@ -886,12 +886,19 @@ async function closeDay(
       createdAtIso: ctx.nowIso,
     })
   } catch (err) {
-    // Sin aviso no hay cierre: se suelta el día para reintentar.
-    await db
+    // Sin aviso no hay cierre: se suelta el día para reintentar. Si tampoco se
+    // puede soltar, el error lo dice: ese día quedaría sin aviso.
+    const { error: releaseError } = await db
       .from('clinic_day_closes')
       .delete()
       .eq('account_id', account.id)
       .eq('date_key', today.dateKey)
+    if (releaseError) {
+      const reason = err instanceof Error ? err.message : String(err)
+      throw new Error(
+        `${reason} (y no se pudo soltar el cierre del día ${today.dateKey}: ${releaseError.message})`,
+      )
+    }
     throw err
   }
   return true
