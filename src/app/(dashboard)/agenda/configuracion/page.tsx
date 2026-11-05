@@ -43,6 +43,7 @@ import { ModuleNotEnabled } from '../_components/module-not-enabled'
 import { BotSection } from './_components/bot-section'
 import { BusinessSection } from './_components/business-section'
 import { BusinessTypeSection } from './_components/business-type-section'
+import { CallsSection } from './_components/calls-section'
 import { GoogleCalendarSection } from './_components/google-calendar-section'
 import { PiecesSection } from './_components/pieces-section'
 import { QuestionsSection } from './_components/questions-section'
@@ -327,6 +328,8 @@ export default function AgendaConfiguracionPage() {
             />
             {/* Conectar Google es cosa de owner/admin: los demás roles ni lo ven. */}
             {canEditSettings && <GoogleCalendarSection labels={settings.labels} />}
+            {/* Llamadas: también solo owner/admin (el servidor lo vuelve a exigir). */}
+            {canEditSettings && <CallsSection />}
           </TabsContent>
 
           {!simple && (
