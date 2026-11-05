@@ -55,6 +55,13 @@ describe('plantillas de aviso', () => {
     expect(body.endsWith('}}')).toBe(false)
   })
 
+  // Meta no deja guardar una plantilla cuyas variables no aparecen en orden numérico.
+  it.each(NAMES)('%s: {{1}}, {{2}}... aparecen en orden numérico en el cuerpo', (name) => {
+    const found = approvedBody(name).match(/\{\{\d+\}\}/g)
+
+    expect(found).toEqual(NOTIFY_TEMPLATES[name].variables.map((_, index) => `{{${index + 1}}}`))
+  })
+
   it('las de clínica nunca tienen una variable para el procedimiento', () => {
     for (const name of ['cita_agendada_clinica', 'cita_cancelada_clinica'] as const) {
       expect(NOTIFY_TEMPLATES[name].variables).not.toContain('service')

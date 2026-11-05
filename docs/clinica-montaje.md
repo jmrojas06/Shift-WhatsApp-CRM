@@ -616,9 +616,10 @@ para las 8:
   letra por letra con los del código.
 - **Cuerpo exactamente como está aquí.** Sale de
   `src/verticals/agenda/notify-texts.ts` y de `src/modules/clinica/texts.ts`.
-  Las variables `{{1}}`, `{{2}}`... se llenan en el orden de cada tabla.
-  Meta pide un **valor de ejemplo** por variable: usa los de la columna
-  "Ejemplo".
+  Las variables `{{1}}`, `{{2}}`... se llenan en el orden de cada tabla y
+  aparecen en el texto en orden numérico (Meta no guarda una plantilla que
+  nombre `{{2}}` antes que `{{1}}`). Meta pide un **valor de ejemplo** por
+  variable: usa los de la columna "Ejemplo".
 - **Nunca el procedimiento.** Ninguna plantilla de clínica lo nombra: el
   teléfono puede ser compartido y el texto pasa por Meta.
 - **Botones:** solo de **Respuesta rápida**, con el texto exacto. Meta no
@@ -759,13 +760,13 @@ horas. Si escribió, recibe un texto con el mismo botón.
 Cuerpo:
 
 ```
-¡Hola! 👋 Gracias por venir a {{2}}. Tenemos unas recomendaciones de cuidado para {{1}} después de su visita. Toca el botón para verlas.
+¡Hola! 👋 Gracias por venir a {{1}}. Tenemos unas recomendaciones de cuidado para {{2}} después de su visita. Toca el botón para verlas.
 ```
 
 | Variable | Qué es | Ejemplo |
 | --- | --- | --- |
-| `{{1}}` | Paciente | Camila |
-| `{{2}}` | Nombre de la clínica | Clínica Ejemplo |
+| `{{1}}` | Nombre de la clínica | Clínica Ejemplo |
+| `{{2}}` | Paciente | Camila |
 
 Botón de respuesta rápida: **Ver recomendaciones**. Payload:
 `fu:cuidados:<id del seguimiento>`. La plantilla **no lleva las
@@ -777,13 +778,13 @@ texto de cuidados de esa atención (sección 16.2).
 Cuerpo:
 
 ```
-¡Hola! 👋 Te escribimos de {{2}}. ¿Cómo sigue {{1}} después de su visita?
+¡Hola! 👋 Te escribimos de {{1}}. ¿Cómo sigue {{2}} después de su visita?
 ```
 
 | Variable | Qué es | Ejemplo |
 | --- | --- | --- |
-| `{{1}}` | Paciente | Camila |
-| `{{2}}` | Nombre de la clínica | Clínica Ejemplo |
+| `{{1}}` | Nombre de la clínica | Clínica Ejemplo |
+| `{{2}}` | Paciente | Camila |
 
 Tres botones de respuesta rápida, en este orden:
 
@@ -800,13 +801,13 @@ Categoría Utilidad, pero **Meta puede pasarla a Marketing**.
 Cuerpo:
 
 ```
-¡Hola! 👋 En {{2}} queremos saber cómo le fue a {{1}} en su visita. ¿Cómo la calificas?
+¡Hola! 👋 En {{1}} queremos saber cómo le fue a {{2}} en su visita. ¿Cómo la calificas?
 ```
 
 | Variable | Qué es | Ejemplo |
 | --- | --- | --- |
-| `{{1}}` | Paciente | Camila |
-| `{{2}}` | Nombre de la clínica | Clínica Ejemplo |
+| `{{1}}` | Nombre de la clínica | Clínica Ejemplo |
+| `{{2}}` | Paciente | Camila |
 
 Tres botones de respuesta rápida, en este orden:
 
@@ -816,12 +817,15 @@ Tres botones de respuesta rápida, en este orden:
 | Regular | `rt:regular:<id>` |
 | Mal | `rt:mal:<id>` |
 
-**Sobre el orden de las variables en 15.6, 15.7 y 15.8:** en el texto, `{{2}}`
-(la clínica) aparece antes que `{{1}}` (el paciente). Es como lo manda el
-código: primero el paciente y luego la clínica. Si Meta no deja guardar la
-plantilla por ese orden, avisa al equipo técnico: se arregla cambiando el
-orden de las frases en `src/modules/clinica/texts.ts`, y no hay que tocar
-nada más.
+**Sobre el orden de las variables en 15.6, 15.7 y 15.8:** Meta exige que
+`{{1}}`, `{{2}}`... aparezcan en orden numérico dentro del texto. En estas tres
+la clínica se nombra antes que el paciente, así que la clínica es `{{1}}` y el
+paciente `{{2}}` (al revés que en 15.3 y 15.4, donde el paciente va primero).
+El código manda los valores en ese orden: negocio y luego paciente
+(`buildFollowupTemplateParams`, en `src/modules/clinica/followups.ts`). Si algún
+día se cambia el orden de las frases de `src/modules/clinica/texts.ts`, hay que
+cambiar también el de los valores, y crear una plantilla nueva con otro nombre
+(una aprobada no se edita).
 
 ## 16. Ajustes de la clínica por SQL
 

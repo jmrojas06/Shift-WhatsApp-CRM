@@ -414,11 +414,14 @@ recordatorios. Si el envío falla, vuelve a `pending` con `attempts + 1`, y a lo
 - `calificacion`: cita futura activa, calificación en los últimos 90 días, etiqueta `queja-abierta`, o
   `como_sigues` respondido con molestias o ayuda.
 
+Meta pide las variables de una plantilla en orden numérico dentro del texto. En estas tres el negocio se
+nombra antes que el paciente, por eso el negocio es `{{1}}` (al revés que en `cita_agendada_clinica`).
+
 | Tipo | Ventana abierta | Ventana cerrada (plantilla) |
 | --- | --- | --- |
-| cuidados | Texto con las instrucciones del servicio | `cuidados_cita_clinica` (paciente, negocio), botón "Ver recomendaciones" (`fu:cuidados:<id>`) |
-| como_sigues | Botones Bien / Tengo molestias / Necesito ayuda | `como_sigues_clinica` (paciente, negocio), mismos botones (`fu:bien|molestias|ayuda:<id>`) |
-| calificacion | Botones Bien / Regular / Mal | `calificacion_visita_clinica` (paciente, negocio), mismos botones (`rt:bien|regular|mal:<id>`) |
+| cuidados | Texto con las instrucciones del servicio | `cuidados_cita_clinica` ({{1}} negocio, {{2}} paciente), botón "Ver recomendaciones" (`fu:cuidados:<id>`) |
+| como_sigues | Botones Bien / Tengo molestias / Necesito ayuda | `como_sigues_clinica` ({{1}} negocio, {{2}} paciente), mismos botones (`fu:bien|molestias|ayuda:<id>`) |
+| calificacion | Botones Bien / Regular / Mal | `calificacion_visita_clinica` ({{1}} negocio, {{2}} paciente), mismos botones (`rt:bien|regular|mal:<id>`) |
 
 **7.3 Cierre del día.** Desde las 20:00, si hay citas de hoy ya empezadas en `pending` o `confirmed`,
 se avisa una vez al dueño en la app ("Tienes N citas de hoy sin marcar") y se guarda en

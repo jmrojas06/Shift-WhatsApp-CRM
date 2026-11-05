@@ -101,8 +101,9 @@ const DAY_MS = 24 * 60 * 60 * 1000
 /**
  * Plantillas aprobadas en Meta para cuando la ventana de 24 h está cerrada.
  * El nombre y el idioma deben coincidir EXACTAMENTE con los de WhatsApp Manager
- * (docs/clinica-montaje.md). Cada una lleva dos variables: {{1}} paciente y
- * {{2}} negocio; el procedimiento nunca viaja.
+ * (docs/clinica-montaje.md). Cada una lleva dos variables: {{1}} negocio y
+ * {{2}} paciente (en el cuerpo el negocio se nombra antes que el paciente, y Meta
+ * pide las variables en orden numérico); el procedimiento nunca viaja.
  */
 export const FOLLOWUP_TEMPLATES = {
   cuidados: { name: 'cuidados_cita_clinica', language: 'es' },
@@ -305,9 +306,9 @@ export function buildFollowupBody(d: FollowupDelivery): string {
   }
 }
 
-/** Variables del cuerpo de la plantilla: {{1}} paciente · {{2}} negocio. */
+/** Variables del cuerpo de la plantilla: {{1}} negocio · {{2}} paciente. */
 export function buildFollowupTemplateParams(d: FollowupDelivery): string[] {
-  return [oneLine(d.patientName), oneLine(d.businessName)]
+  return [oneLine(d.businessName), oneLine(d.patientName)]
 }
 
 // ------------------------------------------------------------

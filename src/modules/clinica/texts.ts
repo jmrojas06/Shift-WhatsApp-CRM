@@ -342,8 +342,10 @@ export function buildClinicTexts(l: AgendaLabels) {
     // procedimiento. Los cuidados (que sí vienen del servicio) solo salen con
     // la ventana de 24 h abierta; la plantilla solo invita a verlos.
     // Los cuerpos "...TemplateBody" son los de las plantillas aprobadas en
-    // Meta (variables {{1}} paciente y {{2}} negocio): el mismo texto se
-    // guarda en la bandeja cuando sale la plantilla.
+    // Meta (variables {{1}} negocio y {{2}} paciente, en el orden en que salen
+    // en el texto): el mismo texto se guarda en la bandeja cuando sale la
+    // plantilla. Si cambias el orden de las frases, cambia también el de
+    // `buildFollowupTemplateParams`: Meta exige las variables en orden numérico.
     // ------------------------------------------------------------
     followupCareBody: (a: { patient: string; business: string; instructions: string }) =>
       `¡Hola! 👋 Gracias por venir a ${a.business}. Estos son los cuidados para ${a.patient} después de su ${l.cita}:\n\n${a.instructions.trim()}`,

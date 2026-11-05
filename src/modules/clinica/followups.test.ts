@@ -355,12 +355,28 @@ describe('textos del seguimiento', () => {
     expect(body).not.toMatch(/endodoncia/i)
   })
 
-  it('las plantillas llevan dos variables: paciente y negocio', () => {
+  it('las plantillas llevan dos variables, en este orden: {{1}} negocio y {{2}} paciente', () => {
     expect(buildFollowupTemplateParams(delivery({ channel: 'template' }))).toEqual([
-      'Tomás Gil',
       'Clínica Sonrisa',
+      'Tomás Gil',
     ])
   })
+
+  // Meta pide que las variables aparezcan en orden numérico dentro del cuerpo. El
+  // negocio se nombra antes que el paciente, así que es {{1}} y el paciente {{2}}.
+  it.each(['cuidados', 'como_sigues', 'calificacion'] as const)(
+    '%s: {{1}} y {{2}} aparecen en ese orden en el cuerpo y los parámetros las llenan bien',
+    (kind) => {
+      const real = delivery({ kind, channel: 'template', aftercare: null })
+      const approved = buildFollowupBody({ ...real, businessName: '{{1}}', patientName: '{{2}}' })
+
+      expect(approved.match(/\{\{\d+\}\}/g)).toEqual(['{{1}}', '{{2}}'])
+      const params = buildFollowupTemplateParams(real)
+      expect(approved.replace(/\{\{(\d+)\}\}/g, (_, n: string) => params[Number(n) - 1])).toBe(
+        buildFollowupBody(real),
+      )
+    },
+  )
 
   it.each(['como_sigues', 'calificacion'] as const)('%s nombra al paciente y al negocio', (kind) => {
     const body = buildFollowupBody(delivery({ kind, aftercare: null }))
@@ -372,7 +388,7 @@ describe('textos del seguimiento', () => {
   it('una variable de la plantilla va en una sola línea', () => {
     expect(
       buildFollowupTemplateParams(delivery({ channel: 'template', patientName: 'Tomás\nGil' })),
-    ).toEqual(['Tomás Gil', 'Clínica Sonrisa'])
+    ).toEqual(['Clínica Sonrisa', 'Tomás Gil'])
   })
 })
 

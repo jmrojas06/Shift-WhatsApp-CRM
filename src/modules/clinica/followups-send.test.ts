@@ -228,7 +228,7 @@ describe('sendClinicFollowup — plantilla', () => {
       'calificacion_visita_clinica',
       ['rt:bien:fu-1', 'rt:regular:fu-1', 'rt:mal:fu-1'],
     ],
-  ])('%s usa %s con paciente y negocio, y los payloads del seguimiento', async (kind, name, payloads) => {
+  ])('%s usa %s con negocio y paciente, y los payloads del seguimiento', async (kind, name, payloads) => {
     await sendClinicFollowup(delivery({ kind, channel: 'template' }))
 
     expect(sendTemplateMessage).toHaveBeenCalledTimes(1)
@@ -238,7 +238,7 @@ describe('sendClinicFollowup — plantilla', () => {
       to: '573001112233',
       templateName: name,
       language: 'es',
-      params: ['Tomás Gil', 'Clínica Sonrisa'],
+      params: ['Clínica Sonrisa', 'Tomás Gil'],
       quickReplyPayloads: payloads,
     })
   })
