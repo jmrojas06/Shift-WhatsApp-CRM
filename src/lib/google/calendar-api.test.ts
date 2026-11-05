@@ -343,6 +343,27 @@ describe('eventIdForAppointment', () => {
     expect(() => eventIdForAppointment('zzzzzzzz')).toThrow()
     expect(() => eventIdForAppointment('abc')).toThrow() // menos de 5 caracteres
   })
+
+  // Quitar los guiones de cualquier texto juntaría ids distintos en un mismo evento
+  // ('ab-cde' y 'a-bcde' darían 'abcde'): solo se acepta un uuid completo.
+  it.each([
+    ['sin guiones', '0a1b2c3d4e5f60718293a4b5c6d7e8f9'],
+    ['con guiones de más', '0a1b-2c3d-4e5f-6071-8293-a4b5-c6d7-e8f9'],
+    ['guiones en otro lugar', '0a1b2c3d4-e5f-6071-8293-a4b5c6d7e8f9'],
+    ['un grupo corto', '0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f'],
+    ['un grupo largo', '0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f90'],
+    ['letras que no son hexadecimales', '0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8fz'],
+    ['con espacios', ' 0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9 '],
+    ['texto cualquiera con guiones', 'ab-cde'],
+  ])('rechaza lo que no tiene forma de uuid: %s', (_label, value) => {
+    expect(() => eventIdForAppointment(value)).toThrow(RangeError)
+  })
+
+  it('dos uuid distintos nunca dan el mismo id de evento', () => {
+    expect(eventIdForAppointment('00000000-0000-4000-8000-000000000001')).not.toBe(
+      eventIdForAppointment('00000000-0000-4000-8000-000000000002'),
+    )
+  })
 })
 
 describe('buildEventBody', () => {
@@ -646,6 +667,47 @@ describe('red y seguridad', () => {
     await deleteEvent({ accessToken: 'access-1', calendarId: CAL, eventId: EVENT_ID, fetchImpl })
     expect(callAt(fetchImpl, 0).signal).toBeInstanceOf(AbortSignal)
     expect(callAt(fetchImpl, 1).signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('a los 10 s sin respuesta la señal se aborta y sale GoogleNetworkError("timeout")', async () => {
+    vi.useFakeTimers()
+    try {
+      let seen: AbortSignal | null | undefined
+      // Un Google que nunca contesta: la llamada solo termina cuando se aborta la señal.
+      const fetchImpl = fakeFetch().mockImplementation(
+        (_url, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            seen = init?.signal
+            seen?.addEventListener('abort', () => reject(seen?.reason))
+          }),
+      )
+
+      const pending = fetchUserEmail({ accessToken: 'access-1', fetchImpl }).catch((e) => e)
+
+      await vi.advanceTimersByTimeAsync(9_999)
+      expect(seen?.aborted).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(seen?.aborted).toBe(true)
+
+      const err = await pending
+      expect(err).toBeInstanceOf(GoogleNetworkError)
+      expect(err.kind).toBe('timeout')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('una llamada que contesta a tiempo no se aborta', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchImpl = fakeFetch().mockResolvedValueOnce(json({ email: 'a@b.test' }))
+      await fetchUserEmail({ accessToken: 'access-1', fetchImpl })
+
+      const signal = callAt(fetchImpl, 0).signal
+      expect(signal?.aborted).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('sin fetchImpl usa el fetch global', async () => {

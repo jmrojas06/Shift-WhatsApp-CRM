@@ -98,6 +98,24 @@ interface WithFetch {
   fetchImpl?: typeof fetch
 }
 
+/**
+ * Señal que se aborta a los `REQUEST_TIMEOUT_MS`, con `TimeoutError` como motivo
+ * (igual que `AbortSignal.timeout`). Se arma con `setTimeout` y no con
+ * `AbortSignal.timeout` porque este último usa un reloj interno de Node que los
+ * relojes falsos de las pruebas no controlan. El temporizador no retiene el
+ * proceso (`unref`) y se deja armado a propósito: así el tope también cubre la
+ * lectura del cuerpo de la respuesta, y abortar una llamada ya terminada no hace
+ * nada.
+ */
+function timeoutSignal(): AbortSignal {
+  const controller = new AbortController()
+  const timer = setTimeout(() => {
+    controller.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError'))
+  }, REQUEST_TIMEOUT_MS)
+  ;(timer as { unref?: () => void }).unref?.()
+  return controller.signal
+}
+
 async function send(
   fetchImpl: typeof fetch | undefined,
   url: string,
@@ -105,7 +123,7 @@ async function send(
 ): Promise<Response> {
   const doFetch = fetchImpl ?? fetch
   try {
-    return await doFetch(url, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
+    return await doFetch(url, { ...init, signal: timeoutSignal() })
   } catch (err) {
     // No se conserva el error original: puede traer cabeceras o URLs.
     const timedOut =
@@ -377,17 +395,20 @@ export async function listWritableCalendars(
   return [...found.filter((c) => c.primary), ...found.filter((c) => !c.primary)]
 }
 
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 /**
  * Id del evento de Google para una cita: el uuid sin guiones y en minúsculas.
- * Es base32hex válido (0-9, a-v; 5 a 1024 caracteres) y siempre da el mismo
- * id para la misma cita, así reintentar no duplica el evento.
+ * Es base32hex válido (0-9, a-v) y siempre da el mismo id para la misma cita,
+ * así reintentar no duplica el evento. Solo acepta un uuid completo
+ * (8-4-4-4-12): quitar los guiones de un texto cualquiera juntaría ids distintos
+ * en un mismo evento ('ab-cde' y 'a-bcde').
  */
 export function eventIdForAppointment(appointmentId: string): string {
-  const id = appointmentId.replace(/-/g, '').toLowerCase()
-  if (!/^[0-9a-v]{5,1024}$/.test(id)) {
+  if (!UUID_SHAPE.test(appointmentId)) {
     throw new RangeError('The appointment id cannot be used as a Google event id')
   }
-  return id
+  return appointmentId.replace(/-/g, '').toLowerCase()
 }
 
 /**
