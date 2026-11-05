@@ -346,29 +346,42 @@ export async function listServices(
   }))
 }
 
-/** Barberos activos que atienden un servicio, en orden de posición. */
+/**
+ * Barberos activos que atienden un servicio, en orden de posición.
+ *
+ * Con `strict` (el panel) un fallo de lectura lanza: la recepción no puede
+ * ver "no hay horas" cuando en realidad no se pudo leer la agenda. El bot
+ * conserva su conducta de siempre.
+ */
 export async function listEligibleStaff(
   db: SupabaseClient,
   accountId: string,
   serviceId: string,
+  options: { strict?: boolean } = {},
 ): Promise<StaffInfo[]> {
-  const { data: links } = await db
+  const { data: links, error: linksError } = await db
     .from('booking_staff_services')
     .select('staff_id')
     .eq('account_id', accountId)
     .eq('service_id', serviceId)
+  if (linksError && options.strict) {
+    throw new Error(`No se pudo leer quién atiende el servicio: ${linksError.message}`)
+  }
   const staffIds = ((links ?? []) as Record<string, unknown>[]).map(
     (row) => row.staff_id as string,
   )
   if (!staffIds.length) return []
 
-  const { data } = await db
+  const { data, error: staffError } = await db
     .from('booking_staff')
     .select('id, name')
     .eq('account_id', accountId)
     .eq('is_active', true)
     .in('id', staffIds)
     .order('position')
+  if (staffError && options.strict) {
+    throw new Error(`No se pudo leer el equipo: ${staffError.message}`)
+  }
   return ((data ?? []) as Record<string, unknown>[]).map((row) => ({
     id: row.id as string,
     name: row.name as string,

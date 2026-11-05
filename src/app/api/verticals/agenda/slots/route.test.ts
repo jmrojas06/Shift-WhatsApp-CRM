@@ -188,6 +188,22 @@ describe('GET /api/verticals/agenda/slots: "Cualquiera"', () => {
     expect(slots[0].staff_ids).toEqual([STAFF, STAFF_B])
   })
 
+  it('si no se puede leer quién atiende el servicio, responde 500 y no "no hay horas"', async () => {
+    const db = boot()
+    db._failNext('select', 'booking_staff_services', { message: 'timeout' })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const res = await get({ service_id: SERVICE, date: TUESDAY })
+    expect(res.status).toBe(500)
+  })
+
+  it('si no se puede leer el equipo, responde 500', async () => {
+    const db = boot()
+    db._failNext('select', 'booking_staff', { message: 'timeout' })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const res = await get({ service_id: SERVICE, date: TUESDAY })
+    expect(res.status).toBe(500)
+  })
+
   it('en un día donde solo uno trabaja, solo ese aparece', async () => {
     boot()
     const res = await get({ service_id: SERVICE, date: MONDAY })

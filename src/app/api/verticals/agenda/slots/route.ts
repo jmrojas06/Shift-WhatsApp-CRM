@@ -63,7 +63,7 @@ export async function GET(request: Request) {
       }
       staffIds = [staff.id]
     } else {
-      staffIds = (await listEligibleStaff(db, accountId, service.id)).map((staff) => staff.id)
+      staffIds = (await listEligibleStaff(db, accountId, service.id, { strict: true })).map((staff) => staff.id)
     }
     if (staffIds.length === 0) return NextResponse.json({ slots: [] })
 
