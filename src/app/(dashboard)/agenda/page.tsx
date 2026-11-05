@@ -13,7 +13,7 @@
 // la API server-only con service-role — nunca desde el navegador.
 // ============================================================
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import {
   BellRing,
@@ -68,6 +68,8 @@ import {
 } from '@/verticals/agenda/panel'
 import { AGENDA_TEXTS as T } from '@/verticals/agenda/texts'
 import { CALENDAR_TEXTS } from '@/verticals/agenda/calendar-texts'
+import { createCallListApi } from '@/verticals/agenda/call-list-api'
+import { selectUnmarked } from '@/verticals/agenda/unmarked'
 import type { AppointmentStatus } from '@/verticals/agenda/appointments'
 import {
   formatDayLabel,
@@ -88,8 +90,10 @@ import {
 } from '@/verticals/agenda/seed'
 
 import { agendaConfigApi } from './configuracion/_components/api'
+import { CallListSection } from './_components/call-list-section'
 import { ModuleNotEnabled } from './_components/module-not-enabled'
 import { SetupWizard } from './_components/setup-wizard'
+import { UnmarkedSection } from './_components/unmarked-section'
 
 interface BookingServiceRow {
   id: string
@@ -580,6 +584,16 @@ export default function AgendaPage() {
     void loadReminders()
   }, [load, loadAgenda, loadReminders])
 
+  // "Para llamar" lee y anota por la API; un cliente para toda la vida de la página.
+  const callListApi = useMemo(() => createCallListApi(), [])
+  // "Sin marcar" depende de la hora: se recalcula cada minuto.
+  const [clock, setClock] = useState(() => new Date())
+  useEffect(() => {
+    const timer = setInterval(() => setClock(new Date()), 60_000)
+    return () => clearInterval(timer)
+  }, [])
+  const unmarked = useMemo(() => selectUnmarked(appointments, clock), [appointments, clock])
+
   /** Reinstalar: vuelve a aplicar el tipo de negocio que ya tiene la cuenta. */
   const handleInstall = useCallback(async () => {
     setInstalling(true)
@@ -819,6 +833,36 @@ export default function AgendaPage() {
       )}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-start">
+      <div className="min-w-0 space-y-6">
+      {/* Lo que pide una persona va encima de las citas de hoy: a quién llamar y qué falta marcar. */}
+      <CallListSection
+        api={callListApi}
+        labels={labels}
+        canAct={canManageAppointments}
+        onAppointmentChanged={() => {
+          void loadAgenda()
+          void loadReminders()
+        }}
+      />
+      <UnmarkedSection
+        items={unmarked.map((appointment) => ({
+          id: appointment.id,
+          startsAt: appointment.starts_at,
+          serviceName: appointment.serviceName,
+          staffName: appointment.staffName,
+          personLabel: contactLabel(appointment),
+        }))}
+        canAct={canManageAppointments}
+        changingId={changingId}
+        serviceGone={T.agendaServiceGone}
+        staffGone={T.agendaStaffGone}
+        // La sección solo lista citas que ya empezaron: ya viene confirmada la edición de una cita pasada.
+        onMark={(id, status) => {
+          const appointment = appointments.find((item) => item.id === id)
+          if (appointment) void changeStatus(appointment, status, true)
+        }}
+      />
+
       {/* Agenda del día: lo principal de la página */}
       <Card className="min-w-0">
         <CardHeader>
@@ -972,6 +1016,7 @@ export default function AgendaPage() {
           )}
         </CardContent>
       </Card>
+      </div>
 
       {/* Columna secundaria: recordatorios, servicios, equipo y plantilla */}
       <div className="min-w-0 space-y-6">

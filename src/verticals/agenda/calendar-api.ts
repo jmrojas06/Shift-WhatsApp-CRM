@@ -74,13 +74,13 @@ export interface CalendarApi {
 const BASE = '/api/verticals/agenda'
 const GENERIC_ERROR = 'No se pudo completar la acción. Revisa tu conexión e inténtalo de nuevo.'
 
-interface RawBody {
+export interface RawBody {
   error?: unknown
   code?: unknown
   [key: string]: unknown
 }
 
-async function call(
+export async function call(
   fetchImpl: typeof fetch,
   url: string,
   init?: { method: string; body: unknown },
