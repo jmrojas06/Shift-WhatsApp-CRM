@@ -151,7 +151,7 @@ export function panelBookingMessage(code: PanelBookingMessageCode, labels: Agend
     case 'chairs_full':
       return 'No quedan sillones libres a esa hora.'
     case 'slot_taken':
-      return `Esa hora ya no está libre para quien elegiste. Cambia la hora o de ${labels.profesional}.`
+      return `Quien elegiste ya tiene una cita a esa hora. Cambia la hora o cambia de ${labels.profesional}.`
     case 'stale':
       return 'Alguien cambió esto mientras lo editabas. Recarga e intenta de nuevo.'
   }
