@@ -34,8 +34,9 @@ import { panelError, panelRejection, scheduleCalendarKick } from '../_lib/panel-
 //         no_response   no contestó → solo queda en el historial.
 //         wrong_number  el número no es del paciente → solo el historial.
 //       Responde { ok, recorded, attempt, notified?, notify_error?, note? }.
-//       `recorded: false` = la llamada no quedó en el historial (la base admite
-//       3 llamadas manuales por cita); lo que cambia la cita igual se aplicó.
+//       `recorded: false` = esta petición no agregó la llamada al historial (la
+//       base admite 3 llamadas manuales por cita, o otra persona acababa de
+//       anotar ese mismo intento); lo que cambia la cita igual se aplicó.
 //
 // Guardas:
 //   - requireRole('agent') para anotar: un viewer solo lee (la RLS de la
@@ -55,6 +56,7 @@ const MESSAGES = {
   alreadyConfirmed: 'El paciente ya confirmó esta cita.',
   migrationMissing: 'Falta actualizar la base de datos. Avísale a Shift.',
   historyFull: `Ya hay ${MANUAL_ATTEMPTS_MAX} llamadas anotadas a esta cita, así que esta no quedó en el historial.`,
+  alreadyRecorded: 'Esa llamada ya estaba anotada en el historial, así que no se repitió.',
   historyFailed: 'La cita se actualizó, pero no se pudo guardar la llamada en el historial.',
 } as const
 
@@ -143,7 +145,7 @@ export async function POST(request: Request) {
 
     const attempt = previous + 1
     try {
-      await insertManualCall(db, {
+      const inserted = await insertManualCall(db, {
         accountId,
         appointmentId: input.appointmentId,
         contactId: target.contactId,
@@ -152,6 +154,16 @@ export async function POST(request: Request) {
         outcome: input.outcome,
         nowIso,
       })
+      // Otra persona anotó este mismo intento justo antes (índice único): ya está.
+      if (inserted === 'duplicate') {
+        return NextResponse.json({
+          ok: true,
+          recorded: false,
+          attempt: null,
+          note: MESSAGES.alreadyRecorded,
+          ...notice,
+        })
+      }
     } catch (err) {
       // Sin cambio en la cita, lo único que había que hacer era anotar: es un error.
       if (!changedAppointment) throw err

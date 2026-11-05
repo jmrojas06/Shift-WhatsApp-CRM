@@ -22,6 +22,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { ACTIVE_STATUSES } from './active-statuses'
 import { accountHasClinic } from './panel-booking-repo'
 import { isMissingMigrationError } from './panel'
 import {
@@ -118,7 +119,6 @@ export interface BuildCallListArgs {
 // Armado (puro)
 // ------------------------------------------------------------
 
-const ACTIVE_STATUSES: readonly string[] = ['pending', 'confirmed']
 /** El robot ya no está llamando: la llamada terminó (con o sin resultado guardado). */
 const FINISHED_WITHOUT_RESULT: readonly CallStatus[] = ['completed', 'no_answer', 'busy', 'canceled']
 

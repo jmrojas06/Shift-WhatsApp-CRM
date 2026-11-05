@@ -103,6 +103,31 @@ function boot(options: PanelSeedOptions & { appointments?: Row[]; settings?: Row
 }
 
 const rows = (db: FakeDb, table: string): Row[] => db._tables[table] ?? []
+
+/** Cuándo el bot confirmó la reserva (`confirmed_at`): la ruta no lo toca. */
+const BOT_CONFIRMED_AT = '2026-11-04T12:00:00.000Z'
+
+/**
+ * La ruta lee la cita y, justo después, otra persona la cambia: `change` corre
+ * entre esa lectura y la escritura de la ruta.
+ */
+function changeAppointmentAfterFirstRead(db: FakeDb, change: (appointment: Row) => void): void {
+  const original = db.from.bind(db)
+  let firstRead = true
+  ;(db as { from: (t: string) => unknown }).from = (table: string) => {
+    const query = original(table) as { maybeSingle: () => Promise<unknown> }
+    if (table === 'booking_appointments' && firstRead) {
+      const maybeSingle = query.maybeSingle.bind(query)
+      query.maybeSingle = async () => {
+        const result = await maybeSingle()
+        firstRead = false
+        change(rows(db, 'booking_appointments')[0])
+        return result
+      }
+    }
+    return query
+  }
+}
 const get = async () => (await GET()) as unknown as TestResponse
 const post = async (payload: unknown) => (await POST(jsonRequest(payload))) as unknown as TestResponse
 const drainAfter = async () => {
@@ -327,7 +352,7 @@ describe('POST: permisos y cuerpo', () => {
 
 describe('POST confirmed', () => {
   it('marca la cita como confirmada por el paciente y anota la llamada a nombre de quien la hizo', async () => {
-    const db = boot({ appointments: [ownAppointment({ status: 'pending' })] })
+    const db = boot({ appointments: [ownAppointment({ status: 'pending', confirmed_at: BOT_CONFIRMED_AT })] })
     const res = await post(body())
 
     expect(res.status).toBe(200)
@@ -336,7 +361,8 @@ describe('POST confirmed', () => {
     const appointment = rows(db, 'booking_appointments')[0]
     expect(appointment.status).toBe('confirmed')
     expect(appointment.attendance_confirmed_at).toBe(NOW.toISOString())
-    expect(appointment.confirmed_at).toBe(NOW.toISOString())
+    // La hora en que el bot confirmó la reserva se conserva.
+    expect(appointment.confirmed_at).toBe(BOT_CONFIRMED_AT)
 
     expect(rows(db, 'booking_calls')).toEqual([
       expect.objectContaining({
@@ -381,27 +407,30 @@ describe('POST confirmed', () => {
   it('si la cita cambió entre leerla y escribirla (la cancelaron) → 409 stale y no la revive', async () => {
     const db = boot()
     // La lectura la ve activa; justo después alguien la cancela.
-    const original = db.from.bind(db)
-    let firstRead = true
-    ;(db as { from: (t: string) => unknown }).from = (table: string) => {
-      const query = original(table) as { maybeSingle: () => Promise<unknown> }
-      if (table === 'booking_appointments' && firstRead) {
-        const maybeSingle = query.maybeSingle.bind(query)
-        query.maybeSingle = async () => {
-          const result = await maybeSingle()
-          firstRead = false
-          rows(db, 'booking_appointments')[0].status = 'cancelled'
-          return result
-        }
-      }
-      return query
-    }
+    changeAppointmentAfterFirstRead(db, (appointment) => {
+      appointment.status = 'cancelled'
+    })
     const res = await post(body())
     expect(res.status).toBe(409)
     expect(res.body.code).toBe('stale')
     expect(rows(db, 'booking_appointments')[0].status).toBe('cancelled')
     expect(rows(db, 'booking_appointments')[0].attendance_confirmed_at).toBeNull()
     expect(rows(db, 'booking_calls')).toHaveLength(0)
+  })
+
+  it('si otra persona confirmó entre leerla y escribirla → 409 stale y no pisa la hora que ya quedó', async () => {
+    const earlier = '2026-11-05T14:30:00.000Z'
+    const db = boot({ appointments: [ownAppointment({ confirmed_at: BOT_CONFIRMED_AT })] })
+    changeAppointmentAfterFirstRead(db, (appointment) => {
+      appointment.attendance_confirmed_at = earlier
+    })
+    const res = await post(body())
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe('stale')
+    expect(rows(db, 'booking_appointments')[0].attendance_confirmed_at).toBe(earlier)
+    expect(rows(db, 'booking_appointments')[0].confirmed_at).toBe(BOT_CONFIRMED_AT)
+    expect(rows(db, 'booking_calls')).toHaveLength(0)
+    expect(h.afterCallbacks).toHaveLength(0)
   })
 })
 
@@ -527,6 +556,55 @@ describe('POST no_response y wrong_number', () => {
     const res = await post(body({ outcome: 'no_response' }))
     expect(res.status).toBe(500)
     expect(rows(db, 'booking_calls')).toHaveLength(0)
+  })
+})
+
+// ------------------------------------------------------------
+// POST: otra persona anotó el mismo intento al mismo tiempo
+// (índice único en booking_calls por cita e intento manual)
+// ------------------------------------------------------------
+
+describe('POST con el intento ya anotado por otra persona (23505)', () => {
+  const duplicate = { message: 'duplicate key value violates unique constraint', code: '23505' }
+
+  it('No contestó: 200 con recorded=false y un aviso, no un error', async () => {
+    const db = boot()
+    db._failNext('insert', 'booking_calls', duplicate)
+    const res = await post(body({ outcome: 'no_response' }))
+
+    expect(res.status).toBe(200)
+    expect(res.body).toMatchObject({ ok: true, recorded: false, attempt: null })
+    expect(res.body.note).toMatch(/ya estaba anotada/)
+    expect(rows(db, 'booking_calls')).toHaveLength(0)
+  })
+
+  it('Confirmó: la cita igual queda confirmada y la respuesta dice que la llamada ya estaba anotada', async () => {
+    const db = boot()
+    db._failNext('insert', 'booking_calls', duplicate)
+    const res = await post(body())
+
+    expect(res.status).toBe(200)
+    expect(res.body).toMatchObject({ ok: true, recorded: false, attempt: null })
+    expect(res.body.note).toMatch(/ya estaba anotada/)
+    expect(rows(db, 'booking_appointments')[0].attendance_confirmed_at).toBe(NOW.toISOString())
+  })
+
+  it('Canceló: la cita igual se cancela y el aviso al paciente sale', async () => {
+    const db = boot()
+    db._failNext('insert', 'booking_calls', duplicate)
+    const res = await post(body({ outcome: 'cancelled' }))
+
+    expect(res.status).toBe(200)
+    expect(res.body).toMatchObject({ recorded: false, notified: true })
+    expect(res.body.note).toMatch(/ya estaba anotada/)
+    expect(rows(db, 'booking_appointments')[0].status).toBe('cancelled')
+  })
+
+  it('cualquier otro error al anotar (no 23505) sigue siendo un error si la cita no cambió', async () => {
+    const db = boot()
+    db._failNext('insert', 'booking_calls', { message: 'check violation', code: '23514' })
+    const res = await post(body({ outcome: 'no_response' }))
+    expect(res.status).toBe(500)
   })
 })
 

@@ -10,9 +10,13 @@
 //   - `parseManualCallBody` (puro): revisa la forma del cuerpo.
 //   - `loadCallTarget`: la cita, acotada por cuenta.
 //   - `writeAttendanceConfirmed`: "el paciente dijo que va". A diferencia de
-//     `markAppointmentConfirmed` del bot, solo escribe si la cita sigue activa:
-//     una cita que alguien canceló entre tanto nunca se revive.
-//   - `countManualCalls` e `insertManualCall`: el historial.
+//     `markAppointmentConfirmed` del bot, solo escribe si la cita sigue activa
+//     y nadie la confirmó antes: una cita que alguien canceló entre tanto nunca
+//     se revive, ni se pisa la hora de una confirmación que ya quedó. No toca
+//     `confirmed_at`, que es la confirmación de la reserva que puso el bot.
+//   - `countManualCalls` e `insertManualCall`: el historial. Un índice único
+//     (cita + intento, solo manuales) evita que dos personas anoten el mismo
+//     intento a la vez; la segunda recibe `duplicate`.
 //
 // Las lecturas y escrituras que deciden algo LANZAN si fallan. Ni el nombre
 // ni el teléfono del paciente van a un error.
@@ -20,6 +24,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { ACTIVE_STATUSES } from './active-statuses'
 import type { EditableAppointment } from './panel-booking-repo'
 import { isUuid } from './panel-booking-input'
 import type { CallOutcome, CallStatus } from './voice/calls-repo'
@@ -38,8 +43,6 @@ export const MANUAL_STATUS: Record<ManualOutcome, CallStatus> = {
   wrong_number: 'completed',
   no_response: 'no_answer',
 }
-
-const ACTIVE_STATUSES = ['pending', 'confirmed']
 
 // ------------------------------------------------------------
 // Cuerpo
@@ -125,8 +128,10 @@ export function isCallable(target: CallTarget, now: Date): boolean {
 
 /**
  * El paciente dijo que va: confirma la cita y deja `attendance_confirmed_at`
- * (migración 056). Solo escribe si la cita sigue activa; devuelve false si
- * nadie la pudo actualizar (la cambiaron entre tanto).
+ * (migración 056). Solo escribe si la cita sigue activa y todavía sin
+ * `attendance_confirmed_at`; devuelve false si nadie la pudo actualizar (la
+ * cancelaron o la confirmó otra persona entre tanto). `confirmed_at` no se
+ * toca: sigue siendo la hora en que el bot confirmó la reserva.
  */
 export async function writeAttendanceConfirmed(
   db: SupabaseClient,
@@ -136,13 +141,13 @@ export async function writeAttendanceConfirmed(
     .from('booking_appointments')
     .update({
       status: 'confirmed',
-      confirmed_at: args.nowIso,
       attendance_confirmed_at: args.nowIso,
       updated_at: args.nowIso,
     })
     .eq('id', args.appointmentId)
     .eq('account_id', args.accountId)
-    .in('status', ACTIVE_STATUSES)
+    .in('status', [...ACTIVE_STATUSES])
+    .is('attendance_confirmed_at', null)
     .select('id')
     .maybeSingle()
   if (error) throw new Error(`No se pudo confirmar la cita: ${error.message}`)
@@ -166,6 +171,14 @@ export async function countManualCalls(db: SupabaseClient, accountId: string, ap
   return ((data ?? []) as unknown[]).length
 }
 
+/** Código de Postgres para una violación de índice único. */
+const UNIQUE_VIOLATION = '23505'
+
+/**
+ * Anota la llamada. `duplicate`: otra persona anotó ese mismo intento en el
+ * mismo instante (índice único de la migración 056), así que ya está en el
+ * historial y no se repite. Cualquier otro fallo lanza.
+ */
 export async function insertManualCall(
   db: SupabaseClient,
   args: {
@@ -177,7 +190,7 @@ export async function insertManualCall(
     outcome: ManualOutcome
     nowIso: string
   },
-): Promise<void> {
+): Promise<'inserted' | 'duplicate'> {
   const { error } = await db.from('booking_calls').insert({
     account_id: args.accountId,
     direction: 'outbound',
@@ -190,5 +203,7 @@ export async function insertManualCall(
     created_by: args.userId,
     finished_at: args.nowIso,
   })
+  if (error?.code === UNIQUE_VIOLATION) return 'duplicate'
   if (error) throw new Error(`No se pudo guardar la llamada: ${error.message}`)
+  return 'inserted'
 }

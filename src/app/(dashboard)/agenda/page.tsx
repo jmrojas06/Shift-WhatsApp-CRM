@@ -13,7 +13,7 @@
 // la API server-only con service-role — nunca desde el navegador.
 // ============================================================
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
   BellRing,
@@ -592,6 +592,16 @@ export default function AgendaPage() {
     const timer = setInterval(() => setClock(new Date()), 60_000)
     return () => clearInterval(timer)
   }, [])
+  // Las citas se cargaron al abrir: al pasar la medianoche de Bogotá son de ayer.
+  // Se recarga el día apenas el reloj cambia de fecha (`selectUnmarked` ya no
+  // muestra las de otro día mientras llega la lectura nueva).
+  const todayKey = zonedDateKey(clock)
+  const loadedDayKey = useRef(todayKey)
+  useEffect(() => {
+    if (loadedDayKey.current === todayKey) return
+    loadedDayKey.current = todayKey
+    void loadAgenda()
+  }, [todayKey, loadAgenda])
   const unmarked = useMemo(() => selectUnmarked(appointments, clock), [appointments, clock])
 
   /** Reinstalar: vuelve a aplicar el tipo de negocio que ya tiene la cuenta. */
