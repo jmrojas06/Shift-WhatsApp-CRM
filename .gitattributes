@@ -1,0 +1,3 @@
+# Los scripts del VPS se ejecutan en Linux: siempre con LF.
+*.sh text eol=lf
+deploy/vps/* text eol=lf

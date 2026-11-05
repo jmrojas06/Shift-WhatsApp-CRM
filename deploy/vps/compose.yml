@@ -1,0 +1,47 @@
+# Producción en el VPS (docs/despliegue-vps.md). Diferencias con el
+# docker-compose.yml de la raíz:
+#   - la imagen lleva etiqueta (CRM_TAG = commit) para poder volver atrás;
+#   - el puerto solo escucha en 127.0.0.1: Docker se salta el firewall (ufw)
+#     con los puertos publicados, así que publicarlo en 0.0.0.0 dejaría el
+#     CRM abierto en http://IP:3000 sin HTTPS;
+#   - los logs rotan (sin esto, el json-file de Docker crece sin límite).
+# Se usa siempre desde la raíz del repo:
+#   docker compose -f deploy/vps/compose.yml --env-file .env.local ...
+# deploy/vps/deploy.sh ya lo hace.
+name: shift-crm
+
+services:
+  app:
+    build:
+      context: ../..
+      # NEXT_PUBLIC_* se incrustan al construir: cambiarlas exige reconstruir.
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-}
+        NEXT_PUBLIC_APP_LOCALE: ${NEXT_PUBLIC_APP_LOCALE:-es}
+    image: shift-whatsapp-crm:${CRM_TAG:-latest}
+    env_file:
+      - ../../.env.local
+    environment:
+      PORT: 3000
+    ports:
+      - '127.0.0.1:${HOST_PORT:-3000}:3000'
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://localhost:3000/api/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '5'

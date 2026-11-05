@@ -42,3 +42,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# VPS: estado del despliegue y override local del proxy (deploy/vps/)
+/.deploy/
+/deploy/vps/compose.local.yml
