@@ -110,6 +110,8 @@ export function NewAppointmentDialog(props: NewAppointmentDialogProps) {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [outsidePrompt, setOutsidePrompt] = useState(false)
+  /** Sube cuando hay que volver a pedir las horas libres (alguien se llevó la elegida). */
+  const [slotsVersion, setSlotsVersion] = useState(0)
 
   const staffForService = useMemo(
     () =>
@@ -186,6 +188,16 @@ export function NewAppointmentDialog(props: NewAppointmentDialogProps) {
 
   const staffName = (id: string | null): string => data.staff.find((s) => s.id === id)?.name ?? ''
 
+  // Una hora elegida de la lista depende de la atención, de quien atiende y del
+  // día: si algo cambia, deja de valer ella y los profesionales libres que
+  // trajo. La que vino del clic en el calendario o se escribió a mano no sale
+  // de la lista, así que se queda (se ve en "Otra hora"); lo que sí se suelta
+  // siempre es la lista de libres, para no agendar con alguien que ya no lo está.
+  const dropListChoice = () => {
+    if (slotStaff !== null) setTime('')
+    setSlotStaff(null)
+  }
+
   // ---- guardar ----
   const submit = async (outsideHoursOk: boolean) => {
     setError(null)
@@ -244,6 +256,12 @@ export function NewAppointmentDialog(props: NewAppointmentDialogProps) {
         return
       }
       setOutsidePrompt(false)
+      if (res.code === 'slot_taken' || res.code === 'chairs_full') {
+        // Alguien se llevó la hora: se sueltan la hora y la lista y se piden las libres de nuevo.
+        setTime('')
+        setSlotStaff(null)
+        setSlotsVersion((v) => v + 1)
+      }
       return setError(res.error || T.newDialog.saveFailed)
     }
 
@@ -493,6 +511,8 @@ export function NewAppointmentDialog(props: NewAppointmentDialogProps) {
                 value={serviceId || null}
                 onValueChange={(value) => {
                   setServiceId(value ?? '')
+                  dropListChoice()
+                  setOutsidePrompt(false)
                   setError(null)
                 }}
               >
@@ -517,6 +537,8 @@ export function NewAppointmentDialog(props: NewAppointmentDialogProps) {
                 value={effectiveStaffChoice}
                 onValueChange={(value) => {
                   setStaffChoice(value ?? ANY)
+                  dropListChoice()
+                  setOutsidePrompt(false)
                   setError(null)
                 }}
                 disabled={!serviceId}
@@ -552,6 +574,8 @@ export function NewAppointmentDialog(props: NewAppointmentDialogProps) {
             dateKey={dateKey}
             onDateChange={(next) => {
               setDateKey(next)
+              setTime('')
+              setSlotStaff(null)
               setOutsidePrompt(false)
             }}
             time={time}
@@ -563,6 +587,7 @@ export function NewAppointmentDialog(props: NewAppointmentDialogProps) {
             }}
             minDateKey={todayKey}
             waitingFor={waitingFor}
+            reloadKey={slotsVersion}
           />
           {effectiveStaffChoice === ANY && slotStaff?.[0] && (
             <p className="-mt-3 text-sm text-muted-foreground">

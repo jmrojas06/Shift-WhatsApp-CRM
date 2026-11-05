@@ -35,7 +35,7 @@ describe('parseContactQuery', () => {
 })
 
 describe('appointmentTitle', () => {
-  const base = { patientName: null, contactName: null, contactPhone: null }
+  const base = { patientName: null, contactName: null }
 
   it('en clínica manda el paciente', () => {
     expect(appointmentTitle({ ...base, patientName: 'Lucía Pérez', contactName: 'Mamá de Lucía' }, 'Sin nombre')).toBe(
@@ -43,16 +43,13 @@ describe('appointmentTitle', () => {
     )
   })
 
-  it('sin paciente usa el contacto y, si falta, el celular', () => {
-    expect(appointmentTitle({ ...base, contactName: 'Mateo Rojas', contactPhone: '+57300' }, 'Sin nombre')).toBe(
-      'Mateo Rojas',
-    )
-    expect(appointmentTitle({ ...base, contactName: '  ', contactPhone: '+573001112233' }, 'Sin nombre')).toBe(
-      '+573001112233',
-    )
+  it('sin paciente usa el contacto', () => {
+    expect(appointmentTitle({ ...base, contactName: 'Mateo Rojas' }, 'Sin nombre')).toBe('Mateo Rojas')
   })
 
-  it('sin nada usa el texto de respaldo', () => {
+  it('sin nombre usa el texto de respaldo y nunca el celular', () => {
+    const withPhone = { patientName: null, contactName: '  ', contactPhone: '+573001112233' }
+    expect(appointmentTitle(withPhone, 'Sin nombre')).toBe('Sin nombre')
     expect(appointmentTitle(base, 'Sin nombre')).toBe('Sin nombre')
   })
 })

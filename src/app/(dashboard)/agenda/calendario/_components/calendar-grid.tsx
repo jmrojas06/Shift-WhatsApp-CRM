@@ -129,7 +129,7 @@ export function CalendarGrid(props: CalendarGridProps) {
       <div
         ref={scrollerRef}
         role="region"
-        aria-label={T.gridLabel}
+        aria-label={T.gridLabel(labels)}
         aria-busy={busy || undefined}
         tabIndex={0}
         className={cn(
@@ -242,7 +242,7 @@ function ColumnHeader({
         <span className="min-w-0">
           <span className="block truncate text-sm font-semibold">{name}</span>
           <span className="block truncate text-xs text-muted-foreground">
-            {count === 0 ? T.noAppointmentsDay : T.countOf(count, labels)}
+            {count === 0 ? T.noAppointmentsDay(labels) : T.countOf(count, labels)}
           </span>
         </span>
       </div>
@@ -272,7 +272,7 @@ function ColumnHeader({
         {day}
       </span>
       <span className="text-[11px] text-muted-foreground">
-        {count === 0 ? T.noAppointmentsDay : T.countOf(count, labels)}
+        {count === 0 ? T.noAppointmentsDay(labels) : T.countOf(count, labels)}
       </span>
     </button>
   )
@@ -510,7 +510,7 @@ function WeekList({
   onOpenDay: (dateKey: string) => void
 }) {
   return (
-    <ol className="space-y-3 md:hidden" aria-label={T.gridLabel}>
+    <ol className="space-y-3 md:hidden" aria-label={T.gridLabel(labels)}>
       {columns.map((column) => (
         <li
           key={column.key}
@@ -533,7 +533,7 @@ function WeekList({
               </span>
               <span className="block text-xs text-muted-foreground">
                 {column.appointments.length === 0
-                  ? T.emptyWeekDay
+                  ? T.emptyWeekDay(labels)
                   : T.countOf(column.appointments.length, labels)}
               </span>
             </span>

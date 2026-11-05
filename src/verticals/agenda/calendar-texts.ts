@@ -34,9 +34,9 @@ export const CALENDAR_TEXTS = {
   newAppointmentGate: (l: AgendaLabels) => `crear ${l.citas}`,
 
   // Cuadrícula
-  gridLabel: 'Calendario de citas',
+  gridLabel: (l: AgendaLabels) => `Calendario de ${l.citas}`,
   countOf: (n: number, l: AgendaLabels) => (n === 1 ? `1 ${l.cita}` : `${n} ${l.citas}`),
-  noAppointmentsDay: 'Sin citas',
+  noAppointmentsDay: (l: AgendaLabels) => `Sin ${l.citas}`,
   noStaff: (l: AgendaLabels) =>
     `Todavía no hay ${l.profesionales} activos. Agrégalos en Configuración para ver el calendario.`,
   loading: 'Cargando el calendario…',
@@ -49,7 +49,7 @@ export const CALENDAR_TEXTS = {
   timeOffWithReason: (reason: string) => `Bloqueado: ${reason}`,
   outsideHours: 'Fuera de horario',
   now: 'Ahora',
-  emptyWeekDay: 'Sin citas este día',
+  emptyWeekDay: (l: AgendaLabels) => `Sin ${l.citas} este día`,
   openDay: (label: string) => `Ver el día ${label}`,
   noService: 'Servicio eliminado',
   noStaffAssigned: 'Sin asignar',
@@ -184,6 +184,11 @@ export const CALENDAR_TEXTS = {
     saving: 'Cancelando…',
     done: (l: AgendaLabels) => `${capitalize(l.cita)} cancelada`,
     failed: 'No se pudo cancelar. Inténtalo de nuevo.',
+    // La hora ya pasó: cancelar pide un "sí" aparte (sin género, sirve con cualquier palabra).
+    pastTitle: 'Ya pasó',
+    pastBody: 'Ya pasó la hora programada. ¿Cancelar igual?',
+    pastConfirm: 'Sí, cancelar igual',
+    pastBack: 'Volver',
   },
 
   doneNotifyFailed: 'El cambio quedó guardado, pero no se pudo avisar por WhatsApp.',

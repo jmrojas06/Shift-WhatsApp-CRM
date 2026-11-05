@@ -48,6 +48,8 @@ export interface SlotPickerProps {
   minDateKey: string
   /** Texto que reemplaza a las horas cuando aún falta elegir algo. */
   waitingFor?: string | null
+  /** Súbelo para volver a pedir las horas libres (por ejemplo, si alguien se llevó una). */
+  reloadKey?: number
 }
 
 const hhmm = (iso: string): string => {
@@ -56,12 +58,12 @@ const hhmm = (iso: string): string => {
 }
 
 export function SlotPicker(props: SlotPickerProps) {
-  const { idPrefix, api, serviceId, staffId, excludeId, dateKey, time, waitingFor } = props
+  const { idPrefix, api, serviceId, staffId, excludeId, dateKey, time, waitingFor, reloadKey = 0 } = props
   const { onTimeChange } = props
   const [result, setResult] = useState<SlotsResult | null>(null)
   const [manual, setManual] = useState(false)
 
-  const queryKey = `${serviceId}|${dateKey}|${staffId ?? ''}|${excludeId ?? ''}`
+  const queryKey = `${serviceId}|${dateKey}|${staffId ?? ''}|${excludeId ?? ''}|${reloadKey}`
 
   useEffect(() => {
     if (!serviceId) return

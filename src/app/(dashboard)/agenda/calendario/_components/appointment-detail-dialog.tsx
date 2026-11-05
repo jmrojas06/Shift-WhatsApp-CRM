@@ -241,7 +241,7 @@ function DetailView(
         <Row label={T.detail.who}>
           {a.contactName?.trim() || T.noName}
         </Row>
-        {a.contactPhone && (
+        {canWrite && a.contactPhone && (
           <Row label={T.detail.phone}>
             <a
               href={`tel:${a.contactPhone}`}
@@ -262,16 +262,19 @@ function DetailView(
         <p className="text-sm text-muted-foreground">{T.detail.closedState(visual.label)}</p>
       ) : (
         <div className="grid gap-2">
-          <div className="grid grid-cols-2 gap-2">
-            <Button disabled={busy} onClick={() => void changeStatus('completed', false)}>
-              {busy ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Check aria-hidden="true" />}
-              {T.detail.complete}
-            </Button>
-            <Button variant="outline" disabled={busy} onClick={() => void changeStatus('no_show', false)}>
-              <UserX aria-hidden="true" />
-              {T.detail.noShow}
-            </Button>
-          </div>
+          {/* "Atendida" y "No vino" no tienen sentido antes de la hora. */}
+          {props.hasStarted && (
+            <div className="grid grid-cols-2 gap-2">
+              <Button disabled={busy} onClick={() => void changeStatus('completed', false)}>
+                {busy ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Check aria-hidden="true" />}
+                {T.detail.complete}
+              </Button>
+              <Button variant="outline" disabled={busy} onClick={() => void changeStatus('no_show', false)}>
+                <UserX aria-hidden="true" />
+                {T.detail.noShow}
+              </Button>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-2">
             <Button variant="outline" disabled={busy || !movable} onClick={props.onMove}>
               <CalendarClock aria-hidden="true" />
@@ -328,6 +331,8 @@ function MoveView(
   const [notify, setNotify] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [outsidePrompt, setOutsidePrompt] = useState(false)
+  /** Sube cuando hay que volver a pedir las horas libres (alguien se llevó la elegida). */
+  const [slotsVersion, setSlotsVersion] = useState(0)
 
   const staffName = (id: string | null) => data.staff.find((s) => s.id === id)?.name ?? ''
 
@@ -357,6 +362,12 @@ function MoveView(
         return
       }
       setOutsidePrompt(false)
+      if (res.code === 'slot_taken' || res.code === 'chairs_full') {
+        // Alguien se llevó la hora: se sueltan la hora y la lista y se piden las libres de nuevo.
+        setTime('')
+        setSlotStaff(null)
+        setSlotsVersion((v) => v + 1)
+      }
       setError(res.error || T.move.failed)
       if (res.code === 'stale') props.onChanged()
       return
@@ -432,6 +443,9 @@ function MoveView(
             value={effectiveChoice}
             onValueChange={(value) => {
               setStaffChoice(value ?? ANY)
+              // La hora y los libres salían de la lista de otra persona.
+              setTime('')
+              setSlotStaff(null)
               setOutsidePrompt(false)
             }}
           >
@@ -463,6 +477,8 @@ function MoveView(
         dateKey={dateKey}
         onDateChange={(next) => {
           setDateKey(next)
+          setTime('')
+          setSlotStaff(null)
           setOutsidePrompt(false)
         }}
         time={time}
@@ -473,6 +489,7 @@ function MoveView(
           setError(null)
         }}
         minDateKey={todayKey}
+        reloadKey={slotsVersion}
       />
       {effectiveChoice === ANY && slotStaff?.[0] && (
         <p className="-mt-3 text-sm text-muted-foreground">
@@ -510,13 +527,25 @@ function CancelView(
   // Cancelar algo que ya pasó casi nunca necesita avisarle al paciente.
   const [notify, setNotify] = useState(!hasStarted)
   const [error, setError] = useState<string | null>(null)
+  const [pastPrompt, setPastPrompt] = useState(false)
 
-  const submit = async () => {
+  // `confirm_past` solo viaja después de un "sí" explícito a "Ya pasó".
+  const submit = async (confirmPast: boolean) => {
     setError(null)
+    if (hasStarted && !confirmPast) {
+      setPastPrompt(true)
+      return
+    }
     setBusy(true)
-    const res = await api.cancel(a.id, { reason, notify, confirmPast: hasStarted })
+    const res = await api.cancel(a.id, { reason, notify, confirmPast })
     setBusy(false)
     if (!res.ok) {
+      // El reloj del servidor puede ir por delante del de esta pantalla.
+      if (res.status === 409 && res.code === 'past_confirmation_required') {
+        setPastPrompt(true)
+        return
+      }
+      setPastPrompt(false)
       setError(res.error || T.cancel.failed)
       if (res.code === 'stale') props.onChanged()
       return
@@ -534,6 +563,24 @@ function CancelView(
     <DialogFrame
       notice={
         <>
+          {pastPrompt && (
+            <Alert role="alert" className="border-warning/40">
+              <AlertDescription className="grid gap-2">
+                <p className="font-medium text-foreground">{T.cancel.pastTitle}</p>
+                <p>{T.cancel.pastBody}</p>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <Button type="button" size="sm" variant="destructive" disabled={busy} onClick={() => void submit(true)}>
+                    {busy && <Loader2 className="animate-spin" aria-hidden="true" />}
+                    {T.cancel.pastConfirm}
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => setPastPrompt(false)}>
+                    {T.cancel.pastBack}
+                  </Button>
+                </div>
+              </AlertDescription>
+            </Alert>
+          )}
+
           {error && (
             <Alert variant="destructive" role="alert">
               <AlertDescription>{error}</AlertDescription>
@@ -547,7 +594,7 @@ function CancelView(
             <ArrowLeft aria-hidden="true" />
             {T.cancel.back}
           </Button>
-          <Button type="button" variant="destructive" disabled={busy} onClick={() => void submit()}>
+          <Button type="button" variant="destructive" disabled={busy || pastPrompt} onClick={() => void submit(false)}>
             {busy && <Loader2 className="animate-spin" aria-hidden="true" />}
             {busy ? T.cancel.saving : T.cancel.confirm(labels)}
           </Button>

@@ -89,12 +89,16 @@ export interface ContactSource {
   patients(contactId: string): Promise<PatientOption[]>
 }
 
-/** Nombre para mostrar: paciente (clínica), si no el contacto, si no su celular. */
+/**
+ * Nombre para mostrar: paciente (clínica), si no el contacto, si no el texto
+ * de respaldo. Nunca el celular: este título se pinta en la cuadrícula, a la
+ * vista de cualquier rol; el celular solo va en el detalle de la cita.
+ */
 export function appointmentTitle(
-  a: { patientName: string | null; contactName: string | null; contactPhone: string | null },
+  a: { patientName: string | null; contactName: string | null },
   fallback: string,
 ): string {
-  return a.patientName?.trim() || a.contactName?.trim() || a.contactPhone?.trim() || fallback
+  return a.patientName?.trim() || a.contactName?.trim() || fallback
 }
 
 // ------------------------------------------------------------
