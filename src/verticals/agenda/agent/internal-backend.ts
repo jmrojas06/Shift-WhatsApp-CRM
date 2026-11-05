@@ -12,6 +12,7 @@ import { insertPatient, listPatients } from '@/modules/clinica/patients'
 
 import { computeDaySlots, mergeSlotsByStart, type MergedSlot } from './availability'
 import type { ClinicBackend, DayRangeQuery, SlotQuery } from './backend'
+import { chairsFreeAt, loadChairContext, type ChairContext } from './chairs'
 import {
   cancelAppointment,
   insertAppointment,
@@ -27,22 +28,33 @@ import { addDaysToKey, startOfZonedDay } from './time'
 interface DayData {
   blocks: WorkBlockRow[]
   busy: BusyRow[]
+  /** Solo en una clínica: el cupo de sillones y las citas de toda la cuenta en el rango. */
+  chairs: ChairContext | null
 }
 
 export function createInternalBackend(args: {
   db: SupabaseClient
   accountId: string
+  /**
+   * La cuenta tiene el módulo de clínica: una hora sin silla libre no se
+   * ofrece, aunque el profesional esté libre. Sin la bandera (barberías y
+   * demás) la disponibilidad es la de siempre y no se lee nada de más.
+   */
+  clinic?: boolean
 }): ClinicBackend {
   const { db, accountId } = args
+  const clinic = args.clinic === true
 
   async function loadRange(staffIds: string[], fromKey: string, days: number): Promise<DayData> {
     const fromIso = startOfZonedDay(fromKey).toISOString()
     const toIso = startOfZonedDay(addDaysToKey(fromKey, days)).toISOString()
-    const [blocks, busy] = await Promise.all([
+    // El cupo se lee una vez por rango, no una por día.
+    const [blocks, busy, chairs] = await Promise.all([
       listWorkBlocks(db, accountId, staffIds),
       listBusy(db, accountId, staffIds, fromIso, toIso),
+      clinic ? loadChairContext(db, accountId, fromIso, toIso) : Promise.resolve(null),
     ])
-    return { blocks, busy }
+    return { blocks, busy, chairs }
   }
 
   function slotsForDay(
@@ -60,7 +72,17 @@ export function createInternalBackend(args: {
         now: query.now,
       }),
     }))
-    return mergeSlotsByStart(sets)
+    const merged = mergeSlotsByStart(sets)
+    const { chairs } = data
+    if (!chairs) return merged
+    return merged.filter((slot) =>
+      chairsFreeAt({
+        startsAt: slot.startsAt,
+        endsAt: slot.endsAt,
+        chairCount: chairs.chairCount,
+        active: chairs.active,
+      }),
+    )
   }
 
   return {

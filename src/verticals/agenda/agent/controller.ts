@@ -296,7 +296,9 @@ export async function handleAgendaInbound(
     account,
     settings,
     texts: mergeBotTexts(settings.botTexts, settings.labels),
-    backend: args.backend ?? createInternalBackend({ db: args.db, accountId: args.accountId }),
+    backend:
+      args.backend ??
+      createInternalBackend({ db: args.db, accountId: args.accountId, clinic: clinicActive }),
     clinic: clinicResult?.status === 'ok' ? clinicResult.clinic : null,
     // Con el módulo activo, una configuración que falta o no se pudo leer NO
     // equivale a una cuenta sin clínica: ver el cierre de más abajo.

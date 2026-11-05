@@ -668,7 +668,11 @@ export async function cancelAppointment(
 /**
  * Confirmación de una cita existente (botón Confirmar del
  * recordatorio). Idempotente: una cita ya confirmada solo refresca
- * `confirmed_at`. El trigger de 047 registra el cambio de estado.
+ * `confirmed_at` y `attendance_confirmed_at`. El trigger de 047
+ * registra el cambio de estado.
+ *
+ * `attendance_confirmed_at` (migración 056) es "el paciente dijo que va";
+ * no es lo mismo que `confirmed_at`, que el bot pone al reservar.
  */
 export async function markAppointmentConfirmed(
   db: SupabaseClient,
@@ -683,6 +687,7 @@ export async function markAppointmentConfirmed(
     .update({
       status: 'confirmed',
       confirmed_at: args.confirmedAtIso,
+      attendance_confirmed_at: args.confirmedAtIso,
       updated_at: args.confirmedAtIso,
     })
     .eq('id', args.id)

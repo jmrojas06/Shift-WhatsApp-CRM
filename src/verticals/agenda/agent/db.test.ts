@@ -13,6 +13,7 @@ import {
   loadAppointmentClinicLinks,
   loadBotSettings,
   loadHumanOwned,
+  markAppointmentConfirmed,
 } from './db'
 import { asClient, makeFakeDb } from './testing/fake-db'
 
@@ -197,6 +198,60 @@ describe('insertAppointment: paciente y sede', () => {
     expect('location_id' in inserted[0]).toBe(false)
     expect(inserted[1]).toMatchObject({ location_id: 'loc-1' })
     expect('patient_id' in inserted[1]).toBe(false)
+  })
+})
+
+describe('markAppointmentConfirmed', () => {
+  const CONFIRMED_AT = '2026-10-19T13:00:00.000Z'
+  const seed = () =>
+    makeFakeDb({
+      booking_appointments: [
+        { id: 'ap-1', account_id: 'acc-1', status: 'pending', confirmed_at: null },
+        { id: 'ap-2', account_id: 'acc-1', status: 'pending', confirmed_at: null },
+        { id: 'ap-3', account_id: 'acc-2', status: 'pending', confirmed_at: null },
+      ],
+    })
+
+  it('deja la cita confirmada y anota la hora en confirmed_at y attendance_confirmed_at', async () => {
+    const db = seed()
+    await markAppointmentConfirmed(asClient(db), {
+      accountId: 'acc-1',
+      id: 'ap-1',
+      confirmedAtIso: CONFIRMED_AT,
+    })
+    expect(db._tables.booking_appointments[0]).toMatchObject({
+      status: 'confirmed',
+      confirmed_at: CONFIRMED_AT,
+      attendance_confirmed_at: CONFIRMED_AT,
+      updated_at: CONFIRMED_AT,
+    })
+  })
+
+  it('solo toca esa cita de esa cuenta', async () => {
+    const db = seed()
+    await markAppointmentConfirmed(asClient(db), {
+      accountId: 'acc-1',
+      id: 'ap-3',
+      confirmedAtIso: CONFIRMED_AT,
+    })
+    expect(db._tables.booking_appointments.map((a) => a.status)).toEqual([
+      'pending',
+      'pending',
+      'pending',
+    ])
+    expect(db._tables.booking_appointments.some((a) => 'attendance_confirmed_at' in a)).toBe(false)
+  })
+
+  it('si la base lo rechaza, lanza: no se puede decir "confirmada" sobre una cita que sigue igual', async () => {
+    const db = seed()
+    db._failNext('update', 'booking_appointments', { message: 'boom' })
+    await expect(
+      markAppointmentConfirmed(asClient(db), {
+        accountId: 'acc-1',
+        id: 'ap-1',
+        confirmedAtIso: CONFIRMED_AT,
+      }),
+    ).rejects.toThrow('No se pudo confirmar la cita')
   })
 })
 

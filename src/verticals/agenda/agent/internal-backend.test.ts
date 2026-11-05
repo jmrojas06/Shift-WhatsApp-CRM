@@ -241,4 +241,169 @@ describe('InternalBackend', () => {
       ).rejects.toThrow('No se pudieron leer los pacientes')
     })
   })
+
+  describe('cupo de sillones', () => {
+    const OTHER = 'st-2'
+    // 9:00 a. m. en Bogotá, lunes 19 de octubre: la única hora de 30 min que tapa la cita de abajo.
+    const NINE = '2026-10-19T14:00:00.000Z'
+    const NINE_THIRTY = '2026-10-19T14:30:00.000Z'
+
+    /** Dos profesionales con el mismo horario (lunes 9:00 a 10:00) y una cita del otro a las 9:00. */
+    const seedChairs = (chairCount: number | null) => {
+      const db = makeFakeDb({
+        booking_working_hours: [
+          { account_id: ACCOUNT, staff_id: STAFF, weekday: 1, start_time: '09:00:00', end_time: '10:00:00' },
+          { account_id: ACCOUNT, staff_id: OTHER, weekday: 1, start_time: '09:00:00', end_time: '10:00:00' },
+        ],
+        booking_appointments: [
+          {
+            account_id: ACCOUNT,
+            staff_id: OTHER,
+            status: 'confirmed',
+            starts_at: NINE,
+            ends_at: NINE_THIRTY,
+          },
+        ],
+        booking_time_off: [],
+        clinic_locations: [
+          {
+            id: 'loc-1',
+            account_id: ACCOUNT,
+            chair_count: chairCount,
+            is_active: true,
+            created_at: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+      })
+      return db
+    }
+
+    const dayQuery = {
+      service,
+      staffIds: [STAFF],
+      dateKey: '2026-10-19',
+      now: NOW,
+    }
+
+    it('con la bandera y el cupo lleno, no ofrece la hora aunque su profesional esté libre', async () => {
+      const backend = createInternalBackend({
+        db: asClient(seedChairs(1)),
+        accountId: ACCOUNT,
+        clinic: true,
+      })
+      const slots = await backend.getDaySlots(dayQuery)
+      expect(slots.map((s) => s.label)).toEqual(['9:30 a. m.'])
+    })
+
+    it('con la bandera y una silla de sobra, ofrece la hora', async () => {
+      const backend = createInternalBackend({
+        db: asClient(seedChairs(2)),
+        accountId: ACCOUNT,
+        clinic: true,
+      })
+      const slots = await backend.getDaySlots(dayQuery)
+      expect(slots.map((s) => s.label)).toEqual(['9:00 a. m.', '9:30 a. m.'])
+    })
+
+    it('con la bandera pero sin cupo puesto, no limita nada', async () => {
+      const backend = createInternalBackend({
+        db: asClient(seedChairs(null)),
+        accountId: ACCOUNT,
+        clinic: true,
+      })
+      const slots = await backend.getDaySlots(dayQuery)
+      expect(slots.map((s) => s.label)).toEqual(['9:00 a. m.', '9:30 a. m.'])
+    })
+
+    it('una cita cancelada no ocupa silla', async () => {
+      const db = seedChairs(1)
+      db._tables.booking_appointments[0].status = 'cancelled'
+      const backend = createInternalBackend({ db: asClient(db), accountId: ACCOUNT, clinic: true })
+      const slots = await backend.getDaySlots(dayQuery)
+      expect(slots.map((s) => s.label)).toEqual(['9:00 a. m.', '9:30 a. m.'])
+    })
+
+    it('"Cualquiera": una hora sin silla no se ofrece con ningún profesional', async () => {
+      const backend = createInternalBackend({
+        db: asClient(seedChairs(1)),
+        accountId: ACCOUNT,
+        clinic: true,
+      })
+      const slots = await backend.getDaySlots({ ...dayQuery, staffIds: [STAFF, OTHER] })
+      expect(slots.map((s) => s.label)).toEqual(['9:30 a. m.'])
+      expect(slots[0].staffIds).toEqual([STAFF, OTHER])
+    })
+
+    it('getDaysWithSlots descarta el día cuya única hora se quedó sin silla', async () => {
+      const db = seedChairs(1)
+      // Cada lunes tiene una sola hora (9:00) y en los dos la silla está llena con la cita del otro profesional.
+      db._tables.booking_working_hours = [
+        { account_id: ACCOUNT, staff_id: STAFF, weekday: 1, start_time: '09:00:00', end_time: '09:30:00' },
+        { account_id: ACCOUNT, staff_id: OTHER, weekday: 1, start_time: '09:00:00', end_time: '09:30:00' },
+      ]
+      db._tables.booking_appointments.push({
+        account_id: ACCOUNT,
+        staff_id: OTHER,
+        status: 'pending',
+        starts_at: '2026-10-26T14:00:00.000Z',
+        ends_at: '2026-10-26T14:30:00.000Z',
+      })
+      const query = { service, staffIds: [STAFF], fromKey: '2026-10-19', days: 8, now: NOW }
+
+      const plain = createInternalBackend({ db: asClient(db), accountId: ACCOUNT })
+      expect(await plain.getDaysWithSlots(query)).toEqual(['2026-10-19', '2026-10-26'])
+
+      const clinic = createInternalBackend({ db: asClient(db), accountId: ACCOUNT, clinic: true })
+      expect(await clinic.getDaysWithSlots(query)).toEqual([])
+    })
+
+    it('carga el cupo una sola vez por rango, no una por día', async () => {
+      const db = seedChairs(2)
+      const reads: string[] = []
+      const from = db.from
+      db.from = (table: string) => {
+        reads.push(table)
+        return from(table)
+      }
+      const backend = createInternalBackend({ db: asClient(db), accountId: ACCOUNT, clinic: true })
+      await backend.getDaysWithSlots({ service, staffIds: [STAFF], fromKey: '2026-10-19', days: 8, now: NOW })
+      expect(reads.filter((t) => t === 'clinic_locations')).toHaveLength(1)
+      // Una lectura es la del profesional (listBusy) y otra la de toda la cuenta.
+      expect(reads.filter((t) => t === 'booking_appointments')).toHaveLength(2)
+    })
+
+    it('sin la bandera no hace la lectura extra ni limita por sillas', async () => {
+      const db = seedChairs(1)
+      const reads: string[] = []
+      const from = db.from
+      db.from = (table: string) => {
+        reads.push(table)
+        return from(table)
+      }
+      const backend = createInternalBackend({ db: asClient(db), accountId: ACCOUNT })
+      const slots = await backend.getDaySlots(dayQuery)
+      expect(slots.map((s) => s.label)).toEqual(['9:00 a. m.', '9:30 a. m.'])
+      expect(reads).not.toContain('clinic_locations')
+      expect(reads.filter((t) => t === 'booking_appointments')).toHaveLength(1)
+    })
+
+    it('con la bandera, si no puede leer el cupo, lanza en vez de ofrecer horas', async () => {
+      const db = seedChairs(1)
+      db._failNext('select', 'clinic_locations', { message: 'se cayó la base' })
+      const backend = createInternalBackend({ db: asClient(db), accountId: ACCOUNT, clinic: true })
+      await expect(backend.getDaySlots(dayQuery)).rejects.toThrow('No se pudo leer el cupo de sillones')
+    })
+
+    it('confirm marca la asistencia del paciente', async () => {
+      const db = seedChairs(1)
+      db._tables.booking_appointments[0].id = 'ap-1'
+      const backend = createInternalBackend({ db: asClient(db), accountId: ACCOUNT, clinic: true })
+      await backend.confirm({ id: 'ap-1', confirmedAtIso: NOW.toISOString() })
+      expect(db._tables.booking_appointments[0]).toMatchObject({
+        status: 'confirmed',
+        confirmed_at: NOW.toISOString(),
+        attendance_confirmed_at: NOW.toISOString(),
+      })
+    })
+  })
 })
