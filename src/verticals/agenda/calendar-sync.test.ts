@@ -27,6 +27,7 @@ vi.mock('@/lib/flows/admin-client', () => ({
 }))
 
 import {
+  CALENDAR_SYNC_TEXTS,
   buildEventText,
   kickCalendarSyncNow,
   runCalendarSync,
@@ -1072,6 +1073,26 @@ describe('runCalendarSync', () => {
     })
 
     expect(out).toMatchObject({ accounts: 2, revoked: 1, synced: 1 })
+  })
+
+  it('sin GOOGLE_CLIENT_ID/SECRET lo dice una sola vez con el texto de CALENDAR_SYNC_TEXTS', async () => {
+    delete process.env.GOOGLE_CLIENT_SECRET
+    const { db, first, second } = twoAccounts()
+    const google = makeGoogle()
+
+    const out = await runCalendarSync({
+      db: asClient(db),
+      now: NOW,
+      fetchImpl: google.fetchImpl,
+    })
+
+    expect(CALENDAR_SYNC_TEXTS.notConfigured).toContain('GOOGLE_CLIENT_ID')
+    expect(CALENDAR_SYNC_TEXTS.notConfigured).toContain('GOOGLE_CLIENT_SECRET')
+    expect(out.errors).toEqual([CALENDAR_SYNC_TEXTS.notConfigured])
+    expect(out).toMatchObject({ accounts: 2, synced: 0, connectionErrors: 2 })
+    expect(google.fetchImpl).not.toHaveBeenCalled()
+    expect(rowOf(db, first.id).google_dirty).toBe(true)
+    expect(rowOf(db, second.id).google_dirty).toBe(true)
   })
 
   it('si no se pueden leer las conexiones, lanza', async () => {

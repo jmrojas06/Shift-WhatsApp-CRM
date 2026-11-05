@@ -87,6 +87,8 @@ export const CALENDAR_SYNC_TEXTS = {
   cannotReadToken:
     'No se pudo leer el permiso guardado de Google. Vuelve a conectar Google Calendar.',
   revokedError: 'Google revocó el permiso de Shift. Vuelve a conectar Google Calendar.',
+  /** Para el resumen del cron (ruta y alerta): faltan las variables de Google en el servidor. */
+  notConfigured: 'Faltan GOOGLE_CLIENT_ID o GOOGLE_CLIENT_SECRET en el servidor',
 
   revokedNoticeTitle: 'Google Calendar se desconectó',
   revokedNoticeBody:
@@ -754,8 +756,7 @@ export async function runCalendarSync(args: {
         summary.connectionErrors += 1
       }
       if (result.outcome === 'not_configured') {
-        const text = 'Faltan GOOGLE_CLIENT_ID o GOOGLE_CLIENT_SECRET en el servidor'
-        if (!summary.errors.includes(text)) summary.errors.push(text)
+        if (!summary.errors.includes(T.notConfigured)) summary.errors.push(T.notConfigured)
       }
     } catch (err) {
       const text = `cuenta ${accountId}: ${logText(err)}`
