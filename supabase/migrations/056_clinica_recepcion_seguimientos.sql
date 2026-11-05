@@ -12,8 +12,10 @@
 --      (citas hechas desde el panel).
 --   2. booking_staff.google_calendar_id: calendario de Google del profesional.
 --   3. agenda_calendar_connections: la conexión con Google (token cifrado).
---   4. booking_call_settings: configuración de las llamadas por pasos (§6.4).
---   5. booking_calls: registro de llamadas, del robot y a mano (§6.4).
+--   4. booking_call_settings: configuración de las llamadas por pasos (§6.4),
+--      con last_test_call_at (el minuto de espera de la llamada de prueba).
+--   5. booking_calls: registro de llamadas, del robot y a mano (§6.4), con un
+--      CallSid único y un intento manual único por cita.
 --   6. clinic_followups, clinic_ratings, clinic_day_closes: después de la cita (§7).
 --   7. clinic_settings.followups_enabled: el interruptor por cuenta de los
 --      seguimientos (§7). Nace apagado: se prende a mano, cuenta por cuenta, cuando
@@ -29,14 +31,20 @@
 --   - clinic_followups, clinic_ratings, clinic_day_closes y las llamadas del
 --     robot no tienen política de escritura para el navegador.
 --   - booking_call_settings: el admin escribe la configuración, pero NO las
---     cuatro columnas que controla Shift (provider, monthly_limit,
---     inbound_number y caller_id): un trigger (patrón de 050 sobre accounts)
---     lo rechaza con 42501 si escribe authenticated o anon. Esas las fija Shift
---     con service role.
+--     cinco columnas que controla Shift o el servidor (provider, monthly_limit,
+--     inbound_number, caller_id y last_test_call_at): un trigger (patrón de 050
+--     sobre accounts) lo rechaza con 42501 si escribe authenticated o anon. Las
+--     primeras cuatro las fija Shift con service role; last_test_call_at la
+--     escribe el servidor (también con service role) al reservar el minuto de
+--     espera de la llamada de prueba.
 --   - A las seis tablas nuevas se les quita TRUNCATE para anon y authenticated
 --     (TRUNCATE salta la RLS y los triggers de fila).
 --
 -- Reglas de datos:
+--   - Dos llamadas no comparten el mismo CallSid de Telnyx (índice único
+--     parcial) y dos anotaciones a mano de una cita no repiten el intento
+--     (índice único parcial): la segunda se rechaza con 23505 y el código la
+--     trata como "ya estaba".
 --   - Nada cruza cuentas: las llamadas, los seguimientos y las calificaciones
 --     enlazan la cita (y la sede o el seguimiento) con FK compuestas
 --     (account_id, id). Como booking_appointments no tenía UNIQUE
@@ -302,6 +310,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_booking_call_settings_inbound_number
   ON booking_call_settings (inbound_number)
   WHERE inbound_number IS NOT NULL;
 
+-- Cuándo se reservó la última llamada de prueba de la cuenta. El servidor la
+-- reserva con un UPDATE condicional (service role) ANTES de llamar a Telnyx,
+-- para que un doble clic no pague dos llamadas. NO es del admin: el trigger de
+-- abajo la protege, porque ponerla en NULL se saltaría la espera de un minuto.
+ALTER TABLE booking_call_settings
+  ADD COLUMN IF NOT EXISTS last_test_call_at timestamptz;
+
 -- ------------------------------------------------------------
 -- 5) booking_calls — llamadas del robot y anotadas a mano (§6.4)
 -- ------------------------------------------------------------
@@ -358,6 +373,21 @@ CREATE INDEX IF NOT EXISTS idx_booking_calls_contact
 CREATE UNIQUE INDEX IF NOT EXISTS idx_booking_calls_robot_attempt
   ON booking_calls (appointment_id, attempt)
   WHERE direction = 'outbound' AND channel = 'robot' AND attempt IS NOT NULL;
+
+-- Un CallSid de Telnyx, una sola fila: el webhook ata la fila a la llamada con
+-- un UPDATE condicional y un 23505 aquí significa "ese CallSid ya es de otra
+-- fila" (una URL firmada repetida desde otra llamada). Las filas sin CallSid
+-- (aún no se marcó, o llamadas a mano) no chocan.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_booking_calls_provider_call_sid
+  ON booking_calls (provider_call_sid)
+  WHERE provider_call_sid IS NOT NULL;
+
+-- Una anotación a mano por (cita, intento): dos personas que anotan el mismo
+-- intento a la vez no lo duplican; la segunda recibe 23505 y el código responde
+-- "ya estaba anotado". Aparte del índice del robot: cada canal cuenta sus intentos.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_booking_calls_manual_attempt
+  ON booking_calls (appointment_id, attempt)
+  WHERE channel = 'manual' AND appointment_id IS NOT NULL AND attempt IS NOT NULL;
 
 -- ------------------------------------------------------------
 -- 6) Después de la cita (§7)
@@ -474,23 +504,27 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON booking_call_settings
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- ------------------------------------------------------------
--- booking_call_settings: cuatro columnas que controla Shift
+-- booking_call_settings: cinco columnas que no son del admin
 -- ------------------------------------------------------------
 -- La política deja al admin de la clínica escribir la fila entera por
--- PostgREST, pero estas cuatro no son suyas:
---   - provider:       quién pasa la llamada.
---   - monthly_limit:  el tope de llamadas, que paga Shift.
---   - inbound_number: único en toda la plataforma; el webhook encuentra la
---                     cuenta por él, así que uno ajeno desviaría las llamadas
---                     de otra clínica.
---   - caller_id:      el número que verá el paciente al recibir la llamada.
+-- PostgREST, pero estas cinco no son suyas:
+--   - provider:         quién pasa la llamada.
+--   - monthly_limit:    el tope de llamadas, que paga Shift.
+--   - inbound_number:   único en toda la plataforma; el webhook encuentra la
+--                       cuenta por él, así que uno ajeno desviaría las llamadas
+--                       de otra clínica.
+--   - caller_id:        el número que verá el paciente al recibir la llamada.
+--   - last_test_call_at: la reserva del minuto de espera de la llamada de
+--                       prueba (cada una cuesta); si el admin pudiera ponerla
+--                       en NULL se saltaría la espera.
 -- Mismo patrón que enforce_account_protected_columns (050): corre como quien
 -- escribe (SIN SECURITY DEFINER, para que current_user sea el rol de la API) y
--- rechaza con 42501 si escribe authenticated o anon. Shift los fija con
--- service role (o el operador por SQL), que pasan.
+-- rechaza con 42501 si escribe authenticated o anon. Shift (las cuatro
+-- primeras) y el servidor (la última) escriben con service role (o el operador
+-- por SQL), que pasan.
 --   - INSERT: deben venir con el valor por defecto (provider 'telnyx',
---     monthly_limit 300, inbound_number y caller_id en NULL); así el admin
---     puede crear su fila y la de Shift se completa después.
+--     monthly_limit 300, inbound_number, caller_id y last_test_call_at en NULL);
+--     así el admin puede crear su fila y la de Shift se completa después.
 --   - UPDATE: no pueden cambiar. Mandar el mismo valor no es un cambio.
 -- Si cambia el DEFAULT de monthly_limit hay que cambiarlo también aquí.
 CREATE OR REPLACE FUNCTION enforce_call_settings_protected_columns()
@@ -502,18 +536,20 @@ BEGIN
          OR NEW.monthly_limit IS DISTINCT FROM 300
          OR NEW.inbound_number IS NOT NULL
          OR NEW.caller_id IS NOT NULL
+         OR NEW.last_test_call_at IS NOT NULL
       THEN
         RAISE EXCEPTION
-          'booking_call_settings.provider, monthly_limit, inbound_number and caller_id are set by Shift with the service role, not from the panel'
+          'booking_call_settings.provider, monthly_limit, inbound_number, caller_id and last_test_call_at are set by the server with the service role, not from the panel'
           USING ERRCODE = 'insufficient_privilege';
       END IF;
     ELSIF NEW.provider IS DISTINCT FROM OLD.provider
        OR NEW.monthly_limit IS DISTINCT FROM OLD.monthly_limit
        OR NEW.inbound_number IS DISTINCT FROM OLD.inbound_number
        OR NEW.caller_id IS DISTINCT FROM OLD.caller_id
+       OR NEW.last_test_call_at IS DISTINCT FROM OLD.last_test_call_at
     THEN
       RAISE EXCEPTION
-        'booking_call_settings.provider, monthly_limit, inbound_number and caller_id are set by Shift with the service role, not from the panel'
+        'booking_call_settings.provider, monthly_limit, inbound_number, caller_id and last_test_call_at are set by the server with the service role, not from the panel'
         USING ERRCODE = 'insufficient_privilege';
     END IF;
   END IF;

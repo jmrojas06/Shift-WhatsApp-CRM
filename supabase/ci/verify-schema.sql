@@ -1319,6 +1319,31 @@ BEGIN
       'booking_calls must be unique per (appointment_id, attempt) for outbound robot calls — migration 056 did not apply';
   END IF;
 
+  -- Un CallSid de Telnyx, una sola fila; y una anotación a mano por (cita, intento).
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND tablename = 'booking_calls'
+      AND indexdef LIKE 'CREATE UNIQUE INDEX%(provider_call_sid)%'
+      AND indexdef LIKE '%provider_call_sid IS NOT NULL%'
+  ) THEN
+    RAISE EXCEPTION
+      'booking_calls.provider_call_sid must be unique when not null — migration 056 did not apply';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND tablename = 'booking_calls'
+      AND indexdef LIKE 'CREATE UNIQUE INDEX%(appointment_id, attempt)%'
+      AND indexdef LIKE '%channel%manual%'
+      AND indexdef LIKE '%appointment_id IS NOT NULL%'
+      AND indexdef LIKE '%attempt IS NOT NULL%'
+  ) THEN
+    RAISE EXCEPTION
+      'booking_calls must be unique per (appointment_id, attempt) for manual calls — migration 056 did not apply';
+  END IF;
+
   -- Un seguimiento por (cita, tipo) y una calificación por seguimiento.
   IF NOT EXISTS (
     SELECT 1 FROM pg_indexes
@@ -1465,8 +1490,8 @@ BEGIN
       'booking_call_settings phone CHECKs must require 8 to 15 digits ({7,14}) — migration 056 did not apply';
   END IF;
 
-  -- provider, monthly_limit, inbound_number y caller_id son de Shift: un admin
-  -- no los cambia por PostgREST. BEFORE INSERT OR UPDATE por fila (tgtype fila
+  -- provider, monthly_limit, inbound_number y caller_id son de Shift, y
+  -- last_test_call_at del servidor: un admin no los cambia por PostgREST. BEFORE INSERT OR UPDATE por fila (tgtype fila
   -- 1, antes 2, insert 4, update 16; sin delete 8), SIN SECURITY DEFINER (es lo
   -- que hace que current_user sea el rol de la API) y habilitado ('O' o 'A').
   IF NOT EXISTS (
@@ -1489,6 +1514,8 @@ BEGIN
       AND p.prosrc LIKE '%NEW.caller_id IS DISTINCT FROM OLD.caller_id%'
       AND p.prosrc LIKE '%NEW.inbound_number IS NOT NULL%'
       AND p.prosrc LIKE '%NEW.caller_id IS NOT NULL%'
+      AND p.prosrc LIKE '%NEW.last_test_call_at IS DISTINCT FROM OLD.last_test_call_at%'
+      AND p.prosrc LIKE '%NEW.last_test_call_at IS NOT NULL%'
   ) THEN
     RAISE EXCEPTION
       'enforce_call_settings_protected_columns trigger is missing, disabled, SECURITY DEFINER or incomplete — migration 056 did not apply';
@@ -1500,6 +1527,19 @@ BEGIN
   THEN
     RAISE EXCEPTION
       'enforce_call_settings_protected_columns is executable by anon/authenticated or not by service_role — migration 056 did not apply';
+  END IF;
+
+  -- La reserva del minuto de espera de la llamada de prueba: timestamptz, anulable.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'booking_call_settings'
+      AND column_name = 'last_test_call_at'
+      AND data_type = 'timestamp with time zone'
+      AND is_nullable = 'YES'
+  ) THEN
+    RAISE EXCEPTION
+      'booking_call_settings.last_test_call_at must be a nullable timestamptz — migration 056 did not apply';
   END IF;
 
   -- El interruptor de los seguimientos: boolean NOT NULL DEFAULT false. Sin el

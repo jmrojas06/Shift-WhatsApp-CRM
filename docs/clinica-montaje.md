@@ -1076,7 +1076,21 @@ llamar.
    ```
 
    Imprime un texto de unos 43 caracteres. Ese es `<token>`.
-3. **Voice → Programmable Voice → TeXML Applications → crear.**
+3. Genera el `t` de la dirección de **estado** de las llamadas entrantes
+   (donde Telnyx avisa que la llamada terminó). Este token es **otro**: no
+   firma solo la palabra `inbound`, firma también los parámetros de la
+   dirección (aquí `inbound=1`), como hace
+   `voiceToken("inbound", { inbound: "1" })`. Así nadie puede reusar el
+   token de la URL de voz en la de estado, ni al revés. Otro comando de una
+   línea (PowerShell y bash):
+
+   ```bash
+   node -e "console.log(require('crypto').createHmac('sha256', process.argv[1]).update(JSON.stringify(['inbound',[['inbound','1']]])).digest('base64url'))" "<tu VOICE_WEBHOOK_SECRET>"
+   ```
+
+   También imprime unos 43 caracteres, pero distintos a los del paso 2. Ese
+   es `<token-de-estado>`.
+4. **Voice → Programmable Voice → TeXML Applications → crear.**
    - **Nombre:** por ejemplo «Shift robot de voz».
    - **Método de voz (Voice Method): `POST`.**
    - **URL de voz (Voice URL):**
@@ -1085,21 +1099,47 @@ llamar.
      https://<tu-dominio>/api/voice/telnyx/inbound?t=<token>
      ```
 
-     Es `NEXT_PUBLIC_SITE_URL` más esa ruta y el token del paso anterior.
+     Es `NEXT_PUBLIC_SITE_URL` más esa ruta y el token del paso 2.
+   - **URL de estado (Status Callback URL), método `POST`:**
+
+     ```
+     https://<tu-dominio>/api/voice/telnyx/status?inbound=1&t=<token-de-estado>
+     ```
+
+     Es `NEXT_PUBLIC_SITE_URL` más esa ruta, **`inbound=1` tal cual, antes
+     del `t`**, y el token del paso 3. Sin esta URL una llamada entrante
+     nunca se cierra en el CRM: queda sin hora de fin ni estado final. Si
+     cambias `inbound=1` o cualquier parte de la query, el token deja de
+     valer (403).
    - **Perfil de voz saliente:** el de la sección 18.4.
    - Deja vacía cualquier otra URL: las llamadas salientes llevan sus
-     propias direcciones.
-4. Guarda y copia dos datos de esa aplicación: el **ID de la aplicación**
+     propias direcciones (voz, estado y resultado del `<Dial>`).
+5. Guarda y copia dos datos de esa aplicación: el **ID de la aplicación**
    (`TELNYX_TEXML_APP_ID`) y el **Account SID**, el identificador de la
    cuenta que usa la API de TeXML (`TELNYX_ACCOUNT_SID`). Si no ves el
    Account SID en la aplicación, búscalo en los datos de la cuenta.
-5. **Asigna el número a la aplicación:** Numbers → My Numbers → el número →
+6. **Asigna el número a la aplicación:** Numbers → My Numbers → el número →
    conexión de voz → la aplicación TeXML. Sin esto, las llamadas entrantes
    no llegan al robot.
 
-**Si cambias `VOICE_WEBHOOK_SECRET`**, el `t` de la dirección entrante deja
-de valer: genéralo de nuevo y actualiza la URL de voz en Telnyx. Con un `t`
-inválido, la app responde 403 y la llamada entrante no se atiende.
+**Si cambias `VOICE_WEBHOOK_SECRET`**, los dos `t` (el de la URL de voz y el
+de la URL de estado) dejan de valer: genéralos de nuevo (pasos 2 y 3) y
+actualiza las dos URL en Telnyx. Con un `t` inválido, la app responde 403: en
+la URL de voz la llamada entrante no se atiende, y en la de estado no se
+cierra.
+
+**Pendiente de comprobar en la primera llamada real.** Cuando la llamada pasa
+a un asesor (tecla 0 de una entrante, o la tecla 3 de una saliente), la app
+ata el aviso del resultado del `<Dial>` a la llamada por su `CallSid`. Telnyx
+no promete en su documentación que mande el `CallSid` en ese aviso. Para
+verlo: marca 0 dentro del horario y **deja sin contestar** los teléfonos de
+los asesores. Debe oírse «En este momento no hay asesores disponibles...» y
+debe salir en la app el aviso «Llamada: pidió un asesor y nadie contestó». Si
+la llamada solo se corta en silencio, sin aviso, Telnyx no está mandando el
+`CallSid` en ese paso (la app descarta a propósito un aviso cuyo `CallSid` no
+cuadra) y hay que avisar a quien mantiene el código. Repite la prueba
+contestando con un teléfono de asesor: la llamada en `booking_calls` debe
+quedar en `advisor_connected`.
 
 ### 18.6 Los números de la cuenta (solo Shift)
 
@@ -1241,8 +1281,8 @@ VPS, `deploy/vps/deploy.sh`).
 | `GOOGLE_CLIENT_ID` | ID del cliente OAuth | Google Cloud (17.1, paso 7) |
 | `GOOGLE_CLIENT_SECRET` | Secreto del cliente OAuth | Google Cloud (17.1, paso 7) |
 | `TELNYX_API_KEY` | Clave de la API de Telnyx | Telnyx, Auth → API Keys (18.3) |
-| `TELNYX_ACCOUNT_SID` | Identificador de la cuenta para TeXML | Telnyx (18.5, paso 4) |
-| `TELNYX_TEXML_APP_ID` | ID de la aplicación TeXML | Telnyx (18.5, paso 4) |
+| `TELNYX_ACCOUNT_SID` | Identificador de la cuenta para TeXML | Telnyx (18.5, paso 5) |
+| `TELNYX_TEXML_APP_ID` | ID de la aplicación TeXML | Telnyx (18.5, paso 5) |
 | `TELNYX_PUBLIC_KEY` | Clave pública para verificar firmas | Telnyx, Keys & Credentials (18.3) |
 | `VOICE_WEBHOOK_SECRET` | Secreto que firma las direcciones de voz | Lo genera Shift (18.5, paso 1) |
 | `VOICE_DEFAULT_VOICE` | Voz por defecto del robot. Opcional | Sin definir: `Polly.Mia-Neural` |

@@ -760,8 +760,8 @@ describe('clínica, fases 2 y 3 (056)', () => {
     })
   })
 
-  describe('booking_call_settings: provider, monthly_limit, inbound_number y caller_id son de Shift', () => {
-    const PROTECTED = ['provider', 'monthly_limit', 'inbound_number', 'caller_id']
+  describe('booking_call_settings: provider, monthly_limit, inbound_number, caller_id y last_test_call_at no son del admin', () => {
+    const PROTECTED = ['provider', 'monthly_limit', 'inbound_number', 'caller_id', 'last_test_call_at']
 
     // La función termina en "LANGUAGE plpgsql SET search_path = public;": si
     // fuera SECURITY DEFINER (current_user pasaría a ser postgres y el guard
@@ -782,7 +782,7 @@ describe('clínica, fases 2 y 3 (056)', () => {
       expect(body).not.toMatch(/service_role|postgres/)
     })
 
-    it('en UPDATE compara con OLD exactamente las cuatro columnas', () => {
+    it('en UPDATE compara con OLD exactamente las cinco columnas', () => {
       const body = fn![1]
       for (const column of PROTECTED) {
         expect(body, column).toContain(`NEW.${column} IS DISTINCT FROM OLD.${column}`)
@@ -791,13 +791,14 @@ describe('clínica, fases 2 y 3 (056)', () => {
       expect(looked).toEqual([...PROTECTED].sort())
     })
 
-    it('en INSERT exige los valores por defecto (telnyx, 300, sin números)', () => {
+    it('en INSERT exige los valores por defecto (telnyx, 300, sin números ni prueba reservada)', () => {
       const body = fn![1]
       expect(body).toContain("TG_OP = 'INSERT'")
       expect(body).toContain("NEW.provider IS DISTINCT FROM 'telnyx'")
       expect(body).toContain('NEW.monthly_limit IS DISTINCT FROM 300')
       expect(body).toContain('NEW.inbound_number IS NOT NULL')
       expect(body).toContain('NEW.caller_id IS NOT NULL')
+      expect(body).toContain('NEW.last_test_call_at IS NOT NULL')
       // Los mismos valores que declara la tabla.
       const table = tableBlock('booking_call_settings')
       expect(table).toContain("provider text NOT NULL DEFAULT 'telnyx'")
@@ -834,6 +835,12 @@ describe('clínica, fases 2 y 3 (056)', () => {
     it('las políticas de escritura siguen siendo solo de owner/admin (el guard no las reemplaza)', () => {
       expectOnly('booking_call_settings', 'INSERT', `WITH CHECK (${ADMIN})`)
       expectOnly('booking_call_settings', 'UPDATE', `USING (${ADMIN}) WITH CHECK (${ADMIN})`)
+    })
+
+    it('last_test_call_at: columna timestamptz anulable, agregada con IF NOT EXISTS', () => {
+      expect(flat).toContain(
+        'ALTER TABLE booking_call_settings ADD COLUMN IF NOT EXISTS last_test_call_at timestamptz;',
+      )
     })
   })
 
@@ -1130,6 +1137,14 @@ describe('clínica, fases 2 y 3 (056)', () => {
       [
         'un intento del robot por cita (único parcial)',
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_booking_calls_robot_attempt ON booking_calls (appointment_id, attempt) WHERE direction = 'outbound' AND channel = 'robot' AND attempt IS NOT NULL;",
+      ],
+      [
+        'un CallSid de Telnyx, una sola llamada (único parcial)',
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_booking_calls_provider_call_sid ON booking_calls (provider_call_sid) WHERE provider_call_sid IS NOT NULL;',
+      ],
+      [
+        'una anotación a mano por cita e intento (único parcial)',
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_booking_calls_manual_attempt ON booking_calls (appointment_id, attempt) WHERE channel = 'manual' AND appointment_id IS NOT NULL AND attempt IS NOT NULL;",
       ],
       [
         'seguimientos pendientes por fecha (parcial)',
