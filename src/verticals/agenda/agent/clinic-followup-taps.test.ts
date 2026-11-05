@@ -703,3 +703,218 @@ describe('con una sesión de reserva abierta', () => {
     expect(conversation(db).ai_autoreply_disabled).toBe(true)
   })
 })
+
+// ============================================================
+// Autorización de datos: la calificación y la respuesta de "¿cómo sigues?" son datos
+// de salud ligados a una visita. Con un NO vigente (rechazó o revocó), o sin poder
+// leer la decisión, no se guarda nada; el paciente recibe su respuesta igual, y quien
+// reporta molestias o pide ayuda llega a una persona.
+// ============================================================
+
+/** Reemplaza las autorizaciones de la cuenta de prueba por estas. */
+function setConsents(db: FakeDb, rows: Row[]) {
+  db._tables.clinic_consents.splice(0, db._tables.clinic_consents.length, ...rows)
+}
+
+/** Una autorización de datos sensibles de la cuenta de prueba, con estos cambios. */
+const consent = (over: Row): Row => ({ ...grantedConsent(), ...over })
+
+const NO_STORING_CASES: [string, (db: FakeDb) => void][] = [
+  [
+    'la revocó después de aceptar',
+    (db) =>
+      setConsents(db, [
+        grantedConsent(),
+        consent({ id: 'cons-2', granted: false, created_at: '2026-10-10T00:00:00.000Z' }),
+      ]),
+  ],
+  [
+    'la rechazó desde el principio',
+    (db) => setConsents(db, [{ ...grantedConsent(), granted: false }]),
+  ],
+  [
+    'no se pudo leer la decisión',
+    (db) => db._failNext('select', 'clinic_consents', { message: 'base caída' }),
+  ],
+]
+
+/** Nada del paciente quedó guardado: ni calificación, ni respuesta, ni marca de respondido. */
+function expectNothingStored(db: FakeDb) {
+  expect(db._tables.clinic_ratings).toEqual([])
+  for (const r of db._tables.clinic_followups) {
+    expect(r.response).toBeNull()
+    expect(r.responded_at).toBeNull()
+  }
+}
+
+describe.each(NO_STORING_CASES)('sin autorización para guardar: %s', (_label, setup) => {
+  it('rt:mal no se guarda ni avisa al dueño, pero se agradece con el enlace de Google', async () => {
+    const db = visitDb()
+    db._tables.clinic_locations[0].google_review_url = REVIEW_URL
+    setup(db)
+    const rec = makeRecorder()
+
+    const result = await send(db, rec, { replyId: ratingPayload('mal', FU_RATE) })
+
+    expect(result).toEqual({ consumed: true })
+    expectNothingStored(db)
+    // Ni siquiera el aviso de una calificación baja: llevaría el nombre y lo que contestó.
+    expect(db._tables.notifications).toEqual([])
+    expect(conversation(db).ai_autoreply_disabled).toBe(false)
+    expect(bodies(rec)).toEqual([
+      `¡Gracias por contarnos! Si quieres, déjanos tu opinión en Google: ${REVIEW_URL}`,
+    ])
+  })
+
+  it('rt:bien tampoco se guarda y, sin enlace de Google, solo agradece', async () => {
+    const db = visitDb()
+    setup(db)
+    const rec = makeRecorder()
+
+    await send(db, rec, { replyId: ratingPayload('bien', FU_RATE) })
+
+    expectNothingStored(db)
+    expect(bodies(rec)).toEqual(['¡Gracias por contarnos!'])
+  })
+
+  it('fu:bien se contesta, pero no se guarda', async () => {
+    const db = visitDb()
+    setup(db)
+    const rec = makeRecorder()
+
+    const result = await send(db, rec, { replyId: followupPayload('bien', FU_HOW) })
+
+    expect(result).toEqual({ consumed: true })
+    expectNothingStored(db)
+    expect(bodies(rec)).toEqual([texts.followupWellReply])
+    expect(db._tables.notifications).toEqual([])
+  })
+
+  it('fu:cuidados manda las instrucciones igual (no guarda nada)', async () => {
+    const db = visitDb()
+    setup(db)
+    const rec = makeRecorder()
+
+    const result = await send(db, rec, { replyId: followupPayload('cuidados', FU_CARE) })
+
+    expect(result).toEqual({ consumed: true })
+    expectNothingStored(db)
+    expect(bodies(rec)).toEqual([texts.followupCareReply('No comas por 2 horas.')])
+  })
+
+  describe.each([['molestias'], ['ayuda']] as const)('fu:%s', (action) => {
+    it('no guarda la respuesta, pero pasa el hilo a una persona y avisa al dueño', async () => {
+      const db = visitDb()
+      setup(db)
+      const rec = makeRecorder()
+
+      const result = await send(db, rec, { replyId: followupPayload(action, FU_HOW) })
+
+      expect(result).toEqual({ consumed: true })
+      expectNothingStored(db)
+      expect(conversation(db)).toMatchObject({
+        ai_autoreply_disabled: true,
+        ai_handoff_summary: texts.followupTroubleNote,
+      })
+      expect(db._tables.tags.map((t) => t.name)).toContain('quiere-humano')
+      expect(db._tables.notifications).toMatchObject([
+        {
+          user_id: OWNER,
+          conversation_id: CONVERSATION,
+          title: texts.followupTroubleNotificationTitle,
+          body: texts.followupTroubleNotificationBody('Marta Ruiz'),
+        },
+      ])
+      // Y le dice que se avisó al equipo, con los signos de alarma.
+      expect(bodies(rec)).toEqual([
+        'Le avisamos al equipo para que te contacten pronto.\n\nSignos de alarma',
+      ])
+    })
+
+    it('en un hilo que lleva una persona, se le avisa a ella y al dueño sin guardar nada', async () => {
+      const db = visitDb()
+      humanThread(db)
+      setup(db)
+      const rec = makeRecorder()
+
+      const tap = { replyId: followupPayload(action, FU_HOW) }
+
+      const result = await send(db, rec, tap, { humanOwned: true })
+
+      expect(result).toEqual({ consumed: true })
+      expectNothingStored(db)
+      expect(conversation(db).assigned_agent_id).toBe(AGENT)
+      expect(db._tables.notifications.map((n) => n.user_id).sort()).toEqual([AGENT, OWNER].sort())
+      expect(bodies(rec)).toEqual([
+        'Le avisamos al equipo para que te contacten pronto.\n\nSignos de alarma',
+      ])
+    })
+  })
+})
+
+describe('la lectura de la autorización', () => {
+  it('si falla, se registra sin datos del paciente', async () => {
+    const db = visitDb()
+    db._failNext('select', 'clinic_consents', { message: 'base caída' })
+    const rec = makeRecorder()
+
+    await send(db, rec, { replyId: ratingPayload('mal', FU_RATE) })
+
+    const logged = vi.mocked(console.error).mock.calls.flat().map(String).join(' ')
+    expect(logged).toContain('autorización')
+    expect(logged).not.toContain('Marta')
+    expect(logged).not.toContain('573001112233')
+  })
+
+  it('una nueva aceptación después de revocar vuelve a permitir guardar', async () => {
+    const db = visitDb()
+    setConsents(db, [
+      grantedConsent(),
+      consent({ id: 'cons-2', granted: false, created_at: '2026-10-10T00:00:00.000Z' }),
+      consent({ id: 'cons-3', granted: true, created_at: '2026-10-12T00:00:00.000Z' }),
+    ])
+    const rec = makeRecorder()
+
+    await send(db, rec, { replyId: ratingPayload('bien', FU_RATE) })
+    await send(db, rec, { replyId: followupPayload('molestias', FU_HOW) })
+
+    expect(db._tables.clinic_ratings).toHaveLength(1)
+    expect(row(db, FU_HOW).response).toBe('molestias')
+  })
+
+  it('el NO de otro contacto o de mercadeo no es el NO de este paciente', async () => {
+    const db = visitDb()
+    setConsents(db, [
+      grantedConsent(),
+      consent({
+        id: 'cons-2',
+        contact_id: 'ct-2',
+        granted: false,
+        created_at: '2026-10-10T00:00:00.000Z',
+      }),
+      consent({
+        id: 'cons-3',
+        kind: 'mercadeo',
+        granted: false,
+        created_at: '2026-10-11T00:00:00.000Z',
+      }),
+    ])
+    const rec = makeRecorder()
+
+    await send(db, rec, { replyId: followupPayload('bien', FU_HOW) })
+
+    expect(row(db, FU_HOW).response).toBe('bien')
+  })
+
+  it('sin ninguna fila (visita sin autorización declarada) no es un NO: se guarda como siempre', async () => {
+    const db = visitDb()
+    setConsents(db, [])
+    const rec = makeRecorder()
+
+    await send(db, rec, { replyId: ratingPayload('regular', FU_RATE) })
+    await send(db, rec, { replyId: followupPayload('molestias', FU_HOW) })
+
+    expect(db._tables.clinic_ratings).toHaveLength(1)
+    expect(row(db, FU_HOW).response).toBe('molestias')
+  })
+})

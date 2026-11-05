@@ -159,7 +159,8 @@ async function mustNotBeDropped(ctx: VerticalInboundContext): Promise<boolean> {
  * se lee de nuevo: la sesión y quién lleva el hilo. Si el candado no se
  * consigue, el mensaje se consume sin responder y se avisa al equipo técnico,
  * salvo una urgencia, un "No acepto" o el toque de un recordatorio o de un
- * seguimiento de después de la cita, que se procesan igual. Las demás cuentas siguen igual que siempre.
+ * seguimiento de después de la cita, que se procesan igual. Las demás cuentas siguen
+ * igual que siempre.
  */
 export const agendaInboundHandler: VerticalInboundHandler = async (ctx) => {
   const run = (session: VerticalInboundContext['session'], humanOwned: boolean) =>

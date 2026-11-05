@@ -19,6 +19,13 @@
 // contacto que escribe, ni del tipo que dice el botón, se IGNORA en silencio: ni
 // respuesta ni escritura. Un botón viejo o ajeno no le dice nada a nadie.
 //
+// Qué se guarda depende de la autorización de datos: la calificación y la respuesta
+// de "¿cómo sigues?" son datos de salud ligados a una visita. Si la decisión vigente
+// es un NO (rechazó o revocó), o no se pudo leer, NO se guarda nada, pero el paciente
+// recibe su respuesta igual: el agradecimiento (con el enlace de Google, que no lleva
+// datos de nadie) y, con molestias o ayuda, el pase a una persona y los signos de
+// alarma. Quien tiene dolor tiene que llegar a alguien aunque no autorice guardar.
+//
 // Un paciente es un dato personal: su nombre no va a los logs ni a las alertas.
 // ============================================================
 
@@ -66,7 +73,11 @@ const TROUBLE_NOTICE_EVERY_MINUTES = 10
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /** De menos a más grave: la respuesta guardada nunca baja. */
-const RESPONSE_RANK: Readonly<Record<FollowupResponse, number>> = { bien: 0, molestias: 1, ayuda: 2 }
+const RESPONSE_RANK: Readonly<Record<FollowupResponse, number>> = {
+  bien: 0,
+  molestias: 1,
+  ayuda: 2,
+}
 
 const isResponse = (value: unknown): value is FollowupResponse =>
   typeof value === 'string' && Object.hasOwn(RESPONSE_RANK, value)
@@ -88,22 +99,63 @@ export async function handleFollowupTap(
   const followup = await loadOwnFollowup(ctx, tap)
   if (!followup) return { kind: 'done' }
 
+  // Las instrucciones de cuidado no guardan nada: se mandan sin mirar la autorización.
+  if (tap.type === 'fu' && tap.action === 'cuidados') {
+    await ctx.sender.sendText({ text: await careReply(ctx, followup) })
+    return { kind: 'done' }
+  }
+
+  const mayStore = await mayStoreAnswers(ctx)
+
   if (tap.type === 'rt') {
-    await answerRating(ctx, followup, tap.value)
+    await answerRating(ctx, followup, tap.value, mayStore)
     return { kind: 'done' }
   }
 
   switch (tap.action) {
     case 'cuidados':
-      await ctx.sender.sendText({ text: await careReply(ctx, followup) })
+      // Ya atendido arriba; queda para que el `switch` cubra todas las acciones.
       return { kind: 'done' }
     case 'bien':
-      await saveResponse(ctx, followup, 'bien')
+      if (mayStore) await saveResponse(ctx, followup, 'bien')
       await ctx.sender.sendText({ text: ctx.clinicTexts.followupWellReply })
       return { kind: 'done' }
     case 'molestias':
     case 'ayuda':
-      return answerTrouble(ctx, followup, tap.action)
+      return answerTrouble(ctx, followup, tap.action, mayStore)
+  }
+}
+
+// ------------------------------------------------------------
+// Autorización de datos
+// ------------------------------------------------------------
+
+/**
+ * ¿Se puede guardar lo que contesta el paciente? Sí, salvo que su decisión vigente
+ * sobre los datos sensibles sea un NO, o que no se pueda saber cuál es.
+ *
+ * Sin ninguna fila (visitas de antes del módulo, o sin autorización declarada en
+ * recepción) no es un NO: igual que `consentWithdrawn` del controlador y que el envío
+ * del seguimiento, que solo se omite ante un NO. Por eso no se usa `latestConsent`,
+ * que mezcla "sin fila" y "la lectura falló" en un mismo null; aquí una lectura que
+ * falla (o lanza) cuenta como desconocido y NO guarda.
+ */
+async function mayStoreAnswers(ctx: FollowupTapCtx): Promise<boolean> {
+  try {
+    const { data, error } = await ctx.db
+      .from('clinic_consents')
+      .select('granted, created_at')
+      .eq('account_id', ctx.accountId)
+      .eq('contact_id', ctx.contactId)
+      .eq('kind', 'datos_sensibles')
+      .order('created_at', { ascending: false })
+      .limit(1)
+    if (error) throw new Error(error.message)
+    const latest = ((data ?? []) as { granted: boolean }[])[0]
+    return latest === undefined || latest.granted === true
+  } catch (err) {
+    console.error('[clinica] no se pudo leer la autorización para guardar el seguimiento:', err)
+    return false
   }
 }
 
@@ -204,7 +256,8 @@ async function saveResponse(
   followup: OwnFollowup,
   response: FollowupResponse,
 ): Promise<void> {
-  if (followup.response !== null && RESPONSE_RANK[followup.response] >= RESPONSE_RANK[response]) return
+  if (followup.response !== null && RESPONSE_RANK[followup.response] >= RESPONSE_RANK[response])
+    return
   try {
     const { error } = await ctx.db
       .from('clinic_followups')
@@ -231,8 +284,10 @@ async function answerTrouble(
   ctx: FollowupTapCtx,
   followup: OwnFollowup,
   response: 'molestias' | 'ayuda',
+  mayStore: boolean,
 ): Promise<FollowupTapOutcome> {
-  await saveResponse(ctx, followup, response)
+  // Sin autorización vigente no se guarda la respuesta, pero el aviso y el pase siguen.
+  if (mayStore) await saveResponse(ctx, followup, response)
   const { clinicTexts: texts } = ctx
   const message = texts.followupTroubleReply(ctx.alarmText)
 
@@ -321,32 +376,41 @@ async function warnTeamInHumanThread(ctx: FollowupTapCtx): Promise<void> {
  * único por `followup_id`: tocar de nuevo no repite ni cambia la primera) y le
  * agradece a todos. Si no se pudo guardar, LANZA: no se agradece ni se avisa lo que
  * no quedó, y el paciente puede tocar de nuevo.
+ *
+ * Sin autorización vigente (`mayStore` falso) no se guarda la calificación, ni se
+ * marca el seguimiento, ni se avisa al dueño de una calificación baja (el aviso
+ * también la guardaría, con el nombre del paciente). Se agradece igual, con el
+ * enlace de Google: no lleva datos de nadie.
  */
 async function answerRating(
   ctx: FollowupTapCtx,
   followup: OwnFollowup,
   value: RatingValue,
+  mayStore: boolean,
 ): Promise<void> {
   const visit = await loadVisit(ctx, followup.appointment_id)
-  const { data, error } = await ctx.db
-    .from('clinic_ratings')
-    .upsert(
-      {
-        id: crypto.randomUUID(),
-        account_id: ctx.accountId,
-        appointment_id: followup.appointment_id,
-        contact_id: ctx.contactId,
-        location_id: visit?.locationId ?? null,
-        value,
-        followup_id: followup.id,
-        created_at: ctx.nowIso,
-      },
-      { onConflict: 'followup_id', ignoreDuplicates: true },
-    )
-    .select('id')
-  if (error) throw new Error(`No se pudo guardar la calificación: ${error.message}`)
-  // Con `ignoreDuplicates` la base devuelve solo lo que insertó: vacío = ya había una.
-  const stored = ((data ?? []) as unknown[]).length > 0
+  let stored = false
+  if (mayStore) {
+    const { data, error } = await ctx.db
+      .from('clinic_ratings')
+      .upsert(
+        {
+          id: crypto.randomUUID(),
+          account_id: ctx.accountId,
+          appointment_id: followup.appointment_id,
+          contact_id: ctx.contactId,
+          location_id: visit?.locationId ?? null,
+          value,
+          followup_id: followup.id,
+          created_at: ctx.nowIso,
+        },
+        { onConflict: 'followup_id', ignoreDuplicates: true },
+      )
+      .select('id')
+    if (error) throw new Error(`No se pudo guardar la calificación: ${error.message}`)
+    // Con `ignoreDuplicates` la base devuelve solo lo que insertó: vacío = ya había una.
+    stored = ((data ?? []) as unknown[]).length > 0
+  }
 
   if (stored) {
     await markResponded(ctx, followup.id)
@@ -400,7 +464,10 @@ async function warnOwnerOfLowRating(ctx: FollowupTapCtx, value: 'regular' | 'mal
  * de la clínica; una sede sin enlace no pide prestado el de otra. Si no se puede leer,
  * se agradece sin enlace: la calificación ya quedó guardada.
  */
-async function loadReviewUrl(ctx: FollowupTapCtx, locationId: string | null): Promise<string | null> {
+async function loadReviewUrl(
+  ctx: FollowupTapCtx,
+  locationId: string | null,
+): Promise<string | null> {
   const query = ctx.db
     .from('clinic_locations')
     .select('google_review_url')
@@ -412,7 +479,9 @@ async function loadReviewUrl(ctx: FollowupTapCtx, locationId: string | null): Pr
     console.error('[clinica] no se pudo leer el enlace de Google de la sede:', error.message)
     return null
   }
-  const url = ((data ?? []) as { google_review_url?: string | null }[])[0]?.google_review_url?.trim()
+  const url = (
+    (data ?? []) as { google_review_url?: string | null }[]
+  )[0]?.google_review_url?.trim()
   return url && isWebUrl(url) ? url : null
 }
 
