@@ -49,6 +49,9 @@ export function chairsFreeAt(args: {
  * (`loadClinicContext`). Sin cupo puesto no lee las citas: no hay nada que
  * comparar.
  *
+ * Con `excludeAppointmentId` esa cita no cuenta: al mover una cita, la propia
+ * no debe ocupar la silla que va a usar. Sin él, nada cambia.
+ *
  * Lanza si no puede leer: ofrecer una hora sin saber si hay silla es peor que
  * no ofrecer ninguna. Los mensajes de error no llevan datos del paciente.
  */
@@ -57,6 +60,7 @@ export async function loadChairContext(
   accountId: string,
   fromIso: string,
   toIso: string,
+  excludeAppointmentId?: string,
 ): Promise<ChairContext> {
   const { data: locations, error: locationError } = await db
     .from('clinic_locations')
@@ -72,14 +76,15 @@ export async function loadChairContext(
   const chairCount = raw == null ? null : Number(raw)
   if (chairCount === null) return { chairCount: null, active: [] }
 
-  const { data: appointments, error: appointmentsError } = await db
+  let query = db
     .from('booking_appointments')
     .select('starts_at, ends_at')
     .eq('account_id', accountId)
     .in('status', ['pending', 'confirmed'])
     .lt('starts_at', toIso)
     .gt('ends_at', fromIso)
-    .order('starts_at')
+  if (excludeAppointmentId) query = query.neq('id', excludeAppointmentId)
+  const { data: appointments, error: appointmentsError } = await query.order('starts_at')
   if (appointmentsError) {
     throw new Error(`No se pudieron leer las citas: ${appointmentsError.message}`)
   }

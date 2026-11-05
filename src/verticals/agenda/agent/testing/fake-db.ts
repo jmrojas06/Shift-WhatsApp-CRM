@@ -62,7 +62,7 @@ export interface FakeDb {
   from(table: string): unknown
 }
 
-type FilterKind = 'eq' | 'in' | 'lt' | 'lte' | 'gt' | 'gte' | 'is'
+type FilterKind = 'eq' | 'neq' | 'in' | 'lt' | 'lte' | 'gt' | 'gte' | 'is'
 
 /** Tablas donde el código deja que Postgres genere el `id` al insertar. */
 const GENERATED_ID_TABLES = new Set(['flows'])
@@ -137,6 +137,8 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
         switch (kind) {
           case 'eq':
             return v === value
+          case 'neq':
+            return v !== value
           case 'in':
             return (value as unknown[]).includes(v)
           case 'lt':
@@ -262,6 +264,10 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
       },
       eq: (col: string, value: unknown) => {
         filters.push({ col, kind: 'eq', value })
+        return api
+      },
+      neq: (col: string, value: unknown) => {
+        filters.push({ col, kind: 'neq', value })
         return api
       },
       in: (col: string, value: unknown[]) => {

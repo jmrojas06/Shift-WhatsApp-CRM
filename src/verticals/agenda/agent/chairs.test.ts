@@ -213,4 +213,18 @@ describe('loadChairContext', () => {
       'No se pudieron leer las citas',
     )
   })
+
+  it('con excludeAppointmentId, esa cita no ocupa silla (al mover, la propia cita no cuenta)', async () => {
+    const db = makeFakeDb({
+      clinic_locations: [location({ chair_count: 1 })],
+      booking_appointments: [
+        appointment('a-1', '2026-10-19T14:00:00.000Z', '2026-10-19T14:30:00.000Z'),
+        appointment('a-2', '2026-10-19T15:00:00.000Z', '2026-10-19T15:30:00.000Z'),
+      ],
+    })
+    const context = await loadChairContext(asClient(db), ACCOUNT, FROM, TO, 'a-1')
+    expect(context.active).toEqual([
+      { startsAt: new Date('2026-10-19T15:00:00.000Z'), endsAt: new Date('2026-10-19T15:30:00.000Z') },
+    ])
+  })
 })

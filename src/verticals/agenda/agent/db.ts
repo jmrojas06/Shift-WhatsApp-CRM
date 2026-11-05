@@ -447,6 +447,9 @@ export async function listWorkBlocks(
  * Citas activas + bloqueos de time off de los barberos, en una
  * ventana [fromIso, toIso). Los intervalos se devuelven crudos: el
  * cálculo de solapes vive en availability.ts.
+ *
+ * Con `excludeAppointmentId` esa cita no cuenta como ocupada (al mover una
+ * cita, la propia no debe taparse a sí misma). Los bloqueos siempre cuentan.
  */
 export async function listBusy(
   db: SupabaseClient,
@@ -454,11 +457,12 @@ export async function listBusy(
   staffIds: string[],
   fromIso: string,
   toIso: string,
+  excludeAppointmentId?: string,
 ): Promise<BusyRow[]> {
   if (!staffIds.length) return []
   const out: BusyRow[] = []
 
-  const { data: appts } = await db
+  let apptsQuery = db
     .from('booking_appointments')
     .select('staff_id, starts_at, ends_at')
     .eq('account_id', accountId)
@@ -466,6 +470,8 @@ export async function listBusy(
     .in('status', ['pending', 'confirmed'])
     .lt('starts_at', toIso)
     .gt('ends_at', fromIso)
+  if (excludeAppointmentId) apptsQuery = apptsQuery.neq('id', excludeAppointmentId)
+  const { data: appts } = await apptsQuery
   for (const row of (appts ?? []) as Record<string, unknown>[]) {
     out.push({
       staffId: row.staff_id as string,

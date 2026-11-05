@@ -45,14 +45,21 @@ export function createInternalBackend(args: {
   const { db, accountId } = args
   const clinic = args.clinic === true
 
-  async function loadRange(staffIds: string[], fromKey: string, days: number): Promise<DayData> {
+  async function loadRange(
+    staffIds: string[],
+    fromKey: string,
+    days: number,
+    excludeAppointmentId?: string,
+  ): Promise<DayData> {
     const fromIso = startOfZonedDay(fromKey).toISOString()
     const toIso = startOfZonedDay(addDaysToKey(fromKey, days)).toISOString()
     // El cupo se lee una vez por rango, no una por día.
     const [blocks, busy, chairs] = await Promise.all([
       listWorkBlocks(db, accountId, staffIds),
-      listBusy(db, accountId, staffIds, fromIso, toIso),
-      clinic ? loadChairContext(db, accountId, fromIso, toIso) : Promise.resolve(null),
+      listBusy(db, accountId, staffIds, fromIso, toIso, excludeAppointmentId),
+      clinic
+        ? loadChairContext(db, accountId, fromIso, toIso, excludeAppointmentId)
+        : Promise.resolve(null),
     ])
     return { blocks, busy, chairs }
   }
@@ -87,7 +94,7 @@ export function createInternalBackend(args: {
 
   return {
     async getDaySlots(query: SlotQuery) {
-      const data = await loadRange(query.staffIds, query.dateKey, 1)
+      const data = await loadRange(query.staffIds, query.dateKey, 1, query.excludeAppointmentId)
       return slotsForDay(query, data, query.dateKey)
     },
 

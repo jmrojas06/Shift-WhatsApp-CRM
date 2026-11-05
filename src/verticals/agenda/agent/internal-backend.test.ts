@@ -80,6 +80,57 @@ describe('InternalBackend', () => {
     expect(slots.map((s) => s.label)).toEqual(['9:30 a. m.'])
   })
 
+  it('getDaySlots con excludeAppointmentId no cuenta esa cita como ocupada (mover la propia cita)', async () => {
+    const db = seed()
+    db._tables.booking_appointments.push({
+      id: 'ap-propia',
+      account_id: ACCOUNT,
+      staff_id: STAFF,
+      status: 'confirmed',
+      starts_at: '2026-10-19T14:00:00.000Z',
+      ends_at: '2026-10-19T14:30:00.000Z',
+    })
+    const backend = createInternalBackend({ db: asClient(db), accountId: ACCOUNT })
+    const query = { service, staffIds: [STAFF], dateKey: '2026-10-19', now: NOW }
+
+    const without = await backend.getDaySlots(query)
+    const withExclude = await backend.getDaySlots({ ...query, excludeAppointmentId: 'ap-propia' })
+
+    expect(without.map((s) => s.label)).toEqual(['9:30 a. m.'])
+    expect(withExclude.map((s) => s.label)).toEqual(['9:00 a. m.', '9:30 a. m.'])
+  })
+
+  it('getDaySlots con excludeAppointmentId sigue contando las demás citas', async () => {
+    const db = seed()
+    db._tables.booking_appointments.push(
+      {
+        id: 'ap-propia',
+        account_id: ACCOUNT,
+        staff_id: STAFF,
+        status: 'confirmed',
+        starts_at: '2026-10-19T14:00:00.000Z',
+        ends_at: '2026-10-19T14:30:00.000Z',
+      },
+      {
+        id: 'ap-otra',
+        account_id: ACCOUNT,
+        staff_id: STAFF,
+        status: 'confirmed',
+        starts_at: '2026-10-19T14:30:00.000Z',
+        ends_at: '2026-10-19T15:00:00.000Z',
+      },
+    )
+    const backend = createInternalBackend({ db: asClient(db), accountId: ACCOUNT })
+    const slots = await backend.getDaySlots({
+      service,
+      staffIds: [STAFF],
+      dateKey: '2026-10-19',
+      now: NOW,
+      excludeAppointmentId: 'ap-propia',
+    })
+    expect(slots.map((s) => s.label)).toEqual(['9:00 a. m.'])
+  })
+
   it('getDaysWithSlots descuenta el último día del rango', async () => {
     const db = seed()
     // Lunes 26, 9:00 a 10:00 en Bogotá: tapa todo el bloque de ese día.
@@ -312,6 +363,14 @@ describe('InternalBackend', () => {
         clinic: true,
       })
       const slots = await backend.getDaySlots(dayQuery)
+      expect(slots.map((s) => s.label)).toEqual(['9:00 a. m.', '9:30 a. m.'])
+    })
+
+    it('con excludeAppointmentId, la propia cita tampoco ocupa silla', async () => {
+      const db = seedChairs(1)
+      db._tables.booking_appointments[0].id = 'ap-propia'
+      const backend = createInternalBackend({ db: asClient(db), accountId: ACCOUNT, clinic: true })
+      const slots = await backend.getDaySlots({ ...dayQuery, excludeAppointmentId: 'ap-propia' })
       expect(slots.map((s) => s.label)).toEqual(['9:00 a. m.', '9:30 a. m.'])
     })
 

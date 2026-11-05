@@ -54,3 +54,13 @@ describe('fake-db: upsert con onConflict', () => {
     expect(db._tables.t).toEqual([{ a: 1, b: 'x', v: 'pisada' }])
   })
 })
+
+describe('fake-db: neq', () => {
+  it('deja fuera solo la fila con ese valor', async () => {
+    const db = makeFakeDb({ t: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] })
+
+    const { data } = await asClient(db).from('t').select('id').neq('id', 'b')
+
+    expect(data).toEqual([{ id: 'a' }, { id: 'c' }])
+  })
+})

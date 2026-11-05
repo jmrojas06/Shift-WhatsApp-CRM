@@ -12,6 +12,7 @@ import {
   loadActiveSession,
   loadAppointmentClinicLinks,
   loadBotSettings,
+  listBusy,
   loadHumanOwned,
   markAppointmentConfirmed,
 } from './db'
@@ -523,5 +524,56 @@ describe('loadHumanOwned', () => {
     const fake = makeFakeDb({ conversations: [] })
     fake._failNext('select', 'conversations', { message: 'la base se cayó' })
     await expect(loadHumanOwned(asClient(fake), 'acc', 'cv-1')).rejects.toThrow('la base se cayó')
+  })
+})
+
+describe('listBusy', () => {
+  const FROM = '2026-10-19T05:00:00.000Z'
+  const TO = '2026-10-20T05:00:00.000Z'
+  const tables = () => ({
+    booking_appointments: [
+      {
+        id: 'ap-1',
+        account_id: 'acc-1',
+        staff_id: 'st-1',
+        status: 'confirmed',
+        starts_at: '2026-10-19T14:00:00.000Z',
+        ends_at: '2026-10-19T14:30:00.000Z',
+      },
+      {
+        id: 'ap-2',
+        account_id: 'acc-1',
+        staff_id: 'st-1',
+        status: 'pending',
+        starts_at: '2026-10-19T15:00:00.000Z',
+        ends_at: '2026-10-19T15:30:00.000Z',
+      },
+    ],
+    booking_time_off: [
+      {
+        id: 'off-1',
+        account_id: 'acc-1',
+        staff_id: 'st-1',
+        starts_at: '2026-10-19T16:00:00.000Z',
+        ends_at: '2026-10-19T17:00:00.000Z',
+      },
+    ],
+  })
+
+  it('sin excludeAppointmentId trae las citas activas y los bloqueos', async () => {
+    const busy = await listBusy(asClient(makeFakeDb(tables())), 'acc-1', ['st-1'], FROM, TO)
+    expect(busy.map((b) => b.startsAt.toISOString())).toEqual([
+      '2026-10-19T14:00:00.000Z',
+      '2026-10-19T15:00:00.000Z',
+      '2026-10-19T16:00:00.000Z',
+    ])
+  })
+
+  it('con excludeAppointmentId deja fuera solo esa cita; los bloqueos siguen', async () => {
+    const busy = await listBusy(asClient(makeFakeDb(tables())), 'acc-1', ['st-1'], FROM, TO, 'ap-1')
+    expect(busy.map((b) => b.startsAt.toISOString())).toEqual([
+      '2026-10-19T15:00:00.000Z',
+      '2026-10-19T16:00:00.000Z',
+    ])
   })
 })
