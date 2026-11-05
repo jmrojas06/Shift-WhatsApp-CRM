@@ -92,7 +92,7 @@ async function runDeferred() {
 
 beforeEach(() => {
   vi.stubEnv('VOICE_WEBHOOK_SECRET', TEST_VOICE_SECRET)
-  vi.stubEnv('NEXT_PUBLIC_APP_URL', TEST_APP_URL)
+  vi.stubEnv('NEXT_PUBLIC_SITE_URL', TEST_APP_URL)
   h.state.db = seed()
   h.state.deferred.length = 0
   h.state.notify.mockReset().mockResolvedValue({ sent: true, channel: 'text' })
@@ -119,6 +119,35 @@ describe('seguridad del webhook', () => {
 
   it('403 sin el id de la llamada', async () => {
     expect((await POST(webhookRequest('outbound', { call: null }))).status).toBe(403)
+  })
+
+  it('403 si se cambió el paso, la vuelta o el camino de una URL firmada, y no cambia nada', async () => {
+    const { voiceToken } = await import('@/lib/voice/tokens')
+    const db = h.state.db as FakeDb
+    const before = JSON.stringify(db._tables)
+    // El token es el de la URL del primer menú (`step=menu`, `loop=1`); el atacante cambia el paso.
+    const token = voiceToken(TEST_CALL_ID, { call: TEST_CALL_ID, step: 'menu', loop: '1' })
+    const forged = webhookRequest('outbound', {
+      token,
+      query: { step: 'cancel', loop: '1', path: '2' },
+      form: { CallSid: 'CA1', Digits: '1' },
+    })
+    expect((await POST(forged)).status).toBe(403)
+    expect(JSON.stringify(db._tables)).toBe(before)
+
+    // La URL tal cual la armó el servidor sí pasa.
+    const genuine = webhookRequest('outbound', { token, query: { step: 'menu', loop: '1' }, form: { CallSid: 'CA1' } })
+    expect((await POST(genuine)).status).toBe(200)
+  })
+
+  it('un pedido con otro CallSid, con la llamada ya atada, cuelga y no cambia nada', async () => {
+    const db = h.state.db as FakeDb
+    callOf(db).provider_call_sid = 'CA-REAL'
+    const before = JSON.stringify(db._tables)
+    const res = await POST(webhookRequest('outbound', { form: { CallSid: 'CA-AJENO', Digits: '1' } }))
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>')
+    expect(JSON.stringify(db._tables)).toBe(before)
   })
 
   it('un 403 no toca la base: ni la cita ni la llamada cambian', async () => {

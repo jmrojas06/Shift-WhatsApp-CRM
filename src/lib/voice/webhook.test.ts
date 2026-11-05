@@ -38,9 +38,15 @@ function post(options: {
 
 const bySubject = (query: URLSearchParams) => query.get('call')
 
+/** La query tal como la arma `voiceUrl`: el token firma el sujeto y todos los demás parámetros. */
+const signed = (query: Record<string, string>): Record<string, string> => ({
+  ...query,
+  t: voiceToken(query.call ?? 'inbound', query),
+})
+
 beforeEach(() => {
   vi.stubEnv('VOICE_WEBHOOK_SECRET', SECRET)
-  vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://crm.example.test')
+  vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://crm.example.test')
   vi.stubEnv('TELNYX_PUBLIC_KEY', PUBLIC_KEY_B64)
 })
 
@@ -61,7 +67,7 @@ describe('texmlResponse', () => {
 describe('readVoiceWebhook — el token t', () => {
   it('acepta un token válido y entrega la query y el formulario', async () => {
     const result = await readVoiceWebhook(
-      post({ query: { call: CALL, t: voiceToken(CALL), step: 'menu' }, body: 'CallSid=CA1&Digits=2' }),
+      post({ query: signed({ call: CALL, step: 'menu' }), body: 'CallSid=CA1&Digits=2' }),
       { subject: bySubject, nowSec: NOW_SEC },
     )
     expect(result.ok).toBe(true)
@@ -88,8 +94,36 @@ describe('readVoiceWebhook — el token t', () => {
     expect(result.response.status).toBe(403)
   })
 
+  it('403 si se cambió el paso, la vuelta, el camino o la cita de una URL firmada', async () => {
+    const original = signed({ call: CALL, step: 'menu', loop: '1' })
+    const tampered: Record<string, string>[] = [
+      { ...original, step: 'cancel' },
+      { ...original, loop: '3' },
+      { ...original, path: '2>1' },
+      { ...original, appt: '77777777-7777-4777-8777-777777777777' },
+    ]
+    for (const query of tampered) {
+      const result = await readVoiceWebhook(post({ query }), { subject: bySubject, nowSec: NOW_SEC })
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.response.status).toBe(403)
+    }
+    const untouched = await readVoiceWebhook(post({ query: original }), { subject: bySubject, nowSec: NOW_SEC })
+    expect(untouched.ok).toBe(true)
+  })
+
+  it('403 si se agrega un segundo `step` a una URL firmada', async () => {
+    const original = signed({ call: CALL, step: 'menu', loop: '1' })
+    const request = new Request(
+      `https://crm.example.test/api/voice/telnyx/outbound?${new URLSearchParams(original)}&step=cancel`,
+      { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'CallSid=CA1' },
+    )
+    const result = await readVoiceWebhook(request, { subject: bySubject, nowSec: NOW_SEC })
+    expect(result.ok).toBe(false)
+  })
+
   it('403 si no hay de qué llamada se trata', async () => {
-    const result = await readVoiceWebhook(post({ query: { t: voiceToken(CALL) } }), {
+    const result = await readVoiceWebhook(post({ query: signed({ step: 'menu' }) }), {
       subject: bySubject,
       nowSec: NOW_SEC,
     })
@@ -119,7 +153,7 @@ describe('readVoiceWebhook — el token t', () => {
 })
 
 describe('readVoiceWebhook — la firma de Telnyx', () => {
-  const query = () => ({ call: CALL, t: voiceToken(CALL) })
+  const query = () => signed({ call: CALL })
 
   it('sin cabeceras de firma basta el token', async () => {
     const result = await readVoiceWebhook(post({ query: query() }), { subject: bySubject, nowSec: NOW_SEC })

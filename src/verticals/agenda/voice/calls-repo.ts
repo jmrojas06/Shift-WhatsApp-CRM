@@ -118,6 +118,64 @@ export async function loadCallRow(db: SupabaseClient, callId: string): Promise<C
   return data ? callRowFromDb(data as Record<string, unknown>) : null
 }
 
+// ------------------------------------------------------------
+// El CallSid ata la fila a UNA llamada de Telnyx
+// ------------------------------------------------------------
+
+/** El `CallSid` cabe en la columna (CHECK de la migración: máx. 100). */
+export const SID_MAX = 100
+
+/** El `CallSid` de un formulario: sin espacios y con el largo de la columna; '' si no hay. */
+export function readCallSid(value: unknown): string {
+  return typeof value === 'string' ? value.trim().slice(0, SID_MAX) : ''
+}
+
+const isUniqueViolation = (error: unknown): boolean => (error as { code?: string } | null)?.code === '23505'
+
+export type SidBinding = 'ok' | 'mismatch'
+
+/**
+ * Ata la fila al `CallSid` del pedido, o comprueba que sea el que ya tiene.
+ * La URL firmada (`t`) prueba que el pedido es de nuestra llamada, pero quien la
+ * vea (un log, un proxy) podría repetirla desde otra llamada: el `CallSid` es lo
+ * que distingue una llamada de Telnyx de otra.
+ *
+ *   - La fila ya tiene `provider_call_sid`: el pedido tiene que traer el MISMO;
+ *     otro, o ninguno, es `mismatch`.
+ *   - La fila no tiene: se escribe el del pedido con un UPDATE condicional
+ *     (`provider_call_sid IS NULL`), así dos pedidos a la vez no se pisan; si otro
+ *     ganó, se vuelve a leer y solo pasa quien trajo el mismo `CallSid`.
+ *   - Un 23505 (índice único parcial de `provider_call_sid`) significa que ese
+ *     `CallSid` ya es de OTRA fila: `mismatch`.
+ *   - Sin `CallSid` ni en la fila ni en el pedido no hay nada que atar: `ok`.
+ *
+ * Un `mismatch` es un rechazo sin efectos: quien llama no actualiza nada y
+ * responde con una despedida (`hangupOnlyXml`) en los webhooks de TeXML; el aviso
+ * de estado también responde 200, porque Telnyx no lee su respuesta. Un fallo de
+ * la base LANZA (el webhook responde 500 y Telnyx puede reintentar).
+ */
+export async function bindCallSid(db: SupabaseClient, call: CallRow, rawSid: unknown): Promise<SidBinding> {
+  const sid = readCallSid(rawSid)
+  if (call.providerCallSid) return sid === call.providerCallSid ? 'ok' : 'mismatch'
+  if (sid === '') return 'ok'
+
+  const { data, error } = await db
+    .from('booking_calls')
+    .update({ provider_call_sid: sid })
+    .eq('id', call.id)
+    .is('provider_call_sid', null)
+    .select('id')
+  if (error) {
+    if (isUniqueViolation(error)) return 'mismatch'
+    throw new Error(`No se pudo guardar el CallSid de la llamada: ${error.message}`)
+  }
+  if (((data ?? []) as unknown[]).length > 0) return 'ok'
+
+  // Otro pedido la ató antes que este: solo pasa si fue con el mismo CallSid.
+  const current = await loadCallRow(db, call.id)
+  return current?.providerCallSid === sid ? 'ok' : 'mismatch'
+}
+
 /** Cambia columnas de la llamada. Lanza si la base lo rechaza. */
 export async function updateCall(
   db: SupabaseClient,

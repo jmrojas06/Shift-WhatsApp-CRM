@@ -33,7 +33,7 @@ export function makeSigningKeys() {
 export interface WebhookRequestOptions {
   /** Id de la llamada (por defecto, `TEST_CALL_ID`); null = sin `call`. */
   call?: string | null
-  /** Token (por defecto, el correcto para esa llamada); null = sin `t`. */
+  /** Token (por defecto, el correcto para esa llamada y esa query); null = sin `t`. */
   token?: string | null
   /** Parámetros extra de la query (`step`, `loop`, `path`). */
   query?: Record<string, string>
@@ -47,8 +47,9 @@ export function webhookRequest(route: string, options: WebhookRequestOptions = {
   const call = options.call === undefined ? TEST_CALL_ID : options.call
   const query = new URLSearchParams()
   if (call !== null) query.set('call', call)
-  if (options.token !== null) query.set('t', options.token ?? voiceToken(call ?? 'inbound'))
   for (const [key, value] of Object.entries(options.query ?? {})) query.set(key, value)
+  // El token firma el sujeto y el estado de la URL (todo menos `t`), como `voiceUrl`.
+  if (options.token !== null) query.set('t', options.token ?? voiceToken(call ?? 'inbound', query))
 
   const body = new URLSearchParams(options.form ?? {}).toString()
   const extra = typeof options.headers === 'function' ? options.headers(body) : (options.headers ?? {})

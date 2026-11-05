@@ -201,7 +201,7 @@ const urlOf = (xml: string, tag: 'Gather' | 'Redirect') => {
 
 beforeEach(() => {
   vi.stubEnv('VOICE_WEBHOOK_SECRET', 'secreto-de-prueba-voz')
-  vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://crm.example.test')
+  vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://crm.example.test')
   for (const mock of [notifyPatient, kickCalendar, sendBookingLink, ensureCaller, findContact]) mock.mockReset()
   notifyPatient.mockResolvedValue({ sent: true, channel: 'template' })
   kickCalendar.mockResolvedValue(undefined)
@@ -277,11 +277,11 @@ describe('primer pedido', () => {
     expect(gather.searchParams.get('call')).toBe(id)
     expect(gather.searchParams.get('step')).toBe('menu')
     expect(gather.searchParams.get('loop')).toBe('1')
-    expect(checkVoiceToken(id, gather.searchParams.get('t'))).toBe(true)
+    expect(checkVoiceToken(id, gather.searchParams.get('t'), gather.searchParams)).toBe(true)
 
     const redirect = urlOf(xml, 'Redirect')!
     expect(redirect.searchParams.get('loop')).toBe('2')
-    expect(checkVoiceToken(id, redirect.searchParams.get('t'))).toBe(true)
+    expect(checkVoiceToken(id, redirect.searchParams.get('t'), redirect.searchParams)).toBe(true)
   })
 
   it('si Telnyx reintenta el primer pedido (mismo CallSid) no duplica la llamada', async () => {
@@ -501,13 +501,8 @@ describe('1: agendar por WhatsApp', () => {
 // ------------------------------------------------------------
 
 describe('2: mi cita', () => {
-  const reading = (clinic = true) =>
-    scripts.myAppointment({
-      patient: clinic ? 'Ana Pérez' : null,
-      day: 'mañana',
-      time: 'a las 3 y media de la tarde',
-      staff: 'la doctora Rojas',
-    })
+  // Solo el día y la hora: jamás el paciente ni el profesional (el teléfono se comparte o se falsifica).
+  const reading = () => scripts.myAppointment({ day: 'mañana', time: 'a las 3 y media de la tarde' })
 
   it('lee la próxima cita activa y lleva su id en la URL', async () => {
     const db = seed()
@@ -518,7 +513,7 @@ describe('2: mi cita', () => {
     expect(gather.searchParams.get('step')).toBe('appt')
     expect(gather.searchParams.get('appt')).toBe(APPT)
     expect(gather.searchParams.get('path')).toBe('2')
-    expect(checkVoiceToken(CALL_ID, gather.searchParams.get('t'))).toBe(true)
+    expect(checkVoiceToken(CALL_ID, gather.searchParams.get('t'), gather.searchParams)).toBe(true)
     expect(callOf(db).menu_path).toBe('2')
     // Aún no cambió nada.
     expect(appointmentOf(db).attendance_confirmed_at).toBeNull()
@@ -529,10 +524,11 @@ describe('2: mi cita', () => {
     expect(xml).not.toMatch(/blanqueamiento/i)
   })
 
-  it('otro negocio no nombra al paciente', async () => {
-    const db = seed({ clinic: false })
+  it.each([[true], [false]])('no nombra al paciente ni al profesional (clínica: %s)', async (clinic) => {
+    const db = seed({ clinic })
     const { xml } = await press(db, '2')
-    expect(said(xml)).toEqual([reading(false)])
+    expect(said(xml)).toEqual([reading()])
+    expect(xml).not.toMatch(/\bAna\b|Pérez|Rojas|[Dd]octor/)
   })
 
   it('1 confirma la cita', async () => {
@@ -777,7 +773,7 @@ describe('0: asesor', () => {
     const { xml } = await handleDialResult({
       db: asDb(db),
       callId: CALL_ID,
-      form: { DialCallStatus: 'no-answer' },
+      form: { CallSid: 'CA-1', DialCallStatus: 'no-answer' },
       now: NOW,
     })
     expect(said(xml)).toEqual([scripts.advisorMissed()])
@@ -793,7 +789,7 @@ describe('0: asesor', () => {
     const { xml } = await handleDialResult({
       db: asDb(db),
       callId: CALL_ID,
-      form: { DialCallStatus: 'completed' },
+      form: { CallSid: 'CA-1', DialCallStatus: 'completed' },
       now: NOW,
     })
     expect(said(xml)).toEqual([])
@@ -938,6 +934,62 @@ describe('llamadas que no se atienden', () => {
     const { xml } = await press(db, '1')
     expect(xml).toBe('<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>')
     expect(sendBookingLink).not.toHaveBeenCalled()
+  })
+})
+
+describe('el CallSid ata la llamada a una sola llamada de Telnyx', () => {
+  const HANGUP_ONLY = '<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>'
+  const confirmArgs = { query: { step: 'appt', loop: '1', path: '2', appt: APPT } }
+
+  it('un pedido del menú con otro CallSid cuelga y no cambia nada, aunque confirme', async () => {
+    const db = seed()
+    const before = { call: { ...callOf(db) }, appointment: { ...appointmentOf(db) } }
+
+    const { xml } = await hit(db, { form: { CallSid: 'CA-AJENO', Digits: '1' }, ...confirmArgs })
+
+    expect(xml).toBe(HANGUP_ONLY)
+    expect(callOf(db)).toEqual(before.call)
+    expect(appointmentOf(db)).toEqual(before.appointment)
+    expect(notifyPatient).not.toHaveBeenCalled()
+  })
+
+  it('un pedido sin CallSid, con la llamada ya atada, tampoco pasa', async () => {
+    const db = seed()
+    const { xml } = await hit(db, { form: { CallSid: '', Digits: '1' }, ...confirmArgs })
+    expect(xml).toBe(HANGUP_ONLY)
+    expect(callOf(db).outcome).toBeNull()
+  })
+
+  it('con el CallSid de la llamada todo sigue igual', async () => {
+    const db = seed()
+    const { xml } = await hit(db, { form: { CallSid: 'CA-1', Digits: '1' }, ...confirmArgs })
+    expect(said(xml)).toEqual([scripts.appointmentConfirmed()])
+    expect(callOf(db).outcome).toBe('confirmed')
+  })
+
+  it('una llamada sin CallSid guardado se ata al del primer pedido del menú que lo trae', async () => {
+    const db = seed({ call: { provider_call_sid: null } })
+    await hit(db, { form: { CallSid: 'CA-7', Digits: '3' } })
+    expect(callOf(db).provider_call_sid).toBe('CA-7')
+    const other = await hit(db, { form: { CallSid: 'CA-8', Digits: '3' } })
+    expect(other.xml).toBe(HANGUP_ONLY)
+  })
+
+  it('un CallSid que ya es de otra llamada (23505) se rechaza sin efectos', async () => {
+    const db = seed({ call: { provider_call_sid: null } })
+    db._tables.booking_calls.push(callRowSeed({ id: 'x-otra', direction: 'inbound', provider_call_sid: 'CA-DE-OTRA' }))
+    const { xml } = await hit(db, { form: { CallSid: 'CA-DE-OTRA', Digits: '1' }, ...confirmArgs })
+    expect(xml).toBe(HANGUP_ONLY)
+    expect(callOf(db)).toMatchObject({ provider_call_sid: null, outcome: null })
+    expect(appointmentOf(db).attendance_confirmed_at).toBeNull()
+  })
+
+  it('el primer pedido reintentado por Telnyx (mismo CallSid) sigue encontrando su fila', async () => {
+    const db = seed({ call: null })
+    await hit(db, { first: true })
+    const retry = await hit(db, { first: true })
+    expect(retry.xml).toContain('<Gather')
+    expect(calls(db)).toHaveLength(1)
   })
 })
 

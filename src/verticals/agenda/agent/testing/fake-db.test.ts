@@ -64,3 +64,51 @@ describe('fake-db: neq', () => {
     expect(data).toEqual([{ id: 'a' }, { id: 'c' }])
   })
 })
+
+describe('fake-db: or', () => {
+  it('suma condiciones por coma y trata la columna ausente como NULL', async () => {
+    const db = makeFakeDb({
+      t: [{ id: 'a', last: '2026-11-05T10:00:00.000Z' }, { id: 'b', last: '2026-11-05T12:00:00.000Z' }, { id: 'c' }],
+    })
+
+    const { data } = await asClient(db)
+      .from('t')
+      .select('id')
+      .or('last.is.null,last.lt.2026-11-05T11:00:00.000Z')
+
+    expect((data ?? []).map((row) => row.id)).toEqual(['a', 'c'])
+  })
+
+  it('entiende and(...) anidado: el recorrido por llaves (fecha, id)', async () => {
+    const db = makeFakeDb({
+      t: [
+        { id: '1', at: '2026-11-05T10:00:00.000Z' },
+        { id: '2', at: '2026-11-05T10:00:00.000Z' },
+        { id: '3', at: '2026-11-05T10:00:00.000Z' },
+        { id: '4', at: '2026-11-05T11:00:00.000Z' },
+      ],
+    })
+
+    const { data } = await asClient(db)
+      .from('t')
+      .select('id')
+      .or('at.gt.2026-11-05T10:00:00.000Z,and(at.eq.2026-11-05T10:00:00.000Z,id.gt.2)')
+      .order('at')
+      .order('id')
+
+    expect((data ?? []).map((row) => row.id)).toEqual(['3', '4'])
+  })
+
+  it('filtra también el update: solo toca las filas que cumplen', async () => {
+    const db = makeFakeDb({ t: [{ id: 'a', last: null }, { id: 'b', last: '2026-11-05T12:00:00.000Z' }] })
+
+    const { data } = await asClient(db)
+      .from('t')
+      .update({ last: 'ahora' })
+      .or('last.is.null,last.lt.2026-11-05T11:00:00.000Z')
+      .select('id')
+
+    expect((data ?? []).map((row) => row.id)).toEqual(['a'])
+    expect(db._tables.t.find((r) => r.id === 'b')?.last).toBe('2026-11-05T12:00:00.000Z')
+  })
+})

@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { StartCallArgs, StartCallResult, VoiceProvider } from '@/lib/voice/telnyx'
-import { voiceToken } from '@/lib/voice/tokens'
+import { checkVoiceToken } from '@/lib/voice/tokens'
 import type { FakeDb, Row } from '@/verticals/agenda/agent/testing/fake-db'
 
 import {
+  CANDIDATE_PAGE_SIZE,
   decideAttempt,
+  MAX_CANDIDATE_PAGES,
   NO_CALL_TAG,
   runOutboundCalls,
   type CallHistoryItem,
@@ -142,7 +144,7 @@ async function run(db: FakeDb, options: { provider?: VoiceProvider | null; now?:
 
 beforeEach(() => {
   vi.stubEnv('VOICE_WEBHOOK_SECRET', 'secreto-de-prueba-voz')
-  vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://crm.example.test')
+  vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://crm.example.test')
   vi.spyOn(console, 'error').mockImplementation(() => {})
 })
 
@@ -188,12 +190,12 @@ describe('la llamada, de punta a punta', () => {
     expect(url.searchParams.get('call')).toBe(callId)
     expect(url.searchParams.get('step')).toBe('menu')
     expect(url.searchParams.get('loop')).toBe('1')
-    expect(url.searchParams.get('t')).toBe(voiceToken(callId))
+    expect(checkVoiceToken(callId, url.searchParams.get('t'), url.searchParams)).toBe(true)
 
     const status = new URL(call.statusCallback)
     expect(status.pathname).toBe('/api/voice/telnyx/status')
     expect(status.searchParams.get('call')).toBe(callId)
-    expect(status.searchParams.get('t')).toBe(voiceToken(callId))
+    expect(checkVoiceToken(callId, status.searchParams.get('t'), status.searchParams)).toBe(true)
   })
 
   it('el número que marca es caller_id y, si no hay, el número de entrantes', async () => {
@@ -525,7 +527,18 @@ describe('tope del mes', () => {
     const provider = fakeProvider()
     const summary = await run(db, { provider })
     expect(provider.calls).toHaveLength(0)
-    expect(summary.skipped.monthly_limit).toBeGreaterThan(0)
+    expect(summary.skipped.monthly_limit).toBe(1)
+  })
+
+  it('al llegar al tope en plena corrida lo cuenta UNA vez por cuenta, no una por cita que queda', async () => {
+    const appointments = Array.from({ length: 5 }, (_, n) => appointmentAt(`appt-${n}`, n))
+    const used = [pastCall({ appointment_id: 'old', attempt: 1, created_at: '2026-11-02T15:00:00.000Z' })]
+    const db = seed({ appointments, settings: { monthly_limit: 3 }, calls: used })
+    const provider = fakeProvider()
+    const summary = await run(db, { provider })
+
+    expect(provider.calls).toHaveLength(2)
+    expect(summary.skipped.monthly_limit).toBe(1)
   })
 
   it('no pasa del tope aunque haya más citas: llama hasta completarlo', async () => {
@@ -701,6 +714,110 @@ describe('a quién no se llama', () => {
     expect(provider.calls).toHaveLength(0)
     expect(summary.failed).toBe(1)
     expect(robotRows(db)).toHaveLength(0)
+  })
+})
+
+/** Una cita llamable (con su recordatorio de 24 h ya enviado) que empieza `offsetMinutes` después de STARTS_AT. */
+function appointmentAt(id: string, offsetMinutes: number, overrides: Row = {}): Row {
+  return {
+    id,
+    account_id: ACCOUNT,
+    contact_id: CONTACT,
+    status: 'confirmed',
+    starts_at: new Date(Date.parse(STARTS_AT) + offsetMinutes * 60_000).toISOString(),
+    reminder_sent_at: REMINDER_AT,
+    attendance_confirmed_at: null,
+    ...overrides,
+  }
+}
+
+/** Una llamada que deja la cita en manos de una persona: el robot la salta ('handled'). */
+const handledCall = (appointmentId: string): Row =>
+  pastCall({ id: crypto.randomUUID(), appointment_id: appointmentId, outcome: 'human', status: 'completed' })
+
+describe('muchas citas saltadas no tapan a las que sí se llaman', () => {
+  it('una cita llamable detrás de más de 100 saltadas se llama igual (se pasa de página)', async () => {
+    const skipped = Array.from({ length: CANDIDATE_PAGE_SIZE + 5 }, (_, n) => appointmentAt(`skip-${String(n).padStart(3, '0')}`, n))
+    const callable = appointmentAt('callable', 500)
+    const db = seed({
+      appointments: [...skipped, callable],
+      calls: skipped.map((appointment) => handledCall(String(appointment.id))),
+    })
+    const provider = fakeProvider()
+    const summary = await run(db, { provider })
+
+    expect(provider.calls).toHaveLength(1)
+    expect(robotRows(db).filter((row) => row.status === 'calling').map((row) => row.appointment_id)).toEqual(['callable'])
+    expect(summary).toMatchObject({ called: 1, considered: skipped.length + 1 })
+    expect(summary.skipped.handled).toBe(skipped.length)
+  })
+
+  it('con muchas citas a la MISMA hora, el desempate por id recorre todas (ninguna se repite ni se pierde)', async () => {
+    const sameTime = Array.from({ length: CANDIDATE_PAGE_SIZE + 20 }, (_, n) => appointmentAt(`same-${String(n).padStart(3, '0')}`, 0))
+    const callable = appointmentAt('same-999', 0)
+    const db = seed({
+      appointments: [...sameTime, callable],
+      calls: sameTime.map((appointment) => handledCall(String(appointment.id))),
+    })
+    const provider = fakeProvider()
+    const summary = await run(db, { provider })
+
+    expect(provider.calls).toHaveLength(1)
+    expect(robotRows(db).find((row) => row.status === 'calling')?.appointment_id).toBe('same-999')
+    expect(summary.considered).toBe(sameTime.length + 1)
+    expect(summary.skipped.handled).toBe(sameTime.length)
+  })
+
+  it('una página llena justo en 100 también sigue con la siguiente', async () => {
+    const skipped = Array.from({ length: CANDIDATE_PAGE_SIZE }, (_, n) => appointmentAt(`skip-${String(n).padStart(3, '0')}`, n))
+    const callable = [appointmentAt('c1', 200), appointmentAt('c2', 201), appointmentAt('c3', 202)]
+    const db = seed({
+      appointments: [...skipped, ...callable],
+      calls: skipped.map((appointment) => handledCall(String(appointment.id))),
+    })
+    const provider = fakeProvider()
+    const summary = await run(db, { provider, limit: 2 })
+
+    expect(summary.called).toBe(2)
+    expect(robotRows(db).filter((row) => row.status === 'calling').map((row) => row.appointment_id)).toEqual(['c1', 'c2'])
+  })
+
+  it('al llegar al límite de llamadas no lee más páginas', async () => {
+    const many = Array.from({ length: CANDIDATE_PAGE_SIZE * 3 }, (_, n) => appointmentAt(`many-${String(n).padStart(3, '0')}`, n))
+    const db = seed({ appointments: many })
+    const provider = fakeProvider()
+    const summary = await run(db, { provider, limit: 1 })
+
+    expect(summary.called).toBe(1)
+    expect(summary.considered).toBe(CANDIDATE_PAGE_SIZE)
+  })
+
+  it('tiene un tope de páginas por corrida: más allá no se mira (para no tardar sin fin)', async () => {
+    const total = CANDIDATE_PAGE_SIZE * MAX_CANDIDATE_PAGES
+    const skipped = Array.from({ length: total + 5 }, (_, n) => appointmentAt(`skip-${String(n).padStart(4, '0')}`, n % 600, { id: `skip-${String(n).padStart(4, '0')}` }))
+    const callable = appointmentAt('callable-too-far', 700)
+    const db = seed({
+      appointments: [...skipped, callable],
+      settings: { monthly_limit: 100000 },
+      calls: skipped.map((appointment) => handledCall(String(appointment.id))),
+    })
+    const provider = fakeProvider()
+    const summary = await run(db, { provider })
+
+    expect(summary.considered).toBe(total)
+    expect(provider.calls).toHaveLength(0)
+    expect(summary.errors).toEqual([])
+  })
+
+  it('las citas de otra cuenta o ya no llamables no cuentan como candidatas de relleno', async () => {
+    const foreign = Array.from({ length: CANDIDATE_PAGE_SIZE + 1 }, (_, n) =>
+      appointmentAt(`foreign-${String(n).padStart(3, '0')}`, n, { account_id: OTHER_ACCOUNT }),
+    )
+    const db = seed({ appointments: [...foreign, appointmentAt('mine', 300)] })
+    const provider = fakeProvider()
+    const summary = await run(db, { provider })
+    expect(provider.calls).toHaveLength(1)
+    expect(summary.considered).toBe(1)
   })
 })
 

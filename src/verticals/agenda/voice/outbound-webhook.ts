@@ -3,7 +3,9 @@
 // que Telnyx pide instrucciones de una llamada saliente, ya con el token y la
 // firma verificados por la ruta.
 //
-//   1. Carga la llamada (por el `call` de la URL) y la cuenta.
+//   1. Carga la llamada (por el `call` de la URL) y comprueba su `CallSid`: la
+//      fila queda atada a UNA llamada de Telnyx, y un pedido con otro `CallSid`
+//      (o sin él, si la fila ya lo tiene) cuelga sin hacer nada.
 //   2. Si la llamada ya tiene resultado, repite la despedida (un reintento no
 //      repite nada).
 //   3. Si la cita ya no está activa, lo dice y cuelga.
@@ -29,6 +31,7 @@ import { loadClinicReminderInfo } from '@/modules/clinica/reminder-info'
 import { loadStaffName } from '../agent/db'
 import { CALL_NOTICES } from './call-notices'
 import {
+  bindCallSid,
   isActiveAppointment,
   loadCallAppointment,
   loadCallRow,
@@ -154,6 +157,8 @@ function pickAdvisors(
 ): OutboundFlowContext['advisors'] {
   if (test || settings.advisorPhones.length === 0) return null
   if (!isWithinOfficeHours(settings.officeHours, now)) return null
+  // Lo que ve el asesor: `caller_id` y, si es null, `inbound_number` (diseño §6.4); el número
+  // desde el que se llamó al paciente es el último recurso.
   const callerId = settings.callerId ?? settings.inboundNumber ?? call.fromNumber
   return callerId ? { phones: settings.advisorPhones, callerId } : null
 }
@@ -162,11 +167,8 @@ function pickAdvisors(
 // Escrituras de la llamada
 // ------------------------------------------------------------
 
-/** Primer pedido de la llamada: guarda el CallSid y la marca en curso. Solo escribe lo que falta. */
-async function touchCall(db: SupabaseClient, call: CallRow, callSid: string | undefined): Promise<void> {
-  if (callSid && !call.providerCallSid) {
-    await db.from('booking_calls').update({ provider_call_sid: callSid.slice(0, 100) }).eq('id', call.id).is('provider_call_sid', null)
-  }
+/** Primer pedido de la llamada: la marca en curso. Solo escribe lo que falta. */
+async function touchCall(db: SupabaseClient, call: CallRow): Promise<void> {
   if (call.status === 'queued' || call.status === 'calling') {
     await db.from('booking_calls').update({ status: 'in_progress' }).eq('id', call.id).in('status', ['queued', 'calling'])
   }
@@ -194,7 +196,10 @@ export async function handleOutboundWebhook(args: OutboundWebhookArgs): Promise<
   const call = await loadCallRow(db, args.callId)
   if (!call || call.direction !== 'outbound') return { xml: hangupOnlyXml(), deferred: [] }
 
-  await touchCall(db, call, form.CallSid)
+  // La fila queda atada al CallSid del primer pedido; otro CallSid no es esta llamada.
+  if ((await bindCallSid(db, call, form.CallSid)) === 'mismatch') return { xml: hangupOnlyXml(), deferred: [] }
+
+  await touchCall(db, call)
 
   const settings = await loadCallSettings(db, call.accountId)
   const voice = resolveVoice(settings)

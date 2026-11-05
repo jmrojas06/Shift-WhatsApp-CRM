@@ -234,18 +234,28 @@ describe('guion entrante', () => {
     expect(bookingLinkFailed()).toBe('No pudimos enviarte el WhatsApp. Escríbenos por WhatsApp para agendar.')
   })
 
-  it('mi cita: con y sin paciente, y cuando no hay citas', () => {
-    expect(
-      myAppointment({ patient: 'Juan Pérez', day: 'mañana', time: 'a las 9 de la mañana', staff: 'Dr. Luis Mora' }),
-    ).toBe(
-      'La próxima cita registrada con este número es la de Juan Pérez, para mañana a las 9 de la mañana, con el doctor Luis Mora. ' +
+  it('mi cita: solo dice cuándo, y cuando no hay citas lo dice', () => {
+    expect(myAppointment({ day: 'mañana', time: 'a las 9 de la mañana' })).toBe(
+      'Tu próxima cita es para mañana a las 9 de la mañana. ' +
         'Para confirmarla, marca 1. Para cancelarla, marca 2. Para volver al menú, marca 0.',
     )
-    expect(myAppointment({ patient: null, day: 'el martes 10 de noviembre', time: 'a la 1 de la tarde', staff: null })).toBe(
+    expect(myAppointment({ day: 'el martes 10 de noviembre', time: 'a la 1 de la tarde' })).toBe(
       'Tu próxima cita es para el martes 10 de noviembre a la 1 de la tarde. ' +
         'Para confirmarla, marca 1. Para cancelarla, marca 2. Para volver al menú, marca 0.',
     )
     expect(noAppointments()).toBe('No encontramos citas con este número. Para agendar, marca 1.')
+  })
+
+  it('mi cita NUNCA dice el nombre del paciente ni del profesional (el número de quien llama se puede falsificar o compartir)', () => {
+    // Aunque alguien le pase los nombres, la frase no los usa.
+    const text = myAppointment({
+      day: 'mañana',
+      time: 'a las 9 de la mañana',
+      patient: 'Juan Pérez',
+      staff: 'Dr. Luis Mora',
+    } as never)
+    expect(text).not.toMatch(/Juan|Pérez|Luis|Mora|doctor/i)
+    expect(text).not.toContain('registrada con este número')
   })
 
   it('el submenú de la cita repite las teclas, sin los datos de la cita', () => {

@@ -17,8 +17,9 @@
 // despide SIN tocar nada.
 //
 // Un asesor solo recibe la llamada en horario de atención (`ctx.advisors` es
-// null fuera de él). Nunca se nombra el procedimiento: el guion ni siquiera lo
-// recibe, porque el teléfono puede ser compartido.
+// null fuera de él). Nunca se nombra el procedimiento, ni el paciente, ni el
+// profesional: el guion ni siquiera los recibe, porque el teléfono puede ser
+// compartido y el número de quien llama se puede falsificar.
 // ============================================================
 
 import type { OfficeHours } from '@/lib/voice/hours'
@@ -76,10 +77,10 @@ export interface InboundFlowInput {
   expired: boolean
 }
 
-/** La próxima cita de quien llama, ya con lo que hace falta para decirla. */
+/** La próxima cita de quien llama, ya con lo que hace falta para decirla: solo el día y la hora. */
 export interface InboundNextAppointment {
   id: string
-  speech: scripts.AppointmentSpeech & { patient: string | null }
+  speech: Pick<scripts.AppointmentSpeech, 'day' | 'time'>
 }
 
 export interface InboundFlowContext {

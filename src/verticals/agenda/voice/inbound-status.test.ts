@@ -40,8 +40,10 @@ function seed(call: Row = {}): FakeDb {
 }
 
 const callOf = (db: FakeDb) => (db._tables.booking_calls ?? []).find((row) => row.id === CALL_ID) as Row
+const CALLER = '+573001112233'
+const INBOUND = '+576015550000'
 const hit = (db: FakeDb, form: Record<string, string>) =>
-  handleInboundStatus({ db: asDb(db), form: { CallSid: 'CA-1', ...form }, now: NOW })
+  handleInboundStatus({ db: asDb(db), form: { CallSid: 'CA-1', From: CALLER, To: INBOUND, ...form }, now: NOW })
 
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -74,11 +76,72 @@ describe('cierre de la llamada entrante', () => {
     expect(JSON.stringify(db._tables)).toBe(before)
   })
 
+  it('acepta el From y el To con otro formato (espacios, sin +): se comparan en E.164', async () => {
+    const db = seed({ outcome: 'info' })
+    await hit(db, { CallStatus: 'completed', From: '+57 300 111 2233', To: '+57 601 555 0000' })
+    expect(callOf(db).status).toBe('completed')
+  })
+
+  it('una llamada privada (sin From válido) se encuentra por la fila sin número', async () => {
+    const db = seed({ from_number: null, contact_id: null })
+    await hit(db, { CallStatus: 'completed', From: 'anonymous' })
+    expect(callOf(db).status).toBe('completed')
+  })
+
   it('estados que no pedimos (ringing) no cierran ni anotan', async () => {
     const db = seed()
     await hit(db, { CallStatus: 'ringing' })
     expect(callOf(db).status).toBe('in_progress')
     expect(db._tables.contact_notes).toHaveLength(0)
+  })
+})
+
+describe('el aviso tiene que ser de la misma llamada: CallSid, To y From', () => {
+  const untouched = async (db: FakeDb, form: Record<string, string>) => {
+    const before = JSON.stringify(db._tables)
+    await hit(db, { CallStatus: 'completed', CallDuration: '42', ...form })
+    expect(JSON.stringify(db._tables)).toBe(before)
+  }
+
+  it('un To que no es el número marcado no cierra la llamada ni deja nota', async () => {
+    await untouched(seed({ outcome: 'confirmed' }), { To: '+576015559999' })
+  })
+
+  it('un From que no es el de quien llamó no la cierra', async () => {
+    await untouched(seed({ outcome: 'confirmed' }), { From: '+573009998877' })
+  })
+
+  it('sin To o sin From válidos en el aviso, una llamada con números tampoco se cierra', async () => {
+    await untouched(seed({ outcome: 'confirmed' }), { To: '' })
+    await untouched(seed({ outcome: 'confirmed' }), { From: 'anonymous' })
+  })
+
+  it('un From presente cuando la fila no tiene número (llamada privada) tampoco coincide', async () => {
+    await untouched(seed({ from_number: null, outcome: 'confirmed' }), { From: CALLER })
+  })
+
+  it('el CallSid de la llamada de OTRA cuenta no la cierra aunque el aviso traiga el To de esta', async () => {
+    const db = seed({ outcome: 'confirmed' })
+    db._tables.booking_calls.push(
+      callRowSeed({
+        id: '99999999-9999-4999-8999-bbbbbbbbbbbb',
+        account_id: 'acc-2',
+        direction: 'inbound',
+        status: 'in_progress',
+        from_number: '+573007770000',
+        to_number: '+576015559999',
+        provider_call_sid: 'CA-DE-OTRA-CUENTA',
+      }),
+    )
+    const before = JSON.stringify(db._tables)
+    await hit(db, { CallSid: 'CA-DE-OTRA-CUENTA', CallStatus: 'completed' })
+    expect(JSON.stringify(db._tables)).toBe(before)
+  })
+
+  it('el aviso correcto sí la cierra', async () => {
+    const db = seed({ outcome: 'confirmed' })
+    await hit(db, { CallStatus: 'completed' })
+    expect(callOf(db).status).toBe('completed')
   })
 })
 

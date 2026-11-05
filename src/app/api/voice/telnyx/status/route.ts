@@ -15,8 +15,13 @@ import { handleInboundStatus } from '@/verticals/agenda/voice/inbound-status'
 //   - Saliente: la URL se arma por llamada y lleva `call` (el id de la fila) y
 //     el token de ese id.
 //   - Entrante: Telnyx usa una URL fija, la de la app de TeXML
-//     (`…/status?inbound=1&t=<token de "inbound">`), sin id de fila. La llamada
-//     se encuentra por su `CallSid`.
+//     (`…/status?inbound=1&t=<token>`), sin id de fila. El token firma el sujeto
+//     "inbound" Y el parámetro `inbound=1` (ver `tokens.ts`). La llamada se
+//     encuentra por su `CallSid`, y además el `To` y el `From` del aviso tienen
+//     que ser los de esa fila.
+//
+// Un aviso con otro `CallSid` (en una saliente, la fila ya atada a otra llamada de
+// Telnyx) no cambia nada; igual responde 200, porque Telnyx no lee esta respuesta.
 //
 // Token `t` siempre y firma de Telnyx si trae sus cabeceras (403 si no cuadran).
 // Es idempotente: un reintento no cambia nada. Si la base falla responde 500 sin

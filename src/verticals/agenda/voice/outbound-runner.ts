@@ -57,8 +57,16 @@ export const HARD_MAX_ATTEMPTS = 3
 
 /** Llamadas que pide una pasada. El cron corre cada 10 minutos. */
 const DEFAULT_LIMIT = 20
-/** Citas que se revisan por cuenta en cada pasada (las más cercanas primero). */
-const CANDIDATES_PER_ACCOUNT = 100
+/** Citas que se leen por página (las más cercanas primero). */
+export const CANDIDATE_PAGE_SIZE = 100
+/**
+ * Páginas que se recorren como mucho por cuenta en cada pasada (1.000 citas). Las
+ * citas que se saltan (ya atendidas, sin teléfono, de baja, esperando el reintento…)
+ * no deben tapar a las que sí toca llamar, así que se pasa de página hasta llegar al
+ * límite de llamadas o hasta que no queden; este tope solo evita que una cuenta
+ * enorme alargue la pasada sin fin.
+ */
+export const MAX_CANDIDATE_PAGES = 10
 /** Un intento "en curso" más viejo que esto se da por terminado (se perdió la señal final). */
 const STALE_IN_FLIGHT_MS = 15 * 60_000
 
@@ -355,6 +363,13 @@ interface AccountRow extends AccountModulesSource {
 interface CandidateRow {
   id: string
   contact_id: string
+  starts_at: string
+}
+
+/** Dónde quedó la página anterior: la última cita leída (hora y id, para desempatar). */
+interface CandidateCursor {
+  startsAt: string
+  id: string
 }
 
 /** Llamadas salientes del robot de este mes (hora de Bogotá), sin las que Telnyx rechazó. */
@@ -372,15 +387,21 @@ export async function countMonthlyCalls(db: SupabaseClient, accountId: string, n
   return count ?? 0
 }
 
+/**
+ * Una página de citas candidatas, de la más cercana a la más lejana. El recorrido es
+ * por llaves `(starts_at, id)`, no por posición: la página siguiente empieza justo
+ * después de la última cita leída, aunque varias citas empiecen a la misma hora.
+ */
 async function loadCandidates(
   db: SupabaseClient,
   accountId: string,
   settings: CallSettings,
   now: Date,
+  after: CandidateCursor | null,
 ): Promise<CandidateRow[]> {
   const reminderCutoff = new Date(now.getTime() - settings.callAfterMinutes * 60_000).toISOString()
   const leadCutoff = new Date(now.getTime() + settings.minLeadMinutes * 60_000).toISOString()
-  const { data, error } = await db
+  let query = db
     .from('booking_appointments')
     .select('id, contact_id, starts_at, reminder_sent_at')
     .eq('account_id', accountId)
@@ -389,8 +410,14 @@ async function loadCandidates(
     // Un recordatorio sin salir (null) no cumple esta condición: no se llama.
     .lte('reminder_sent_at', reminderCutoff)
     .gt('starts_at', leadCutoff)
+  // Los valores salen de las filas que acabamos de leer (hora y uuid de la base), no de quien llama.
+  if (after) {
+    query = query.or(`starts_at.gt.${after.startsAt},and(starts_at.eq.${after.startsAt},id.gt.${after.id})`)
+  }
+  const { data, error } = await query
     .order('starts_at', { ascending: true })
-    .limit(CANDIDATES_PER_ACCOUNT)
+    .order('id', { ascending: true })
+    .limit(CANDIDATE_PAGE_SIZE)
   if (error) throw new Error(`No se pudieron leer las citas: ${error.message}`)
   return (data ?? []) as CandidateRow[]
 }
@@ -523,71 +550,88 @@ async function runAccount(args: RunAccountArgs): Promise<number> {
     return started
   }
 
+  // El tope del mes se lee UNA vez por pasada y se va sumando aquí. No es atómico: otra pasada o
+  // un "llamar ahora" de la recepción a la vez pueden dejar pasar unas pocas llamadas de más. Se
+  // acepta ese pequeño exceso (el tope protege el gasto, no es un límite legal) en vez de bloquear
+  // la tabla de llamadas en cada intento.
   let used = await countMonthlyCalls(db, account.id, now)
   if (used >= settings.monthlyLimit) {
     summary.skipped.monthly_limit++
     return started
   }
 
-  const candidates = await loadCandidates(db, account.id, settings, now)
-  summary.considered += candidates.length
-  if (candidates.length === 0) return started
-  const history = await loadHistory(db, account.id, candidates.map((candidate) => candidate.id))
+  // Se pasa de página hasta llegar al límite de llamadas o hasta que no queden candidatas, con un
+  // tope de páginas: lo que se salta (atendidas, sin teléfono, de baja…) no tapa a las siguientes.
+  let cursor: CandidateCursor | null = null
+  for (let page = 0; page < MAX_CANDIDATE_PAGES; page++) {
+    if (started >= limit) return started
 
-  for (const candidate of candidates) {
-    if (started >= limit) break
-    if (used >= settings.monthlyLimit) {
-      summary.skipped.monthly_limit++
-      break
-    }
+    const candidates = await loadCandidates(db, account.id, settings, now, cursor)
+    summary.considered += candidates.length
+    if (candidates.length === 0) return started
+    const history = await loadHistory(db, account.id, candidates.map((candidate) => candidate.id))
 
-    const decision = decideAttempt(history.get(candidate.id) ?? [], settings, now)
-    if (!decision.ok) {
-      summary.skipped[decision.reason]++
-      continue
-    }
-
-    let to: string | null
-    try {
-      to = await loadCallablePhone(db, { accountId: account.id, contactId: candidate.contact_id })
-      if (!to) {
-        summary.skipped.no_phone++
-        continue
+    for (const candidate of candidates) {
+      if (started >= limit) return started
+      if (used >= settings.monthlyLimit) {
+        // Una sola vez por cuenta: se sale de la cuenta, no solo de esta cita.
+        summary.skipped.monthly_limit++
+        return started
       }
-      const block = await contactCallBlock(db, { accountId: account.id, contactId: candidate.contact_id, clinic })
-      if (block) {
-        summary.skipped[BLOCK_TO_SKIP[block]]++
+
+      const decision = decideAttempt(history.get(candidate.id) ?? [], settings, now)
+      if (!decision.ok) {
+        summary.skipped[decision.reason]++
         continue
       }
 
-      const result = await startOutboundCall({
-        db,
-        provider,
-        accountId: account.id,
-        from,
-        to,
-        appointmentId: candidate.id,
-        contactId: candidate.contact_id,
-        attempt: decision.attempt,
-        createdBy: null,
-        now,
-      })
-      if (result.kind === 'claimed_by_other') {
-        summary.claimedByOther++
-        continue
-      }
-      started++
-      if (result.kind === 'started') {
-        summary.called++
-        used++
-      } else {
+      let to: string | null
+      try {
+        to = await loadCallablePhone(db, { accountId: account.id, contactId: candidate.contact_id })
+        if (!to) {
+          summary.skipped.no_phone++
+          continue
+        }
+        const block = await contactCallBlock(db, { accountId: account.id, contactId: candidate.contact_id, clinic })
+        if (block) {
+          summary.skipped[BLOCK_TO_SKIP[block]]++
+          continue
+        }
+
+        const result = await startOutboundCall({
+          db,
+          provider,
+          accountId: account.id,
+          from,
+          to,
+          appointmentId: candidate.id,
+          contactId: candidate.contact_id,
+          attempt: decision.attempt,
+          createdBy: null,
+          now,
+        })
+        if (result.kind === 'claimed_by_other') {
+          summary.claimedByOther++
+          continue
+        }
+        started++
+        if (result.kind === 'started') {
+          summary.called++
+          used++
+        } else {
+          summary.failed++
+          summary.errors.push(`cita ${candidate.id}: ${result.error}`)
+        }
+      } catch (err) {
         summary.failed++
-        summary.errors.push(`cita ${candidate.id}: ${result.error}`)
+        summary.errors.push(`cita ${candidate.id}: ${errorText(err)}`)
       }
-    } catch (err) {
-      summary.failed++
-      summary.errors.push(`cita ${candidate.id}: ${errorText(err)}`)
     }
+
+    // Una página corta es la última.
+    if (candidates.length < CANDIDATE_PAGE_SIZE) return started
+    const last = candidates[candidates.length - 1]
+    cursor = { startsAt: last.starts_at, id: last.id }
   }
   return started
 }

@@ -272,7 +272,7 @@ describe('readTelnyxConfig', () => {
     TELNYX_TEXML_APP_ID: 'x',
     TELNYX_PUBLIC_KEY: 'p',
     VOICE_WEBHOOK_SECRET: 's',
-    NEXT_PUBLIC_APP_URL: 'https://crm.example.test',
+    NEXT_PUBLIC_SITE_URL: 'https://crm.example.test',
   }
 
   it('con todo puesto devuelve las credenciales', () => {
@@ -295,8 +295,21 @@ describe('readTelnyxConfig', () => {
         'TELNYX_TEXML_APP_ID',
         'TELNYX_PUBLIC_KEY',
         'VOICE_WEBHOOK_SECRET',
-        'NEXT_PUBLIC_APP_URL',
+        'NEXT_PUBLIC_SITE_URL',
       ],
+    })
+  })
+
+  it('la URL pública es NEXT_PUBLIC_SITE_URL, o NEXT_PUBLIC_APP_URL si esa no está', () => {
+    const withoutUrl: Record<string, string | undefined> = { ...FULL, NEXT_PUBLIC_SITE_URL: undefined }
+    expect(readTelnyxConfig({ ...withoutUrl, NEXT_PUBLIC_APP_URL: 'https://crm.example.test' }).ok).toBe(true)
+    expect(readTelnyxConfig({ ...withoutUrl, NEXT_PUBLIC_APP_URL: '  ' })).toEqual({
+      ok: false,
+      missing: ['NEXT_PUBLIC_SITE_URL'],
+    })
+    expect(readTelnyxConfig({ ...FULL, NEXT_PUBLIC_SITE_URL: '   ' })).toEqual({
+      ok: false,
+      missing: ['NEXT_PUBLIC_SITE_URL'],
     })
   })
 })

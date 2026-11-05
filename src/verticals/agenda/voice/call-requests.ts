@@ -14,6 +14,10 @@
 // ni pasando el tope del mes. Lo que no aplica a una persona que decide: esperar
 // el recordatorio de 24 h ni `max_attempts` (queda el tope de 3 de la base).
 //
+// El tope del mes se mira antes de llamar y NO es atómico: dos pedidos a la vez
+// (o uno de la recepción y el cron) pueden dejar pasar unas pocas llamadas de más.
+// Se acepta ese pequeño exceso; el tope protege el gasto, no es un límite legal.
+//
 // Devuelven un resultado con el estado HTTP y un texto que la pantalla muestra
 // tal cual: nunca llevan el teléfono ni el nombre del paciente.
 // ============================================================
@@ -172,6 +176,27 @@ export interface TestCallRequest {
 /** Entre dos pruebas de la misma cuenta tiene que pasar este tiempo. */
 const TEST_COOLDOWN_MS = 60_000
 
+/**
+ * Reserva el minuto de espera de las pruebas de la cuenta ANTES de llamar, con un solo UPDATE
+ * condicional sobre `booking_call_settings.last_test_call_at`: gana el pedido que lo pone en
+ * "ahora" mientras estaba vacío o tenía más de un minuto, y el otro (un doble clic, otra
+ * pestaña) no encuentra fila y recibe 429. Así dos pruebas a la vez no pagan dos llamadas.
+ *
+ * La fila de configuración existe siempre que se llega aquí: el número que marca
+ * (`caller_id` o `inbound_number`) sale de ella, y sin número ya se respondió 409.
+ */
+async function claimTestCooldown(db: SupabaseClient, accountId: string, now: Date): Promise<boolean> {
+  const cutoff = new Date(now.getTime() - TEST_COOLDOWN_MS).toISOString()
+  const { data, error } = await db
+    .from('booking_call_settings')
+    .update({ last_test_call_at: now.toISOString() })
+    .eq('account_id', accountId)
+    .or(`last_test_call_at.is.null,last_test_call_at.lt.${cutoff}`)
+    .select('account_id')
+  if (error) throw new Error(`No se pudo reservar la llamada de prueba: ${error.message}`)
+  return ((data ?? []) as unknown[]).length > 0
+}
+
 export async function requestTestCall(args: TestCallRequest): Promise<TestCallResult> {
   const { db, accountId, now } = args
   const to = toE164(args.phone)
@@ -181,23 +206,15 @@ export async function requestTestCall(args: TestCallRequest): Promise<TestCallRe
   const from = settings.callerId ?? settings.inboundNumber
   if (!from) return fail(409, 'no_caller_id', MSG.noCallerId)
 
-  // Una prueba cuesta como cualquier llamada: no se repite en el mismo minuto...
-  const { data: recent, error: recentError } = await db
-    .from('booking_calls')
-    .select('id')
-    .eq('account_id', accountId)
-    .eq('direction', 'outbound')
-    .eq('channel', 'robot')
-    .is('appointment_id', null)
-    .gt('created_at', new Date(now.getTime() - TEST_COOLDOWN_MS).toISOString())
-    .limit(1)
-  if (recentError) throw new Error(`No se pudieron leer las pruebas recientes: ${recentError.message}`)
-  if (((recent ?? []) as unknown[]).length > 0) return fail(429, 'too_soon', MSG.tooSoon)
-
-  // ...y cuenta para el tope del mes.
+  // Una prueba cuenta para el tope del mes (que se mira primero: una prueba que no sale no gasta el minuto)...
   if ((await countMonthlyCalls(db, accountId, now)) >= settings.monthlyLimit) {
     return fail(409, 'monthly_limit', MSG.monthlyLimit)
   }
+
+  // ...y cuesta como cualquier llamada: no se repite en el mismo minuto. El minuto se reserva con un
+  // UPDATE condicional ANTES de llamar a Telnyx, para que un doble clic no pague dos llamadas. Si
+  // Telnyx la rechaza el minuto ya se gastó (espera como cualquier prueba).
+  if (!(await claimTestCooldown(db, accountId, now))) return fail(429, 'too_soon', MSG.tooSoon)
 
   const started = await startOutboundCall({
     db,

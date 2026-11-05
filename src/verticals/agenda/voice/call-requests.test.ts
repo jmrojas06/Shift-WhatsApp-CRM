@@ -113,7 +113,7 @@ const robot = (db: FakeDb, provider: VoiceProvider, now = NOW, appointmentId = A
 
 beforeEach(() => {
   vi.stubEnv('VOICE_WEBHOOK_SECRET', 'secreto-de-prueba-voz')
-  vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://crm.example.test')
+  vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://crm.example.test')
   vi.spyOn(console, 'error').mockImplementation(() => {})
 })
 
@@ -350,6 +350,99 @@ describe('probar llamada', () => {
 
     const later = await test(db, provider, '+573009998877', new Date(NOW.getTime() + 61_000))
     expect(later.ok).toBe(true)
+  })
+
+  describe('el minuto de espera se reserva ANTES de llamar (sin carreras)', () => {
+    const settingsOf = (db: FakeDb, account = ACCOUNT) =>
+      (db._tables.booking_call_settings ?? []).find((row) => row.account_id === account) as Row
+
+    it('lee el último intento de la configuración de la cuenta y lo deja en la hora de la prueba', async () => {
+      const db = seed({ settings: { last_test_call_at: new Date(NOW.getTime() - 61_000).toISOString() } })
+      const provider = fakeProvider()
+      expect((await test(db, provider, '+573009998877')).ok).toBe(true)
+      expect(settingsOf(db).last_test_call_at).toBe(NOW.toISOString())
+      expect(provider.calls).toHaveLength(1)
+    })
+
+    it('hace menos de 60 segundos: 429, no llama y no mueve la hora guardada', async () => {
+      const last = new Date(NOW.getTime() - 59_000).toISOString()
+      const db = seed({ settings: { last_test_call_at: last } })
+      const provider = fakeProvider()
+      expect(await test(db, provider, '+573009998877')).toMatchObject({ ok: false, status: 429, code: 'too_soon' })
+      expect(provider.calls).toHaveLength(0)
+      expect(robotRows(db)).toHaveLength(0)
+      expect(settingsOf(db).last_test_call_at).toBe(last)
+    })
+
+    it('a los 60 segundos exactos todavía espera; un milisegundo después ya puede', async () => {
+      const db = seed({ settings: { last_test_call_at: new Date(NOW.getTime() - 60_000).toISOString() } })
+      expect(await test(db, fakeProvider(), '+573009998877')).toMatchObject({ ok: false, code: 'too_soon' })
+      const later = seed({ settings: { last_test_call_at: new Date(NOW.getTime() - 60_001).toISOString() } })
+      expect((await test(later, fakeProvider(), '+573009998877')).ok).toBe(true)
+    })
+
+    it('dos pruebas a la vez (doble clic): una llama y la otra recibe 429', async () => {
+      const db = seed()
+      const provider = fakeProvider()
+      const results = await Promise.all([
+        test(db, provider, '+573009998877'),
+        test(db, provider, '+573009998877'),
+      ])
+      expect(results.filter((result) => result.ok)).toHaveLength(1)
+      expect(results.filter((result) => !result.ok)).toEqual([
+        expect.objectContaining({ status: 429, code: 'too_soon' }),
+      ])
+      expect(provider.calls).toHaveLength(1)
+      expect(robotRows(db)).toHaveLength(1)
+    })
+
+    it('solo toca la configuración de la cuenta que pidió la prueba', async () => {
+      const db = seed()
+      db._tables.booking_call_settings.push({ account_id: 'acc-otra', inbound_number: '+576015559999' })
+      await test(db, fakeProvider(), '+573009998877')
+      expect(settingsOf(db, 'acc-otra').last_test_call_at).toBeUndefined()
+    })
+
+    it('una prueba que no sale (número inválido, sin número que marque, tope del mes) no gasta el minuto', async () => {
+      const noFrom = seed({ settings: { inbound_number: null, caller_id: null } })
+      expect(await test(noFrom, fakeProvider(), '+573009998877')).toMatchObject({ status: 409, code: 'no_caller_id' })
+      expect(settingsOf(noFrom).last_test_call_at).toBeUndefined()
+
+      const invalid = seed()
+      expect(await test(invalid, fakeProvider(), '3009998877')).toMatchObject({ status: 400 })
+      expect(settingsOf(invalid).last_test_call_at).toBeUndefined()
+
+      const capped = seed({
+        settings: { monthly_limit: 1 },
+        calls: [pastCall({ appointment_id: 'otra', created_at: '2026-11-02T15:00:00.000Z' })],
+      })
+      expect(await test(capped, fakeProvider(), '+573009998877')).toMatchObject({ status: 409, code: 'monthly_limit' })
+      expect(settingsOf(capped).last_test_call_at).toBeUndefined()
+    })
+
+    it('si Telnyx la rechaza el minuto ya se gastó: el siguiente intento inmediato es 429', async () => {
+      const db = seed()
+      const rejecting = fakeProvider(() => ({ ok: false, error: 'Telnyx rechazó la llamada (400)' }))
+      expect(await test(db, rejecting, '+573009998877')).toMatchObject({ status: 502, code: 'provider_rejected' })
+      expect(await test(db, fakeProvider(), '+573009998877', new Date(NOW.getTime() + 5_000))).toMatchObject({
+        status: 429,
+      })
+    })
+
+    it('ya no depende de las filas de booking_calls: una prueba vieja reciente en el registro no frena', async () => {
+      const db = seed({
+        calls: [pastCall({ appointment_id: null, attempt: null, created_at: new Date(NOW.getTime() - 10_000).toISOString() })],
+      })
+      expect((await test(db, fakeProvider(), '+573009998877')).ok).toBe(true)
+    })
+
+    it('si la base falla al reservar el minuto, lanza y no llama', async () => {
+      const db = seed()
+      db._failNext('update', 'booking_call_settings', { message: 'boom' })
+      const provider = fakeProvider()
+      await expect(test(db, provider, '+573009998877')).rejects.toThrow(/llamada de prueba/)
+      expect(provider.calls).toHaveLength(0)
+    })
   })
 
   it('si Telnyx la rechaza, responde 502 sin repetir el número', async () => {

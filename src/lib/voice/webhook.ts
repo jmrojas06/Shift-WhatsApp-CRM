@@ -6,7 +6,8 @@
 //      sobre esos bytes y un cuerpo leído dos veces no se puede.
 //   2. Exige el token `t` de la URL, SIEMPRE. Telnyx no documenta que firme el
 //      primer pedido de instrucciones, así que el token es lo único que prueba
-//      que la URL es la que armamos nosotros.
+//      que la URL es la que armamos nosotros. El token cubre también el estado
+//      que viaja en la query (paso, vuelta, camino, cita): ver `tokens.ts`.
 //   3. Si llegan las cabeceras de firma de Telnyx (`telnyx-signature-ed25519`,
 //      `telnyx-timestamp`), la firma tiene que cuadrar; si no, 403. Llegar con
 //      solo una de las dos, o sin clave pública configurada, también es 403.
@@ -63,7 +64,9 @@ export async function readVoiceWebhook(
   const query = new URL(request.url).searchParams
 
   const subject = options.subject(query)
-  if (!subject || !checkVoiceToken(subject, query.get('t'))) return { ok: false, response: forbidden() }
+  // El token firma el sujeto Y el estado de la URL (`step`, `loop`, `path`, `appt`…): una URL
+  // con el estado cambiado no pasa.
+  if (!subject || !checkVoiceToken(subject, query.get('t'), query)) return { ok: false, response: forbidden() }
 
   const signature = request.headers.get(SIGNATURE_HEADER)
   const timestamp = request.headers.get(TIMESTAMP_HEADER)

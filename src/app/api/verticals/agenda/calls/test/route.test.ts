@@ -52,7 +52,9 @@ const TELNYX_ENV = {
   TELNYX_TEXML_APP_ID: 'APP789',
   TELNYX_PUBLIC_KEY: 'cHVibGljLWtleS1kZS1wcnVlYmE=',
   VOICE_WEBHOOK_SECRET: 'secreto-de-voz',
-  NEXT_PUBLIC_APP_URL: 'https://crm.example.test',
+  NEXT_PUBLIC_SITE_URL: 'https://crm.example.test',
+  // En blanco: así la URL de respaldo no tapa la que se prueba.
+  NEXT_PUBLIC_APP_URL: '',
 }
 
 function seed(): FakeDb {
@@ -158,6 +160,19 @@ describe('llamada de prueba', () => {
     const again = await post({ to: '+573009998877' })
     expect(again.status).toBe(429)
     expect(h.state.providerCalls).toHaveLength(1)
+  })
+
+  it('las direcciones del webhook usan NEXT_PUBLIC_SITE_URL, o NEXT_PUBLIC_APP_URL si esa falta', async () => {
+    await post({ to: '+573009998877' })
+    expect(h.state.providerCalls[0].url.startsWith('https://crm.example.test/api/voice/telnyx/outbound?')).toBe(true)
+
+    h.state.providerCalls = []
+    vi.setSystemTime(new Date('2026-11-05T15:05:00.000Z'))
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', '')
+    vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://respaldo.example.test')
+    expect((await post({ to: '+573009998877' })).status).toBe(200)
+    expect(h.state.providerCalls[0].url.startsWith('https://respaldo.example.test/api/voice/telnyx/outbound?')).toBe(true)
+    expect(h.state.providerCalls[0].statusCallback.startsWith('https://respaldo.example.test/')).toBe(true)
   })
 
   it('faltan variables de entorno: 503 y no se crea ninguna fila', async () => {

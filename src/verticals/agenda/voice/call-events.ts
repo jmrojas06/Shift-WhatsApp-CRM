@@ -9,8 +9,10 @@
 //     duración y la hora; si no quedó ningún resultado, queda `no_response`.
 //
 // Los dos son idempotentes (escrituras condicionales): un reintento de Telnyx
-// no repite avisos ni revive una llamada cerrada. Ni el nombre ni el teléfono
-// del paciente van a logs.
+// no repite avisos ni revive una llamada cerrada. Los dos comprueban primero el
+// `CallSid` (`bindCallSid`): la fila está atada a UNA llamada de Telnyx, y un
+// aviso con otro `CallSid` no cambia nada. Ni el nombre ni el teléfono del
+// paciente van a logs.
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -19,6 +21,7 @@ import { say, hangup, response } from '@/lib/voice/texml'
 
 import { CALL_NOTICES } from './call-notices'
 import {
+  bindCallSid,
   claimOutcome,
   IN_FLIGHT_STATUSES,
   loadCallRow,
@@ -80,13 +83,9 @@ export async function handleStatusCallback(args: StatusCallbackArgs): Promise<vo
   const call = await loadCallRow(db, args.callId)
   if (!call) return
 
-  if (form.CallSid && !call.providerCallSid) {
-    await db
-      .from('booking_calls')
-      .update({ provider_call_sid: form.CallSid.slice(0, 100) })
-      .eq('id', call.id)
-      .is('provider_call_sid', null)
-  }
+  // Un aviso de otra llamada de Telnyx no cierra esta. (La respuesta de un aviso de estado
+  // no se lee, así que no hay nada que decir: simplemente no se hace nada.)
+  if ((await bindCallSid(db, call, form.CallSid)) === 'mismatch') return
 
   const status = mapCallStatus(form.CallStatus)
   if (!status) return
@@ -122,7 +121,7 @@ export interface DialResultArgs {
   /** Service role. */
   db: SupabaseClient
   callId: string
-  /** `DialCallStatus`. */
+  /** `CallSid` y `DialCallStatus`. */
   form: Record<string, string>
   now: Date
 }
@@ -134,6 +133,7 @@ export async function handleDialResult(args: DialResultArgs): Promise<{ xml: str
   const { db, form } = args
   const call = await loadCallRow(db, args.callId)
   if (!call) return { xml: hangupOnlyXml() }
+  if ((await bindCallSid(db, call, form.CallSid)) === 'mismatch') return { xml: hangupOnlyXml() }
 
   const connected = DIAL_CONNECTED.has((form.DialCallStatus ?? '').trim().toLowerCase())
   const outcome = connected ? 'advisor_connected' : 'advisor_missed'

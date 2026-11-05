@@ -27,7 +27,7 @@ function seed(call: Row = {}): FakeDb {
 
 beforeEach(() => {
   vi.stubEnv('VOICE_WEBHOOK_SECRET', TEST_VOICE_SECRET)
-  vi.stubEnv('NEXT_PUBLIC_APP_URL', TEST_APP_URL)
+  vi.stubEnv('NEXT_PUBLIC_SITE_URL', TEST_APP_URL)
   h.state.db = seed()
   vi.spyOn(console, 'error').mockImplementation(() => {})
 })
@@ -66,6 +66,22 @@ describe('seguridad', () => {
       webhookRequest('status', { form: { CallStatus: 'completed' }, headers: (body) => keys.headersFor(body) }),
     )
     expect(res.status).toBe(200)
+    expect(callOf(h.state.db as FakeDb).status).toBe('completed')
+  })
+})
+
+describe('el CallSid ata la llamada', () => {
+  it('un aviso con otro CallSid, con la llamada ya atada, responde 200 y no la cierra', async () => {
+    h.state.db = seed({ provider_call_sid: 'CA-REAL' })
+    const before = JSON.stringify((h.state.db as FakeDb)._tables)
+    const res = await POST(webhookRequest('status', { form: { CallSid: 'CA-AJENO', CallStatus: 'completed', CallDuration: '9' } }))
+    expect(res.status).toBe(200)
+    expect(JSON.stringify((h.state.db as FakeDb)._tables)).toBe(before)
+  })
+
+  it('con el CallSid de la llamada la cierra', async () => {
+    h.state.db = seed({ provider_call_sid: 'CA-REAL' })
+    await POST(webhookRequest('status', { form: { CallSid: 'CA-REAL', CallStatus: 'completed', CallDuration: '9' } }))
     expect(callOf(h.state.db as FakeDb).status).toBe('completed')
   })
 })
@@ -136,7 +152,7 @@ describe('llamadas entrantes (inbound=1)', () => {
     webhookRequest('status', {
       call: null,
       query: { inbound: '1' },
-      form: { CallSid: 'CA-IN', CallStatus: 'completed', CallDuration: '61' },
+      form: { CallSid: 'CA-IN', From: '+573001112233', To: '+576015550000', CallStatus: 'completed', CallDuration: '61' },
       ...extra,
     })
 
@@ -147,7 +163,15 @@ describe('llamadas entrantes (inbound=1)', () => {
       contacts: [],
       contact_notes: [],
       booking_calls: [
-        callRowSeed({ id: TEST_CALL_ID, direction: 'inbound', status: 'in_progress', provider_call_sid: 'CA-IN', outcome: 'info' }),
+        callRowSeed({
+          id: TEST_CALL_ID,
+          direction: 'inbound',
+          status: 'in_progress',
+          provider_call_sid: 'CA-IN',
+          from_number: '+573001112233',
+          to_number: '+576015550000',
+          outcome: 'info',
+        }),
       ],
     })
   })
@@ -186,8 +210,21 @@ describe('llamadas entrantes (inbound=1)', () => {
     expect(callOf(h.state.db as FakeDb).status).toBe('in_progress')
   })
 
+  it('un aviso con el CallSid correcto pero otro To o otro From responde 200 y no cierra nada', async () => {
+    const forms: Record<string, string>[] = [
+      { CallSid: 'CA-IN', From: '+573001112233', To: '+576015559999', CallStatus: 'completed' },
+      { CallSid: 'CA-IN', From: '+573009998877', To: '+576015550000', CallStatus: 'completed' },
+      { CallSid: 'CA-IN', CallStatus: 'completed' },
+    ]
+    for (const form of forms) {
+      const res = await POST(inboundStatus({ form }))
+      expect(res.status).toBe(200)
+      expect(callOf(h.state.db as FakeDb).status).toBe('in_progress')
+    }
+  })
+
   it('con la llamada concreta (call=) sigue funcionando como antes', async () => {
-    const res = await POST(webhookRequest('status', { form: { CallStatus: 'completed', CallDuration: '10' } }))
+    const res = await POST(webhookRequest('status', { form: { CallSid: 'CA-IN', CallStatus: 'completed', CallDuration: '10' } }))
     expect(res.status).toBe(200)
     expect(callOf(h.state.db as FakeDb).status).toBe('completed')
   })

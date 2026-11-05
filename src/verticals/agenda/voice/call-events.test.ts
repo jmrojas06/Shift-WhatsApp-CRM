@@ -170,6 +170,94 @@ describe('dial-result', () => {
   })
 })
 
+describe('el CallSid ata la llamada (dial-result y status)', () => {
+  const HANGUP_ONLY = '<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>'
+
+  it('dial-result con otro CallSid: cuelga y no pone resultado ni avisa', async () => {
+    const db = seed({ status: 'in_progress', provider_call_sid: 'CA-1' })
+    const before = { ...callOf(db) }
+    const { xml } = await handleDialResult({
+      db: asDb(db),
+      callId: CALL_ID,
+      form: { CallSid: 'CA-AJENO', DialCallStatus: 'no-answer' },
+      now: NOW,
+    })
+
+    expect(xml).toBe(HANGUP_ONLY)
+    expect(callOf(db)).toEqual(before)
+    expect(db._tables.notifications).toHaveLength(0)
+  })
+
+  it('dial-result sin CallSid, con la llamada ya atada, tampoco pasa', async () => {
+    const db = seed({ status: 'in_progress', provider_call_sid: 'CA-1' })
+    const { xml } = await handleDialResult({ db: asDb(db), callId: CALL_ID, form: { DialCallStatus: 'no-answer' }, now: NOW })
+    expect(xml).toBe(HANGUP_ONLY)
+    expect(callOf(db).outcome).toBeNull()
+  })
+
+  it('dial-result con el CallSid correcto sigue funcionando', async () => {
+    const db = seed({ status: 'in_progress', provider_call_sid: 'CA-1' })
+    await handleDialResult({ db: asDb(db), callId: CALL_ID, form: { CallSid: 'CA-1', DialCallStatus: 'completed' }, now: NOW })
+    expect(callOf(db).outcome).toBe('advisor_connected')
+  })
+
+  it('dial-result con un CallSid que ya es de otra llamada (23505) se rechaza', async () => {
+    const db = seed({ status: 'in_progress' })
+    db._failNext('update', 'booking_calls', { code: '23505', message: 'duplicate key' })
+    const { xml } = await handleDialResult({
+      db: asDb(db),
+      callId: CALL_ID,
+      form: { CallSid: 'CA-DE-OTRA', DialCallStatus: 'no-answer' },
+      now: NOW,
+    })
+    expect(xml).toBe(HANGUP_ONLY)
+    expect(callOf(db)).toMatchObject({ outcome: null, provider_call_sid: null })
+    expect(db._tables.notifications).toHaveLength(0)
+  })
+
+  it('status con otro CallSid no cierra la llamada ni cambia nada', async () => {
+    const db = seed({ status: 'in_progress', provider_call_sid: 'CA-1' })
+    const before = { ...callOf(db) }
+    await handleStatusCallback({
+      db: asDb(db),
+      callId: CALL_ID,
+      form: { CallSid: 'CA-AJENO', CallStatus: 'completed', CallDuration: '42' },
+      now: NOW,
+    })
+    expect(callOf(db)).toEqual(before)
+  })
+
+  it('status sin CallSid, con la llamada ya atada, no cierra nada', async () => {
+    const db = seed({ status: 'in_progress', provider_call_sid: 'CA-1' })
+    await handleStatusCallback({ db: asDb(db), callId: CALL_ID, form: { CallStatus: 'completed' }, now: NOW })
+    expect(callOf(db).status).toBe('in_progress')
+    expect(callOf(db).outcome).toBeNull()
+  })
+
+  it('status con el CallSid correcto cierra la llamada', async () => {
+    const db = seed({ status: 'in_progress', provider_call_sid: 'CA-1' })
+    await handleStatusCallback({
+      db: asDb(db),
+      callId: CALL_ID,
+      form: { CallSid: 'CA-1', CallStatus: 'completed', CallDuration: '42' },
+      now: NOW,
+    })
+    expect(callOf(db)).toMatchObject({ status: 'completed', duration_seconds: 42 })
+  })
+
+  it('status con un CallSid que ya es de otra llamada (23505) no cierra nada', async () => {
+    const db = seed({ status: 'in_progress' })
+    db._failNext('update', 'booking_calls', { code: '23505', message: 'duplicate key' })
+    await handleStatusCallback({
+      db: asDb(db),
+      callId: CALL_ID,
+      form: { CallSid: 'CA-DE-OTRA', CallStatus: 'completed' },
+      now: NOW,
+    })
+    expect(callOf(db)).toMatchObject({ status: 'in_progress', provider_call_sid: null, outcome: null })
+  })
+})
+
 describe('status', () => {
   const hit = (db: FakeDb, form: Record<string, string>, now = NOW) =>
     handleStatusCallback({ db: asDb(db), callId: CALL_ID, form, now })

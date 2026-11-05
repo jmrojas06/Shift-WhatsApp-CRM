@@ -38,7 +38,7 @@ function seed(call: Row = {}): FakeDb {
 
 beforeEach(() => {
   vi.stubEnv('VOICE_WEBHOOK_SECRET', TEST_VOICE_SECRET)
-  vi.stubEnv('NEXT_PUBLIC_APP_URL', TEST_APP_URL)
+  vi.stubEnv('NEXT_PUBLIC_SITE_URL', TEST_APP_URL)
   h.state.db = seed()
   vi.spyOn(console, 'error').mockImplementation(() => {})
 })
@@ -73,6 +73,24 @@ describe('seguridad', () => {
       webhookRequest('dial-result', { form: { DialCallStatus: 'completed' }, headers: (body) => keys.headersFor(body) }),
     )
     expect(good.status).toBe(200)
+    expect(callOf(h.state.db as FakeDb).outcome).toBe('advisor_connected')
+  })
+})
+
+describe('el CallSid ata la llamada', () => {
+  it('un aviso con otro CallSid, con la llamada ya atada, cuelga y no cambia nada', async () => {
+    h.state.db = seed({ provider_call_sid: 'CA-REAL' })
+    const before = JSON.stringify((h.state.db as FakeDb)._tables)
+    const res = await POST(webhookRequest('dial-result', { form: { CallSid: 'CA-AJENO', DialCallStatus: 'no-answer' } }))
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>')
+    expect(JSON.stringify((h.state.db as FakeDb)._tables)).toBe(before)
+  })
+
+  it('con el CallSid de la llamada funciona', async () => {
+    h.state.db = seed({ provider_call_sid: 'CA-REAL' })
+    const res = await POST(webhookRequest('dial-result', { form: { CallSid: 'CA-REAL', DialCallStatus: 'completed' } }))
+    expect(res.status).toBe(200)
     expect(callOf(h.state.db as FakeDb).outcome).toBe('advisor_connected')
   })
 })

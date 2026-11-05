@@ -290,14 +290,14 @@ export function bookingLinkFailed(): string {
   return 'No pudimos enviarte el WhatsApp. Escríbenos por WhatsApp para agendar.'
 }
 
-/** La próxima cita del número que llama, con las teclas para confirmarla o cancelarla. */
-export function myAppointment(args: AppointmentSpeech & { patient: string | null }): string {
-  const patient = spokenName(args.patient)
-  const when = `${args.day} ${args.time}${withStaff(args.staff)}`
-  const lead = patient
-    ? `La próxima cita registrada con este número es la de ${patient}, para ${when}.`
-    : `Tu próxima cita es para ${when}.`
-  return `${lead} ${MENU_APPOINTMENT_KEYS} Para volver al menú, marca 0.`
+/**
+ * La próxima cita del número que llama, con las teclas para confirmarla o cancelarla.
+ * Solo dice CUÁNDO: nunca el nombre del paciente ni el del profesional. El número de
+ * quien llama se puede falsificar y un teléfono se comparte (familia, trabajo), así
+ * que quien conteste no debe enterarse de a nombre de quién es la cita.
+ */
+export function myAppointment(args: Pick<AppointmentSpeech, 'day' | 'time'>): string {
+  return `Tu próxima cita es para ${args.day} ${args.time}. ${MENU_APPOINTMENT_KEYS} Para volver al menú, marca 0.`
 }
 
 export function noAppointments(): string {

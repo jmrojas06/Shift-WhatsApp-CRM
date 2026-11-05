@@ -55,7 +55,9 @@ const TELNYX_ENV = {
   TELNYX_TEXML_APP_ID: 'APP789',
   TELNYX_PUBLIC_KEY: 'cHVibGljLWtleS1kZS1wcnVlYmE=',
   VOICE_WEBHOOK_SECRET: 'secreto-de-voz',
-  NEXT_PUBLIC_APP_URL: 'https://crm.example.test',
+  NEXT_PUBLIC_SITE_URL: 'https://crm.example.test',
+  // En blanco: así la URL de respaldo no tapa la que se prueba.
+  NEXT_PUBLIC_APP_URL: '',
 }
 
 function seed(): FakeDb {

@@ -11,6 +11,8 @@
 
 import { createPublicKey, verify } from 'node:crypto'
 
+import { publicBaseUrl } from './tokens'
+
 // ------------------------------------------------------------
 // Llamada saliente
 // ------------------------------------------------------------
@@ -182,8 +184,9 @@ export type TelnyxConfigResult = { ok: true; config: TelnyxConfig } | { ok: fals
 /**
  * Lee las variables que necesita el robot de voz. Si falta alguna, dice cuáles
  * (el cron no hace nada y la tarjeta de ajustes avisa). Además de las de
- * Telnyx pide `VOICE_WEBHOOK_SECRET` y `NEXT_PUBLIC_APP_URL`, sin las cuales no
- * se puede armar ni verificar una URL de webhook.
+ * Telnyx pide `VOICE_WEBHOOK_SECRET` y la URL pública (`NEXT_PUBLIC_SITE_URL`;
+ * se acepta `NEXT_PUBLIC_APP_URL` en su lugar), sin las cuales no se puede armar
+ * ni verificar una URL de webhook. Si no hay ninguna URL, dice que falta la primera.
  */
 export function readTelnyxConfig(env: Record<string, string | undefined> = process.env): TelnyxConfigResult {
   const read = (name: string): string => env[name]?.trim() ?? ''
@@ -193,8 +196,8 @@ export function readTelnyxConfig(env: Record<string, string | undefined> = proce
     'TELNYX_TEXML_APP_ID',
     'TELNYX_PUBLIC_KEY',
     'VOICE_WEBHOOK_SECRET',
-    'NEXT_PUBLIC_APP_URL',
   ].filter((name) => read(name) === '')
+  if (publicBaseUrl(env) === null) missing.push('NEXT_PUBLIC_SITE_URL')
   if (missing.length > 0) return { ok: false, missing }
 
   return {

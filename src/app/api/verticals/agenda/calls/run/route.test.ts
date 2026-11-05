@@ -60,7 +60,9 @@ const TELNYX_ENV = {
   TELNYX_TEXML_APP_ID: 'APP789',
   TELNYX_PUBLIC_KEY: 'cHVibGljLWtleS1kZS1wcnVlYmE=',
   VOICE_WEBHOOK_SECRET: 'secreto-de-voz',
-  NEXT_PUBLIC_APP_URL: 'https://crm.example.test',
+  NEXT_PUBLIC_SITE_URL: 'https://crm.example.test',
+  // En blanco: así la URL de respaldo no tapa la que se prueba.
+  NEXT_PUBLIC_APP_URL: '',
 }
 
 const req = (headers?: Record<string, string>) =>
@@ -128,12 +130,20 @@ describe('el runner', () => {
     'TELNYX_TEXML_APP_ID',
     'TELNYX_PUBLIC_KEY',
     'VOICE_WEBHOOK_SECRET',
-    'NEXT_PUBLIC_APP_URL',
+    'NEXT_PUBLIC_SITE_URL',
   ])('si falta %s, el proveedor es null y el runner sabe cuál falta', async (name) => {
     vi.stubEnv(name, '')
     await call({ 'x-cron-secret': SECRET })
     expect(h.state.runnerCalls[0].provider).toBeNull()
     expect(h.state.runnerCalls[0].missingCredentials).toEqual([name])
+  })
+
+  it('la URL pública también puede venir de NEXT_PUBLIC_APP_URL (respaldo)', async () => {
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', '')
+    vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://crm.example.test')
+    await call({ 'x-cron-secret': SECRET })
+    expect(h.state.runnerCalls[0].provider).not.toBeNull()
+    expect(h.state.runnerCalls[0].missingCredentials).toBeUndefined()
   })
 
   it('responde el resumen tal cual', async () => {

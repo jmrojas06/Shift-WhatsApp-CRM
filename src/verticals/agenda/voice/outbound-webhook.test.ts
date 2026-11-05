@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { voiceToken } from '@/lib/voice/tokens'
+import { checkVoiceToken, voiceToken } from '@/lib/voice/tokens'
 import type { FakeDb, Row } from '@/verticals/agenda/agent/testing/fake-db'
 
 import { handleOutboundWebhook } from './outbound-webhook'
@@ -108,7 +108,8 @@ async function hit(
   db: FakeDb,
   options: { query?: Record<string, string>; form?: Record<string, string>; now?: Date } = {},
 ) {
-  const query = new URLSearchParams({ call: CALL_ID, t: voiceToken(CALL_ID), ...options.query })
+  const query = new URLSearchParams({ call: CALL_ID, ...options.query })
+  query.set('t', voiceToken(CALL_ID, query))
   const result = await handleOutboundWebhook({
     db: asDb(db),
     callId: CALL_ID,
@@ -128,7 +129,7 @@ const gatherAction = (xml: string) => new URL(/<Gather action="([^"]*)"/.exec(xm
 
 beforeEach(() => {
   vi.stubEnv('VOICE_WEBHOOK_SECRET', 'secreto-de-prueba-voz')
-  vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://crm.example.test')
+  vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://crm.example.test')
   notifyPatient.mockReset()
   kickCalendar.mockReset()
   notifyPatient.mockResolvedValue({ sent: true, channel: 'template' })
@@ -188,7 +189,7 @@ describe('primer pedido: el menú', () => {
     expect(action.searchParams.get('call')).toBe(CALL_ID)
     expect(action.searchParams.get('step')).toBe('menu')
     expect(action.searchParams.get('loop')).toBe('1')
-    expect(action.searchParams.get('t')).toBe(voiceToken(CALL_ID))
+    expect(checkVoiceToken(CALL_ID, action.searchParams.get('t'), action.searchParams)).toBe(true)
   })
 
   it('guarda el CallSid la primera vez y pasa la fila a in_progress', async () => {
@@ -196,8 +197,9 @@ describe('primer pedido: el menú', () => {
     await hit(db, { form: { CallSid: 'CA-777' } })
     expect(callOf(db)).toMatchObject({ provider_call_sid: 'CA-777', status: 'in_progress' })
 
-    // Un segundo pedido (otra vuelta) no pisa el CallSid.
-    await hit(db, { form: { CallSid: 'CA-OTRO' }, query: { loop: '2' } })
+    // Un segundo pedido (otra vuelta) con el mismo CallSid sigue y no lo cambia.
+    const again = await hit(db, { form: { CallSid: 'CA-777' }, query: { loop: '2' } })
+    expect(again.xml).toContain('<Gather')
     expect(callOf(db).provider_call_sid).toBe('CA-777')
   })
 
@@ -206,6 +208,67 @@ describe('primer pedido: el menú', () => {
     expect((await hit(own)).xml).toContain('voice="Azure.es-CO-SalomeNeural"')
     const def = seed()
     expect((await hit(def)).xml).toContain('voice="Polly.Mia-Neural"')
+  })
+})
+
+describe('el CallSid ata la llamada a una sola llamada de Telnyx', () => {
+  const HANGUP_ONLY = '<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>'
+
+  it('un pedido con otro CallSid cuelga y no cambia nada, aunque marque 1', async () => {
+    const db = seed({ call: { provider_call_sid: 'CA-777', status: 'in_progress' } })
+    const before = { call: { ...callOf(db) }, appointment: { ...appointmentOf(db) } }
+
+    const { xml } = await hit(db, { form: { CallSid: 'CA-AJENO', Digits: '1' } })
+
+    expect(xml).toBe(HANGUP_ONLY)
+    expect(callOf(db)).toEqual(before.call)
+    expect(appointmentOf(db)).toEqual(before.appointment)
+    expect(notifyPatient).not.toHaveBeenCalled()
+    expect(kickCalendar).not.toHaveBeenCalled()
+  })
+
+  it('un pedido sin CallSid, con la llamada ya atada, tampoco pasa', async () => {
+    const db = seed({ call: { provider_call_sid: 'CA-777' } })
+    const { xml } = await hit(db, { form: { CallSid: '', Digits: '1' } })
+    expect(xml).toBe(HANGUP_ONLY)
+    expect(callOf(db).outcome).toBeNull()
+    expect(callOf(db).digits).toBeNull()
+  })
+
+  it('no repite la despedida de una llamada terminada a quien trae otro CallSid', async () => {
+    const db = seed({ call: { provider_call_sid: 'CA-777', outcome: 'confirmed' } })
+    const mine = await hit(db, { form: { CallSid: 'CA-777' } })
+    expect(allSpeech(mine.xml)).toContain('quedó confirmada')
+    const other = await hit(db, { form: { CallSid: 'CA-AJENO' } })
+    expect(other.xml).toBe(HANGUP_ONLY)
+  })
+
+  it('con el CallSid correcto todo sigue igual en cada vuelta', async () => {
+    const db = seed({ call: { provider_call_sid: 'CA-777', status: 'in_progress' } })
+    const { xml } = await hit(db, { form: { CallSid: 'CA-777', Digits: '1' } })
+    expect(allSpeech(xml)).toContain('quedó confirmada')
+    expect(callOf(db)).toMatchObject({ outcome: 'confirmed', provider_call_sid: 'CA-777' })
+  })
+
+  it('un CallSid que ya es de otra llamada (23505) se rechaza sin efectos', async () => {
+    const db = seed()
+    db._failNext('update', 'booking_calls', { code: '23505', message: 'duplicate key value violates unique constraint' })
+    const { xml } = await hit(db, { form: { CallSid: 'CA-DE-OTRA', Digits: '1' } })
+
+    expect(xml).toBe(HANGUP_ONLY)
+    expect(callOf(db)).toMatchObject({ provider_call_sid: null, outcome: null, digits: null, status: 'calling' })
+    expect(appointmentOf(db).attendance_confirmed_at).toBeNull()
+  })
+
+  it('dos primeros pedidos a la vez con CallSid distintos: solo uno sigue', async () => {
+    const db = seed()
+    const [a, b] = await Promise.all([
+      hit(db, { form: { CallSid: 'CA-A', Digits: '1' } }),
+      hit(db, { form: { CallSid: 'CA-B', Digits: '1' } }),
+    ])
+    expect([a.xml, b.xml].filter((xml) => xml === HANGUP_ONLY)).toHaveLength(1)
+    expect(['CA-A', 'CA-B']).toContain(callOf(db).provider_call_sid)
+    expect(appointmentOf(db).attendance_confirmed_at).not.toBeNull()
   })
 })
 

@@ -35,7 +35,7 @@ const ON_CALL = { phone: '+573009998877', callerId: '+576015550000' }
 
 const NEXT_APPOINTMENT = {
   id: APPT,
-  speech: { patient: 'Ana Pérez', day: 'el martes 10 de noviembre', time: 'a las 3 y media de la tarde', staff: 'la doctora Rojas' },
+  speech: { day: 'el martes 10 de noviembre', time: 'a las 3 y media de la tarde' },
 }
 
 function context(overrides: Partial<InboundFlowContext> = {}): InboundFlowContext {
@@ -225,6 +225,12 @@ describe('2: mi cita', () => {
     expect(redirectUrl(result.xml)).toBe(URLS.step('appt', 2, '2', APPT))
     expect(result.effect).toBeNull()
     expect(result.path).toBe('2')
+  })
+
+  it('solo dice el día y la hora: ni el paciente ni el profesional ni el procedimiento', () => {
+    const result = inboundFlow(input({ digits: '2' }), context({ nextAppointment: NEXT_APPOINTMENT }))
+    expect(said(result.xml)[0]).toMatch(/^Tu próxima cita es para el martes 10 de noviembre a las 3 y media de la tarde\./)
+    expect(result.xml).not.toMatch(/\bAna\b|Pérez|Rojas|[Dd]octor|registrada con este número/)
   })
 
   it('sin citas lo dice y vuelve al menú', () => {

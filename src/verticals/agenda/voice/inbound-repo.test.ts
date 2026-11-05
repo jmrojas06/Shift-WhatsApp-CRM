@@ -97,17 +97,24 @@ describe('findOrCreateInboundCall', () => {
     expect(db._tables.booking_calls).toHaveLength(1)
   })
 
-  it('el mismo CallSid en otra cuenta o en una saliente no cuenta como la misma llamada', async () => {
-    const db = seed({
-      booking_calls: [
-        callRowSeed({ id: 'x-other-account', account_id: OTHER_ACCOUNT, direction: 'inbound', provider_call_sid: 'CA-1' }),
-        callRowSeed({ id: 'x-outbound', account_id: ACCOUNT, direction: 'outbound', provider_call_sid: 'CA-1' }),
-      ],
-    })
-    const call = await findOrCreateInboundCall(asDb(db), args)
-    expect(call.id).not.toBe('x-other-account')
-    expect(call.id).not.toBe('x-outbound')
-    expect(db._tables.booking_calls).toHaveLength(3)
+  it('un CallSid que ya es de otra cuenta, o de una saliente, nunca se reutiliza ni se duplica', async () => {
+    // El índice único parcial de `provider_call_sid` no deja crear una segunda fila con él:
+    // la llamada entrante no se registra (la ruta responde con la despedida de falla).
+    for (const foreign of [
+      callRowSeed({ id: 'x-other-account', account_id: OTHER_ACCOUNT, direction: 'inbound', provider_call_sid: 'CA-1' }),
+      callRowSeed({ id: 'x-outbound', account_id: ACCOUNT, direction: 'outbound', provider_call_sid: 'CA-1' }),
+    ]) {
+      const db = seed({ booking_calls: [foreign] })
+      await expect(findOrCreateInboundCall(asDb(db), args)).rejects.toThrow(/registrar la llamada/)
+      expect(db._tables.booking_calls).toHaveLength(1)
+    }
+  })
+
+  it('dos primeros pedidos a la vez (mismo CallSid) terminan con la misma fila, sin duplicar', async () => {
+    const db = seed()
+    const [a, b] = await Promise.all([findOrCreateInboundCall(asDb(db), args), findOrCreateInboundCall(asDb(db), args)])
+    expect(a.id).toBe(b.id)
+    expect(db._tables.booking_calls).toHaveLength(1)
   })
 
   it('guarda null cuando quien llama no mostró un número válido', async () => {
@@ -145,51 +152,87 @@ describe('findCallBySid', () => {
     const db = seed({ booking_calls: [callRowSeed({ id: 'c-out', direction: 'outbound', provider_call_sid: 'CA-9' })] })
     expect(await findCallBySid(asDb(db), 'CA-9')).toBeNull()
   })
+
+  describe('con los números del aviso (From y To)', () => {
+    const calls = () =>
+      seed({
+        booking_calls: [
+          callRowSeed({
+            id: 'c-in',
+            direction: 'inbound',
+            provider_call_sid: 'CA-9',
+            from_number: '+573001112233',
+            to_number: '+576015550000',
+          }),
+        ],
+      })
+
+    it('la encuentra solo si el To y el From son los de la fila', async () => {
+      const db = asDb(calls())
+      expect((await findCallBySid(db, 'CA-9', { from: '+573001112233', to: '+576015550000' }))?.id).toBe('c-in')
+      expect(await findCallBySid(db, 'CA-9', { from: '+573001112233', to: '+576015559999' })).toBeNull()
+      expect(await findCallBySid(db, 'CA-9', { from: '+573009998877', to: '+576015550000' })).toBeNull()
+      expect(await findCallBySid(db, 'CA-9', { from: null, to: '+576015550000' })).toBeNull()
+      expect(await findCallBySid(db, 'CA-9', { from: '+573001112233', to: null })).toBeNull()
+    })
+
+    it('una propiedad ausente no se mira; null pide que la fila no tenga número', async () => {
+      const db = asDb(calls())
+      expect((await findCallBySid(db, 'CA-9', { to: '+576015550000' }))?.id).toBe('c-in')
+      expect((await findCallBySid(db, 'CA-9', { from: '+573001112233' }))?.id).toBe('c-in')
+
+      const privateCall = asDb(
+        seed({
+          booking_calls: [
+            callRowSeed({ id: 'c-private', direction: 'inbound', provider_call_sid: 'CA-8', from_number: null, to_number: '+576015550000' }),
+          ],
+        }),
+      )
+      expect((await findCallBySid(privateCall, 'CA-8', { from: null, to: '+576015550000' }))?.id).toBe('c-private')
+      expect(await findCallBySid(privateCall, 'CA-8', { from: '+573001112233', to: '+576015550000' })).toBeNull()
+    })
+  })
 })
 
 describe('loadNextAppointment', () => {
-  it('lee la próxima cita activa (pendiente o confirmada y futura) del contacto', async () => {
-    const next = await loadNextAppointment(asDb(seed()), { accountId: ACCOUNT, contactId: CONTACT, clinic: false, now: NOW })
+  it('lee la próxima cita activa (pendiente o confirmada y futura) del contacto: solo el día y la hora', async () => {
+    const next = await loadNextAppointment(asDb(seed()), { accountId: ACCOUNT, contactId: CONTACT, now: NOW })
     expect(next?.id).toBe('ap-soon')
-    expect(next?.speech).toEqual({
-      patient: null,
-      day: 'mañana',
-      time: 'a las 3 y media de la tarde',
-      staff: 'la doctora Rojas',
-    })
+    expect(next?.speech).toEqual({ day: 'mañana', time: 'a las 3 y media de la tarde' })
   })
 
-  it('en una clínica dice a nombre de quién es la cita', async () => {
-    const next = await loadNextAppointment(asDb(seed()), { accountId: ACCOUNT, contactId: CONTACT, clinic: true, now: NOW })
-    expect(next?.speech.patient).toBe('Ana Pérez')
+  it('no lee ni dice el nombre del paciente ni del profesional (el número de quien llama se puede falsificar o compartir)', async () => {
+    const db = seed()
+    db._failNext('select', 'clinic_patients', { message: 'no debía leerse' })
+    db._failNext('select', 'booking_staff', { message: 'no debía leerse' })
+    const next = await loadNextAppointment(asDb(db), { accountId: ACCOUNT, contactId: CONTACT, now: NOW })
+
+    expect(JSON.stringify(next)).not.toMatch(/\bAna\b|Pérez|Rojas|[Dd]octor/)
+    // Los dos fallos preparados siguen pendientes: ninguna de esas tablas se tocó.
+    for (const table of ['clinic_patients', 'booking_staff']) {
+      const { error } = await asDb(db).from(table).select('id')
+      expect(error).toMatchObject({ message: 'no debía leerse' })
+    }
   })
 
   it('sin citas activas devuelve null (canceladas, pasadas y de otro contacto no cuentan)', async () => {
     const db = seed()
     db._tables.booking_appointments = db._tables.booking_appointments.filter((row) => row.id !== 'ap-soon' && row.id !== 'ap-late')
-    expect(await loadNextAppointment(asDb(db), { accountId: ACCOUNT, contactId: CONTACT, clinic: false, now: NOW })).toBeNull()
+    expect(await loadNextAppointment(asDb(db), { accountId: ACCOUNT, contactId: CONTACT, now: NOW })).toBeNull()
   })
 
   it('la cita de otra cuenta nunca aparece', async () => {
-    expect(await loadNextAppointment(asDb(seed()), { accountId: OTHER_ACCOUNT, contactId: CONTACT, clinic: false, now: NOW })).toBeNull()
+    expect(await loadNextAppointment(asDb(seed()), { accountId: OTHER_ACCOUNT, contactId: CONTACT, now: NOW })).toBeNull()
   })
 
   it('un fallo de lectura lanza: no es "no tienes citas"', async () => {
     const db = seed()
     db._failNext('select', 'booking_appointments', { message: 'boom' })
     await expect(
-      loadNextAppointment(asDb(db), { accountId: ACCOUNT, contactId: CONTACT, clinic: false, now: NOW }),
+      loadNextAppointment(asDb(db), { accountId: ACCOUNT, contactId: CONTACT, now: NOW }),
     ).rejects.toThrow(/citas/)
   })
 
-  it('sin el nombre del profesional ni del paciente igual lee la cita', async () => {
-    const db = seed()
-    db._tables.booking_staff = []
-    db._tables.clinic_patients = []
-    const next = await loadNextAppointment(asDb(db), { accountId: ACCOUNT, contactId: CONTACT, clinic: true, now: NOW })
-    expect(next?.speech.staff).toBeNull()
-    expect(typeof next?.speech.patient === 'string' || next?.speech.patient === null).toBe(true)
-  })
 })
 
 describe('dialableNumber', () => {

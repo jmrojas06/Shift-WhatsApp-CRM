@@ -7,8 +7,10 @@
 //      crea la fila de la llamada (un reintento con el mismo `CallSid` reutiliza
 //      la que ya existe) y saluda. Número sin cuenta o atención entrante apagada:
 //      "Este número no está disponible".
-//   2. Los siguientes (con `call`): cargan la fila. Con un resultado final, un
-//      reintento recibe la misma despedida sin repetir nada.
+//   2. Los siguientes (con `call`): cargan la fila y comprueban su `CallSid`: la
+//      fila está atada a UNA llamada de Telnyx, y un pedido con otro `CallSid` (o
+//      sin él) cuelga sin hacer nada. Con un resultado final, un reintento
+//      recibe la misma despedida sin repetir nada.
 //   3. Corre la máquina de pasos (`inbound-flow.ts`) con el paso, la vuelta, el
 //      camino y la cita que vienen en la query, y la tecla del formulario.
 //   4. Guarda la tecla y aplica el efecto (`inbound-effects.ts`).
@@ -28,6 +30,7 @@ import { loadClinicContext } from '@/modules/clinica/settings'
 
 import { isUuid } from '../panel-booking-input'
 import {
+  bindCallSid,
   isActiveAppointment,
   isTerminalStatus,
   loadCallAppointment,
@@ -99,7 +102,11 @@ function readLoop(value: string | null): number {
 // Armado del contexto
 // ------------------------------------------------------------
 
-/** Número que verá quien conteste: el "que marca" de la cuenta o, si no hay, el de la clínica. */
+/**
+ * Número que verá quien conteste: el `caller_id` de la cuenta y, si es null, su
+ * `inbound_number` (diseño §6.4; igual que en las salientes). El último recurso es
+ * el número marcado, que es ese mismo `inbound_number`.
+ */
 function callerIdOf(settings: CallSettings, call: CallRow): string | null {
   return settings.callerId ?? settings.inboundNumber ?? call.toNumber
 }
@@ -167,6 +174,8 @@ export async function handleInboundWebhook(args: InboundWebhookArgs): Promise<In
     const loaded = await loadCallRow(db, callParam)
     if (!loaded || loaded.direction !== 'inbound') return done(hangupOnlyXml())
     call = loaded
+    // Otro CallSid no es esta llamada (la URL firmada la pudo repetir alguien más).
+    if ((await bindCallSid(db, call, form.CallSid)) === 'mismatch') return done(hangupOnlyXml())
     // Una llamada que ya terminó no revive por un pedido tardío.
     if (isTerminalStatus(call.status)) return done(hangupOnlyXml())
     settings = await loadCallSettings(db, call.accountId)
@@ -213,12 +222,7 @@ export async function handleInboundWebhook(args: InboundWebhookArgs): Promise<In
   let nextAppointment: InboundNextAppointment | null | undefined
   if (pressedAtMenu === '2') {
     nextAppointment = call.contactId
-      ? await loadNextAppointment(db, {
-          accountId: call.accountId,
-          contactId: call.contactId,
-          clinic: account.clinic,
-          now,
-        })
+      ? await loadNextAppointment(db, { accountId: call.accountId, contactId: call.contactId, now })
       : null
   }
   const urgency =

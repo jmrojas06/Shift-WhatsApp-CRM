@@ -113,7 +113,7 @@ async function runDeferred() {
 
 beforeEach(() => {
   vi.stubEnv('VOICE_WEBHOOK_SECRET', TEST_VOICE_SECRET)
-  vi.stubEnv('NEXT_PUBLIC_APP_URL', TEST_APP_URL)
+  vi.stubEnv('NEXT_PUBLIC_SITE_URL', TEST_APP_URL)
   h.state.db = seed({ call: null })
   h.state.deferred.length = 0
   h.state.notify.mockReset().mockResolvedValue({ sent: true, channel: 'text' })
@@ -147,6 +147,38 @@ describe('seguridad del webhook', () => {
     h.state.db = seed()
     expect((await POST(webhookRequest('inbound', { call: CALL_ID, token: voiceToken('inbound') }))).status).toBe(403)
     expect((await POST(webhookRequest('inbound', { call: null, token: voiceToken(CALL_ID) }))).status).toBe(403)
+  })
+
+  it('403 si alguien cambia el paso o la cita de una URL firmada: no se salta preguntas ni apunta a otra cita', async () => {
+    const { voiceToken } = await import('@/lib/voice/tokens')
+    h.state.db = seed()
+    const before = JSON.stringify((h.state.db as FakeDb)._tables)
+    // El servidor firmó la URL del menú (`step=menu`, `loop=1`); quien llama la cambia al paso "confirmar cita".
+    const token = voiceToken(CALL_ID, { call: CALL_ID, step: 'menu', loop: '1' })
+    const forged = webhookRequest('inbound', {
+      call: CALL_ID,
+      token,
+      query: { step: 'appt', loop: '1', appt: APPT },
+      form: { CallSid: 'CA-1', Digits: '1' },
+    })
+    expect((await POST(forged)).status).toBe(403)
+    expect(JSON.stringify((h.state.db as FakeDb)._tables)).toBe(before)
+    expect(appointmentOf().attendance_confirmed_at).toBeNull()
+  })
+
+  it('un pedido del menú con otro CallSid cuelga y no cambia nada', async () => {
+    h.state.db = seed()
+    const before = JSON.stringify((h.state.db as FakeDb)._tables)
+    const res = await POST(
+      webhookRequest('inbound', {
+        call: CALL_ID,
+        query: { step: 'appt', loop: '1', appt: APPT },
+        form: { CallSid: 'CA-AJENO', Digits: '1' },
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>')
+    expect(JSON.stringify((h.state.db as FakeDb)._tables)).toBe(before)
   })
 
   it('403 con call vacío', async () => {
