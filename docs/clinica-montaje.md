@@ -502,8 +502,9 @@ Las Fases 2 y 3 están en la rama `feat/clinica-fases-2-3`. Su diseño está en
 `docs/superpowers/specs/2026-11-05-clinica-fases-2-3-design.md`. Agregan
 cuatro piezas. El calendario aparece en toda cuenta con `agenda` en cuanto
 se despliega el código. Google y las llamadas se prenden aparte, cuenta por
-cuenta. Los seguimientos de después de la cita **no tienen interruptor** (ver
-abajo). Una cuenta que no prende nada de eso sigue como antes.
+cuenta. Los seguimientos de después de la cita también vienen apagados y se
+prenden por SQL, cuenta por cuenta, cuando Meta aprobó las plantillas
+(sección 16.5). Una cuenta que no prende nada de eso sigue como antes.
 
 La única excepción: el botón **Confirmar** de un recordatorio ahora también
 anota que el paciente dijo que va (`attendance_confirmed_at`), en todas las
@@ -514,7 +515,8 @@ cuentas. Está explicado en `docs/agenda-recordatorios.md`.
 | Calendario de recepción (`/agenda/calendario`): crear, mover y cancelar citas, y la lista "Para llamar" en `/agenda` | Toda cuenta con `agenda` | Migración 056. Para avisar al paciente, las plantillas de la sección 15 |
 | Copia a Google Calendar | Toda cuenta con `agenda`; la conecta el dueño | 056, Google Cloud (sección 17) y las variables de la sección 20 |
 | Llamadas con voz por pasos (salientes y entrantes) | Toda cuenta con `agenda`; vienen apagadas | 056, Telnyx (sección 18) y prenderlas por cuenta (sección 19) |
-| Después de la cita: cierre del día, cuidados, "¿Cómo sigues?" y calificación | Solo con `clinica`. Sin interruptor: arrancan solos cuando corre el cron | 056, tres plantillas (sección 15) y los ajustes de la sección 16 |
+| Después de la cita: cuidados, "¿Cómo sigues?" y calificación | Solo con `clinica`; vienen apagados y Shift los prende por cuenta (16.5) | 056, tres plantillas aprobadas (sección 15) y los ajustes de la sección 16 |
+| Después de la cita: aviso del cierre del día | Solo con `clinica`; corre solo, sin interruptor | 056. Solo avisa al dueño dentro de la app; no le escribe a nadie más |
 
 Palabras que se repiten en estas secciones:
 
@@ -539,20 +541,24 @@ Palabras que se repiten en estas secciones:
 1. Aplicar la 056 (sección 14).
 2. Pedir las plantillas en Meta (sección 15). Meta tarda en aprobarlas, así
    que se piden primero.
-3. Ajustes por SQL de la clínica (sección 16).
+3. Ajustes por SQL de la clínica (sección 16, menos el interruptor de los
+   seguimientos, 16.5).
 4. Poner las variables y desplegar el código con los crons (sección 20).
 5. Conectar Google (sección 17).
 6. Montar Telnyx (sección 18) y prender las llamadas de esa cuenta
    (sección 19).
-7. Probar todo (sección 21).
+7. Cuando Meta haya aprobado las tres plantillas de después de la cita
+   (15.6, 15.7 y 15.8), prender los seguimientos de esa cuenta (16.5).
+8. Probar todo (sección 21).
 
 **Las plantillas se piden y se aprueban antes de unir el PR y desplegar.**
 Sin la plantilla aprobada, el aviso a un paciente que no ha escrito en 24
 horas no sale. En el calendario eso no es grave: la cita se guarda y el panel
-avisa que no se pudo notificar. En los seguimientos sí: no tienen interruptor,
-así que en cuanto corre el cron toda cuenta con `clinica` empieza a recibirlos
-por cada cita marcada como atendida. Un seguimiento sin plantilla aprobada
-falla tres veces y se pierde.
+avisa que no se pudo notificar. En los seguimientos sí importa: un seguimiento
+sin plantilla aprobada falla tres veces y se pierde. Por eso vienen apagados
+(`followups_enabled = false` en `clinic_settings`): desplegar el código no le
+escribe a ningún paciente, y Shift los prende cuenta por cuenta (16.5) solo
+cuando las tres plantillas ya están aprobadas.
 
 ## 14. Aplicar la migración 056
 
@@ -622,10 +628,11 @@ para las 8:
 - **No edites una plantilla aprobada.** Una edición en revisión puede bloquear
   los envíos mientras Meta la revisa. Si hay que cambiar un texto, se crea una
   plantilla nueva con otro nombre y se cambia el código.
-- **Tienen que estar aprobadas antes de desplegar.** Si falta una, el panel
-  dice "La cita quedó guardada, pero no se pudo avisar por WhatsApp" y, en
-  los seguimientos, el envío se reintenta y a los 3 intentos queda como
-  fallido.
+- **Tienen que estar aprobadas antes de desplegar** (las de los seguimientos,
+  antes de prender el interruptor de 16.5). Si falta una, el panel dice "La
+  cita quedó guardada, pero no se pudo avisar por WhatsApp" y, en los
+  seguimientos de una cuenta que ya los tiene prendidos, el envío se reintenta
+  y a los 3 intentos queda como fallido.
 
 | Plantilla | Para quién | Cuándo sale | Botones |
 | --- | --- | --- | --- |
@@ -883,6 +890,39 @@ CRM guarda su autorización con origen `recepcion` y el texto vigente. Sin
 eso, el paciente queda sin autorización y el bot se la pide en su primer
 mensaje. Para quitarlo, pon `reception_consent_declared_at = null`: solo
 afecta a los pacientes nuevos; lo ya guardado se queda.
+
+### 16.5 Prender los seguimientos de una cuenta
+
+Los cuidados, el «¿Cómo sigues?» y la calificación **vienen apagados** en
+todas las cuentas (`clinic_settings.followups_enabled`, que la 056 crea en
+`false`). Mientras estén apagados el cron no siembra ni envía nada de eso. Se
+prenden a mano, **solo después de que Meta apruebe las tres plantillas**
+(15.6, 15.7 y 15.8) y con el OK de la clínica:
+
+```sql
+update public.clinic_settings
+set followups_enabled = true
+where account_id = '<uuid-de-la-cuenta>';
+```
+
+Tiene que decir `UPDATE 1`. Si dice `UPDATE 0`, la cuenta no tiene la
+configuración de clínica: vuelve a las secciones 4 y 5.
+
+Qué esperar al prenderlos:
+
+- En la siguiente corrida del cron (hasta 10 minutos) entran **las citas
+  atendidas en los últimos 3 días**. Lo que ya venció de ellas sale de una
+  vez, hasta 50 mensajes por corrida. Si no quieres que salgan mensajes de
+  visitas de hace dos días, prende el interruptor cuando no haya citas
+  atendidas recientes sin mensaje, o acepta que salgan.
+- De ahí en adelante, cada cita marcada como atendida genera sus mensajes.
+
+Para apagarlos: `set followups_enabled = false`. Deja de salir todo lo que
+siga pendiente; si se vuelve a prender, sale lo que ya haya vencido.
+
+El **aviso del cierre del día** («Cierre del día pendiente», después de las
+20:00) no depende de este interruptor: solo avisa al dueño dentro de la app y
+no le escribe a ningún paciente, así que corre en toda cuenta con `clinica`.
 
 ## 17. Google Calendar paso a paso
 
@@ -1216,7 +1256,7 @@ Los tres usan el mismo secreto que el de recordatorios
 | --- | --- | --- |
 | `/api/verticals/agenda/calendar-sync/run` | 5 minutos | Copia las citas pendientes a Google Calendar |
 | `/api/verticals/agenda/calls/run` | 10 minutos | Hace las llamadas de confirmación que toquen |
-| `/api/verticals/clinica/followups/run` | 10 minutos | Cuidados, «¿Cómo sigues?», calificación y aviso del cierre del día |
+| `/api/verticals/clinica/followups/run` | 10 minutos | Cuidados, «¿Cómo sigues?» y calificación (solo cuentas con el interruptor de 16.5 prendido) y aviso del cierre del día (todas) |
 
 - **Vercel:** ya están en `vercel.json`. Después de desplegar, míralos en
   Project → Settings → Cron Jobs. Necesitan `CRON_SECRET` con el mismo valor
@@ -1241,8 +1281,10 @@ Cambia la ruta por `/api/verticals/agenda/calls/run` o
   `revoked`.
 - **calls:** si faltan variables, `credentialsMissing` dice cuáles y no
   llama a nadie. Si no, `called`, `failed` y `skipped` por motivo.
-- **followups:** `seeded` (seguimientos creados), `sent`, `skipped`,
-  `failed` y `dayCloses`.
+- **followups:** `accounts` (cuentas con `clinica`), `followupAccounts` (las
+  que tienen el interruptor de 16.5 prendido; si es 0 no se siembra ni se
+  envía nada), `seeded` (seguimientos creados), `sent`, `skipped`, `failed` y
+  `dayCloses`.
 
 Sin secreto en el servidor responden 503; con un secreto incorrecto, 401.
 
@@ -1270,8 +1312,10 @@ datos de prueba se marcan y se limpian al terminar.
 6. **Llamadas.** Haz la prueba de la sección 19.3 y la revisión de voz de la
    19.4. Después, con una cita de prueba que cumpla las condiciones de la
    19.2, corre el cron de llamadas (sección 20.2) y contesta.
-7. **Después de la cita.** Marca una cita de prueba como atendida. Para no
-   esperar al día siguiente, adelanta los seguimientos y corre el cron:
+7. **Después de la cita.** Prende los seguimientos de la cuenta de prueba
+   (16.5; con ellos apagados el cron no hace nada y `followupAccounts` da
+   0). Marca una cita de prueba como atendida. Para no esperar al día
+   siguiente, adelanta los seguimientos y corre el cron:
 
    ```sql
    update public.clinic_followups

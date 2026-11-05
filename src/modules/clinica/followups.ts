@@ -9,6 +9,14 @@
 //   - `calificacion`: Bien / Regular / Mal, a los dos días a las 10:00. Va aparte
 //     de `como_sigues` para no mandar dos mensajes el mismo día.
 //
+// INTERRUPTOR POR CUENTA: nada de lo anterior corre en una cuenta hasta que
+// `clinic_settings.followups_enabled` sea true (nace en false; sin fila de
+// configuración también cuenta como apagado). Así desplegar el código no le escribe
+// a los pacientes antes de que Meta apruebe las tres plantillas. Con la cuenta
+// apagada no se siembra (si no, al prenderla saldría de golpe lo de días atrás) ni
+// se envía lo que ya estuviera pendiente. El CIERRE DEL DÍA (3) no depende del
+// interruptor: solo avisa al dueño dentro de la app y no escribe a nadie más.
+//
 // El runner hace tres cosas en cada corrida (cada 10 min desde el cron):
 //   1. SIEMBRA: las citas `completed` con inicio en los últimos 3 días que aún
 //      no tienen filas. Con upsert + ignoreDuplicates: correrlo dos veces, o dos
@@ -572,6 +580,8 @@ async function loadAftercare(
 export interface FollowupRunSummary {
   /** Cuentas con el módulo clínica. */
   accounts: number
+  /** De ellas, las que tienen prendido el interruptor de los seguimientos. */
+  followupAccounts: number
   /** Seguimientos nuevos creados en esta corrida. */
   seeded: number
   /** Seguimientos vencidos que se revisaron en esta corrida. */
@@ -917,6 +927,7 @@ export async function runClinicFollowups(
   const nowIso = now.toISOString()
   const summary: FollowupRunSummary = {
     accounts: 0,
+    followupAccounts: 0,
     seeded: 0,
     due: 0,
     sent: 0,
@@ -950,10 +961,26 @@ export async function runClinicFollowups(
     labels.set(row.account_id, readLabels(row.labels))
   }
 
+  // El interruptor de los seguimientos. Falta de fila = apagado; un fallo de lectura
+  // LANZA (no se asume prendido: se le escribiría a pacientes sin permiso).
+  const { data: switchRows, error: switchError } = await db
+    .from('clinic_settings')
+    .select('account_id, followups_enabled')
+    .in('account_id', [...accounts.keys()])
+  if (switchError) {
+    throw new Error(`no se pudo leer el interruptor de los seguimientos: ${switchError.message}`)
+  }
+  const enabledIds = (
+    (switchRows ?? []) as { account_id: string; followups_enabled: boolean | null }[]
+  )
+    .filter((row) => row.followups_enabled === true)
+    .map((row) => row.account_id)
+  summary.followupAccounts = enabledIds.length
+
   const ctx: RunContext = { db, send: args.send, now, nowIso, accounts, labels }
 
   // 1. Siembra. Una cuenta con problemas no frena a las demás.
-  for (const accountId of accounts.keys()) {
+  for (const accountId of enabledIds) {
     try {
       summary.seeded += await seedAccount(db, accountId, now)
     } catch (err) {
@@ -962,25 +989,28 @@ export async function runClinicFollowups(
     }
   }
 
-  // 2. Envío de los vencidos, los más viejos primero.
-  const { data: dueRows, error: dueError } = await db
-    .from('clinic_followups')
-    .select('id, account_id, appointment_id, contact_id, kind, attempts')
-    .in('account_id', [...accounts.keys()])
-    .eq('status', 'pending')
-    .lte('due_at', nowIso)
-    .order('due_at', { ascending: true })
-    .limit(args.limit ?? DEFAULT_LIMIT)
-  if (dueError) {
-    throw new Error(`no se pudieron leer los seguimientos: ${dueError.message}`)
-  }
-  const due = (dueRows ?? []) as DueFollowupRow[]
-  summary.due = due.length
-  for (const followup of due) {
-    await processFollowup(ctx, followup, summary)
+  // 2. Envío de los vencidos, los más viejos primero. Solo de las cuentas con el
+  // interruptor prendido: lo que quedó pendiente en una apagada espera.
+  if (enabledIds.length) {
+    const { data: dueRows, error: dueError } = await db
+      .from('clinic_followups')
+      .select('id, account_id, appointment_id, contact_id, kind, attempts')
+      .in('account_id', enabledIds)
+      .eq('status', 'pending')
+      .lte('due_at', nowIso)
+      .order('due_at', { ascending: true })
+      .limit(args.limit ?? DEFAULT_LIMIT)
+    if (dueError) {
+      throw new Error(`no se pudieron leer los seguimientos: ${dueError.message}`)
+    }
+    const due = (dueRows ?? []) as DueFollowupRow[]
+    summary.due = due.length
+    for (const followup of due) {
+      await processFollowup(ctx, followup, summary)
+    }
   }
 
-  // 3. Cierre del día.
+  // 3. Cierre del día (todas las cuentas con clínica, con o sin el interruptor).
   for (const account of accounts.values()) {
     try {
       if (await closeDay(ctx, account, labels.get(account.id) ?? DEFAULT_LABELS)) {

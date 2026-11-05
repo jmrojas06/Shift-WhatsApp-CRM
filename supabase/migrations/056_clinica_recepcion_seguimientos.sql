@@ -15,6 +15,9 @@
 --   4. booking_call_settings: configuración de las llamadas por pasos (§6.4).
 --   5. booking_calls: registro de llamadas, del robot y a mano (§6.4).
 --   6. clinic_followups, clinic_ratings, clinic_day_closes: después de la cita (§7).
+--   7. clinic_settings.followups_enabled: el interruptor por cuenta de los
+--      seguimientos (§7). Nace apagado: se prende a mano, cuenta por cuenta, cuando
+--      Meta aprobó las tres plantillas.
 --
 -- RLS (patrón 017/050/055): los miembros leen; owner/admin escriben la
 -- configuración de llamadas; un agent o más anota llamadas a mano (solo
@@ -52,7 +55,9 @@
 -- restricciones, índices, políticas y triggers; lo único que cambia de lo ya
 -- existente es que dos CHECK de 047 (created_via y actor) aceptan además
 -- 'dashboard' y que el set_updated_at de booking_appointments (047) pasa a ser
--- uno propio de las citas. Idempotente: se puede correr de nuevo.
+-- uno propio de las citas y que clinic_settings gana la columna
+-- followups_enabled (false para todas las cuentas que ya existen). Idempotente: se
+-- puede correr de nuevo.
 -- ============================================================
 
 -- Solo tiene efecto si el script corre dentro de una transacción (así
@@ -447,6 +452,15 @@ CREATE TABLE IF NOT EXISTS clinic_day_closes (
   notified_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (account_id, date_key)
 );
+
+-- Interruptor por cuenta de los seguimientos (cuidados, "¿cómo sigues?" y
+-- calificación). El código no envía nada mientras sea false (o no haya fila en
+-- clinic_settings): así desplegar el código no empieza a escribirle a los
+-- pacientes antes de que Meta apruebe las tres plantillas. Se prende a mano,
+-- con service role, cuenta por cuenta (docs/clinica-montaje.md). El cierre del
+-- día NO depende de esto: solo avisa al dueño dentro de la app.
+ALTER TABLE clinic_settings
+  ADD COLUMN IF NOT EXISTS followups_enabled boolean NOT NULL DEFAULT false;
 
 -- ------------------------------------------------------------
 -- updated_at (helper de 001)

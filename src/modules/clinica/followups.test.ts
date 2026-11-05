@@ -92,6 +92,8 @@ function baseSeed(extra: Record<string, Row[]> = {}): Record<string, Row[]> {
       },
     ],
     booking_settings: [{ account_id: ACCOUNT, labels: {} }],
+    // El interruptor de los seguimientos: prendido en la cuenta de las pruebas.
+    clinic_settings: [{ account_id: ACCOUNT, followups_enabled: true }],
     contacts: [
       { id: CONTACT, account_id: ACCOUNT, name: 'Marta Ruiz', phone: '573001112233', wa_user_id: null },
     ],
@@ -451,6 +453,149 @@ describe('runClinicFollowups — cuentas', () => {
     db._failNext('select', 'accounts', { message: 'connection reset' })
 
     await expect(run(db)).rejects.toThrow('no se pudieron leer las cuentas: connection reset')
+  })
+})
+
+// ------------------------------------------------------------
+// Runner: interruptor por cuenta (clinic_settings.followups_enabled)
+//
+// Los seguimientos le escriben a pacientes con plantillas que Meta debe
+// aprobar. Sin el interruptor, desplegar el código los activaría en todas las
+// clínicas. Apagado (o sin fila de configuración) no se siembra ni se envía;
+// el cierre del día sigue, porque solo avisa al dueño dentro de la app.
+// ------------------------------------------------------------
+
+describe('runClinicFollowups — interruptor por cuenta', () => {
+  /** 20:00 en Bogotá del lunes 19 de octubre, con una cita de hoy sin marcar. */
+  const EIGHT_PM = new Date('2026-10-20T01:00:00.000Z')
+
+  const withSwitch = (settings: Row[], extra: Record<string, Row[]> = {}) =>
+    makeFakeDb(baseSeed({ clinic_settings: settings, ...extra }))
+
+  it('con el interruptor apagado no siembra, no envía y no toca lo pendiente', async () => {
+    const db = withSwitch([{ account_id: ACCOUNT, followups_enabled: false }], {
+      clinic_followups: [followupRow()],
+    })
+
+    const { summary, deliveries } = await run(db, { now: NOW_DAY1 })
+
+    expect(summary).toMatchObject({
+      accounts: 1,
+      followupAccounts: 0,
+      seeded: 0,
+      due: 0,
+      sent: 0,
+      skipped: 0,
+      failed: 0,
+    })
+    expect(deliveries).toHaveLength(0)
+    // Ni siquiera sembró la cita atendida del seed: solo queda la fila pendiente de antes.
+    expect(rows(db, 'clinic_followups')).toHaveLength(1)
+    expect(row(db, 'clinic_followups', FOLLOWUP)).toMatchObject({ status: 'pending', sent_at: null })
+  })
+
+  it('sin fila en clinic_settings cuenta como apagado', async () => {
+    const db = withSwitch([])
+
+    const { summary, deliveries } = await run(db, { now: NOW_DAY1 })
+
+    expect(summary).toMatchObject({ accounts: 1, followupAccounts: 0, seeded: 0, sent: 0 })
+    expect(deliveries).toHaveLength(0)
+    expect(rows(db, 'clinic_followups')).toHaveLength(0)
+  })
+
+  it('un valor que no es true (null) cuenta como apagado', async () => {
+    const db = withSwitch([{ account_id: ACCOUNT, followups_enabled: null }])
+
+    const { summary } = await run(db, { now: NOW_DAY1 })
+
+    expect(summary).toMatchObject({ followupAccounts: 0, seeded: 0, sent: 0 })
+  })
+
+  it('con el interruptor prendido siembra y envía', async () => {
+    const db = withSwitch([{ account_id: ACCOUNT, followups_enabled: true }])
+
+    const { summary, deliveries } = await run(db, { now: NOW_DAY1 })
+
+    expect(summary).toMatchObject({ accounts: 1, followupAccounts: 1 })
+    expect(summary.seeded).toBeGreaterThan(0)
+    expect(deliveries.length).toBeGreaterThan(0)
+  })
+
+  it('cada cuenta decide por sí misma: la apagada no recibe nada aunque otra clínica sí', async () => {
+    const SECOND = 'acc-3'
+    const db = withSwitch(
+      [
+        { account_id: ACCOUNT, followups_enabled: false },
+        { account_id: SECOND, followups_enabled: true },
+      ],
+      {
+        accounts: [
+          ...(baseSeed().accounts as Row[]),
+          { id: SECOND, name: 'Clínica Dos', owner_user_id: 'u-3', modules: ['clinica'], vertical_key: 'agenda' },
+        ],
+        booking_appointments: [
+          ...(baseSeed().booking_appointments as Row[]),
+          {
+            id: 'ap-3',
+            account_id: SECOND,
+            contact_id: 'ct-3',
+            conversation_id: 'cv-3',
+            service_id: null,
+            starts_at: STARTS_AT,
+            ends_at: ENDS_AT,
+            status: 'completed',
+          },
+        ],
+        contacts: [
+          ...(baseSeed().contacts as Row[]),
+          { id: 'ct-3', account_id: SECOND, name: 'Luis Paz', phone: '573009998877', wa_user_id: null },
+        ],
+        conversations: [
+          ...(baseSeed().conversations as Row[]),
+          { id: 'cv-3', account_id: SECOND, contact_id: 'ct-3', created_at: '2026-10-01T00:00:00.000Z' },
+        ],
+      },
+    )
+
+    const { summary, deliveries } = await run(db, { now: NOW_DAY1 })
+
+    expect(summary).toMatchObject({ accounts: 2, followupAccounts: 1 })
+    expect(deliveries.length).toBeGreaterThan(0)
+    expect(deliveries.every((d) => d.accountId === SECOND)).toBe(true)
+    expect(rows(db, 'clinic_followups').every((f) => f.account_id === SECOND)).toBe(true)
+  })
+
+  it('el cierre del día sigue funcionando con el interruptor apagado (no escribe a pacientes)', async () => {
+    const db = withSwitch([{ account_id: ACCOUNT, followups_enabled: false }], {
+      booking_appointments: [
+        {
+          id: 'a-1',
+          account_id: ACCOUNT,
+          contact_id: CONTACT,
+          starts_at: '2026-10-19T14:00:00.000Z',
+          ends_at: '2026-10-19T14:30:00.000Z',
+          status: 'pending',
+        },
+      ],
+    })
+
+    const { summary, deliveries } = await run(db, { now: EIGHT_PM })
+
+    expect(summary).toMatchObject({ followupAccounts: 0, sent: 0, dayCloses: 1 })
+    expect(deliveries).toHaveLength(0)
+    expect(rows(db, 'notifications')).toHaveLength(1)
+    expect(rows(db, 'messages')).toHaveLength(1) // solo el mensaje del paciente del seed
+  })
+
+  it('un fallo al leer el interruptor lanza (la ruta responde 500 y avisa), no asume prendido', async () => {
+    const db = withSwitch([{ account_id: ACCOUNT, followups_enabled: true }])
+    db._failNext('select', 'clinic_settings', { message: 'connection reset' })
+
+    await expect(run(db)).rejects.toThrow(
+      'no se pudo leer el interruptor de los seguimientos: connection reset',
+    )
+    expect(rows(db, 'clinic_followups')).toHaveLength(0)
   })
 })
 

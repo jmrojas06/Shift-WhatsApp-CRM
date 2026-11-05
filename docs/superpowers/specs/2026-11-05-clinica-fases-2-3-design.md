@@ -27,7 +27,7 @@ la Agenda de Shift, lista de espera, volver y pagar, reportes y conector Dentali
 | Google Calendar | Todas con `agenda`, si el dueño lo conecta |
 | Llamadas por pasos (salientes y entrantes) | Todas con `agenda`, apagadas por defecto y con un tope mensual |
 | Lista "Para llamar" | Todas con `agenda` |
-| Fase 3 completa | Solo con `clinica` |
+| Fase 3 completa | Solo con `clinica`. Los mensajes a pacientes (§7.2) vienen apagados y se prenden por cuenta (§7.0) |
 
 Una cuenta que no prende nada nuevo no cambia de conducta. La única excepción es que **Confirmar** en
 un recordatorio ahora también marca `attendance_confirmed_at` (§4.1).
@@ -67,6 +67,8 @@ Se prueba en un Postgres temporal como la 055.
   Miembros leen; el servidor escribe.
 - `clinic_day_closes`: `account_id`, `date_key` ('YYYY-MM-DD'), `notified_at`. PK (`account_id`,
   `date_key`). Sirve para avisar una sola vez por día.
+- `clinic_settings.followups_enabled boolean NOT NULL DEFAULT false`: el interruptor por cuenta de los
+  seguimientos (§7.0). `ADD COLUMN IF NOT EXISTS`, así que la 056 sigue siendo idempotente.
 - Todas con RLS 017/050, CHECK de largos y valores, y `supabase/ci/verify-schema.sql` +
   `rls-policies.test.ts` actualizados.
 
@@ -383,6 +385,18 @@ sin forzar el idioma. Debe salir `es` y el texto exacto; si sale otro idioma, se
 ## 7. Fase 3: después de la cita (solo `clinica`)
 
 Cron `/api/verticals/clinica/followups/run` cada 10 minutos. Hace tres cosas.
+
+**7.0 Interruptor por cuenta.** Los seguimientos le escriben a pacientes con plantillas que Meta debe
+aprobar; si estuvieran prendidos por defecto, desplegar el código los activaría en todas las clínicas
+antes de la aprobación (y cada envío sin plantilla falla tres veces y se pierde). Por eso
+`clinic_settings.followups_enabled` nace en `false` y Shift lo prende cuenta por cuenta, por SQL, cuando
+las tres plantillas están aprobadas (`docs/clinica-montaje.md` 16.5). Una cuenta sin fila en
+`clinic_settings` cuenta como apagada; un fallo al leer el interruptor lanza (500 + alerta) en vez de
+suponerlo prendido. Con la cuenta apagada **no se siembra** (al prenderla saldría de golpe lo de días
+atrás) **ni se envía** lo que ya estuviera pendiente: espera. Al prenderla entran las citas atendidas de
+los últimos 3 días (§7.1). Decisión: el **cierre del día (§7.3) no depende del interruptor**, porque solo
+avisa al dueño dentro de la app y no escribe a ningún paciente; corre en toda cuenta con `clinica`. La
+respuesta del cron lleva `followupAccounts` (cuántas cuentas tienen el interruptor prendido).
 
 **7.1 Crear seguimientos.** Citas de clínica `completed` con inicio en los últimos 3 días y sin filas:
 - `cuidados`, a la hora de fin de la cita (si ya pasó, sale en la siguiente corrida), solo si el

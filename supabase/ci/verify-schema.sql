@@ -1502,6 +1502,22 @@ BEGIN
       'enforce_call_settings_protected_columns is executable by anon/authenticated or not by service_role — migration 056 did not apply';
   END IF;
 
+  -- El interruptor de los seguimientos: boolean NOT NULL DEFAULT false. Sin el
+  -- default en false, desplegar el código empezaría a escribirles a los
+  -- pacientes de todas las clínicas antes de que Meta apruebe las plantillas.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'clinic_settings'
+      AND column_name = 'followups_enabled'
+      AND data_type = 'boolean'
+      AND is_nullable = 'NO'
+      AND column_default = 'false'
+  ) THEN
+    RAISE EXCEPTION
+      'clinic_settings.followups_enabled must be boolean NOT NULL DEFAULT false — migration 056 did not apply';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
