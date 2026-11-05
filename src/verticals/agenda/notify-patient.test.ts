@@ -211,6 +211,27 @@ describe('ventana de 24 h abierta: mensaje libre', () => {
     expect(await call(w, 'booked')).toEqual({ sent: true, channel: 'text' })
   })
 
+  it('una cuenta sin dueño lo dice con su propio texto y no envía (no es "no se encontró la cuenta")', async () => {
+    const w = world()
+    Object.assign(w.db._tables.accounts[0], { owner_user_id: null })
+    customerWrote(w.db, 2)
+
+    const result = (await call(w, 'booked')) as { sent: false; error: string }
+
+    expect(result.sent).toBe(false)
+    expect(result.error).toMatch(/dueño/i)
+    expect(result.error).not.toMatch(/no se encontró la cuenta/i)
+    expect(w.send.createSender).not.toHaveBeenCalled()
+  })
+
+  it('una cuenta que no existe sí dice "No se encontró la cuenta."', async () => {
+    const w = world()
+
+    const result = await call(w, 'booked', { accountId: 'acc-que-no-existe' })
+
+    expect(result).toEqual({ sent: false, error: 'No se encontró la cuenta.' })
+  })
+
   it('un envío rechazado devuelve "no se envió" con el motivo y no lanza', async () => {
     const w = world()
     customerWrote(w.db, 2)

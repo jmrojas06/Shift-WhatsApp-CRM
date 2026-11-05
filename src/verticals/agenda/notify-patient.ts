@@ -330,7 +330,7 @@ async function deliver(
 }
 
 async function sendFreeText(ctx: DeliveryContext, message: Outgoing): Promise<void> {
-  if (!ctx.ownerUserId) throw new NotifyFailure(NOTIFY_TEXTS.accountMissing)
+  if (!ctx.ownerUserId) throw new NotifyFailure(NOTIFY_TEXTS.ownerMissing)
   const sender = ctx.deps.createSender({
     accountId: ctx.accountId,
     conversationId: ctx.conversationId,

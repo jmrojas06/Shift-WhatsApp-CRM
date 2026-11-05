@@ -141,6 +141,8 @@ export const NOTIFY_TEXTS = {
   failedWithCode: (code: string) => `No se pudo enviar el aviso por WhatsApp (código ${code}).`,
   appointmentMissing: 'No se encontró la cita.',
   accountMissing: 'No se encontró la cuenta.',
+  ownerMissing:
+    'La cuenta no tiene un dueño asignado, y sin él no se puede usar la conexión de WhatsApp para avisar.',
   contactMissing: 'No se encontró el contacto del paciente.',
   noWhatsApp: 'El contacto no tiene un número de WhatsApp.',
   noConversation: 'El paciente no tiene una conversación de WhatsApp.',
