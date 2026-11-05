@@ -67,6 +67,7 @@ import {
   suggestedAiPrompt,
 } from '@/verticals/agenda/panel'
 import { AGENDA_TEXTS as T } from '@/verticals/agenda/texts'
+import { CALENDAR_TEXTS } from '@/verticals/agenda/calendar-texts'
 import type { AppointmentStatus } from '@/verticals/agenda/appointments'
 import {
   formatDayLabel,
@@ -680,14 +681,23 @@ export default function AgendaPage() {
           <h1 className="text-2xl font-semibold text-foreground">{T.title}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{T.subtitle}</p>
         </div>
-        {/* Navigation, so a real link (open in a new tab, long-press on phones). */}
-        <Link
-          href="/agenda/configuracion"
-          className={buttonVariants({ variant: 'outline' })}
-        >
-          <Settings2 className="h-4 w-4" />
-          {T.config.openConfig}
-        </Link>
+        {/* Navigation, so real links (open in a new tab, long-press on phones). */}
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href="/agenda/calendario"
+            className={buttonVariants({ variant: 'outline' })}
+          >
+            <CalendarDays className="h-4 w-4" aria-hidden="true" />
+            {CALENDAR_TEXTS.viewCalendar}
+          </Link>
+          <Link
+            href="/agenda/configuracion"
+            className={buttonVariants({ variant: 'outline' })}
+          >
+            <Settings2 className="h-4 w-4" />
+            {T.config.openConfig}
+          </Link>
+        </div>
       </div>
 
       {loadFailed && (
