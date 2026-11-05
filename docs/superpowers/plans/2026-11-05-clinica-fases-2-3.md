@@ -39,7 +39,11 @@ Rama: `feat/clinica-fases-2-3`. Worktree:
    - Clínica: `src/modules/clinica/*` (`loadClinicContext`, `latestConsent`, `recordConsent`,
      `insertPatient`, `listPatients`, `loadClinicReminderInfo`).
 8. Un paciente es dato personal: nunca pongas su nombre o teléfono en logs ni en mensajes de error.
-9. Informe final (≤ 250 palabras): qué hiciste, archivos, SHA del commit, pruebas corridas con su
+9. **Trabajan varios agentes a la vez en este worktree**, en archivos distintos. Toca solo los archivos
+   de tu tarea. Si `tsc` o `eslint` marcan errores solo en archivos que no son tuyos (los está
+   escribiendo otro agente), ignóralos y menciónalos. Si `git commit` falla por `index.lock`, espera unos
+   segundos y reintenta. Nunca hagas commit de archivos ajenos.
+10. Informe final (≤ 250 palabras): qué hiciste, archivos, SHA del commit, pruebas corridas con su
    resultado, y cualquier desvío del diseño.
 
 ## Orden y dependencias
@@ -55,8 +59,7 @@ Cada tarea parte del commit de la anterior.
 **Archivos:** `supabase/migrations/056_clinica_recepcion_seguimientos.sql` (nuevo),
 `supabase/ci/verify-schema.sql`, `src/verticals/agenda/rls-policies.test.ts`.
 
-Contenido exacto en el diseño §3 **más** la sección de voz de §6 (ver T12–T15 de este plan para las
-columnas de entrantes). Requisitos:
+Contenido exacto en el diseño §3, con las tablas de voz como las define §6.4. Requisitos:
 
 - Idempotente (`IF NOT EXISTS`, `DROP ... IF EXISTS` antes de `CREATE TRIGGER/POLICY`), aditiva, con
   comentario de cabecera como 055 (qué hace, orden: después de 055, Postgres ≥ 15).
@@ -67,8 +70,9 @@ columnas de entrantes). Requisitos:
   - `agenda_calendar_connections`: RLS prendida, **sin ninguna política** (solo service role), y
     `REVOKE ALL ... FROM anon, authenticated`.
   - `booking_call_settings`: SELECT miembros; INSERT/UPDATE admin.
-  - `booking_calls`: SELECT miembros; INSERT `agent` solo con `channel = 'manual'` y `created_by =
-    auth.uid()`; sin UPDATE/DELETE para clientes.
+  - `booking_calls`: SELECT miembros; INSERT `agent` solo con `channel = 'manual'`,
+    `direction = 'outbound'` y `created_by = auth.uid()`; sin UPDATE/DELETE para clientes.
+  - `booking_call_settings.inbound_number`: índice único parcial `WHERE inbound_number IS NOT NULL`.
   - `clinic_followups`, `clinic_ratings`, `clinic_day_closes`: SELECT miembros; sin escrituras de clientes.
 - Trigger `mark_booking_google_dirty` (función `plpgsql`, `SET search_path = public`) como en el diseño.
   Debe correr ANTES que `set_updated_at` no importa; solo toca `google_dirty`.
@@ -306,9 +310,97 @@ prueba, enlace "Ver calendario" en `src/app/(dashboard)/agenda/page.tsx`.
   aviso "Los eventos no incluyen teléfonos ni notas".
 - Pruebas: roles, state inválido, sin refresh token, que la respuesta de settings nunca trae el token.
 
-## T12–T15. Llamadas por pasos
+## T12. Núcleo de voz (puro)
 
-> Se detallan en la sección **Voz** al final de este plan (pendiente de la investigación del proveedor).
+Diseño §6.1 y §6.4. **Archivos:** `src/lib/voice/texml.ts`, `src/lib/voice/telnyx.ts`,
+`src/lib/voice/tokens.ts`, `src/lib/voice/co-holidays.ts`, `src/lib/voice/hours.ts`,
+`src/verticals/agenda/voice/scripts.ts`, `src/verticals/agenda/voice/settings.ts` (lectura y validación de
+`booking_call_settings`), pruebas de todos.
+
+- `texml.ts`: constructor tipado que produce XML válido con escape de `& < > " '`:
+  `say(text, voice)`, `gather({ action, numDigits, timeout }, children)`, `dial({ action, timeout,
+  timeLimit, callerId }, numbers)`, `redirect(url)`, `pause(s)`, `hangup()`, `response(children)`. Sin
+  atributo `method` en `Gather` (Telnyx no lo tiene); `Dial` con `method="POST"`.
+- `telnyx.ts`: `interface VoiceProvider { startCall(args: { to; from; url; statusCallback }):
+  Promise<{ ok: true } | { ok: false; error: string }> }` y `createTelnyxProvider({ apiKey, accountSid,
+  appId, fetchImpl? })` con el POST del diseño (form-urlencoded, `StatusCallbackEvent=completed`,
+  `Timeout=25`, timeout de red 10 s). `verifyTelnyxSignature({ rawBody, signature, timestamp,
+  publicKeyB64, nowSec })` con Ed25519 y el prefijo SPKI; prueba con un par de claves generado en la
+  prueba (`crypto.generateKeyPairSync('ed25519')`). `parseForm(rawBody)`.
+- `tokens.ts`: `voiceToken(subject)` = HMAC-SHA256 base64url con `VOICE_WEBHOOK_SECRET`;
+  `checkVoiceToken(subject, t)` en tiempo constante; sin secreto → siempre falso.
+  `voiceUrl(path, params)` con base `NEXT_PUBLIC_APP_URL` (sin barra final) que agrega `t`.
+- `co-holidays.ts`: `colombianHolidays(year): string[]` ('YYYY-MM-DD') con los fijos (1 ene, 1 may,
+  20 jul, 7 ago, 8 dic, 25 dic), los de Ley Emiliani que se corren al lunes (6 ene, 19 mar, 29 jun,
+  15 ago, 12 oct, 1 nov, 11 nov) y los de Pascua (jueves y viernes santo; Ascensión +43, Corpus +64 y
+  Sagrado Corazón +71 días desde Pascua, ya en lunes). Pruebas con los festivos oficiales de 2026 y 2027.
+- `hours.ts`: `isWithinOfficeHours(officeHours, now)` (festivo = cerrado), `isWithinCallWindow(settings,
+  now)` (lun–sáb según `call_saturday`, nunca domingo ni festivo, entre `window_start` y `window_end`),
+  `formatOfficeHours(officeHours)` → "de lunes a viernes de 8 a. m. a 6 p. m. y los sábados de 8 a. m.
+  a 1 p. m." (agrupa días seguidos con el mismo horario). Hora de Bogotá con `time.ts`.
+- `scripts.ts`: TODAS las frases de §6.2 y §6.3 como funciones puras en español (`outboundMenu({
+  business, patient, day, time, staff })`, etc.). Fechas y horas habladas ("el martes 10 de noviembre",
+  "a las 3 y 30 de la tarde"), sin abreviaturas que la voz lea mal ("a. m."). Prueba que ninguna frase
+  incluya el nombre del servicio.
+- `settings.ts`: `loadCallSettings(db, accountId)` con valores por defecto si no hay fila;
+  `validateCallSettingsPatch(body)` para la ruta de T15 (E.164, 0–3 asesores, horas `HH:MM`,
+  rangos de enteros, largo de `info_text`).
+
+## T13. Llamadas salientes
+
+Diseño §6.2. **Archivos:** `src/verticals/agenda/voice/outbound-runner.ts`, `voice/outbound-flow.ts`
+(máquina de pasos pura: estado + tecla → { xml, efectos }), `voice/effects.ts` (aplicar efectos: confirmar,
+cancelar + `notifyPatient`, aviso), `src/app/api/verticals/agenda/calls/run/route.ts` (cron),
+`src/app/api/voice/telnyx/outbound/route.ts` (instrucciones y `Gather`), `src/app/api/voice/telnyx/status/route.ts`,
+`src/app/api/voice/telnyx/dial-result/route.ts` (compartida con T14), `src/app/api/verticals/agenda/calls/robot/route.ts`
+(llamar ya, `requireRole('agent')`), `src/app/api/verticals/agenda/calls/test/route.ts` (prueba,
+`requireRole('admin')`), pruebas.
+
+- Runner con todas las condiciones del diseño; reclamo por insert con el único (23505 = otra corrida
+  ganó). Credenciales ausentes → no hace nada y lo dice en el resumen.
+- Las rutas de webhook: leen el cuerpo crudo una sola vez (`await request.text()`), verifican `t` y la
+  firma si viene, cargan la fila por `call` (y la cuenta), guardan `provider_call_sid` la primera vez, y
+  responden `Content-Type: text/xml`. El estado del menú va en la query (`step`, `loop`), nunca en
+  memoria. Cada efecto es idempotente: confirmar o cancelar una cita que ya cambió no repite nada, y
+  dice "Esta cita ya no está activa" si no está activa.
+- `status`: mapea `CallStatus` (completed, busy, no-answer, failed, canceled) a `status`, guarda
+  `duration_seconds` y `finished_at`; si terminó sin resultado, `outcome = 'no_response'`.
+- La prueba de llamada usa una fila con `appointment_id` null y un guion de ejemplo; no toca citas.
+- Pruebas: cada camino de teclas, doble confirmación de cancelar, token inválido 403, firma inválida 403,
+  idempotencia ante reintentos, condiciones del runner (festivo, domingo, tope del mes, intentos,
+  reintento, etiqueta `no-llamar`, autorización revocada).
+
+## T14. Llamadas entrantes 24/7
+
+Diseño §6.3. **Archivos:** `src/verticals/agenda/voice/inbound-flow.ts` (pura), `voice/inbound-effects.ts`,
+`src/app/api/voice/telnyx/inbound/route.ts`, plantilla `agendar_por_llamada` en `notify-patient.ts` o un
+módulo hermano, pruebas.
+
+- Cuenta por `To` (`inbound_number`). Crea la fila `inbound` al primer pedido (usa `CallSid` para no
+  duplicar si Telnyx reintenta). Menú con 9 (solo clínicas), 1, 2, 3 y 0 según el diseño; `menu_path`
+  acumula las teclas (máx. 60).
+- 0 en horario → `dial` a `advisor_phones` con `callerId = inbound_number`, `action` = dial-result. Fuera
+  de horario → frase del diseño con `formatOfficeHours` y vuelta al menú.
+- 1 → contacto por el número (crear si no existe, con nombre = número), conversación, y envío del enlace
+  para agendar (texto si la ventana está abierta, plantilla si no) con botón `book:again`.
+- 2 → próxima cita activa del contacto y submenú confirmar/cancelar/volver.
+- Nota interna en la conversación ("Llamó: …"): usa el mecanismo de notas que ya tenga la bandeja; si no
+  hay, omítelo y dilo en el informe.
+- Pruebas: cada rama, fuera de horario, festivo, sin asesores, dial sin respuesta, número desconocido,
+  atención entrante apagada.
+
+## T15. Configuración de llamadas
+
+Diseño §6.5. **Archivos:** `src/app/api/verticals/agenda/call-settings/route.ts` (GET miembros,
+PATCH admin, con `validateCallSettingsPatch`; devuelve también lo usado en el mes),
+`src/app/(dashboard)/agenda/configuracion/_components/calls-section.tsx`, `configuracion/page.tsx`, pruebas.
+
+- Tarjeta con las skills de diseño de T7. Interruptores, números, horario de atención por día (con
+  "copiar a lunes–viernes"), texto de horario y dirección, ventana de salientes, intentos, tope y uso del
+  mes, y "Probar llamada" (campo de número + botón). Si faltan las variables de Telnyx, la tarjeta lo dice
+  y deja guardar pero no prender.
+- Aviso visible: "Las llamadas tienen costo por minuto. Las salientes solo salen de lunes a sábado en tu
+  ventana y nunca en festivos."
 
 ## T16. Seguimientos después de la cita (runner)
 
@@ -353,8 +445,13 @@ pruebas.
 (§9: Fases 2 y 3 hechas, enlace al nuevo diseño).
 
 - Crons: `calendar-sync/run` cada 5 min; `calls/run` cada 10 min; `clinica/followups/run` cada 10 min.
-- `.env.example`: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, y las variables de voz de la sección Voz,
-  con comentario en español.
+- `.env.example`: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `TELNYX_API_KEY`, `TELNYX_ACCOUNT_SID`,
+  `TELNYX_TEXML_APP_ID`, `TELNYX_PUBLIC_KEY`, `VOICE_WEBHOOK_SECRET`, `VOICE_DEFAULT_VOICE`, con
+  comentario en español.
+- Plantillas: 8 (agrega `agendar_por_llamada`). Telnyx paso a paso: cuenta, número local (nombre, apellido
+  y dirección), app de TeXML con método POST y URL de entrada
+  `{NEXT_PUBLIC_APP_URL}/api/voice/telnyx/inbound?t=<voiceToken("inbound")>` (explica cómo generar `t`
+  con un comando de una línea), clave pública, saldo.
 - `clinica-montaje.md`: orden 055 → 056; texto exacto de las 7 plantillas de Meta (categoría,
   idioma `es`, variables numeradas, botones y payloads); Google Cloud paso a paso (pantalla de
   consentimiento "En producción", URL de retorno, por qué); voz paso a paso (cuenta, número, caller ID,

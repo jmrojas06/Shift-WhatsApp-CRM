@@ -11,6 +11,8 @@ Fecha: 2026-11-05. Sigue a `2026-11-02-odontologia-design.md` (Fase 1, PR #11). 
 - **Solo WhatsApp** como canal de mensajes por ahora (sin Instagram ni Messenger).
 - **Llamadas con voz por pasos**, como el bot de WhatsApp: "Hola, soy el asistente virtual de X.
   Marca 1 para…, marca 2 para…". No es una IA que conversa: es un menú fijo con voz sintética.
+  Económicas, **activas las 24 horas** para llamadas entrantes, y con paso a un asesor solo en horario
+  de atención; fuera de horario se le pide llamar en ese horario y marcar asesor.
 - **Fase 3**: cierre del día, cuidados, "¿Cómo sigues?" y calificación con el enlace de Google.
 
 Fuera de esta entrega: leer los ocupados de Google para bloquear horas (doble vía), sedes múltiples en
@@ -23,7 +25,7 @@ la Agenda de Shift, lista de espera, volver y pagar, reportes y conector Dentali
 | Calendario, crear, mover y cancelar desde el panel | Todas las cuentas con `agenda` |
 | Paciente, cupo de sillones, plantillas `_clinica` | Solo con `clinica` |
 | Google Calendar | Todas con `agenda`, si el dueño lo conecta |
-| Llamadas por pasos | Todas con `agenda`, apagadas por defecto y con un tope mensual |
+| Llamadas por pasos (salientes y entrantes) | Todas con `agenda`, apagadas por defecto y con un tope mensual |
 | Lista "Para llamar" | Todas con `agenda` |
 | Fase 3 completa | Solo con `clinica` |
 
@@ -52,18 +54,9 @@ Se prueba en un Postgres temporal como la 055.
   'error', 'revoked'), `last_error`, `last_sync_at`, `connected_by`, `created_at`, `updated_at`. RLS
   prendida **sin políticas para clientes**: el token solo lo lee el servidor. El panel ve el estado por
   una ruta API que nunca devuelve el token.
-- `booking_call_settings`: `account_id` PK, `enabled` (false), `caller_id` (número que marca, E.164),
-  `call_after_minutes` (180, tiempo después del recordatorio de 24 h sin confirmar), `min_lead_minutes`
-  (120, no se llama si faltan menos), `max_attempts` (2, entre 1 y 3), `retry_minutes` (90),
-  `window_start` ('08:00'), `window_end` ('19:00'), `call_saturday` (true), `monthly_limit` (300),
-  `voice` (null = la de la plataforma), `updated_at`. Miembros leen, admin escribe (patrón 050).
-- `booking_calls`: `id`, `account_id`, `appointment_id` (FK compuesta con cuenta, `ON DELETE
-  CASCADE`), `contact_id` (SET NULL), `channel` ('robot', 'manual'), `attempt` (1–3), `status`
-  ('queued', 'calling', 'completed', 'no_answer', 'busy', 'failed', 'canceled'), `outcome`
-  ('confirmed', 'cancelled', 'human', 'no_response', 'wrong_number', null), `digits` (máx. 10),
-  `provider_call_sid`, `error` (máx. 300), `duration_seconds`, `created_by`, `created_at`,
-  `finished_at`. Único por (`appointment_id`, `channel`, `attempt`) cuando `channel = 'robot'`.
-  Miembros leen; los agentes insertan filas `manual` de su cuenta; el robot escribe con service role.
+- `booking_call_settings`: columnas en §6.4. Miembros leen, admin escribe (patrón 050).
+- `booking_calls`: columnas en §6.4. Miembros leen; los agentes insertan filas `manual` de su cuenta; el
+  robot escribe con service role.
 - `clinic_followups`: `id`, `account_id`, `appointment_id` (FK compuesta, CASCADE), `contact_id`
   (SET NULL), `kind` ('cuidados', 'como_sigues', 'calificacion'), `due_at`, `status` ('pending',
   'sent', 'skipped', 'failed'), `attempts` (0–5), `skip_reason` (máx. 60), `response` ('bien',
@@ -216,56 +209,176 @@ prendidas). Lo manual se guarda en `booking_calls` con `channel = 'manual'`.
 
 ## 6. Llamadas por pasos (robot de voz)
 
-Proveedor: **Twilio Programmable Voice**, por API REST con `fetch` (sin SDK) y detrás de una interfaz
-`VoiceProvider` para poder cambiarlo. Llamada a celular de Colombia: unos USD 0,038 por minuto según la
-página de precios de Twilio (a confirmar). Variables: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` y
-`TWILIO_DEFAULT_CALLER_ID`. El número que marca puede ser uno de Twilio o el de la clínica verificado
-en Twilio ("Verified Caller ID"). Twilio dice que en Colombia el identificador de un número que no es
-de Twilio se respeta "lo mejor posible".
+Es un menú fijo con voz sintética, como el bot de WhatsApp: no conversa con IA. **Contesta las 24
+horas** las llamadas entrantes y hace llamadas cortas para confirmar citas. Solo pasa a un asesor en el
+horario de atención.
 
-**Cuándo llama** (cron `/api/verticals/agenda/calls/run` cada 10 minutos):
-- llamadas prendidas en la cuenta y credenciales puestas;
-- cita activa y futura, sin `attendance_confirmed_at`, con el recordatorio de 24 h enviado hace más de
-  `call_after_minutes`, y faltando más de `min_lead_minutes`;
-- dentro del horario (`window_start`–`window_end`, hora de Bogotá), de lunes a sábado (sábado si
-  `call_saturday`), **nunca domingos ni festivos de Colombia** (cálculo propio con Ley Emiliani y
-  Pascua);
-- intentos por debajo de `max_attempts`, con `retry_minutes` desde el anterior, y la cuenta por debajo
-  de `monthly_limit` en el mes;
-- el contacto tiene teléfono, no tiene las etiquetas de baja ni `no-llamar` y, en clínica, no revocó la
+### 6.1 Proveedor: Telnyx (TeXML)
+
+Se escogió por costo. Precios publicados, por confirmar en la cuenta:
+
+| | Telnyx | Twilio |
+| --- | --- | --- |
+| Número local de Colombia | USD 13,50 al mes | USD 17,50 al mes |
+| Llamada saliente a celular | USD 0,0125/min + 0,002 de TeXML | USD 0,0377/min |
+| Llamada entrante | desde USD 0,065/min + 0,002 | USD 0,0945/min |
+| Voz neural (Polly) | USD 0,000024 por carácter | USD 0,000032 por carácter |
+
+Costo aproximado:
+- Confirmación de 45 segundos: unos USD 0,016.
+- Llamada entrante de 1 minuto: unos USD 0,07.
+- Llamada entrante de 3 minutos pasada a un asesor: entre USD 0,24 y 0,34. Falta confirmar si Telnyx
+  cobra USD 0,10 por cada transferencia.
+
+Las llamadas por WhatsApp (API de Meta) se descartan por ahora:
+- no permiten pasar la llamada al celular de un asesor;
+- el número necesita un límite de mensajes de al menos 2.000 destinatarios;
+- el paciente tiene que dar permiso antes;
+- casi no ahorran.
+
+TeXML es compatible con TwiML: el marcado (`Say`, `Gather`, `Dial`, `Hangup`, `Redirect`) sirve para
+los dos proveedores. Todo queda detrás de una interfaz `VoiceProvider`, y en esta entrega solo se
+programa Telnyx.
+
+Datos técnicos de Telnyx:
+- Llamada saliente: `POST https://api.telnyx.com/v2/texml/Accounts/{TELNYX_ACCOUNT_SID}/Calls`, con
+  `Authorization: Bearer {TELNYX_API_KEY}` y el cuerpo `To`, `From`, `ApplicationSid`
+  (`TELNYX_TEXML_APP_ID`), `Url`, `StatusCallback`, `StatusCallbackEvent=completed` y `Timeout=25`.
+  La respuesta documentada no trae id. Por eso **el id de nuestra fila va en la URL**, y el `CallSid`
+  se guarda cuando llega en el primer webhook.
+- Firma: Ed25519 sobre `"{telnyx-timestamp}|{cuerpo crudo}"`, en las cabeceras
+  `telnyx-signature-ed25519` y `telnyx-timestamp`, con 5 minutos de tolerancia. La clave pública
+  (`TELNYX_PUBLIC_KEY`, base64 de 32 bytes) se envuelve con el prefijo SPKI
+  `302a300506032b6570032100` para `crypto.verify`.
+- Telnyx no documenta que firme el primer pedido de instrucciones. Por eso **toda URL de webhook lleva
+  además `t`**, un HMAC-SHA256 con `VOICE_WEBHOOK_SECRET` del id de la llamada (o de `"inbound"`).
+  Sin `t` válido se responde 403. Si llegan las cabeceras de firma y no cuadran, también 403.
+- Los webhooks llegan como formulario con `CallSid`, `From`, `To` y `Digits`. El resultado de `Dial`
+  trae `DialCallStatus`. La app de TeXML se configura con método POST.
+- Voz: `Polly.Mia-Neural` (español de México), configurable por cuenta. Se puede probar
+  `Azure.es-CO-SalomeNeural`, pero Telnyx no la documenta.
+
+### 6.2 Llamadas salientes de confirmación
+
+Cron `/api/verticals/agenda/calls/run` cada 10 minutos. Llama solo si se cumple todo esto:
+- las llamadas salientes están prendidas en la cuenta y las credenciales están puestas;
+- la cita está activa y es futura, sin `attendance_confirmed_at`;
+- el recordatorio de 24 h salió hace más de `call_after_minutes`;
+- faltan más de `min_lead_minutes` para la cita;
+- es dentro de `window_start`–`window_end`, hora de Bogotá;
+- es de lunes a sábado (sábado solo si `call_saturday`), **nunca domingo ni festivo de Colombia**. Los
+  festivos se calculan en el código: fijos, Ley Emiliani y los que dependen de Pascua;
+- la cita tiene menos de `max_attempts` intentos y pasaron `retry_minutes` desde el anterior;
+- la cuenta está por debajo de `monthly_limit` llamadas salientes del mes;
+- el contacto tiene teléfono, no tiene etiqueta de baja ni `no-llamar` y, en una clínica, no revocó la
   autorización.
-- Se reclama insertando la fila `queued` con su `attempt` (el único impide dos llamadas). Si Twilio
-  rechaza la llamada, la fila queda `failed` y la cita aparece en Para llamar.
 
-**Qué dice** (voz `Polly.Mia-Neural`, `es-MX`, configurable; **siempre una voz nativa en español**):
+Para que dos corridas no llamen dos veces, se reclama insertando la fila `queued` con su `attempt`.
+Si Telnyx rechaza la llamada, la fila queda `failed` y la cita aparece en Para llamar.
 
-1. "Hola, soy el asistente virtual de {negocio}. Te llamamos para recordar la cita de {paciente o
-   "tu cita"} el {día} a las {hora} con {profesional}. Para confirmarla, marca 1. Para cancelarla,
-   marca 2. Para hablar con alguien del equipo, marca 3." Se repite una vez si no marca nada.
-2. **1** → `attendance_confirmed_at`, "Listo, tu cita quedó confirmada. Te esperamos. Hasta luego."
-3. **2** → "¿Seguro que quieres cancelarla? Marca 1 para sí o 2 para no." Con 1 se cancela
-   (`cancel_reason = 'patient_call'`), "Tu cita quedó cancelada. Te escribiremos por WhatsApp para
-   agendar otra." y, si la ventana de 24 h está abierta, sale el mensaje para reagendar. Con 2, vuelve
-   al menú.
-4. **3** → outcome `human`, aviso prioritario en la app, "Listo, alguien del equipo te va a contactar
-   pronto. Hasta luego."
-5. Sin respuesta tras dos vueltas → `no_response`, "No recibimos respuesta. Te escribiremos por
-   WhatsApp. Hasta luego." Otra tecla → "No entendí" y se repite.
+Guion:
+1. "Hola, soy el asistente virtual de {negocio}. Te llamamos para recordar la cita de {paciente o "tu
+   cita"} el {día} a las {hora} con {profesional}. Para confirmarla, marca 1. Para cancelarla, marca
+   2. Para hablar con alguien del equipo, marca 3." Se repite una vez si no marca nada.
+2. **1:** se guarda `attendance_confirmed_at` y dice "Listo, tu cita quedó confirmada. Te esperamos.
+   Hasta luego."
+3. **2:** pregunta "¿Seguro que quieres cancelarla? Marca 1 para sí o 2 para no." Con 1 se cancela
+   (`cancel_reason = 'patient_call'`), se avisa con `notifyPatient` (cancelada, con botón Agendar otra)
+   y dice "Tu cita quedó cancelada. Te escribimos por WhatsApp para agendar otra." Con 2 vuelve al
+   menú.
+4. **3:** el resultado queda `human`, sale un aviso prioritario en la app y dice "Listo, alguien del
+   equipo te va a contactar pronto. Hasta luego." En horario de atención y con asesores configurados, en
+   cambio dice "Te comunico con un asesor" y conecta la llamada, igual que en §6.3.
+5. Sin respuesta tras dos vueltas, el resultado queda `no_response` y dice "No recibimos respuesta.
+   Hasta luego." Con otra tecla dice "No entendí" y repite.
 
-Nunca nombra el procedimiento ni dice nada clínico.
+Si la cita ya no está activa cuando contestan, dice "Esta cita ya no está activa. Hasta luego." Nunca
+nombra el procedimiento.
 
-**Seguridad de los webhooks** (`/api/voice/twilio/answer`, `/gather`, `/status`): se valida
-`X-Twilio-Signature` (HMAC-SHA1 sobre la URL pública `NEXT_PUBLIC_APP_URL` + ruta + query, más los
-parámetros POST ordenados) con comparación de tiempo constante. La fila se busca por `call` id y
-`provider_call_sid`. Cada acción es idempotente: un reintento de Twilio no cancela dos veces.
+### 6.3 Llamadas entrantes, las 24 horas
 
-**Configuración:** tarjeta "Llamadas" en `/agenda/configuracion` con el interruptor, el número, el
-horario, los intentos, el tope y un botón "Probar llamada a mi número", que llama a un número que se
-escribe en el momento, con una cita de ejemplo marcada como prueba.
+Cada cuenta tiene su `inbound_number`, único en toda la plataforma. El webhook
+`/api/voice/telnyx/inbound` encuentra la cuenta por el `To`. Si no hay cuenta o la atención entrante
+está apagada, dice "Este número no está disponible" y cuelga.
 
-**Voz:** antes de prender las llamadas en una cuenta real se graba una llamada de prueba y se revisa
-con faster-whisper sin forzar idioma: debe salir `es` y el texto exacto. Si sale otro idioma, se cambia
-la voz.
+Menú: "Hola, gracias por llamar a {negocio}. Soy el asistente virtual." y luego:
+
+- **9, solo clínicas:** "Si es una urgencia, marca 9." Va primero. Lee los signos de alarma de la
+  clínica (`urgency_alarm_text`) y dice "Si tienes alguno de estos signos, ve a urgencias ahora".
+  Después:
+  - en horario, pasa a los asesores;
+  - fuera de horario, pasa al teléfono de turno de la sede (`on_call_phone`) si existe;
+  - si no hay a quién pasar, dice "Le avisamos al equipo y te escribirán a primera hora" y sale un
+    aviso prioritario en la app.
+- **1, agendar:** "Te enviamos un WhatsApp a este número para que agendes en un minuto." Sale la
+  plantilla `agendar_por_llamada` (negocio), o un texto si la ventana está abierta, con el botón
+  **Agendar** (`book:again`). Si el contacto no existe, se crea con el número que llamó. Si el envío
+  falla, dice "No pudimos enviarte el WhatsApp. Escríbenos por WhatsApp para agendar."
+- **2, mi cita:** busca el contacto por las variantes del número. Lee la próxima cita activa y ofrece 1
+  para confirmar, 2 para cancelar (con doble confirmación, como §6.2) y 0 para volver. Si no hay citas,
+  dice "No encontramos citas con este número. Para agendar, marca 1."
+- **3, horario y dirección:** lee `info_text`. Si está vacío, lee el horario de atención generado desde
+  `office_hours`. Luego vuelve al menú.
+- **0, asesor:**
+  - **En horario de atención** (`office_hours`, sin festivos) y con `advisor_phones`: dice "Te
+    comunico con un asesor" y marca a los números a la vez (`Dial` con `timeout` 25 y `timeLimit`
+    1800). Si nadie contesta, dice "En este momento no hay asesores disponibles. Le avisamos al equipo
+    para que te llame", el resultado queda `advisor_missed` y sale un aviso en la app.
+  - **Fuera de horario:** dice "En este momento estamos fuera del horario de atención. Atendemos
+    {horario}. Si deseas hablar con un asesor, llama en ese horario y marca 0. Para agendar por
+    WhatsApp, marca 1." y vuelve al menú. El resultado queda `out_of_hours`.
+
+Sin tecla o con una tecla inválida se repite hasta dos veces, y luego dice "Gracias por llamar. Hasta
+luego." La llamada entrante dura como mucho 10 minutos antes de pasar al asesor. Cada llamada entrante
+queda en `booking_calls` con `direction = 'inbound'`, `from_number`, el camino del menú y el
+resultado. En la conversación de WhatsApp del contacto, si existe, se anota "Llamó: {resultado}" como
+nota interna, sin enviarle nada al paciente.
+
+### 6.4 Datos (en la 056)
+
+`booking_call_settings`:
+- `provider` ('telnyx');
+- `outbound_enabled` (false) e `inbound_enabled` (false);
+- `inbound_number` (E.164, único cuando no es null) y `caller_id` (si es null, se usa
+  `inbound_number`);
+- `advisor_phones text[]` (0 a 3 números E.164);
+- `office_hours jsonb`, de la forma `{"1":[["08:00","18:00"]], …, "6":[["08:00","13:00"]]}` (0 =
+  domingo), y `info_text` (máx. 500);
+- `call_after_minutes` (180), `min_lead_minutes` (120), `max_attempts` (2, de 1 a 3) y
+  `retry_minutes` (90);
+- `window_start` ('08:00'), `window_end` ('19:00') y `call_saturday` (true);
+- `monthly_limit` (300), `voice` (null = `VOICE_DEFAULT_VOICE`) y `updated_at`.
+
+`booking_calls`:
+- `id`, `account_id`, `direction` ('outbound', 'inbound') y `channel` ('robot', 'manual');
+- `appointment_id` (null en las entrantes, FK compuesta con CASCADE) y `contact_id` (SET NULL);
+- `attempt` (de 1 a 3, null en las entrantes), `from_number` y `to_number`;
+- `status` ('queued', 'calling', 'in_progress', 'completed', 'no_answer', 'busy', 'failed',
+  'canceled');
+- `outcome`: 'confirmed', 'cancelled', 'human', 'no_response', 'wrong_number', 'booking_link_sent',
+  'advisor_connected', 'advisor_missed', 'out_of_hours', 'info', 'urgency' o null;
+- `menu_path` (máx. 60), `digits` (máx. 10), `provider_call_sid`, `error` (máx. 300) y
+  `duration_seconds`;
+- `created_by`, `created_at` y `finished_at`.
+
+Es único por (`appointment_id`, `attempt`) cuando `direction = 'outbound'` y `channel = 'robot'`.
+
+### 6.5 Configuración y prueba
+
+En `/agenda/configuracion`, la tarjeta "Llamadas" (admin) tiene:
+- los interruptores de salientes y entrantes;
+- los números (entrante, el que marca y los de asesores);
+- el horario de atención por día, el texto de horario y dirección, la ventana de llamadas salientes y
+  los intentos;
+- el tope del mes con lo usado;
+- el botón **"Probar llamada"**, que llama al número que se escriba con un guion de ejemplo marcado
+  como prueba.
+
+Variables de entorno: `TELNYX_API_KEY`, `TELNYX_ACCOUNT_SID`, `TELNYX_TEXML_APP_ID`,
+`TELNYX_PUBLIC_KEY`, `VOICE_WEBHOOK_SECRET` y `VOICE_DEFAULT_VOICE`.
+
+**Voz:** antes de prender una cuenta real, se graba una llamada de prueba y se revisa con faster-whisper
+sin forzar el idioma. Debe salir `es` y el texto exacto; si sale otro idioma, se cambia la voz.
 
 ## 7. Fase 3: después de la cita (solo `clinica`)
 
@@ -337,14 +450,15 @@ se avisa una vez al dueño en la app ("Tienes N citas de hoy sin marcar") y se g
 ## 10. Pendientes del usuario y riesgos
 
 - Aplicar 055 y luego 056 en el SQL Editor (con `SHOW server_version` ≥ 15).
-- Crear y aprobar en Meta las 7 plantillas nuevas (`cita_agendada`, `cita_cancelada`, sus versiones
-  `_clinica`, `cuidados_cita_clinica`, `como_sigues_clinica` y `calificacion_visita_clinica`). Meta
+- Crear y aprobar en Meta las 8 plantillas nuevas (`cita_agendada`, `cita_cancelada`, sus versiones
+  `_clinica`, `cuidados_cita_clinica`, `como_sigues_clinica`, `calificacion_visita_clinica` y
+  `agendar_por_llamada`). Meta
   puede clasificar la calificación como marketing, que cuesta más.
 - Google Cloud: proyecto, credenciales OAuth, app "En producción" y, después, la verificación.
-- Twilio: cuenta, saldo, número o caller ID verificado, y la llamada de prueba revisada con
-  faster-whisper.
+- Telnyx: cuenta, saldo, número local de Colombia (pide nombre, apellido y dirección), app de TeXML con
+  método POST, clave pública, y la llamada de prueba revisada con faster-whisper.
 - **Para el abogado:** llamar al paciente con voz sintética (autorización y horario: la Ley 2300 de
   2023 limita horarios para cobranza y mercadeo, y aquí se aplica el mismo cuidado por prudencia),
   copiar nombres y citas a Google (Google como encargado del tratamiento), y la autorización declarada
   en recepción.
-- Costos: Twilio por minuto, plantillas de utilidad de Meta y el tope mensual de llamadas por cuenta.
+- Costos: Telnyx por minuto (las entrantes son lo que más pesa), plantillas de utilidad de Meta y el tope mensual de llamadas por cuenta.
