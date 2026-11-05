@@ -3,38 +3,32 @@
 // cita desde el panel.
 //
 // Esta es la ÚNICA costura entre las rutas del panel y el envío por
-// WhatsApp. Mientras no exista `notifyPatient` (T5) devuelve "no se
-// envió" con un motivo; T5 solo cambia el cuerpo de `notifyFromPanel`
-// para llamarlo. Las rutas no cambian.
+// WhatsApp: las rutas llaman `notifyIfRequested` y este archivo delega en
+// `notifyPatient` (`notify-patient.ts`), que decide el canal (mensaje libre o
+// plantilla) y arma el texto.
 //
 // Contrato: nunca lanza, y los textos de error no llevan datos del
 // paciente (nombre ni teléfono): la pantalla los muestra tal cual.
 // ============================================================
 
-import type { SupabaseClient } from '@supabase/supabase-js'
+import {
+  notifyPatient,
+  type NotifyPatientArgs,
+  type NotifyPatientKind,
+  type NotifyPatientResult,
+} from './notify-patient'
 
-export type PanelNotifyKind = 'booked' | 'moved' | 'cancelled'
+export type PanelNotifyKind = NotifyPatientKind
 
-export interface PanelNotifyArgs {
-  /** Service role: el envío escribe en `messages` y lee la conexión de WhatsApp. */
-  db: SupabaseClient
-  accountId: string
-  appointmentId: string
-  kind: PanelNotifyKind
-  now: Date
-}
+/** `db` es el service role: el envío escribe en `messages` y lee la conexión de WhatsApp. */
+export type PanelNotifyArgs = NotifyPatientArgs
 
-export type PanelNotifyResult =
-  | { sent: true; channel: 'text' | 'template' }
-  | { sent: false; error: string }
+export type PanelNotifyResult = NotifyPatientResult
 
-export const NOTIFY_UNAVAILABLE = 'El aviso por WhatsApp todavía no está disponible.'
 const NOTIFY_FAILED = 'No se pudo enviar el aviso por WhatsApp.'
 
-/** TODO(T5): reemplazar por `notifyPatient(args)`. */
 export async function notifyFromPanel(args: PanelNotifyArgs): Promise<PanelNotifyResult> {
-  void args
-  return { sent: false, error: NOTIFY_UNAVAILABLE }
+  return notifyPatient(args)
 }
 
 /** Lo que las rutas ponen en la respuesta. */

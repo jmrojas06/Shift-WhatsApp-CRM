@@ -89,6 +89,7 @@ import { createInternalBackend } from './internal-backend'
 import { consentRevocation, type ConsentRevocation } from '@/modules/clinica/revocation'
 import { isReminderTemplateName } from './reminders'
 import {
+  BOOK_AGAIN_ID,
   actId,
   ansId,
   ansSkipId,
@@ -231,7 +232,12 @@ export async function handleAgendaInbound(
       )
     : null
   const text = inbound?.text ?? ''
-  const replyId = inbound?.replyId ?? null
+  // "Agendar otra" (aviso de cancelación) y "Agendar" (enlace tras una llamada) viajan
+  // con `book:again`: abren la reserva igual que el botón "Agendar" del menú. Se lee
+  // como ese toque desde aquí para que valga en cualquier paso, con o sin sesión y con
+  // o sin autorización. Un hilo de una persona lo suelta como cualquier otro mensaje.
+  const bookAgain = inbound?.replyId === BOOK_AGAIN_ID
+  const replyId = bookAgain ? actId('book') : (inbound?.replyId ?? null)
   // Una ETIQUETA ("Confirmar") la puede traer el botón de cualquier otra
   // plantilla o difusión: solo es un toque de recordatorio si el mensaje
   // responde a una plantilla de recordatorio. Los ids `rem:*` los pone este
@@ -350,6 +356,16 @@ export async function handleAgendaInbound(
   // no llega hasta aquí.
   if (dialog.clinicUnavailable) {
     await handoffClinicUnavailable(dialog, args.session?.id ?? null, { text, replyId })
+    return { consumed: true }
+  }
+
+  // Sin el módulo clínica no hay menú con "Agendar": el toque abre una reserva nueva, aunque
+  // la persona tenga otra cita (ya dijo que quiere agendar). A media reserva, la reinicia en la
+  // misma sesión. En una clínica sigue el camino del menú (más abajo).
+  if (bookAgain && !dialog.clinic) {
+    const fresh = newBookingState('pick_service')
+    const sessionId = args.session?.id ?? (await openSession(dialog, fresh))
+    await conclude(dialog, sessionId, fresh)
     return { consumed: true }
   }
 

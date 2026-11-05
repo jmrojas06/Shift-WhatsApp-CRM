@@ -186,6 +186,17 @@ export function parseReminderTap(id: string): ReminderTap | null {
   return { action: action as ReminderAction, appointmentId: appointmentId || null }
 }
 
+// ------------------------------------------------------------
+// "Agendar otra" / "Agendar" de los avisos al paciente
+//
+// El botón del aviso de cancelación ("Agendar otra") y el del enlace que se
+// manda tras una llamada ("Agendar") viajan con este mismo id, tanto en el
+// mensaje libre como en el payload de la plantilla. El controlador lo trata
+// como el botón "Agendar" del menú: abre el flujo de reservas.
+// ------------------------------------------------------------
+
+export const BOOK_AGAIN_ID = 'book:again'
+
 export type OptionKind = 'svc' | 'staff' | 'day' | 'slot' | 'act' | 'ans' | 'pat' | 'appt'
 
 const OPTION_KINDS: readonly OptionKind[] = ['svc', 'staff', 'day', 'slot', 'act', 'ans', 'pat', 'appt']
