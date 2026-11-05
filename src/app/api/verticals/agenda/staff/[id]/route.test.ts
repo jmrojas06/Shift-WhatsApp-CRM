@@ -103,6 +103,40 @@ describe('PATCH /api/verticals/agenda/staff/[id]', () => {
     expect(staff(db, 'st-1')).toBeDefined()
   })
 
+  it('guarda y quita el calendario de Google del barbero', async () => {
+    const db = boot()
+
+    const set = await patch('st-1', { google_calendar_id: 'sala-1@group.calendar.google.com' })
+    expect(set.status).toBe(200)
+    expect(set.body.staff).toMatchObject({
+      googleCalendarId: 'sala-1@group.calendar.google.com',
+    })
+    expect(staff(db, 'st-1')?.google_calendar_id).toBe('sala-1@group.calendar.google.com')
+
+    const cleared = await patch('st-1', { google_calendar_id: null })
+    expect(cleared.status).toBe(200)
+    expect(staff(db, 'st-1')?.google_calendar_id).toBeNull()
+  })
+
+  it('400 si el calendario de Google no es válido y no cambia nada', async () => {
+    const db = boot()
+
+    const res = await patch('st-1', { google_calendar_id: 'x'.repeat(301) })
+
+    expect(res.status).toBe(400)
+    expect(staff(db, 'st-1')?.google_calendar_id).toBeUndefined()
+  })
+
+  it('un agente no puede cambiar el calendario de Google', async () => {
+    const db = boot()
+    h.state.role = 'agent'
+
+    const res = await patch('st-1', { google_calendar_id: 'cal-1' })
+
+    expect(res.status).toBe(403)
+    expect(staff(db, 'st-1')?.google_calendar_id).toBeUndefined()
+  })
+
   it('404 si el barbero es de otra cuenta y no lo toca', async () => {
     const db = boot()
 

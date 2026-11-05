@@ -13,14 +13,18 @@ import type { AgendaQuestion, QuestionKind } from '@/verticals/agenda/questions'
 import type { AgendaInstallReport } from '@/verticals/agenda/seed'
 import { AGENDA_TEXTS as T } from '@/verticals/agenda/texts'
 
+import { GOOGLE_TEXTS, type CalendarOption } from './google-calendar-texts'
+
 export type ApiResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: string }
 
 async function request<T>(
   url: string,
-  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   body?: unknown,
+  /** Mensaje si el servidor no explica el error (por defecto, "no se pudo guardar"). */
+  fallbackError: string = T.config.saveFailed,
 ): Promise<ApiResult<T>> {
   try {
     const res = await fetch(url, {
@@ -36,11 +40,11 @@ async function request<T>(
       | (T & { error?: string })
       | null
     if (!res.ok) {
-      return { ok: false, error: payload?.error ?? T.config.saveFailed }
+      return { ok: false, error: payload?.error ?? fallbackError }
     }
     return { ok: true, data: (payload ?? {}) as T }
   } catch {
-    return { ok: false, error: T.config.saveFailed }
+    return { ok: false, error: fallbackError }
   }
 }
 
@@ -64,6 +68,7 @@ export interface StaffPayload {
   bio: string | null
   isActive: boolean
   position: number
+  googleCalendarId: string | null
 }
 
 export interface TimeOffPayload {
@@ -160,7 +165,13 @@ export const agendaConfigApi = {
 
   updateStaff: (
     id: string,
-    body: { name?: string; bio?: string | null; is_active?: boolean },
+    body: {
+      name?: string
+      bio?: string | null
+      is_active?: boolean
+      /** Calendario de Google de esta persona; null = el general. */
+      google_calendar_id?: string | null
+    },
   ) =>
     request<{ staff: StaffPayload }>(
       `/api/verticals/agenda/staff/${id}`,
@@ -241,4 +252,60 @@ export const agendaConfigApi = {
     }
     return { ok: true, data: { report } }
   },
+}
+
+// ------------------------------------------------------------
+// Google Calendar (/api/integrations/google-calendar/*)
+// ------------------------------------------------------------
+
+/** Estado de la conexión; el servidor nunca manda el permiso guardado. */
+export interface GoogleSettingsPayload {
+  /** El servidor tiene las variables de Google. */
+  configured: boolean
+  /** Hay una conexión que no fue revocada. */
+  connected: boolean
+  google_email: string | null
+  status: 'active' | 'error' | 'revoked' | null
+  last_error: string | null
+  last_sync_at: string | null
+  default_calendar_id: string | null
+}
+
+const GOOGLE_API = '/api/integrations/google-calendar'
+
+export const googleCalendarApi = {
+  /** Enlace normal (no fetch): el navegador viaja a Google y vuelve al callback. */
+  connectUrl: `${GOOGLE_API}/connect`,
+
+  getSettings: () =>
+    request<GoogleSettingsPayload>(
+      `${GOOGLE_API}/settings`,
+      'GET',
+      undefined,
+      GOOGLE_TEXTS.loadFailed,
+    ),
+
+  saveDefaultCalendar: (calendarId: string) =>
+    request<GoogleSettingsPayload>(
+      `${GOOGLE_API}/settings`,
+      'PATCH',
+      { default_calendar_id: calendarId },
+      GOOGLE_TEXTS.calendarSaveFailed,
+    ),
+
+  getCalendars: () =>
+    request<{ calendars: CalendarOption[] }>(
+      `${GOOGLE_API}/calendars`,
+      'GET',
+      undefined,
+      GOOGLE_TEXTS.calendarsFailed,
+    ),
+
+  disconnect: () =>
+    request<{ ok: true }>(
+      `${GOOGLE_API}/disconnect`,
+      'POST',
+      undefined,
+      GOOGLE_TEXTS.disconnectFailed,
+    ),
 }

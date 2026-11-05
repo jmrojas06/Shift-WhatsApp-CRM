@@ -43,6 +43,7 @@ import { ModuleNotEnabled } from '../_components/module-not-enabled'
 import { BotSection } from './_components/bot-section'
 import { BusinessSection } from './_components/business-section'
 import { BusinessTypeSection } from './_components/business-type-section'
+import { GoogleCalendarSection } from './_components/google-calendar-section'
 import { PiecesSection } from './_components/pieces-section'
 import { QuestionsSection } from './_components/questions-section'
 import { ScheduleSection } from './_components/schedule-section'
@@ -104,7 +105,7 @@ export default function AgendaConfiguracionPage() {
         .order('position', { ascending: true }),
       supabase
         .from('booking_staff')
-        .select('id, name, bio, is_active, position')
+        .select('id, name, bio, is_active, position, google_calendar_id')
         .eq('account_id', accountId)
         .order('position', { ascending: true }),
       supabase
@@ -142,7 +143,7 @@ export default function AgendaConfiguracionPage() {
       // Columnas o tabla de la migración 051 que aún no existen: mensaje claro
       // en vez del error genérico.
       setMigrationMissing(
-        [settingsRes.error, questionsRes.error].some((error) =>
+        [settingsRes.error, staffRes.error, questionsRes.error].some((error) =>
           isMissingMigrationError(error),
         ),
       )
@@ -317,12 +318,14 @@ export default function AgendaConfiguracionPage() {
             </TabsList>
           </div>
 
-          <TabsContent value="business">
+          <TabsContent value="business" className="space-y-6">
             <BusinessSection
               settings={settings}
               canEdit={canEditSettings}
               reload={load}
             />
+            {/* Conectar Google es cosa de owner/admin: los demás roles ni lo ven. */}
+            {canEditSettings && <GoogleCalendarSection labels={settings.labels} />}
           </TabsContent>
 
           {!simple && (
