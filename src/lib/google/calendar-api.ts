@@ -390,8 +390,12 @@ export function eventIdForAppointment(appointmentId: string): string {
   return id
 }
 
-/** Estados de evento que usamos (las canceladas se borran, no se marcan). */
-export type GoogleEventStatus = 'tentative' | 'confirmed'
+/**
+ * Estados de evento que usamos. `cancelled` es lo que Google llama "borrado":
+ * el evento deja de verse pero se puede restaurar con otro PUT, y el id sigue
+ * siendo usable (con DELETE el id queda quemado: PUT da 404 y POST da 409).
+ */
+export type GoogleEventStatus = 'tentative' | 'confirmed' | 'cancelled'
 
 export interface GoogleEventBody {
   summary: string
@@ -445,6 +449,10 @@ export interface PutEventResult {
  * Crea o actualiza el evento con un id fijo, sin duplicar:
  * PUT → si no existe (404) → POST con ese id → si otro proceso lo creó en
  * medio (409) → un último PUT.
+ *
+ * Con `createIfMissing: false` solo actualiza: un 404 del PUT lanza
+ * `GoogleApiError` y no se crea nada (sirve para cancelar un evento que quizá
+ * ya no existe).
  */
 export async function putEvent(
   args: {
@@ -452,6 +460,8 @@ export async function putEvent(
     calendarId: string
     eventId: string
     body: GoogleEventBody
+    /** Por defecto `true`. */
+    createIfMissing?: boolean
   } & WithFetch,
 ): Promise<PutEventResult> {
   const headers = { ...bearer(args.accessToken), 'Content-Type': 'application/json' }
@@ -467,7 +477,7 @@ export async function putEvent(
     await drain(first)
     return { id: args.eventId, created: false }
   }
-  if (first.status !== 404) throw await apiError(first)
+  if (first.status !== 404 || args.createIfMissing === false) throw await apiError(first)
   await drain(first)
 
   const insert = await send(args.fetchImpl, eventsUrl(args.calendarId), {

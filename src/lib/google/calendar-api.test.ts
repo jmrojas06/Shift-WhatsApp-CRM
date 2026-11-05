@@ -510,6 +510,57 @@ describe('putEvent', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
+  it('con createIfMissing: false, un 404 del PUT lanza y no crea nada (sin POST)', async () => {
+    const fetchImpl = fakeFetch().mockResolvedValueOnce(
+      json({ error: { errors: [{ reason: 'notFound' }] } }, 404),
+    )
+    const err = await putEvent({
+      accessToken: 'access-1',
+      calendarId: CAL,
+      eventId: EVENT_ID,
+      body,
+      createIfMissing: false,
+      fetchImpl,
+    }).catch((e) => e)
+    expect(err).toBeInstanceOf(GoogleApiError)
+    expect(err.httpStatus).toBe(404)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(callAt(fetchImpl, 0).method).toBe('PUT')
+  })
+
+  it('con createIfMissing: false, si el evento existe lo actualiza igual', async () => {
+    const fetchImpl = fakeFetch().mockResolvedValueOnce(json({ id: EVENT_ID }))
+    const out = await putEvent({
+      accessToken: 'access-1',
+      calendarId: CAL,
+      eventId: EVENT_ID,
+      body,
+      createIfMissing: false,
+      fetchImpl,
+    })
+    expect(out).toEqual({ id: EVENT_ID, created: false })
+  })
+
+  it('acepta el estado cancelled (Google lo trata como borrado pero se puede restaurar)', async () => {
+    const cancelled = buildEventBody({
+      title: 'Limpieza · Ana',
+      description: 'Creada desde Shift',
+      startIso: '2026-11-10T15:00:00Z',
+      endIso: '2026-11-10T15:45:00Z',
+      status: 'cancelled',
+      timeZone: 'America/Bogota',
+    })
+    const fetchImpl = fakeFetch().mockResolvedValueOnce(json({ id: EVENT_ID }))
+    await putEvent({
+      accessToken: 'access-1',
+      calendarId: CAL,
+      eventId: EVENT_ID,
+      body: cancelled,
+      fetchImpl,
+    })
+    expect(JSON.parse(callAt(fetchImpl, 0).body as string).status).toBe('cancelled')
+  })
+
   it('un error del POST (por ejemplo 400) también es GoogleApiError', async () => {
     const fetchImpl = fakeFetch()
       .mockResolvedValueOnce(json({}, 404))

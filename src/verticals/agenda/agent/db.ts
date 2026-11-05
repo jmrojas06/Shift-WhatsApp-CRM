@@ -985,8 +985,9 @@ export async function insertNotification(
   args: {
     accountId: string
     userId: string
-    conversationId: string
-    contactId: string
+    /** null en avisos que no son de una conversación (la columna lo permite). */
+    conversationId: string | null
+    contactId: string | null
     title: string
     body: string
     createdAtIso?: string
