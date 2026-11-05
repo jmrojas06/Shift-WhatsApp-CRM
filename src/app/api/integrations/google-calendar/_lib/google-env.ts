@@ -25,13 +25,17 @@ export interface GoogleEnv {
 type EnvSource = Record<string, string | undefined>
 
 /**
- * Lee las tres variables que hacen falta. Devuelve `null` si falta alguna
- * (las rutas contestan 503 con un mensaje claro).
+ * Lee las variables que hacen falta: el ID y el secreto de Google, y la
+ * dirección pública de la app. Esa dirección es `NEXT_PUBLIC_SITE_URL` (la que
+ * ya usan .env.local.example, el compose y las guías de despliegue) y, si no
+ * está, `NEXT_PUBLIC_APP_URL`. Devuelve `null` si falta algo (las rutas
+ * contestan 503 con un mensaje claro).
  */
 export function readGoogleEnv(env: EnvSource = process.env): GoogleEnv | null {
   const clientId = env.GOOGLE_CLIENT_ID?.trim()
   const clientSecret = env.GOOGLE_CLIENT_SECRET?.trim()
-  const appUrl = env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, '')
+  const baseUrl = (name: string) => env[name]?.trim().replace(/\/+$/, '')
+  const appUrl = baseUrl('NEXT_PUBLIC_SITE_URL') || baseUrl('NEXT_PUBLIC_APP_URL')
   if (!clientId || !clientSecret || !appUrl) return null
   return { clientId, clientSecret, appUrl, redirectUri: `${appUrl}${CALLBACK_PATH}` }
 }
@@ -94,7 +98,7 @@ export function returnUrl(appUrl: string, result: 'ok' | ReturnReason): string {
 /** Mensajes de las rutas JSON (en español, para la pantalla). */
 export const GOOGLE_API_TEXTS = {
   notConfigured:
-    'Google Calendar todavía no está listo en este servidor. Falta configurar GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET y NEXT_PUBLIC_APP_URL.',
+    'Google Calendar todavía no está listo en este servidor. Falta configurar GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET y NEXT_PUBLIC_SITE_URL.',
   notConnected: 'Primero conecta Google Calendar.',
   revoked: 'Google dejó de dar permiso. Vuelve a conectar Google Calendar.',
   cannotReadToken:

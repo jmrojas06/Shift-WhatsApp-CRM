@@ -33,7 +33,7 @@ import { GET } from './route'
 function setEnv() {
   vi.stubEnv('GOOGLE_CLIENT_ID', 'client-id-123')
   vi.stubEnv('GOOGLE_CLIENT_SECRET', 'client-secret-456')
-  vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://crm.example.com/')
+  vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://crm.example.com/')
 }
 
 beforeEach(() => {
@@ -96,7 +96,7 @@ describe('GET /connect', () => {
     expect(a).not.toBe(b)
   })
 
-  it.each(['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'NEXT_PUBLIC_APP_URL'])(
+  it.each(['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'NEXT_PUBLIC_SITE_URL'])(
     'sin %s contesta 503 con un mensaje claro y no redirige',
     async (name) => {
       vi.stubEnv(name, '')

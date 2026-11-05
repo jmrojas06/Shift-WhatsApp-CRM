@@ -982,7 +982,7 @@ más parecido.
    https://<tu-dominio>/api/integrations/google-calendar/callback
    ```
 
-   Es `NEXT_PUBLIC_APP_URL` (sin barra final) más
+   Es `NEXT_PUBLIC_SITE_URL` (sin barra final) más
    `/api/integrations/google-calendar/callback`. Tiene que coincidir letra
    por letra con el dominio del CRM, o Google rechaza la conexión.
 7. Copia el **ID de cliente** y el **secreto** a las variables
@@ -1011,7 +1011,7 @@ y es un trámite aparte. Hoy no es necesario para empezar.
 «Google dejó de dar permiso», toca **Reconectar**. Al **desconectar**, los
 eventos ya creados se quedan en Google. Si la tarjeta dice que falta un paso
 de Shift, faltan `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` o
-`NEXT_PUBLIC_APP_URL` en el servidor.
+`NEXT_PUBLIC_SITE_URL` en el servidor.
 
 ## 18. Telnyx paso a paso
 
@@ -1085,7 +1085,7 @@ llamar.
      https://<tu-dominio>/api/voice/telnyx/inbound?t=<token>
      ```
 
-     Es `NEXT_PUBLIC_APP_URL` más esa ruta y el token del paso anterior.
+     Es `NEXT_PUBLIC_SITE_URL` más esa ruta y el token del paso anterior.
    - **Perfil de voz saliente:** el de la sección 18.4.
    - Deja vacía cualquier otra URL: las llamadas salientes llevan sus
      propias direcciones.
@@ -1237,7 +1237,7 @@ VPS, `deploy/vps/deploy.sh`).
 
 | Variable | Qué es | De dónde sale |
 | --- | --- | --- |
-| `NEXT_PUBLIC_APP_URL` | Dirección pública del CRM, sin barra final. La misma que `NEXT_PUBLIC_SITE_URL`. Arma la URL de retorno de Google y las URL de voz | El dominio del CRM |
+| `NEXT_PUBLIC_SITE_URL` | Dirección pública del CRM, sin barra final. Ya existe en toda instalación (`.env.local.example`, `docs/despliegue-vps.md`, `docs/despliegue-vercel.md`). Google (URL de retorno) y la voz (URLs firmadas) leen **esta** y no hay que crear otra. Si por algún motivo falta, ambos aceptan `NEXT_PUBLIC_APP_URL` como respaldo | El dominio del CRM |
 | `GOOGLE_CLIENT_ID` | ID del cliente OAuth | Google Cloud (17.1, paso 7) |
 | `GOOGLE_CLIENT_SECRET` | Secreto del cliente OAuth | Google Cloud (17.1, paso 7) |
 | `TELNYX_API_KEY` | Clave de la API de Telnyx | Telnyx, Auth → API Keys (18.3) |

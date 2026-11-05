@@ -204,8 +204,9 @@ prendidas). Lo manual se guarda en `booking_calls` con `channel = 'manual'`.
   VPS), más un empujón con `after()` de Next al crear, mover, cancelar o cambiar el estado desde el
   panel.
 - **Requisitos del usuario:** crear un proyecto en Google Cloud con OAuth (variables `GOOGLE_CLIENT_ID`
-  y `GOOGLE_CLIENT_SECRET`, URL de retorno `{NEXT_PUBLIC_APP_URL}/api/integrations/google-calendar/
-  callback`). Hay que **publicar la app en modo "En producción" aunque no esté verificada**: en modo
+  y `GOOGLE_CLIENT_SECRET`, URL de retorno `{NEXT_PUBLIC_SITE_URL}/api/integrations/google-calendar/
+  callback`; Google y la voz leen la misma `NEXT_PUBLIC_SITE_URL` que ya usa toda la app, y aceptan
+  `NEXT_PUBLIC_APP_URL` solo como respaldo). Hay que **publicar la app en modo "En producción" aunque no esté verificada**: en modo
   "Prueba" Google vence los tokens a los 7 días. Sin verificar, Google muestra un aviso y admite hasta
   100 usuarios. La verificación (política de privacidad, dominio y video) se pide aparte.
 

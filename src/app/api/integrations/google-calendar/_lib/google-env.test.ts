@@ -12,7 +12,7 @@ import {
 const FULL_ENV = {
   GOOGLE_CLIENT_ID: 'client-id',
   GOOGLE_CLIENT_SECRET: 'client-secret',
-  NEXT_PUBLIC_APP_URL: 'https://crm.example.com',
+  NEXT_PUBLIC_SITE_URL: 'https://crm.example.com',
 }
 
 describe('readGoogleEnv', () => {
@@ -26,13 +26,33 @@ describe('readGoogleEnv', () => {
   })
 
   it('quita las barras finales y los espacios de la dirección', () => {
-    const env = readGoogleEnv({ ...FULL_ENV, NEXT_PUBLIC_APP_URL: '  https://crm.example.com//  ' })
+    const env = readGoogleEnv({ ...FULL_ENV, NEXT_PUBLIC_SITE_URL: '  https://crm.example.com//  ' })
     expect(env?.appUrl).toBe('https://crm.example.com')
     expect(env?.redirectUri).toBe(`https://crm.example.com${CALLBACK_PATH}`)
   })
 
-  it.each(['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'NEXT_PUBLIC_APP_URL'] as const)(
-    'devuelve null si falta %s',
+  // NEXT_PUBLIC_SITE_URL es la variable que ya usa el resto de la app
+  // (.env.local.example, compose, docs de despliegue); NEXT_PUBLIC_APP_URL es el respaldo.
+  it('NEXT_PUBLIC_SITE_URL manda sobre NEXT_PUBLIC_APP_URL', () => {
+    const env = readGoogleEnv({ ...FULL_ENV, NEXT_PUBLIC_APP_URL: 'https://otra.example.com' })
+    expect(env?.appUrl).toBe('https://crm.example.com')
+  })
+
+  it.each([undefined, '', '   '])(
+    'sin NEXT_PUBLIC_SITE_URL (%j) usa NEXT_PUBLIC_APP_URL',
+    (site) => {
+      const env = readGoogleEnv({
+        ...FULL_ENV,
+        NEXT_PUBLIC_SITE_URL: site,
+        NEXT_PUBLIC_APP_URL: 'https://respaldo.example.com/',
+      })
+      expect(env?.appUrl).toBe('https://respaldo.example.com')
+      expect(env?.redirectUri).toBe(`https://respaldo.example.com${CALLBACK_PATH}`)
+    },
+  )
+
+  it.each(['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'NEXT_PUBLIC_SITE_URL'] as const)(
+    'devuelve null si falta %s (y no hay NEXT_PUBLIC_APP_URL)',
     (name) => {
       expect(readGoogleEnv({ ...FULL_ENV, [name]: undefined })).toBeNull()
       expect(readGoogleEnv({ ...FULL_ENV, [name]: '   ' })).toBeNull()

@@ -108,7 +108,7 @@ function seed(extra: Record<string, Row[]> = {}) {
 function setEnv() {
   vi.stubEnv('GOOGLE_CLIENT_ID', 'client-id-123')
   vi.stubEnv('GOOGLE_CLIENT_SECRET', 'client-secret-456')
-  vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://crm.example.com')
+  vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://crm.example.com')
 }
 
 beforeEach(() => {
