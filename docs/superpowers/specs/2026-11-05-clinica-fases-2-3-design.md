@@ -117,7 +117,7 @@ Cuerpo:
 Reglas:
 - Pasa por una función pura `validateNewAppointment` y escribe con `insertAppointment`, ampliado para
   `createdVia: 'dashboard'`, `created_by` y `status: 'confirmed'`.
-- Un choque del profesional (23P01) da 409 `slot_taken`: "X ya tiene una cita a esa hora".
+- Un choque del profesional (23P01) da 409 `slot_taken`: "Quien elegiste ya tiene una cita a esa hora. Cambia la hora o cambia de {profesional}." (sin artículo, para no chocar con el género de la palabra de la cuenta).
 - Cupo de sillones (clínica): si las citas activas que se cruzan con esa franja ya igualan
   `chair_count`, 409 `chairs_full`: "No quedan sillones libres a esa hora".
 - Una hora pasada se rechaza (400).
@@ -443,12 +443,12 @@ se avisa una vez al dueño en la app ("Tienes N citas de hoy sin marcar") y se g
 
 | Caso | Qué pasa |
 | --- | --- |
-| Dos personas mueven la misma cita | Bloqueo optimista por `updated_at`: "Alguien cambió esta cita. Recarga." |
+| Dos personas mueven la misma cita | Bloqueo optimista por `updated_at`: "Alguien cambió esto mientras lo editabas. Recarga e intenta de nuevo." |
 | La plantilla no está aprobada | La cita se guarda y el panel avisa que no se pudo notificar. |
 | Google caído | La cita sigue sucia y se reintenta en 5 minutos. El panel muestra el último error de conexión. |
 | Token de Google revocado | Conexión `revoked`, aviso al dueño y botón "Reconectar". |
-| Twilio rechaza la llamada | Fila `failed` y la cita aparece en Para llamar. |
-| El paciente cuelga a mitad | El `status` final de Twilio cierra la fila. Sin tecla: `no_response`. |
+| Telnyx rechaza la llamada | Fila `failed` y la cita aparece en Para llamar. |
+| El paciente cuelga a mitad | El `status` final de Telnyx cierra la fila. Sin tecla: `no_response`. |
 | Marca 2 y cuelga sin confirmar | No se cancela nada. |
 | La cita se canceló antes de que contestara | La llamada dice "Esta cita ya no está activa" y cuelga. |
 | La cita se movió entre recordatorio y llamada | Marcas borradas: no se llama hasta el nuevo recordatorio. |
@@ -457,10 +457,10 @@ se avisa una vez al dueño en la app ("Tienes N citas de hoy sin marcar") y se g
 ## 9. Pruebas
 
 - Funciones puras con Vitest: validación de nueva cita, cupo, festivos de Colombia, ventana de llamada,
-  firma de Twilio (con el vector del ejemplo oficial), TwiML generado, mapeo de evento de Google,
+  firma Ed25519 de Telnyx (con un par de claves generado en la prueba), TeXML generado, mapeo de evento de Google,
   reglas de omisión de seguimientos y parseo de toques `fu:` / `rt:`.
 - Rutas con el doble de Supabase de `route-testing.ts`. Runners con base falsa, como los recordatorios.
-- Google y Twilio con `fetch` falso: nunca se llama a la red en pruebas.
+- Google y Telnyx con `fetch` falso: nunca se llama a la red en pruebas.
 - 056 en un Postgres temporal, con RLS y el trigger de `google_dirty`.
 - UI del calendario: capturas en escritorio y celular con Playwright, con datos falsos en memoria y no
   contra producción (`.env.local` es producción).
