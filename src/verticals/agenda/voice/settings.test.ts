@@ -9,6 +9,7 @@ import {
   callSettingsToRow,
   isValidCallWindow,
   loadCallSettings,
+  mergeAndValidateWindow,
   resolveVoice,
   validateCallSettingsPatch,
   type CallSettingsPatch,
@@ -215,8 +216,6 @@ describe('validateCallSettingsPatch', () => {
       ok({
         outbound_enabled: true,
         inbound_enabled: false,
-        inbound_number: '+57 601 555 0000',
-        caller_id: null,
         advisor_phones: ['+57 300 111 2233', '+573004445566'],
         office_hours: { '1': [['8:00', '18:00']], '6': [['08:00', '13:00']] },
         info_text: '  Calle 1 # 2-3  ',
@@ -227,14 +226,11 @@ describe('validateCallSettingsPatch', () => {
         window_start: '8:30',
         window_end: '18:30',
         call_saturday: false,
-        monthly_limit: 500,
         voice: 'Polly.Mia-Neural',
       }),
     ).toEqual({
       outboundEnabled: true,
       inboundEnabled: false,
-      inboundNumber: '+576015550000',
-      callerId: null,
       advisorPhones: ['+573001112233', '+573004445566'],
       officeHours: { '1': [['08:00', '18:00']], '6': [['08:00', '13:00']] },
       infoText: 'Calle 1 # 2-3',
@@ -245,7 +241,6 @@ describe('validateCallSettingsPatch', () => {
       windowStart: '08:30',
       windowEnd: '18:30',
       callSaturday: false,
-      monthlyLimit: 500,
       voice: 'Polly.Mia-Neural',
     })
   })
@@ -254,15 +249,49 @@ describe('validateCallSettingsPatch', () => {
     expect(ok({ call_saturday: false })).toEqual({ callSaturday: false })
   })
 
-  it('ignora provider y updated_at (solo lectura) pero no deja pasar claves desconocidas', () => {
-    expect(ok({ provider: 'telnyx', updated_at: 'x', call_saturday: true })).toEqual({ callSaturday: true })
+  it('ignora updated_at y account_id (solo lectura) pero no deja pasar claves desconocidas', () => {
+    expect(ok({ account_id: 'a', updated_at: 'x', call_saturday: true })).toEqual({ callSaturday: true })
     expect(bad({ outbond_enabled: true })).toMatch(/outbond_enabled/)
+    // Nombres que existen en todo objeto no cuentan como claves conocidas.
+    expect(bad(JSON.parse('{"constructor": 1}'))).toMatch(/constructor/)
+    expect(bad(JSON.parse('{"__proto__": {}}'))).toMatch(/__proto__/)
   })
 
   it('un cuerpo vacío o que no es un objeto no es un cambio', () => {
     expect(bad({})).toMatch(/cambios/i)
-    expect(bad({ provider: 'telnyx' })).toMatch(/cambios/i)
+    expect(bad({ updated_at: 'x' })).toMatch(/cambios/i)
     for (const body of [null, 'x', 7, [1], undefined]) expect(bad(body)).toMatch(/no son válidos/i)
+  })
+
+  describe('columnas que controla Shift (el trigger de 056 las rechaza con 42501)', () => {
+    it.each([
+      ['provider', 'telnyx', /proveedor/i],
+      ['monthly_limit', 500, /tope de llamadas/i],
+      ['inbound_number', '+57 601 555 0000', /llamadas entrantes/i],
+      ['caller_id', '+576015550001', /marca/i],
+    ])('rechaza %s con un mensaje claro, venga con el valor que venga', (key, value, label) => {
+      for (const sent of [value, null, '', 0, 'otro']) {
+        const message = bad({ [key]: sent })
+        expect(message).toMatch(label)
+        expect(message).toMatch(/Shift/)
+        expect(message).toMatch(/no se puede cambiar desde el panel/i)
+      }
+    })
+
+    it('rechaza el parche entero aunque lo demás sea válido (no guarda a medias)', () => {
+      expect(bad({ call_saturday: false, monthly_limit: 10 })).toMatch(/tope de llamadas/i)
+      expect(bad({ voice: 'Polly.Mia-Neural', caller_id: '+576015550001' })).toMatch(/marca/i)
+      // Aunque sea el valor que ya tiene: la fila entera que devuelve el panel no se manda de vuelta.
+      expect(bad({ ...ROW })).toMatch(/Shift/)
+    })
+
+    it('el parche ya no tiene esas claves: ni en el tipo ni en la fila que se guarda', () => {
+      const row = callSettingsToRow(
+        // El tipo ya no las admite; esto prueba que aun a la fuerza no llegan a la fila.
+        { inboundNumber: '+576015550000', callerId: '+576015550001', monthlyLimit: 9, provider: 'x', callSaturday: true } as CallSettingsPatch,
+      )
+      expect(row).toEqual({ call_saturday: true })
+    })
   })
 
   it('los interruptores son sí o no, sin coerción', () => {
@@ -275,18 +304,19 @@ describe('validateCallSettingsPatch', () => {
 
   describe('teléfonos', () => {
     it('E.164 con el + obligatorio; tolera espacios, guiones y paréntesis', () => {
-      expect(ok({ inbound_number: '+57 (601) 555-0000' }).inboundNumber).toBe('+576015550000')
-      expect(bad({ inbound_number: '6015550000' })).toMatch(/\+57/)
-      expect(bad({ inbound_number: '+0123456789' })).toMatch(/indicativo/i)
-      expect(bad({ inbound_number: '+57abc' })).toMatch(/indicativo/i)
-      expect(bad({ caller_id: '123' })).toMatch(/indicativo/i)
-      expect(bad({ inbound_number: 573001234567 })).toMatch(/indicativo/i)
+      expect(ok({ advisor_phones: ['+57 (601) 555-0000'] }).advisorPhones).toEqual(['+576015550000'])
+      expect(bad({ advisor_phones: ['6015550000'] })).toMatch(/\+57/)
+      expect(bad({ advisor_phones: ['+0123456789'] })).toMatch(/indicativo/i)
+      expect(bad({ advisor_phones: ['+57abc'] })).toMatch(/indicativo/i)
+      expect(bad({ advisor_phones: ['123'] })).toMatch(/indicativo/i)
+      expect(bad({ advisor_phones: [573001234567] })).toMatch(/indicativo/i)
     })
 
-    it('null o texto en blanco borran el número', () => {
-      expect(ok({ inbound_number: null }).inboundNumber).toBeNull()
-      expect(ok({ inbound_number: '   ' }).inboundNumber).toBeNull()
-      expect(ok({ caller_id: '' }).callerId).toBeNull()
+    it('de 8 a 15 dígitos, como la migración 056 y la app (7 no basta)', () => {
+      expect(ok({ advisor_phones: ['+12345678'] }).advisorPhones).toEqual(['+12345678'])
+      expect(ok({ advisor_phones: ['+123456789012345'] }).advisorPhones).toEqual(['+123456789012345'])
+      expect(bad({ advisor_phones: ['+1234567'] })).toMatch(/indicativo/i)
+      expect(bad({ advisor_phones: ['+1234567890123456'] })).toMatch(/indicativo/i)
     })
 
     it('de 0 a 3 asesores, sin repetidos', () => {
@@ -366,7 +396,6 @@ describe('validateCallSettingsPatch', () => {
       ['min_lead_minutes', 0, 4320],
       ['max_attempts', 1, 3],
       ['retry_minutes', 1, 2880],
-      ['monthly_limit', 0, 100000],
     ])('%s va de %i a %i', (key, min, max) => {
       expect(Object.values(ok({ [key]: min }))[0]).toBe(min)
       expect(Object.values(ok({ [key]: max }))[0]).toBe(max)
@@ -394,6 +423,12 @@ describe('validateCallSettingsPatch', () => {
       expect(bad({ window_start: '19:00', window_end: '08:00' })).toMatch(/antes/i)
       expect(bad({ window_start: '10:00', window_end: '10:00' })).toMatch(/antes/i)
     })
+
+    it('con una sola hora el parche no puede saber si queda al revés: eso lo revisa mergeAndValidateWindow', () => {
+      // 20:00 como inicio es una hora válida sola; contra el fin guardado (19:00) no lo sería.
+      expect(ok({ window_start: '20:00' })).toEqual({ windowStart: '20:00' })
+      expect(ok({ window_end: '07:00' })).toEqual({ windowEnd: '07:00' })
+    })
   })
 
   describe('voz', () => {
@@ -408,12 +443,63 @@ describe('validateCallSettingsPatch', () => {
   })
 })
 
+describe('mergeAndValidateWindow', () => {
+  // Lo guardado: de 09:00 a 18:00.
+  const stored = { windowStart: '09:00', windowEnd: '18:00' }
+
+  it('sin ninguna hora en el parche devuelve lo guardado y no revisa nada', () => {
+    expect(mergeAndValidateWindow(stored, {})).toEqual({ ok: true, value: stored })
+    // Aunque lo guardado estuviera mal, un parche que no toca la ventana no lo bloquea.
+    const broken = { windowStart: '20:00', windowEnd: '08:00' }
+    expect(mergeAndValidateWindow(broken, {})).toEqual({ ok: true, value: broken })
+  })
+
+  it('solo el inicio: se mezcla con el fin guardado', () => {
+    expect(mergeAndValidateWindow(stored, { windowStart: '07:30' })).toEqual({
+      ok: true,
+      value: { windowStart: '07:30', windowEnd: '18:00' },
+    })
+    const late = mergeAndValidateWindow(stored, { windowStart: '18:30' })
+    expect(late.ok).toBe(false)
+    if (!late.ok) expect(late.message).toMatch(/inicio.*antes.*fin.*18:00/i)
+  })
+
+  it('solo el fin: se mezcla con el inicio guardado', () => {
+    expect(mergeAndValidateWindow(stored, { windowEnd: '20:00' })).toEqual({
+      ok: true,
+      value: { windowStart: '09:00', windowEnd: '20:00' },
+    })
+    const early = mergeAndValidateWindow(stored, { windowEnd: '08:00' })
+    expect(early.ok).toBe(false)
+    if (!early.ok) expect(early.message).toMatch(/fin.*después.*inicio.*09:00/i)
+  })
+
+  it('el mismo valor en los dos extremos no es una ventana', () => {
+    expect(mergeAndValidateWindow(stored, { windowStart: '18:00' }).ok).toBe(false)
+    expect(mergeAndValidateWindow(stored, { windowEnd: '09:00' }).ok).toBe(false)
+  })
+
+  it('las dos horas: lo guardado no cuenta', () => {
+    expect(mergeAndValidateWindow(stored, { windowStart: '19:00', windowEnd: '21:00' })).toEqual({
+      ok: true,
+      value: { windowStart: '19:00', windowEnd: '21:00' },
+    })
+    const reversed = mergeAndValidateWindow(stored, { windowStart: '21:00', windowEnd: '19:00' })
+    expect(reversed.ok).toBe(false)
+    if (!reversed.ok) expect(reversed.message).toMatch(/inicio.*antes.*fin/i)
+  })
+
+  it('con los valores por defecto sirve para una cuenta sin fila', () => {
+    expect(mergeAndValidateWindow(DEFAULT_CALL_SETTINGS, { windowStart: '07:00' }).ok).toBe(true)
+    expect(mergeAndValidateWindow(DEFAULT_CALL_SETTINGS, { windowStart: '19:30' }).ok).toBe(false)
+  })
+})
+
 describe('callSettingsToRow', () => {
   it('pasa a nombres de columna y deja el texto vacío como null', () => {
     expect(
       callSettingsToRow({
         outboundEnabled: true,
-        inboundNumber: '+576015550000',
         advisorPhones: ['+573001112233'],
         officeHours: { '1': [['08:00', '18:00']] },
         infoText: '',
@@ -424,7 +510,6 @@ describe('callSettingsToRow', () => {
       }),
     ).toEqual({
       outbound_enabled: true,
-      inbound_number: '+576015550000',
       advisor_phones: ['+573001112233'],
       office_hours: { '1': [['08:00', '18:00']] },
       info_text: null,

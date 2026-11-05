@@ -744,12 +744,106 @@ describe('clínica, fases 2 y 3 (056)', () => {
     }
   })
 
+  describe('TRUNCATE (salta la RLS y los triggers de fila)', () => {
+    it('se revoca a anon y authenticated en las seis tablas nuevas', () => {
+      const m = flat.match(/REVOKE TRUNCATE ON ([\w, ]+) FROM anon, authenticated;/)
+      expect(m, 'REVOKE TRUNCATE ON ... FROM anon, authenticated').not.toBeNull()
+      const tables = m![1].split(',').map((t) => t.trim())
+      expect(tables.sort()).toEqual([...NEW_TABLES].sort())
+    })
+
+    it('nunca se le da a nadie de vuelta', () => {
+      expect(flat).not.toMatch(/\bGRANT\b[^;]*\bTRUNCATE\b/i)
+      for (const table of NEW_TABLES) {
+        expect(flat, table).not.toMatch(new RegExp(`\\bGRANT\\b[^;]* ON (?:TABLE )?${table}\\b`, 'i'))
+      }
+    })
+  })
+
+  describe('booking_call_settings: provider, monthly_limit, inbound_number y caller_id son de Shift', () => {
+    const PROTECTED = ['provider', 'monthly_limit', 'inbound_number', 'caller_id']
+
+    // La función termina en "LANGUAGE plpgsql SET search_path = public;": si
+    // fuera SECURITY DEFINER (current_user pasaría a ser postgres y el guard
+    // nunca dispararía) esta expresión no la encuentra.
+    const fn = flat.match(
+      /CREATE OR REPLACE FUNCTION enforce_call_settings_protected_columns\(\) RETURNS trigger AS \$\$(.*?)\$\$ LANGUAGE plpgsql SET search_path = public;/,
+    )
+
+    it('la función existe, es plpgsql, fija el search_path y no es SECURITY DEFINER', () => {
+      expect(fn, 'CREATE OR REPLACE FUNCTION enforce_call_settings_protected_columns').not.toBeNull()
+      expect(flat).not.toMatch(/enforce_call_settings_protected_columns\(\)[^;]*SECURITY DEFINER/)
+      expect(flat).not.toMatch(/ALTER FUNCTION [\w.()]*enforce_call_settings_protected_columns[^;]*SECURITY DEFINER/)
+    })
+
+    it('solo frena a authenticated y anon (service role y el operador pasan)', () => {
+      const body = fn![1]
+      expect(body).toContain("IF current_user IN ('authenticated', 'anon') THEN")
+      expect(body).not.toMatch(/service_role|postgres/)
+    })
+
+    it('en UPDATE compara con OLD exactamente las cuatro columnas', () => {
+      const body = fn![1]
+      for (const column of PROTECTED) {
+        expect(body, column).toContain(`NEW.${column} IS DISTINCT FROM OLD.${column}`)
+      }
+      const looked = [...body.matchAll(/OLD\.(\w+)/g)].map((m) => m[1]).sort()
+      expect(looked).toEqual([...PROTECTED].sort())
+    })
+
+    it('en INSERT exige los valores por defecto (telnyx, 300, sin números)', () => {
+      const body = fn![1]
+      expect(body).toContain("TG_OP = 'INSERT'")
+      expect(body).toContain("NEW.provider IS DISTINCT FROM 'telnyx'")
+      expect(body).toContain('NEW.monthly_limit IS DISTINCT FROM 300')
+      expect(body).toContain('NEW.inbound_number IS NOT NULL')
+      expect(body).toContain('NEW.caller_id IS NOT NULL')
+      // Los mismos valores que declara la tabla.
+      const table = tableBlock('booking_call_settings')
+      expect(table).toContain("provider text NOT NULL DEFAULT 'telnyx'")
+      expect(table).toContain('monthly_limit integer NOT NULL DEFAULT 300')
+    })
+
+    it('rechaza con 42501 (insufficient_privilege), en INSERT y en UPDATE', () => {
+      const body = fn![1]
+      expect(body.match(/RAISE EXCEPTION/g)).toHaveLength(2)
+      expect(body.match(/ERRCODE = 'insufficient_privilege'/g)).toHaveLength(2)
+      expect(body.match(/RETURN NEW/g)).toHaveLength(1)
+    })
+
+    it('BEFORE INSERT OR UPDATE por fila, re-ejecutable', () => {
+      expect(flat).toContain(
+        'DROP TRIGGER IF EXISTS enforce_call_settings_protected_columns ON booking_call_settings;',
+      )
+      expect(flat).toContain(
+        'CREATE TRIGGER enforce_call_settings_protected_columns BEFORE INSERT OR UPDATE ON booking_call_settings ' +
+          'FOR EACH ROW EXECUTE FUNCTION enforce_call_settings_protected_columns();',
+      )
+    })
+
+    it('la función se endurece como 047/055: dueña postgres, solo service_role ejecuta', () => {
+      expect(flat).toContain('ALTER FUNCTION public.enforce_call_settings_protected_columns() OWNER TO postgres;')
+      expect(flat).toContain(
+        'REVOKE ALL ON FUNCTION public.enforce_call_settings_protected_columns() FROM PUBLIC, anon, authenticated;',
+      )
+      expect(flat).toContain(
+        'GRANT EXECUTE ON FUNCTION public.enforce_call_settings_protected_columns() TO service_role;',
+      )
+    })
+
+    it('las políticas de escritura siguen siendo solo de owner/admin (el guard no las reemplaza)', () => {
+      expectOnly('booking_call_settings', 'INSERT', `WITH CHECK (${ADMIN})`)
+      expectOnly('booking_call_settings', 'UPDATE', `USING (${ADMIN}) WITH CHECK (${ADMIN})`)
+    })
+  })
+
   describe('aditiva, no destructiva y re-ejecutable', () => {
     it('no borra nada: ni DROP TABLE/COLUMN ni DELETE/TRUNCATE y lleva lock_timeout', () => {
       expect(code).not.toMatch(/DROP\s+TABLE/i)
       expect(code).not.toMatch(/DROP\s+COLUMN/i)
       expect(code).not.toMatch(/\bDELETE\s+FROM\b/i)
-      expect(code).not.toMatch(/\bTRUNCATE\b/i)
+      // REVOKE TRUNCATE es justo lo que queremos: se mira sin GRANT/REVOKE.
+      expect(code.replace(/\b(?:GRANT|REVOKE)\b[^;]*;/gi, '')).not.toMatch(/\bTRUNCATE\b/i)
       expect(code).toMatch(/SET\s+LOCAL\s+lock_timeout/i)
     })
 
@@ -1035,7 +1129,7 @@ describe('clínica, fases 2 y 3 (056)', () => {
       ],
       [
         'un intento del robot por cita (único parcial)',
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_booking_calls_robot_attempt ON booking_calls (appointment_id, attempt) WHERE direction = 'outbound' AND channel = 'robot';",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_booking_calls_robot_attempt ON booking_calls (appointment_id, attempt) WHERE direction = 'outbound' AND channel = 'robot' AND attempt IS NOT NULL;",
       ],
       [
         'seguimientos pendientes por fecha (parcial)',
@@ -1082,7 +1176,8 @@ describe('clínica, fases 2 y 3 (056)', () => {
   })
 
   describe('valores y largos', () => {
-    const E164 = String.raw`'^\+[1-9][0-9]{6,14}$'`
+    // De 8 a 15 dígitos, como la app (phone-utils: [1-9]\d{7,14}); {6,14} dejaba pasar 7.
+    const E164 = String.raw`'^\+[1-9][0-9]{7,14}$'`
 
     it('conexión con Google: estados, proveedor y token acotados', () => {
       const t = tableBlock('agenda_calendar_connections')

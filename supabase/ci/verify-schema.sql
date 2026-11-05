@@ -1296,6 +1296,7 @@ BEGIN
       AND indexdef LIKE 'CREATE UNIQUE INDEX%(appointment_id, attempt)%'
       AND indexdef LIKE '%direction%outbound%'
       AND indexdef LIKE '%channel%robot%'
+      AND indexdef LIKE '%attempt IS NOT NULL%'
   ) THEN
     RAISE EXCEPTION
       'booking_calls must be unique per (appointment_id, attempt) for outbound robot calls — migration 056 did not apply';
@@ -1412,6 +1413,76 @@ BEGIN
   THEN
     RAISE EXCEPTION
       'update_updated_at_column() was changed — migration 056 must leave the shared helper untouched';
+  END IF;
+
+  -- TRUNCATE salta la RLS y los triggers de fila, y Supabase se lo da por
+  -- defecto a anon y authenticated: 056 se lo quita en las seis tablas nuevas.
+  FOR v_table IN SELECT unnest(ARRAY[
+    'agenda_calendar_connections', 'booking_call_settings', 'booking_calls',
+    'clinic_followups', 'clinic_ratings', 'clinic_day_closes'
+  ]) LOOP
+    IF has_table_privilege('anon', 'public.' || v_table, 'TRUNCATE')
+       OR has_table_privilege('authenticated', 'public.' || v_table, 'TRUNCATE')
+    THEN
+      RAISE EXCEPTION
+        'anon/authenticated can still TRUNCATE % — migration 056 did not apply', v_table;
+    END IF;
+  END LOOP;
+
+  -- Teléfonos E.164 de booking_call_settings: de 8 a 15 dígitos, como la app
+  -- (phone-utils: [1-9]\d{7,14}). Los tres CHECK (inbound_number, caller_id,
+  -- advisor_phones) con {7,14}; ninguno con el piso viejo de 7 dígitos.
+  IF (
+    SELECT COUNT(*) FROM pg_constraint
+    WHERE conrelid = 'public.booking_call_settings'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) LIKE '%{7,14}%'
+  ) <> 3
+  OR EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.booking_call_settings'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) LIKE '%{6,14}%'
+  ) THEN
+    RAISE EXCEPTION
+      'booking_call_settings phone CHECKs must require 8 to 15 digits ({7,14}) — migration 056 did not apply';
+  END IF;
+
+  -- provider, monthly_limit, inbound_number y caller_id son de Shift: un admin
+  -- no los cambia por PostgREST. BEFORE INSERT OR UPDATE por fila (tgtype fila
+  -- 1, antes 2, insert 4, update 16; sin delete 8), SIN SECURITY DEFINER (es lo
+  -- que hace que current_user sea el rol de la API) y habilitado ('O' o 'A').
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_trigger t
+    JOIN pg_proc p ON p.oid = t.tgfoid
+    WHERE t.tgrelid = 'public.booking_call_settings'::regclass
+      AND t.tgname = 'enforce_call_settings_protected_columns'
+      AND NOT t.tgisinternal
+      AND t.tgenabled IN ('O', 'A')
+      AND (t.tgtype & 31) = 23
+      AND NOT p.prosecdef
+      AND p.proconfig IS NOT NULL
+      AND 'search_path=public' = ANY(p.proconfig)
+      AND p.prosrc LIKE '%current_user IN (''authenticated'', ''anon'')%'
+      AND p.prosrc LIKE '%ERRCODE = ''insufficient_privilege''%'
+      AND p.prosrc LIKE '%NEW.provider IS DISTINCT FROM OLD.provider%'
+      AND p.prosrc LIKE '%NEW.monthly_limit IS DISTINCT FROM OLD.monthly_limit%'
+      AND p.prosrc LIKE '%NEW.inbound_number IS DISTINCT FROM OLD.inbound_number%'
+      AND p.prosrc LIKE '%NEW.caller_id IS DISTINCT FROM OLD.caller_id%'
+      AND p.prosrc LIKE '%NEW.inbound_number IS NOT NULL%'
+      AND p.prosrc LIKE '%NEW.caller_id IS NOT NULL%'
+  ) THEN
+    RAISE EXCEPTION
+      'enforce_call_settings_protected_columns trigger is missing, disabled, SECURITY DEFINER or incomplete — migration 056 did not apply';
+  END IF;
+
+  IF has_function_privilege('anon', 'public.enforce_call_settings_protected_columns()', 'EXECUTE')
+     OR has_function_privilege('authenticated', 'public.enforce_call_settings_protected_columns()', 'EXECUTE')
+     OR NOT has_function_privilege('service_role', 'public.enforce_call_settings_protected_columns()', 'EXECUTE')
+  THEN
+    RAISE EXCEPTION
+      'enforce_call_settings_protected_columns is executable by anon/authenticated or not by service_role — migration 056 did not apply';
   END IF;
 
   RAISE NOTICE 'schema verification passed';

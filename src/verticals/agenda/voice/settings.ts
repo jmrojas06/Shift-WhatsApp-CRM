@@ -8,6 +8,13 @@
 //   - `validateCallSettingsPatch` valida lo que manda el panel (claves en
 //     snake_case, como `reminders_2h_enabled`) y devuelve el parche en
 //     camelCase; `callSettingsToRow` lo pasa a columnas para guardarlo.
+//   - `mergeAndValidateWindow` revisa la ventana de llamadas contra lo ya
+//     guardado cuando el parche trae solo la hora de inicio o solo la de fin.
+//
+// Cuatro columnas NO son del panel: `provider`, `monthly_limit`,
+// `inbound_number` y `caller_id` las fija Shift con service role, y un trigger
+// de la migración 056 rechaza (42501) que un admin las cambie. Por eso el
+// parche las rechaza con un mensaje claro en vez de dejar que falle la base.
 //
 // Los límites van alineados con los CHECK de la migración 056.
 // ============================================================
@@ -49,8 +56,13 @@ export interface CallSettings {
   updatedAt: string | null
 }
 
-/** Lo que el panel puede cambiar. */
-export type CallSettingsPatch = Partial<Omit<CallSettings, 'provider' | 'updatedAt'>>
+/**
+ * Lo que el panel puede cambiar. Sin `provider`, `monthlyLimit`,
+ * `inboundNumber` ni `callerId`: esas las controla Shift (ver arriba).
+ */
+export type CallSettingsPatch = Partial<
+  Omit<CallSettings, 'provider' | 'updatedAt' | 'inboundNumber' | 'callerId' | 'monthlyLimit'>
+>
 
 /** Voz si ni la cuenta ni la plataforma eligieron una: español de México. */
 export const DEFAULT_VOICE = 'Polly.Mia-Neural'
@@ -98,15 +110,12 @@ const INTEGER_FIELDS = {
   },
   max_attempts: { key: 'maxAttempts', label: 'Los intentos por cita', min: 1, max: 3 },
   retry_minutes: { key: 'retryMinutes', label: 'Los minutos entre intentos', min: 1, max: 2880 },
-  monthly_limit: { key: 'monthlyLimit', label: 'El tope de llamadas del mes', min: 0, max: 100000 },
 } as const
 
-/** camelCase → columna. */
+/** camelCase → columna, de lo que el panel puede guardar. */
 const COLUMN_OF: Record<keyof CallSettingsPatch, string> = {
   outboundEnabled: 'outbound_enabled',
   inboundEnabled: 'inbound_enabled',
-  inboundNumber: 'inbound_number',
-  callerId: 'caller_id',
   advisorPhones: 'advisor_phones',
   officeHours: 'office_hours',
   infoText: 'info_text',
@@ -117,13 +126,23 @@ const COLUMN_OF: Record<keyof CallSettingsPatch, string> = {
   windowStart: 'window_start',
   windowEnd: 'window_end',
   callSaturday: 'call_saturday',
-  monthlyLimit: 'monthly_limit',
   voice: 'voice',
+}
+
+/**
+ * Columnas que controla Shift, con el nombre que se le muestra al admin. Se
+ * leen, pero no se guardan desde el panel (las fija Shift con service role).
+ */
+const SHIFT_CONTROLLED: Readonly<Record<string, string>> = {
+  provider: 'El proveedor de llamadas',
+  monthly_limit: 'El tope de llamadas del mes',
+  inbound_number: 'El número de llamadas entrantes',
+  caller_id: 'El número que marca',
 }
 
 /** Columnas que lee `loadCallSettings` (también las necesita quien busca por `inbound_number`). */
 export const CALL_SETTINGS_COLUMNS = [
-  'provider',
+  ...Object.keys(SHIFT_CONTROLLED),
   ...Object.values(COLUMN_OF),
   'updated_at',
 ].join(', ')
@@ -232,8 +251,8 @@ const DAY_NAMES = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'vierne
 
 const PHONE_HELP = 'debe incluir el indicativo del país con el +, por ejemplo +573001234567.'
 
-/** Claves de solo lectura: el panel puede devolverlas junto con lo demás. */
-const READ_ONLY_KEYS = new Set(['provider', 'updated_at', 'account_id'])
+/** Claves de solo lectura: el panel puede devolverlas junto con lo demás y se ignoran. */
+const READ_ONLY_KEYS = new Set(['updated_at', 'account_id'])
 
 const KNOWN_KEYS = new Set<string>([
   ...Object.values(COLUMN_OF),
@@ -243,14 +262,6 @@ const KNOWN_KEYS = new Set<string>([
 function validateBoolean(value: unknown, label: string): Valid<boolean> {
   if (typeof value !== 'boolean') return { ok: false, message: `${label} debe ser sí o no.` }
   return { ok: true, value }
-}
-
-/** Un teléfono opcional: null o texto en blanco lo borran. */
-function validateOptionalPhone(value: unknown, label: string): Valid<string | null> {
-  if (value === null || (typeof value === 'string' && value.trim() === '')) return { ok: true, value: null }
-  const phone = toE164(value)
-  if (!phone) return { ok: false, message: `${label} ${PHONE_HELP}` }
-  return { ok: true, value: phone }
 }
 
 function validateAdvisorPhones(value: unknown): Valid<string[]> {
@@ -348,15 +359,28 @@ function validateVoice(value: unknown): Valid<string | null> {
 /**
  * Valida el cuerpo del PATCH de la configuración de llamadas. Las claves llegan
  * como las columnas (`outbound_enabled`, `window_start`…). Una clave que no
- * existe es un error (una errata no debe aparentar que se guardó); `provider` y
- * `updated_at` se ignoran. Si llegan `window_start` y `window_end`, deben ir en
- * orden; con una sola, quien guarda debe revisar la mezcla con `isValidCallWindow`.
+ * existe es un error (una errata no debe aparentar que se guardó); `updated_at`
+ * y `account_id` se ignoran.
+ *
+ * `provider`, `monthly_limit`, `inbound_number` y `caller_id` los controla Shift:
+ * si llegan se rechaza el parche entero con un mensaje claro (aunque traigan el
+ * mismo valor), porque la base rechazaría el cambio con un 42501 sin explicación
+ * y un "se guardó" mentiroso sería peor.
+ *
+ * Si llegan `window_start` y `window_end`, deben ir en orden; con una sola, quien
+ * guarda debe revisar la mezcla con lo ya guardado: `mergeAndValidateWindow`.
  */
 export function validateCallSettingsPatch(body: unknown): Valid<CallSettingsPatch> {
   const record = asRecord(body)
   if (!record) return { ok: false, message: 'Los ajustes de llamadas no son válidos.' }
 
   for (const key of Object.keys(record)) {
+    if (has(SHIFT_CONTROLLED, key)) {
+      return {
+        ok: false,
+        message: `${SHIFT_CONTROLLED[key]} lo configura Shift y no se puede cambiar desde el panel. Si necesitas cambiarlo, pídeselo a Shift.`,
+      }
+    }
     if (!KNOWN_KEYS.has(key)) {
       return { ok: false, message: `"${key}" no es un ajuste de llamadas válido.` }
     }
@@ -372,17 +396,6 @@ export function validateCallSettingsPatch(body: unknown): Valid<CallSettingsPatc
   for (const [column, key, label] of booleans) {
     if (!has(record, column)) continue
     const result = validateBoolean(record[column], label)
-    if (!result.ok) return result
-    out[key] = result.value
-  }
-
-  const phones = [
-    ['inbound_number', 'inboundNumber', 'El número de llamadas entrantes'],
-    ['caller_id', 'callerId', 'El número que marca'],
-  ] as const
-  for (const [column, key, label] of phones) {
-    if (!has(record, column)) continue
-    const result = validateOptionalPhone(record[column], label)
     if (!result.ok) return result
     out[key] = result.value
   }
@@ -428,8 +441,9 @@ export function validateCallSettingsPatch(body: unknown): Valid<CallSettingsPatc
     }
     out[key] = clock
   }
-  if (out.windowStart !== undefined && out.windowEnd !== undefined && !isValidCallWindow(out.windowStart, out.windowEnd)) {
-    return { ok: false, message: 'La hora de inicio de las llamadas debe ser antes que la de fin.' }
+  if (out.windowStart !== undefined && out.windowEnd !== undefined) {
+    const merged = mergeAndValidateWindow(DEFAULT_CALL_SETTINGS, out)
+    if (!merged.ok) return merged
   }
 
   if (has(record, 'voice')) {
@@ -440,6 +454,39 @@ export function validateCallSettingsPatch(body: unknown): Valid<CallSettingsPatc
 
   if (Object.keys(out).length === 0) return { ok: false, message: 'No hay cambios que guardar.' }
   return { ok: true, value: out }
+}
+
+/**
+ * La ventana de llamadas que quedaría al guardar un parche: lo que trae el
+ * parche y, de lo que no trae, lo ya guardado (`stored`, de `loadCallSettings`).
+ * Hace falta cuando llega solo `window_start` o solo `window_end`: cada hora es
+ * válida sola, pero la mezcla con la otra guardada puede quedar al revés y la
+ * base la rechazaría (CHECK `window_end > window_start`). Sin ninguna de las dos
+ * en el parche no revisa nada y devuelve lo guardado.
+ */
+export function mergeAndValidateWindow(
+  stored: Pick<CallSettings, 'windowStart' | 'windowEnd'>,
+  patch: Pick<CallSettingsPatch, 'windowStart' | 'windowEnd'>,
+): Valid<{ windowStart: string; windowEnd: string }> {
+  const windowStart = patch.windowStart ?? stored.windowStart
+  const windowEnd = patch.windowEnd ?? stored.windowEnd
+
+  const startChanged = patch.windowStart !== undefined
+  const endChanged = patch.windowEnd !== undefined
+  if (!startChanged && !endChanged) return { ok: true, value: { windowStart, windowEnd } }
+
+  if (!isValidCallWindow(windowStart, windowEnd)) {
+    if (startChanged && endChanged) {
+      return { ok: false, message: 'La hora de inicio de las llamadas debe ser antes que la de fin.' }
+    }
+    return {
+      ok: false,
+      message: startChanged
+        ? `La hora de inicio de las llamadas debe ser antes que la de fin (la guardada es ${windowEnd}).`
+        : `La hora de fin de las llamadas debe ser después de la de inicio (la guardada es ${windowStart}).`,
+    }
+  }
+  return { ok: true, value: { windowStart, windowEnd } }
 }
 
 /** Parche (camelCase) → columnas de `booking_call_settings`. El texto vacío se guarda como null. */
