@@ -295,6 +295,55 @@ describe('markAppointmentConfirmed', () => {
       }),
     ).rejects.toThrow('No se pudo confirmar la cita')
   })
+
+  it.each(['42703', 'PGRST204'])(
+    'si la migración 056 no está aplicada (%s) repite sin attendance_confirmed_at y confirma igual',
+    async (code) => {
+      const db = seed()
+      db._failNext('update', 'booking_appointments', {
+        code,
+        message: 'column "attendance_confirmed_at" does not exist',
+      })
+      await markAppointmentConfirmed(asClient(db), {
+        accountId: 'acc-1',
+        id: 'ap-1',
+        confirmedAtIso: CONFIRMED_AT,
+      })
+      expect(db._tables.booking_appointments[0]).toMatchObject({
+        status: 'confirmed',
+        confirmed_at: CONFIRMED_AT,
+        updated_at: CONFIRMED_AT,
+      })
+      expect('attendance_confirmed_at' in db._tables.booking_appointments[0]).toBe(false)
+    },
+  )
+
+  it('si el reintento sin la columna también falla, lanza', async () => {
+    const db = seed()
+    db._failNext('update', 'booking_appointments', { code: '42703', message: 'no column' })
+    db._failNext('update', 'booking_appointments', { message: 'boom' })
+    await expect(
+      markAppointmentConfirmed(asClient(db), {
+        accountId: 'acc-1',
+        id: 'ap-1',
+        confirmedAtIso: CONFIRMED_AT,
+      }),
+    ).rejects.toThrow('No se pudo confirmar la cita')
+    expect(db._tables.booking_appointments[0].status).toBe('pending')
+  })
+
+  it('un error que no es de columna ausente no se reintenta', async () => {
+    const db = seed()
+    db._failNext('update', 'booking_appointments', { code: '57014', message: 'timeout' })
+    await expect(
+      markAppointmentConfirmed(asClient(db), {
+        accountId: 'acc-1',
+        id: 'ap-1',
+        confirmedAtIso: CONFIRMED_AT,
+      }),
+    ).rejects.toThrow('No se pudo confirmar la cita')
+    expect(db._tables.booking_appointments[0].status).toBe('pending')
+  })
 })
 
 describe('insertNotification', () => {

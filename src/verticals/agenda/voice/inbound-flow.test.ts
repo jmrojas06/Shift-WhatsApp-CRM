@@ -215,6 +215,13 @@ describe('1: agendar por WhatsApp', () => {
     expect(said(result.failureXml!)).toEqual([scripts.bookingLinkFailed(), scripts.goodbye()])
     expect(hangsUp(result.failureXml!)).toBe(true)
   })
+
+  it('trae la respuesta para cuando ese número ya recibió el enlace hace poco', () => {
+    const result = inboundFlow(input({ digits: '1' }), context())
+    expect(result.repeatedXml).toBeDefined()
+    expect(said(result.repeatedXml!)).toEqual([scripts.bookingLinkAlreadySent(), scripts.goodbye()])
+    expect(hangsUp(result.repeatedXml!)).toBe(true)
+  })
 })
 
 describe('2: mi cita', () => {

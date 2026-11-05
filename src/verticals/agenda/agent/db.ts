@@ -13,6 +13,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { isUndefinedColumnError } from '@/lib/modules/undefined-column'
 import type { VerticalSession } from '@/lib/verticals/types'
 
 import { sanitizeBotTexts, type BotTextOverrides } from '../bot-texts'
@@ -696,6 +697,10 @@ export async function cancelAppointment(
  *
  * `attendance_confirmed_at` (migración 056) es "el paciente dijo que va";
  * no es lo mismo que `confirmed_at`, que el bot pone al reservar.
+ *
+ * Si la 056 aún no está aplicada (columna ausente: 42703 / PGRST204) repite
+ * una vez sin esa columna, para que el botón Confirmar de las cuentas ya
+ * en producción siga funcionando como antes de la 056.
  */
 export async function markAppointmentConfirmed(
   db: SupabaseClient,
@@ -705,16 +710,25 @@ export async function markAppointmentConfirmed(
     confirmedAtIso: string
   },
 ): Promise<void> {
-  const { error } = await db
-    .from('booking_appointments')
-    .update({
-      status: 'confirmed',
-      confirmed_at: args.confirmedAtIso,
-      attendance_confirmed_at: args.confirmedAtIso,
-      updated_at: args.confirmedAtIso,
-    })
-    .eq('id', args.id)
-    .eq('account_id', args.accountId)
+  const base = {
+    status: 'confirmed',
+    confirmed_at: args.confirmedAtIso,
+    updated_at: args.confirmedAtIso,
+  }
+  const write = (patch: Record<string, unknown>) =>
+    db
+      .from('booking_appointments')
+      .update(patch)
+      .eq('id', args.id)
+      .eq('account_id', args.accountId)
+
+  let { error } = await write({
+    ...base,
+    attendance_confirmed_at: args.confirmedAtIso,
+  })
+  if (isUndefinedColumnError(error)) {
+    ;({ error } = await write(base))
+  }
   if (error) throw new Error(`No se pudo confirmar la cita: ${error.message}`)
 }
 

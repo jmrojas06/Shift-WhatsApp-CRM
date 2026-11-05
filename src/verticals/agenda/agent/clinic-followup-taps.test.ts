@@ -852,6 +852,46 @@ describe.each(NO_STORING_CASES)('sin autorización para guardar: %s', (_label, s
   })
 })
 
+describe('lo que se registra cuando algo falla', () => {
+  // Al log va una línea corta (nombre y mensaje del error), nunca el objeto entero.
+  const logged = (): string[] => vi.mocked(console.error).mock.calls.map((call) => call.map(String).join(' '))
+
+  it('no se pudo guardar la respuesta del seguimiento', async () => {
+    const db = visitDb()
+    const rec = makeRecorder()
+    db._failNext('update', 'clinic_followups', { message: 'base caída' })
+
+    await send(db, rec, { replyId: followupPayload('molestias', FU_HOW) })
+
+    expect(logged()).toContain('[clinica] no se pudo guardar la respuesta del seguimiento: Error: base caída')
+  })
+
+  it('no se pudo guardar el aviso de molestias al equipo (hilo que lleva una persona)', async () => {
+    const db = visitDb()
+    humanThread(db, null)
+    const rec = makeRecorder()
+    db._failNext('insert', 'notifications', { message: 'base caída' })
+
+    await send(db, rec, { replyId: followupPayload('molestias', FU_HOW) }, { humanOwned: true })
+
+    expect(logged()).toContain(
+      '[clinica] el aviso de molestias al equipo falló: Error: No se pudo crear el aviso: base caída',
+    )
+  })
+
+  it('no se pudo guardar el aviso de una calificación baja', async () => {
+    const db = visitDb()
+    const rec = makeRecorder()
+    db._failNext('insert', 'notifications', { message: 'base caída' })
+
+    await send(db, rec, { replyId: ratingPayload('mal', FU_RATE) })
+
+    expect(logged()).toContain(
+      '[clinica] el aviso de una calificación baja falló: Error: No se pudo crear el aviso: base caída',
+    )
+  })
+})
+
 describe('la lectura de la autorización', () => {
   it('si falla, se registra sin datos del paciente', async () => {
     const db = visitDb()
@@ -862,6 +902,7 @@ describe('la lectura de la autorización', () => {
 
     const logged = vi.mocked(console.error).mock.calls.flat().map(String).join(' ')
     expect(logged).toContain('autorización')
+    expect(logged).toContain('Error: base caída')
     expect(logged).not.toContain('Marta')
     expect(logged).not.toContain('573001112233')
   })

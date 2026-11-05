@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { notifyAlert } from '@/lib/ops/alert'
 import { checkVoiceToken } from '@/lib/voice/tokens'
 import type { FakeDb, Row } from '@/verticals/agenda/agent/testing/fake-db'
 
@@ -156,6 +157,8 @@ const calls = (db: FakeDb) => db._tables.booking_calls ?? []
 const callOf = (db: FakeDb) => calls(db).find((row) => row.id === CALL_ID) as Row
 const appointmentOf = (db: FakeDb) => (db._tables.booking_appointments ?? [])[0] as Row
 
+vi.mock('@/lib/ops/alert', () => ({ notifyAlert: vi.fn(async () => {}) }))
+
 const notifyPatient = vi.fn()
 const kickCalendar = vi.fn()
 const sendBookingLink = vi.fn()
@@ -200,6 +203,7 @@ const urlOf = (xml: string, tag: 'Gather' | 'Redirect') => {
 }
 
 beforeEach(() => {
+  vi.mocked(notifyAlert).mockClear()
   vi.stubEnv('VOICE_WEBHOOK_SECRET', 'secreto-de-prueba-voz')
   vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://crm.example.test')
   for (const mock of [notifyPatient, kickCalendar, sendBookingLink, ensureCaller, findContact]) mock.mockReset()
@@ -493,6 +497,54 @@ describe('1: agendar por WhatsApp', () => {
 
     expect(sendBookingLink).toHaveBeenCalledTimes(1)
     expect(said(retry.xml)).toEqual(said(first.xml))
+  })
+
+  /** Una llamada anterior (de `minutes` minutos antes de NOW) a la que ya se le mandó el enlace. */
+  const earlierSent = (n: number, minutes: number, fromNumber: string): Row =>
+    callRowSeed({
+      id: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`,
+      direction: 'inbound',
+      status: 'completed',
+      outcome: 'booking_link_sent',
+      from_number: fromNumber,
+      to_number: INBOUND,
+      created_at: new Date(NOW.getTime() - minutes * 60_000).toISOString(),
+    })
+
+  it('si ese número ya recibió el enlace hace pocos minutos, no manda otro y dice que ya se lo enviaron', async () => {
+    const db = seed()
+    db._tables.booking_calls.push(earlierSent(1, 4, CALLER))
+    const { xml } = await press(db, '1')
+
+    expect(said(xml)).toEqual([scripts.bookingLinkAlreadySent(), scripts.goodbye()])
+    expect(hangsUp(xml)).toBe(true)
+    expect(sendBookingLink).not.toHaveBeenCalled()
+    expect(callOf(db)).toMatchObject({ outcome: 'booking_link_sent', menu_path: '1' })
+  })
+
+  it('un reintento de esa llamada recibe la despedida de siempre, sin mandar nada', async () => {
+    const db = seed()
+    db._tables.booking_calls.push(earlierSent(1, 4, CALLER))
+    await press(db, '1')
+    const retry = await press(db, '1')
+
+    expect(said(retry.xml)).toEqual([scripts.bookingLinkSent(), scripts.goodbye()])
+    expect(sendBookingLink).not.toHaveBeenCalled()
+  })
+
+  it('con el tope por hora de la cuenta no manda, dice que no pudo y avisa a operaciones (una vez)', async () => {
+    const db = seed()
+    for (let i = 0; i < 30; i++) {
+      db._tables.booking_calls.push(earlierSent(100 + i, 20, `+57300000${String(i).padStart(4, '0')}`))
+    }
+    const { xml } = await press(db, '1')
+
+    expect(said(xml)).toEqual([scripts.bookingLinkFailed(), scripts.goodbye()])
+    expect(sendBookingLink).not.toHaveBeenCalled()
+    expect(callOf(db).outcome).toBeNull()
+    // La alerta es una tarea de después de responder: `press` ya las corrió.
+    expect(notifyAlert).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(notifyAlert).mock.calls[0][0]).not.toContain(CALLER)
   })
 })
 

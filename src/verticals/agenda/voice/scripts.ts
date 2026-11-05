@@ -290,6 +290,11 @@ export function bookingLinkFailed(): string {
   return 'No pudimos enviarte el WhatsApp. Escríbenos por WhatsApp para agendar.'
 }
 
+/** El mismo número ya recibió el enlace hace pocos minutos: no se manda otro. */
+export function bookingLinkAlreadySent(): string {
+  return 'Ya te enviamos un WhatsApp a este número hace un momento. Revisa tus mensajes.'
+}
+
 /**
  * La próxima cita del número que llama, con las teclas para confirmarla o cancelarla.
  * Solo dice CUÁNDO: nunca el nombre del paciente ni el del profesional. El número de

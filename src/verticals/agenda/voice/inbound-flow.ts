@@ -117,6 +117,8 @@ export interface InboundFlowResult {
   xml: string
   /** Lo que se dice si el efecto falla (solo `send_link`); sin él se usa el de `xml`. */
   failureXml?: string
+  /** Lo que se dice si ese número ya recibió el enlace hace poco (solo `send_link`); sin él se usa el de `xml`. */
+  repeatedXml?: string
   effect: InboundEffect | null
   /** Lo marcado, para la columna `digits` (como mucho 10 caracteres); null si no marcó. */
   digits: string | null
@@ -272,6 +274,7 @@ export function inboundFlow(input: InboundFlowInput, ctx: InboundFlowContext): I
       return {
         ...finish([scripts.bookingLinkSent(), scripts.goodbye()], { type: 'send_link' }, path),
         failureXml: response([speak(scripts.bookingLinkFailed()), speak(scripts.goodbye()), hangup()]),
+        repeatedXml: response([speak(scripts.bookingLinkAlreadySent()), speak(scripts.goodbye()), hangup()]),
       }
     }
 

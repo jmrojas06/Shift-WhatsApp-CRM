@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { notifyAlert } from '@/lib/ops/alert'
 import type { FakeDb, Row } from '@/verticals/agenda/agent/testing/fake-db'
 
 import { callRowFromDb, type CallRow } from './calls-repo'
@@ -22,6 +23,8 @@ const CONVERSATION = 'conv-1'
 const NOW = new Date('2026-11-05T15:00:00.000Z')
 const STARTS_AT = '2026-11-05T20:30:00.000Z'
 const FROM = '+573001112233'
+
+vi.mock('@/lib/ops/alert', () => ({ notifyAlert: vi.fn(async () => {}) }))
 
 const notifyPatient = vi.fn()
 const kickCalendar = vi.fn()
@@ -93,6 +96,7 @@ async function runDeferred(result: InboundEffectResult) {
 }
 
 beforeEach(() => {
+  vi.mocked(notifyAlert).mockClear()
   for (const mock of [notifyPatient, kickCalendar, sendBookingLink, ensureCaller, findContact]) mock.mockReset()
   notifyPatient.mockResolvedValue({ sent: true, channel: 'template' })
   kickCalendar.mockResolvedValue(undefined)
@@ -182,6 +186,188 @@ describe('send_link: agendar por WhatsApp', () => {
     expect(sendBookingLink).not.toHaveBeenCalled()
     expect(callOf(db).outcome).toBeNull()
     expect(String(callOf(db).error)).toMatch(/número/)
+  })
+})
+
+describe('send_link: límites contra el abuso del webhook', () => {
+  const OTHER = '+573009990000'
+  const minutesAgo = (minutes: number): string => new Date(NOW.getTime() - minutes * 60_000).toISOString()
+  const uuid = (n: number): string => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
+
+  /** Una llamada entrante anterior a la que ya se le mandó el enlace (de verdad). */
+  const earlier = (n: number, overrides: Row = {}): Row =>
+    callRowSeed({
+      id: uuid(n),
+      direction: 'inbound',
+      channel: 'robot',
+      status: 'completed',
+      outcome: 'booking_link_sent',
+      from_number: FROM,
+      to_number: '+576015550000',
+      created_at: minutesAgo(5),
+      ...overrides,
+    })
+
+  /** La base de siempre, con estas llamadas anteriores además de la actual. */
+  function seedWith(rows: Row[], callOverrides: Row = {}): FakeDb {
+    const db = seed({}, callOverrides)
+    db._tables.booking_calls.push(...rows)
+    return db
+  }
+
+  it('el mismo número ya recibió el enlace hace 5 minutos: no manda otro, lo dice y lo deja anotado', async () => {
+    const db = seedWith([earlier(1)])
+    const result = await applyInboundEffect({ type: 'send_link' }, ctx(db))
+
+    expect(result).toMatchObject({ failed: false, repeated: true })
+    expect(ensureCaller).not.toHaveBeenCalled()
+    expect(sendBookingLink).not.toHaveBeenCalled()
+    expect(callOf(db)).toMatchObject({ outcome: 'booking_link_sent' })
+    expect(String(callOf(db).error)).toMatch(/no se repitió/i)
+    expect(String(callOf(db).error)).not.toContain('573001112233')
+    expect(notifyAlert).not.toHaveBeenCalled()
+  })
+
+  it('pasados 10 minutos el mismo número puede pedirlo otra vez', async () => {
+    const db = seedWith([earlier(1, { created_at: minutesAgo(11) })])
+    const result = await applyInboundEffect({ type: 'send_link' }, ctx(db))
+
+    expect(result.failed).toBe(false)
+    expect(result.repeated).toBeUndefined()
+    expect(sendBookingLink).toHaveBeenCalledTimes(1)
+    expect(callOf(db).error).toBeNull()
+  })
+
+  it('otro número, otra cuenta, otra tecla o una llamada saliente no cuentan', async () => {
+    const db = seedWith([
+      earlier(1, { from_number: OTHER }),
+      earlier(2, { account_id: 'acc-2' }),
+      earlier(3, { outcome: 'info' }),
+      earlier(4, { direction: 'outbound', from_number: null, to_number: FROM }),
+    ])
+    const result = await applyInboundEffect({ type: 'send_link' }, ctx(db))
+
+    expect(result.repeated).toBeUndefined()
+    expect(sendBookingLink).toHaveBeenCalledTimes(1)
+  })
+
+  it('un aviso que no se repitió no alarga la espera: cuenta el último envío de verdad', async () => {
+    const db = seedWith([
+      earlier(1, { created_at: minutesAgo(12) }),
+      earlier(2, { created_at: minutesAgo(4), error: 'No se repitió el WhatsApp para agendar.' }),
+    ])
+    const result = await applyInboundEffect({ type: 'send_link' }, ctx(db))
+
+    expect(result.repeated).toBeUndefined()
+    expect(sendBookingLink).toHaveBeenCalledTimes(1)
+  })
+
+  it('un envío que falló (sin resultado) no bloquea al número', async () => {
+    const db = seedWith([earlier(1, { outcome: null, error: 'No se pudo enviar el WhatsApp para agendar: x' })])
+    await applyInboundEffect({ type: 'send_link' }, ctx(db))
+    expect(sendBookingLink).toHaveBeenCalledTimes(1)
+  })
+
+  it('dos llamadas casi a la vez del mismo número: solo la posterior se frena', async () => {
+    // La otra llamada empezó DESPUÉS de esta (y ya reclamó su resultado): esta sí manda.
+    const db = seedWith([earlier(1, { created_at: new Date(NOW.getTime() + 1_000).toISOString() })])
+    const result = await applyInboundEffect({ type: 'send_link' }, ctx(db))
+
+    expect(result.repeated).toBeUndefined()
+    expect(sendBookingLink).toHaveBeenCalledTimes(1)
+  })
+
+  it('un reintento de la llamada que no se repitió tampoco manda nada', async () => {
+    const db = seedWith([earlier(1)])
+    await applyInboundEffect({ type: 'send_link' }, ctx(db))
+    const again = await applyInboundEffect({ type: 'send_link' }, ctx(db))
+
+    expect(again.failed).toBe(false)
+    expect(sendBookingLink).not.toHaveBeenCalled()
+  })
+
+  /** `count` llamadas de números distintos a las que ya se les mandó el enlace hace `minutes`. */
+  const otherNumbers = (count: number, minutes = 20): Row[] =>
+    Array.from({ length: count }, (_, i) =>
+      earlier(100 + i, { from_number: `+57300000${String(i).padStart(4, '0')}`, created_at: minutesAgo(minutes) }),
+    )
+
+  it('con 29 enlaces en la última hora todavía manda el 30', async () => {
+    const db = seedWith(otherNumbers(29))
+    const result = await applyInboundEffect({ type: 'send_link' }, ctx(db))
+
+    expect(result.failed).toBe(false)
+    expect(sendBookingLink).toHaveBeenCalledTimes(1)
+    expect(notifyAlert).not.toHaveBeenCalled()
+  })
+
+  it('con 30 enlaces en la última hora no manda más, suelta el resultado y avisa a operaciones', async () => {
+    const db = seedWith(otherNumbers(30))
+    const result = await applyInboundEffect({ type: 'send_link' }, ctx(db))
+
+    expect(result.failed).toBe(true)
+    expect(sendBookingLink).not.toHaveBeenCalled()
+    expect(ensureCaller).not.toHaveBeenCalled()
+    expect(callOf(db).outcome).toBeNull()
+    expect(String(callOf(db).error)).toMatch(/límite/)
+    // La alerta sale después de responder (deferred), sin números de teléfono.
+    expect(notifyAlert).not.toHaveBeenCalled()
+    await runDeferred(result)
+    expect(notifyAlert).toHaveBeenCalledTimes(1)
+    const text = vi.mocked(notifyAlert).mock.calls[0][0]
+    expect(text).toContain(ACCOUNT)
+    expect(text).not.toMatch(/\d{8,}/)
+  })
+
+  it('el aviso a operaciones sale una sola vez por hora', async () => {
+    const db = seedWith(otherNumbers(30))
+    const first = await applyInboundEffect({ type: 'send_link' }, ctx(db))
+    await runDeferred(first)
+
+    // Otra llamada, un minuto después, también topada.
+    const later = new Date(NOW.getTime() + 60_000)
+    const row = callRowSeed({
+      id: uuid(900),
+      direction: 'inbound',
+      status: 'in_progress',
+      from_number: OTHER,
+      created_at: later.toISOString(),
+    })
+    db._tables.booking_calls.push(row)
+    const second = await applyInboundEffect({ type: 'send_link' }, { ...ctx(db), now: later, call: callRowFromDb(row) })
+    await runDeferred(second)
+
+    expect(second.failed).toBe(true)
+    expect(sendBookingLink).not.toHaveBeenCalled()
+    expect(notifyAlert).toHaveBeenCalledTimes(1)
+  })
+
+  it('los enlaces de hace más de una hora no cuentan para el tope', async () => {
+    const db = seedWith(otherNumbers(30, 61))
+    const result = await applyInboundEffect({ type: 'send_link' }, ctx(db))
+
+    expect(result.failed).toBe(false)
+    expect(sendBookingLink).toHaveBeenCalledTimes(1)
+  })
+
+  it('el tope es por cuenta: los enlaces de otra cuenta no cuentan', async () => {
+    const db = seedWith(otherNumbers(30).map((row) => ({ ...row, account_id: 'acc-2' })))
+    const result = await applyInboundEffect({ type: 'send_link' }, ctx(db))
+
+    expect(result.failed).toBe(false)
+    expect(sendBookingLink).toHaveBeenCalledTimes(1)
+  })
+
+  it('si no se pueden leer las llamadas anteriores falla sin mandar nada y suelta el resultado', async () => {
+    const db = seedWith([])
+    db._failNext('select', 'booking_calls', { code: '57014', message: 'timeout para 573001112233' })
+    const result = await applyInboundEffect({ type: 'send_link' }, ctx(db))
+
+    expect(result.failed).toBe(true)
+    expect(sendBookingLink).not.toHaveBeenCalled()
+    expect(callOf(db).outcome).toBeNull()
+    expect(vi.mocked(console.error).mock.calls.flat().join(' ')).not.toContain('573001112233')
+    expect(String(callOf(db).error)).not.toContain('573001112233')
   })
 })
 

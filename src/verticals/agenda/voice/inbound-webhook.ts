@@ -264,12 +264,17 @@ export async function handleInboundWebhook(args: InboundWebhookArgs): Promise<In
   if (!flow.effect) return done(flow.xml)
 
   const result = await applyInboundEffect(flow.effect, { db, now, call, appointment, deps })
-  if (!result.failed) return { xml: flow.xml, deferred: result.deferred }
+  if (!result.failed) {
+    // Ese número ya recibió el enlace hace poco: se le dice, sin repetir "te enviamos".
+    const xml = result.repeated ? (flow.repeatedXml ?? flow.xml) : flow.xml
+    return { xml, deferred: result.deferred }
+  }
 
   // Solo estos tres prometen algo a quien llama; el resto (leer el horario, un aviso) no cambia lo dicho.
   switch (flow.effect.type) {
     case 'send_link':
-      return done(flow.failureXml ?? inboundFailureXml(voice))
+      // Con las tareas de después (la alerta de operaciones cuando se llegó al tope).
+      return { xml: flow.failureXml ?? inboundFailureXml(voice), deferred: result.deferred }
     case 'confirm':
     case 'cancel':
       return done(failureXml(voice))

@@ -30,6 +30,14 @@ export const CALL_NOTICES = {
   /** Errores que quedan en la fila de la llamada entrante. */
   bookingLinkNoNumber: 'No se pudo enviar el WhatsApp para agendar: la llamada no traía un número.',
   bookingLinkNotSent: (reason: string): string => `No se pudo enviar el WhatsApp para agendar: ${reason}`,
+  /** Ese número ya había recibido el enlace hace pocos minutos. */
+  bookingLinkRepeated: 'No se repitió el WhatsApp para agendar: ya se había enviado a este número hace menos de 10 minutos.',
+  /** Motivo (dentro de `bookingLinkNotSent`) cuando la cuenta llegó al tope de enlaces por hora. */
+  bookingLinkCapReason: 'se llegó al límite de enlaces por hora de las llamadas entrantes.',
+  /** Alerta a operaciones (sin teléfonos): puede ser alguien abusando de la URL del webhook. */
+  bookingLinkCapAlert: (accountId: string): string =>
+    `Llamadas entrantes: la cuenta ${accountId} llegó al límite de 30 WhatsApp para agendar en una hora y dejó de mandarlos. ` +
+    'Revisa el registro de llamadas: puede ser alguien abusando de la URL del webhook entrante.',
 
   /** Quién, cuando el contacto no tiene nombre ni teléfono. */
   someone: 'Un paciente',

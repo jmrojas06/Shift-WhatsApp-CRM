@@ -9,6 +9,7 @@ import {
   appointmentCancelled,
   appointmentConfirmed,
   appointmentInactive,
+  bookingLinkAlreadySent,
   bookingLinkFailed,
   bookingLinkSent,
   cancelConfirmAsk,
@@ -232,6 +233,7 @@ describe('guion entrante', () => {
   it('agendar: enlace enviado o fallo', () => {
     expect(bookingLinkSent()).toBe('Te enviamos un WhatsApp a este número para que agendes en un minuto.')
     expect(bookingLinkFailed()).toBe('No pudimos enviarte el WhatsApp. Escríbenos por WhatsApp para agendar.')
+    expect(bookingLinkAlreadySent()).toBe('Ya te enviamos un WhatsApp a este número hace un momento. Revisa tus mensajes.')
   })
 
   it('mi cita: solo dice cuándo, y cuando no hay citas lo dice', () => {
@@ -331,6 +333,7 @@ describe('todas las frases', () => {
     urgencyNoOne: scripts.urgencyNoOne(),
     bookingLinkSent: scripts.bookingLinkSent(),
     bookingLinkFailed: scripts.bookingLinkFailed(),
+    bookingLinkAlreadySent: scripts.bookingLinkAlreadySent(),
     myAppointment: scripts.myAppointment(sample),
     noAppointments: scripts.noAppointments(),
     inboundApptReprompt: scripts.inboundApptReprompt(),

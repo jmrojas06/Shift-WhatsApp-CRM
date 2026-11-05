@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 
 import { requireRole, toErrorResponse, type AccountContext } from '@/lib/auth/account'
+import { describeError } from '@/lib/ops/describe-error'
 import { supabaseAdmin } from '@/lib/verticals/admin-client'
 import {
   isAppointmentStatus,
@@ -118,7 +119,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       .maybeSingle()
 
     if (loadError) {
-      console.error('[agenda appointments] no se pudo leer la cita:', loadError)
+      console.error('[agenda appointments] no se pudo leer la cita:', describeError(loadError))
       return NextResponse.json(
         { error: 'No se pudo leer la cita.' },
         { status: 500 },
@@ -162,7 +163,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (updateError) {
       console.error(
         '[agenda appointments] no se pudo actualizar la cita:',
-        updateError,
+        describeError(updateError),
       )
       return NextResponse.json(
         { error: 'No se pudo actualizar la cita.' },

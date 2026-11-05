@@ -15,6 +15,11 @@
 // quien llama puede seguir después. Por eso el reclamo parte también de ellos:
 // leer el horario y luego confirmar la cita deja `confirmed`, no `info`.
 //
+// El enlace para agendar tiene dos topes contra el abuso del webhook (quien tenga
+// la URL fija de la llamada entrante podría pedir WhatsApp a números ajenos):
+// a un mismo número no se le manda otro enlace en 10 minutos, y la cuenta no manda
+// más de 30 por hora (al pasarlo avisa a operaciones, una sola vez por hora).
+//
 // Lo lento (avisar por WhatsApp, copiar a Google) NO se hace aquí: vuelve como
 // tareas en `deferred` para correrlas con `after()`. Lo que decide qué se dice
 // (el WhatsApp del enlace) sí es síncrono.
@@ -23,6 +28,8 @@
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+
+import { notifyAlert } from '@/lib/ops/alert'
 
 import { cancelAppointment, markAppointmentConfirmed } from '../agent/db'
 import type { BookingLinkArgs, NotifyPatientResult } from '../notify-patient'
@@ -67,10 +74,18 @@ export interface InboundEffectResult {
   failed: boolean
   /** Tareas para después de responder. */
   deferred: (() => Promise<void>)[]
+  /** Ese número ya recibió el enlace hace poco: no se mandó otro (solo `send_link`). */
+  repeated?: boolean
 }
 
 const OK: InboundEffectResult = { failed: false, deferred: [] }
 const FAILED: InboundEffectResult = { failed: true, deferred: [] }
+const REPEATED: InboundEffectResult = { failed: false, deferred: [], repeated: true }
+
+/** A un mismo número no se le manda otro enlace para agendar antes de esto. */
+export const BOOKING_LINK_REPEAT_MINUTES = 10
+/** Enlaces para agendar que una cuenta manda por llamadas entrantes en una hora, como máximo. */
+export const BOOKING_LINK_HOURLY_CAP = 30
 
 /** Desde dónde se puede reclamar un resultado: ninguno, o uno "de paso". */
 const CLAIM_FROM: readonly (CallOutcome | null)[] = [null, ...REPLACEABLE_OUTCOMES]
@@ -92,6 +107,61 @@ const callerLabel = (ctx: InboundEffectContext): Promise<string> =>
 // Agendar por WhatsApp
 // ------------------------------------------------------------
 
+/**
+ * Las llamadas entrantes de la cuenta a las que ya se les mandó el enlace de verdad
+ * (resultado `booking_link_sent` y sin nota de error: las que no se repitieron la
+ * llevan, y no cuentan). Solo las ANTERIORES a esta llamada: si dos llegan casi a la
+ * vez, la primera manda y la segunda se frena, nunca se frenan las dos.
+ */
+async function earlierLinkCalls(
+  ctx: InboundEffectContext,
+  options: { since: Date; fromNumber?: string; limit: number },
+): Promise<number> {
+  const { db, call } = ctx
+  let query = db
+    .from('booking_calls')
+    .select('id')
+    .eq('account_id', call.accountId)
+    .eq('direction', 'inbound')
+    .eq('outcome', 'booking_link_sent')
+    .is('error', null)
+    .gt('created_at', options.since.toISOString())
+    .lt('created_at', call.createdAt)
+  if (options.fromNumber) query = query.eq('from_number', options.fromNumber)
+  const { data, error } = await query.limit(options.limit)
+  if (error) throw new Error('no se pudo leer las llamadas anteriores')
+  return ((data ?? []) as unknown[]).length
+}
+
+type LinkLimit = 'ok' | 'repeated' | 'capped'
+
+/** ¿Se puede mandar el enlace? Un fallo de lectura LANZA (mejor no mandar que mandar sin tope). */
+async function checkLinkLimits(ctx: InboundEffectContext, fromNumber: string): Promise<LinkLimit> {
+  const { now } = ctx
+  const recently = new Date(now.getTime() - BOOKING_LINK_REPEAT_MINUTES * 60_000)
+  if ((await earlierLinkCalls(ctx, { since: recently, fromNumber, limit: 1 })) > 0) return 'repeated'
+
+  const lastHour = new Date(now.getTime() - 60 * 60_000)
+  const sent = await earlierLinkCalls(ctx, { since: lastHour, limit: BOOKING_LINK_HOURLY_CAP })
+  return sent >= BOOKING_LINK_HOURLY_CAP ? 'capped' : 'ok'
+}
+
+/** ¿Otra llamada de esta cuenta ya chocó con el tope en la última hora (y ya se avisó)? */
+async function capAlreadyReported(ctx: InboundEffectContext): Promise<boolean> {
+  const { db, call, now } = ctx
+  const { data, error } = await db
+    .from('booking_calls')
+    .select('id')
+    .eq('account_id', call.accountId)
+    .eq('direction', 'inbound')
+    .eq('error', CALL_NOTICES.bookingLinkNotSent(CALL_NOTICES.bookingLinkCapReason))
+    .gt('created_at', new Date(now.getTime() - 60 * 60_000).toISOString())
+    .lt('created_at', call.createdAt)
+    .limit(1)
+  if (error) throw new Error('no se pudo leer las llamadas anteriores')
+  return ((data ?? []) as unknown[]).length > 0
+}
+
 async function sendLink(ctx: InboundEffectContext): Promise<InboundEffectResult> {
   const { db, call, now, deps } = ctx
   if (!call.fromNumber) {
@@ -109,6 +179,32 @@ async function sendLink(ctx: InboundEffectContext): Promise<InboundEffectResult>
       // Es una nota para la recepción; la respuesta a quien llama no depende de ella.
     }
     return FAILED
+  }
+
+  // Antes de crear contactos o escribir a nadie: los topes contra el abuso del webhook.
+  let limit: LinkLimit
+  try {
+    limit = await checkLinkLimits(ctx, call.fromNumber)
+  } catch {
+    // Sin el mensaje de la excepción: podría traer el número.
+    console.error('[voice inbound] no se pudieron revisar los topes del enlace para agendar')
+    return fail('no se pudo revisar el límite de envíos.')
+  }
+  if (limit === 'repeated') {
+    try {
+      await updateCall(db, call.id, { error: truncateError(CALL_NOTICES.bookingLinkRepeated) })
+    } catch {
+      // Es una nota para la recepción; a quien llama se le dice igual que ya se le mandó.
+    }
+    return REPEATED
+  }
+  if (limit === 'capped') {
+    // Se avisa a operaciones solo la primera vez de la hora; si no se puede saber, se avisa.
+    const reported = await capAlreadyReported(ctx).catch(() => false)
+    const failed = await fail(CALL_NOTICES.bookingLinkCapReason)
+    if (reported) return failed
+    // Después de responder: la alerta puede tardar y la llamada no espera.
+    return { ...failed, deferred: [() => notifyAlert(CALL_NOTICES.bookingLinkCapAlert(call.accountId))] }
   }
 
   let target: { contactId: string; conversationId: string }

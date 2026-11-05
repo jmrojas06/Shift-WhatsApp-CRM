@@ -266,6 +266,47 @@ describe('cambio de estado (sin cambios)', () => {
     expect(res.body.code).toBe('stale')
     expect(h.afterCallbacks).toHaveLength(0)
   })
+
+  // Un error de la base puede traer la fila (details/hint): al log solo va el código y el mensaje.
+  const dbError = {
+    code: '57014',
+    message: 'timeout al leer',
+    details: 'Key (name)=(Marta Gómez) 573001112233',
+    hint: 'Marta Gómez',
+  }
+  const loggedText = (spy: ReturnType<typeof vi.spyOn>) => spy.mock.calls.flat().map(String).join(' ')
+
+  it('si no se puede leer la cita → 500, y el log lleva el código y el mensaje, no la fila', async () => {
+    const db = boot()
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    db._failNext('select', 'booking_appointments', dbError)
+    const res = await patch({ status: 'completed' })
+    const logged = loggedText(spy)
+    spy.mockRestore()
+
+    expect(res.status).toBe(500)
+    expect(logged).toContain('57014')
+    expect(logged).toContain('timeout al leer')
+    expect(logged).not.toContain('Marta')
+    expect(logged).not.toContain('573001112233')
+    expect(row(db).status).toBe('confirmed')
+  })
+
+  it('si no se puede guardar el cambio → 500, y el log lleva el código y el mensaje, no la fila', async () => {
+    const db = boot()
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    db._failNext('update', 'booking_appointments', dbError)
+    const res = await patch({ status: 'completed' })
+    const logged = loggedText(spy)
+    spy.mockRestore()
+
+    expect(res.status).toBe(500)
+    expect(logged).toContain('57014')
+    expect(logged).toContain('timeout al leer')
+    expect(logged).not.toContain('Marta')
+    expect(logged).not.toContain('573001112233')
+    expect(row(db).status).toBe('confirmed')
+  })
 })
 
 describe('mover', () => {

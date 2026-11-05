@@ -32,6 +32,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { notifyAlert } from '@/lib/ops/alert'
+import { describeError } from '@/lib/ops/describe-error'
 import type { FollowupKind, FollowupResponse, RatingValue } from '@/modules/clinica/followups'
 import type { ClinicTexts } from '@/modules/clinica/texts'
 
@@ -154,7 +155,7 @@ async function mayStoreAnswers(ctx: FollowupTapCtx): Promise<boolean> {
     const latest = ((data ?? []) as { granted: boolean }[])[0]
     return latest === undefined || latest.granted === true
   } catch (err) {
-    console.error('[clinica] no se pudo leer la autorización para guardar el seguimiento:', err)
+    console.error('[clinica] no se pudo leer la autorización para guardar el seguimiento:', describeError(err))
     return false
   }
 }
@@ -267,7 +268,7 @@ async function saveResponse(
       .eq('contact_id', ctx.contactId)
     if (error) throw new Error(error.message)
   } catch (err) {
-    console.error('[clinica] no se pudo guardar la respuesta del seguimiento:', err)
+    console.error('[clinica] no se pudo guardar la respuesta del seguimiento:', describeError(err))
   }
 }
 
@@ -349,13 +350,13 @@ async function warnTeamInHumanThread(ctx: FollowupTapCtx): Promise<void> {
             createdAtIso: ctx.nowIso,
           })
         } catch (err) {
-          console.error('[clinica] el aviso de molestias al equipo falló:', err)
+          console.error('[clinica] el aviso de molestias al equipo falló:', describeError(err))
           problem = 'avisar al equipo en la app'
         }
       }
     }
   } catch (err) {
-    console.error('[clinica] el aviso de molestias al equipo falló:', err)
+    console.error('[clinica] el aviso de molestias al equipo falló:', describeError(err))
     problem = 'avisar al equipo en la app'
   }
 
@@ -430,7 +431,7 @@ async function markResponded(ctx: FollowupTapCtx, followupId: string): Promise<v
       .eq('account_id', ctx.accountId)
     if (error) throw new Error(error.message)
   } catch (err) {
-    console.error('[clinica] no se pudo marcar el seguimiento como respondido:', err)
+    console.error('[clinica] no se pudo marcar el seguimiento como respondido:', describeError(err))
   }
 }
 
@@ -455,7 +456,7 @@ async function warnOwnerOfLowRating(ctx: FollowupTapCtx, value: 'regular' | 'mal
       createdAtIso: ctx.nowIso,
     })
   } catch (err) {
-    console.error('[clinica] el aviso de una calificación baja falló:', err)
+    console.error('[clinica] el aviso de una calificación baja falló:', describeError(err))
   }
 }
 
@@ -476,7 +477,7 @@ async function loadReviewUrl(
     ? await query.eq('id', locationId).limit(1)
     : await query.eq('is_active', true).order('created_at').limit(1)
   if (error) {
-    console.error('[clinica] no se pudo leer el enlace de Google de la sede:', error.message)
+    console.error('[clinica] no se pudo leer el enlace de Google de la sede:', describeError(error))
     return null
   }
   const url = (
