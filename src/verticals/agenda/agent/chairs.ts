@@ -13,6 +13,14 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+/**
+ * Tope de citas que se leen para comprobar los sillones. PostgREST corta en
+ * silencio en `max_rows` (1.000 por defecto en Supabase); con un tope mayor la
+ * lista saldría recortada sin que este código se enterara. Si el resultado llega
+ * al tope se lanza: una lista recortada nunca puede decir que hay silla libre.
+ */
+export const MAX_ACTIVE_APPOINTMENTS = 1000
+
 export interface ChairInterval {
   startsAt: Date
   endsAt: Date
@@ -52,8 +60,10 @@ export function chairsFreeAt(args: {
  * Con `excludeAppointmentId` esa cita no cuenta: al mover una cita, la propia
  * no debe ocupar la silla que va a usar. Sin él, nada cambia.
  *
- * Lanza si no puede leer: ofrecer una hora sin saber si hay silla es peor que
- * no ofrecer ninguna. Los mensajes de error no llevan datos del paciente.
+ * Lanza si no puede leer, o si el rango trae `MAX_ACTIVE_APPOINTMENTS` citas o
+ * más (la lista podría estar recortada): ofrecer una hora sin saber si hay silla
+ * es peor que no ofrecer ninguna. Los mensajes de error no llevan datos del
+ * paciente.
  */
 export async function loadChairContext(
   db: SupabaseClient,
@@ -84,11 +94,19 @@ export async function loadChairContext(
     .lt('starts_at', toIso)
     .gt('ends_at', fromIso)
   if (excludeAppointmentId) query = query.neq('id', excludeAppointmentId)
-  const { data: appointments, error: appointmentsError } = await query.order('starts_at')
+  const { data: appointments, error: appointmentsError } = await query
+    .order('starts_at')
+    .limit(MAX_ACTIVE_APPOINTMENTS)
   if (appointmentsError) {
     throw new Error(`No se pudieron leer las citas: ${appointmentsError.message}`)
   }
-  const active = ((appointments ?? []) as { starts_at: string; ends_at: string }[]).map((row) => ({
+  const rows = (appointments ?? []) as { starts_at: string; ends_at: string }[]
+  if (rows.length >= MAX_ACTIVE_APPOINTMENTS) {
+    throw new Error(
+      'Hay demasiadas citas en ese rango para comprobar los sillones. Prueba con menos días.',
+    )
+  }
+  const active = rows.map((row) => ({
     startsAt: new Date(row.starts_at),
     endsAt: new Date(row.ends_at),
   }))

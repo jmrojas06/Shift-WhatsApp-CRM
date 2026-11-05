@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { chairsFreeAt, loadChairContext } from './chairs'
+import { MAX_ACTIVE_APPOINTMENTS, chairsFreeAt, loadChairContext } from './chairs'
 import { asClient, makeFakeDb, type Row } from './testing/fake-db'
 
 const ACCOUNT = 'acc-1'
@@ -212,6 +212,86 @@ describe('loadChairContext', () => {
     await expect(loadChairContext(asClient(db), ACCOUNT, FROM, TO)).rejects.toThrow(
       'No se pudieron leer las citas',
     )
+  })
+
+  describe('tope de citas leídas', () => {
+    const many = (count: number): Row[] =>
+      Array.from({ length: count }, (_, i) =>
+        appointment(
+          `a-${i}`,
+          '2026-10-19T14:00:00.000Z',
+          '2026-10-19T14:30:00.000Z',
+          { staff_id: `st-${i}` },
+        ),
+      )
+
+    it('la consulta de citas lleva un límite explícito: PostgREST no corta en silencio', async () => {
+      const base = makeFakeDb({ clinic_locations: [location()], booking_appointments: [] })
+      const limits: number[] = []
+      const spied = {
+        ...base,
+        from(table: string) {
+          const query = base.from(table) as { limit: (n: number) => unknown }
+          if (table === 'booking_appointments') {
+            const original = query.limit
+            query.limit = (n: number) => {
+              limits.push(n)
+              return original(n)
+            }
+          }
+          return query
+        },
+      }
+
+      await loadChairContext(asClient(spied), ACCOUNT, FROM, TO)
+
+      expect(limits).toEqual([MAX_ACTIVE_APPOINTMENTS])
+    })
+
+    it('si el resultado llega al tope, lanza: una lista cortada nunca dice que hay silla libre', async () => {
+      const db = makeFakeDb({
+        clinic_locations: [location({ chair_count: 1 })],
+        booking_appointments: many(MAX_ACTIVE_APPOINTMENTS),
+      })
+
+      await expect(loadChairContext(asClient(db), ACCOUNT, FROM, TO)).rejects.toThrow(
+        'Hay demasiadas citas en ese rango para comprobar los sillones',
+      )
+    })
+
+    it('si hay más citas que el tope, también lanza (la consulta devuelve solo el tope)', async () => {
+      const db = makeFakeDb({
+        clinic_locations: [location({ chair_count: 1 })],
+        booking_appointments: many(MAX_ACTIVE_APPOINTMENTS + 25),
+      })
+
+      await expect(loadChairContext(asClient(db), ACCOUNT, FROM, TO)).rejects.toThrow(
+        'Hay demasiadas citas',
+      )
+    })
+
+    it('una cita menos que el tope se lee completa', async () => {
+      const db = makeFakeDb({
+        clinic_locations: [location({ chair_count: 1 })],
+        booking_appointments: many(MAX_ACTIVE_APPOINTMENTS - 1),
+      })
+
+      const context = await loadChairContext(asClient(db), ACCOUNT, FROM, TO)
+
+      expect(context.active).toHaveLength(MAX_ACTIVE_APPOINTMENTS - 1)
+    })
+
+    it('sin cupo puesto no se lee ninguna cita, así que el tope no estorba', async () => {
+      const db = makeFakeDb({
+        clinic_locations: [location({ chair_count: null })],
+        booking_appointments: many(MAX_ACTIVE_APPOINTMENTS + 25),
+      })
+
+      await expect(loadChairContext(asClient(db), ACCOUNT, FROM, TO)).resolves.toEqual({
+        chairCount: null,
+        active: [],
+      })
+    })
   })
 
   it('con excludeAppointmentId, esa cita no ocupa silla (al mover, la propia cita no cuenta)', async () => {
