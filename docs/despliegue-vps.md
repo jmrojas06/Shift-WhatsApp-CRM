@@ -246,7 +246,7 @@ Valores (los secretos, de Bitwarden):
 | --- | --- | --- |
 | `NEXT_PUBLIC_SUPABASE_URL` | la de producción | Se incrusta al construir |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | la de producción | Se incrusta al construir |
-| `NEXT_PUBLIC_SITE_URL` | `https://crm.aishiftdigital.com` | Sin barra final |
+| `NEXT_PUBLIC_SITE_URL` | `https://crm.aishiftdigital.com` | Sin barra final. También arma la URL de retorno de Google y las URL firmadas de la voz |
 | `NEXT_PUBLIC_APP_LOCALE` | `es` | Si falta, la app sale en inglés |
 | `SUPABASE_SERVICE_ROLE_KEY` | la de producción | Nunca sale del servidor |
 | `ENCRYPTION_KEY` | **la misma del `.env.local` de José** | Ver aviso abajo |
@@ -290,11 +290,24 @@ Cloudflare con SSL en **Full (strict)**.
 
 ## 6. Crons
 
-En Vercel solo corría el de recordatorios. En el VPS van tres
-(`deploy/vps/crontab.example`): recordatorios cada 10 minutos, y
-automatizaciones y flujos cada 5. El de flujos no es opcional: sin él, quien
-abandona un flujo a medias no vuelve a entrar a ninguno, y la plantilla de
-inmobiliarias es un flujo.
+En Vercel corren cuatro (`vercel.json`); en el VPS van **seis**
+(`deploy/vps/crontab.example`), porque aquí también hacen falta los de
+automatizaciones y flujos:
+
+| Ruta | Cada | Qué hace |
+| --- | --- | --- |
+| `/api/verticals/agenda/reminders/run` | 10 min | Recordatorios de citas (24 h y 2 h antes) |
+| `/api/automations/cron` | 5 min | Esperas de las automatizaciones |
+| `/api/flows/cron` | 5 min | Cierra flujos abandonados |
+| `/api/verticals/agenda/calendar-sync/run` | 5 min | Copia las citas a Google Calendar (solo cuentas que conectaron Google) |
+| `/api/verticals/agenda/calls/run` | 10 min | Llamadas de confirmación del robot de voz (sin Telnyx o con las llamadas apagadas no llama a nadie) |
+| `/api/verticals/clinica/followups/run` | 10 min | Después de la cita, solo clínicas: cuidados, «¿Cómo sigues?» y calificación (solo cuentas con el interruptor prendido, `docs/clinica-montaje.md` 16.5) y aviso del cierre del día |
+
+El de flujos no es opcional: sin él, quien abandona un flujo a medias no
+vuelve a entrar a ninguno, y la plantilla de inmobiliarias es un flujo. Los
+tres últimos son de las Fases 2 y 3 de la clínica
+(`docs/clinica-montaje.md` §20): sin las variables de Google o de Telnyx, o con
+las cuentas sin prender, solo responden que no hay nada que hacer.
 
 ```bash
 sudo install -m 755 -o root -g root deploy/vps/cron-ping.sh /usr/local/bin/shift-crm-cron
@@ -319,8 +332,9 @@ sudo install -m 644 -o root -g root deploy/vps/crontab.example /etc/cron.d/shift
 ```
 
 A los 10 minutos, `journalctl -t shift-crm-cron --since '15 min ago'` muestra
-líneas `ok` de las tres rutas. Si cambias el script, repite el primer
-`install`.
+líneas `ok` de las seis rutas. Si cambias el script, repite el primer
+`install`; si cambias `crontab.example` (como al sumar los tres crons nuevos),
+repite el segundo.
 
 ---
 

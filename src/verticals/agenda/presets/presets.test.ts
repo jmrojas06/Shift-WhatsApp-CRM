@@ -61,6 +61,19 @@ describe('puntos de partida', () => {
     }
   })
 
+  it('odontología esconde precios y trae una atención de urgencia sin preguntas extra', () => {
+    const preset = AGENDA_PRESETS.odontologia
+    expect(preset.toggles.showPrice).toBe(false)
+    expect(preset.toggles.showDuration).toBe(false)
+    expect(preset.questions).toEqual([])
+    expect(preset.seed.services.map((s) => s.name)).toContain('Urgencia')
+    expect(preset.seed.services.every((s) => s.price === 0)).toBe(true)
+    expect(preset.aiPrompt).toContain('Nunca des diagnósticos')
+    expect(preset.aiPrompt).toContain('medicamentos')
+    expect(preset.aiPrompt).toContain('"urgencia"')
+    expect(preset.aiPrompt).toContain('"cita"')
+  })
+
   it('el taller no deja elegir técnico y pide la placa', () => {
     const taller = AGENDA_PRESETS.taller
     expect(taller.toggles.chooseStaff).toBe(false)

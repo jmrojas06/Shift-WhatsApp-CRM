@@ -30,19 +30,37 @@ mensajes, «cita» y «barbero» siguen el vocabulario del negocio.
   dos corridas simultáneas del cron no mandan dos veces. Si el envío
   falla, la marca se revierte y la próxima corrida reintenta.
 - **Nunca se recuerdan** citas canceladas, completadas, no-show, ni
-  citas que ya empezaron.
+  citas que ya empezaron. Una **clínica** (módulo `clinica`) tampoco
+  recuerda a quien tiene la etiqueta `baja-envios` ni a quien revocó la
+  autorización de datos: la señal no se gasta y sale en la siguiente
+  corrida si cambia (`skipped` en la respuesta). Las demás cuentas no
+  cambian.
+- **Confirmar anota que el paciente va.** Tocar **Confirmar** (en el mensaje
+  libre o en la plantilla) deja la cita confirmada y además anota
+  `attendance_confirmed_at` ("el paciente dijo que va"), en cualquier
+  cuenta. No es lo mismo que `confirmed_at`, que el bot pone al reservar.
+  La lista **Para llamar** de `/agenda` y las llamadas de confirmación
+  usan esa marca para saber a quién no hay que insistirle.
+- **Mover una cita limpia las marcas.** Si la recepción mueve una cita desde
+  `/agenda/calendario`, se borran `reminder_sent_at`, `reminder_2h_sent_at`
+  y `attendance_confirmed_at`: los recordatorios vuelven a salir para la
+  nueva hora y el paciente tiene que confirmar otra vez.
+- **El recordatorio de 24 h arranca lo que sigue.** La lista **Para llamar**
+  y el robot de llamadas parten de las citas cuyo recordatorio de 24 h salió
+  hace más de `call_after_minutes` (180 por defecto) y que siguen sin
+  confirmar. La lista suma además las que el robot dejó sin resolver. Ver
+  `docs/clinica-montaje.md`, secciones 18 y 19.
 - Zona horaria del negocio: America/Bogota (fija para todas las cuentas).
 
-En el mensaje libre los botones llevan ids **estáticos** (`rem:confirm`,
-`rem:reschedule`, `rem:cancel`). La plantilla se envía sin payload en los
-botones, así que Meta devuelve el **texto del botón** y el bot lee las
-tres etiquetas exactas (`Confirmar`, `Reprogramar`, `Cancelar`). Como
-cualquier otra plantilla o difusión puede traer esos textos, la etiqueta
-solo vale si el toque responde a un recordatorio: el mensaje al que
-responde (`reply_to_message_id`) debe tener `template_name` igual a
-`recordatorio_cita`. En ninguno de los dos casos viaja el id de la cita:
-el bot la resuelve al tocarlos, y es la **próxima cita activa** del
-contacto.
+Los botones llevan ids `rem:confirm`, `rem:reschedule` y `rem:cancel`.
+Una plantilla enviada sin payload devuelve la **etiqueta** del botón
+(`Confirmar`), y el bot también la entiende, pero solo si el toque
+responde a una plantilla de recordatorio (`recordatorio_cita` o
+`recordatorio_cita_clinica`): la etiqueta de cualquier otra plantilla no se
+toca. Sin id de cita, el bot resuelve la **próxima cita activa** del
+contacto. Las clínicas envían además el id de la cita en el payload
+(`rem:<acción>:<cita>`), y con más de una cita activa pueden preguntar
+cuál: ver `docs/clinica-montaje.md`.
 
 ## Plantilla de Meta (`recordatorio_cita`)
 
@@ -91,19 +109,17 @@ Crear en WhatsApp Manager → *Plantillas de mensaje* → **Crear plantilla**:
 | `{{4}}` | Fecha («martes 20 de octubre de 2026») |
 | `{{5}}` | Hora («7:00 a. m.») |
 
-**Quick replies** (exactamente estos tres textos, con esas mayúsculas):
+**Quick replies** (exactamente estos tres):
 
-| Texto del botón | Qué hace el bot |
+| Texto del botón | Lo que llega al tocarlo |
 | --- | --- |
-| `Confirmar` | Confirma la cita |
-| `Reprogramar` | Abre el flujo para elegir otro día y hora |
-| `Cancelar` | Pide confirmar la cancelación |
+| `Confirmar` | la etiqueta `Confirmar` (el id `rem:confirm` viaja en el mensaje libre) |
+| `Reprogramar` | la etiqueta `Reprogramar` (`rem:reschedule` en el mensaje libre) |
+| `Cancelar` | la etiqueta `Cancelar` (`rem:cancel` en el mensaje libre) |
 
-Al crear la plantilla solo se define el **texto** del botón: no hay un
-payload que configurar. Meta devuelve ese texto al tocarlo y el bot lo
-compara exacto contra `REMINDER_LABELS` en
-`src/verticals/agenda/agent/state.ts`. Si una plantilla usa otro texto,
-el toque se ignora.
+Meta no pide un payload al crear la plantilla: se manda al enviarla.
+`recordatorio_cita` se envía sin él, por eso el toque llega con la
+etiqueta.
 
 El cuerpo de la plantilla dice «cita» para todos los negocios: Meta no
 admite palabras que cambien por cuenta, así que un negocio de clases
@@ -121,6 +137,16 @@ atienda por el chat.
 > `AGENDA_REMINDER_TEMPLATE` en
 > `src/verticals/agenda/agent/reminders.ts`. Si hace falta otro idioma
 > o nombre, se cambia en ambos sitios.
+>
+> Las **clínicas** usan otra plantilla, `recordatorio_cita_clinica`
+> (`CLINIC_REMINDER_TEMPLATE`): nombra al paciente y la sede, nunca el
+> procedimiento, y envía el id de la cita en el payload. Se crea según
+> `docs/clinica-montaje.md`.
+>
+> Los avisos de una cita **creada, movida o cancelada desde el panel** usan
+> otras plantillas: `cita_agendada` y `cita_cancelada` (y sus versiones
+> `_clinica`). Sirven para cualquier negocio con agenda y se crean según
+> `docs/clinica-montaje.md`, sección 15, con el cuerpo exacto de cada una.
 
 ## Activar la señal de 2 h
 
@@ -152,6 +178,10 @@ automatizaciones). Acepta el secreto de dos formas:
   existe la env `CRON_SECRET` en el proyecto.
 
 Sin secreto configurado responde 503; con secreto incorrecto, 401.
+
+Los otros crons de la agenda (copia a Google Calendar, llamadas de
+confirmación y seguimientos de las clínicas) usan el mismo secreto y se
+programan igual: ver `docs/clinica-montaje.md`, sección 20.
 
 > **URL vieja:** `/api/verticals/barberia/reminders/run` sigue
 > funcionando como alias de la nueva. Apunta los crons externos a
@@ -233,10 +263,6 @@ where id = '<uuid-de-la-cita>';
 - **¿Qué pasa si el cliente toca un botón viejo?** Si al tocarlo ya no
   tiene una cita activa, el bot responde que la cita ya no está activa y
   no crea nada.
-- **¿Y si otra plantilla o difusión tiene un botón «Confirmar»?** El bot
-  no toca la cita ni responde: el toque sigue a las automatizaciones como
-  cualquier otro. Si el contacto tiene un diálogo del bot a medias, ese
-  diálogo sigue dueño del mensaje.
 - **¿Y si toca «Reprogramar» o «Cancelar»?** El bot abre el mismo flujo
   de gestión que existe dentro del chat (elegir día/hora, o confirmar la
   cancelación). Al confirmar la cancelación, se aplica la etiqueta
@@ -250,7 +276,8 @@ where id = '<uuid-de-la-cita>';
   ayuda por el mismo chat. Cualquier otro mensaje en ese chat es del
   asesor: el bot no responde.
 - **¿La confirmación por botón etiqueta al cliente?** No: solo marca la
-  cita como confirmada y registra el evento (`via: recordatorio`). Las
+  cita como confirmada, anota `attendance_confirmed_at` y registra el
+  evento (`via: recordatorio`). Las
   etiquetas se reservan para cancelación/reprogramación/handoff.
 - **¿Por qué no me llegó la plantilla?** Revisa que la plantilla esté
   **aprobada** en Meta, que el nombre/idioma coincidan (`recordatorio_cita`

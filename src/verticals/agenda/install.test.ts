@@ -883,3 +883,16 @@ describe('installAgendaTemplate con punto de partida', () => {
     },
   )
 })
+
+describe('configuración de la clínica', () => {
+  it('odontología la deja lista; los demás negocios no la tocan', async () => {
+    const dental = fakeDb()
+    await installPreset(dental, 'odontologia')
+    expect(dental._tables.clinic_settings).toHaveLength(1)
+    expect(dental._tables.clinic_locations).toHaveLength(1)
+
+    const barberia = fakeDb()
+    await installPreset(barberia, 'barberia')
+    expect(barberia._tables.clinic_settings).toBeUndefined()
+  })
+})

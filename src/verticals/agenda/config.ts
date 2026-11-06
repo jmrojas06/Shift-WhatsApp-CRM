@@ -56,6 +56,8 @@ export const SERVICE_NAME_MAX = 80
 export const STAFF_NAME_MAX = 80
 export const DESCRIPTION_MAX = 300
 export const BIO_MAX = 300
+/** Largo máximo del id de un calendario de Google (CHECK de la migración 056). */
+export const GOOGLE_CALENDAR_ID_MAX = 300
 export const ADDRESS_MAX = 200
 export const DURATION_MIN_MINUTES = 1
 export const DURATION_MAX_MINUTES = 480
@@ -290,6 +292,8 @@ export interface StaffUpdateInput {
   name?: string
   bio?: string | null
   isActive?: boolean
+  /** Calendario de Google de esta persona; null = el general de la conexión. */
+  googleCalendarId?: string | null
 }
 
 function validateBio(raw: unknown): Valid<string | null> {
@@ -304,6 +308,22 @@ function validateBio(raw: unknown): Valid<string | null> {
       ok: false,
       message: `La descripción no puede pasar de ${BIO_MAX} caracteres.`,
     }
+  }
+  return { ok: true, value: text }
+}
+
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/
+
+/** Id de un calendario de Google: una línea de texto; vacío o null = sin calendario propio. */
+function validateGoogleCalendarId(raw: unknown): Valid<string | null> {
+  if (raw === null || raw === undefined) return { ok: true, value: null }
+  if (typeof raw !== 'string') {
+    return { ok: false, message: 'El calendario de Google no es válido.' }
+  }
+  const text = raw.trim()
+  if (!text) return { ok: true, value: null }
+  if (text.length > GOOGLE_CALENDAR_ID_MAX || CONTROL_CHARS.test(text)) {
+    return { ok: false, message: 'El calendario de Google no es válido.' }
   }
   return { ok: true, value: text }
 }
@@ -365,6 +385,12 @@ export function validateStaffUpdate(input: unknown): Valid<StaffUpdateInput> {
       return { ok: false, message: 'El estado debe ser sí o no.' }
     }
     out.isActive = record.is_active
+    any = true
+  }
+  if (has(record, 'google_calendar_id')) {
+    const calendarId = validateGoogleCalendarId(record.google_calendar_id)
+    if (!calendarId.ok) return calendarId
+    out.googleCalendarId = calendarId.value
     any = true
   }
 

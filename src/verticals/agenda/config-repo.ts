@@ -65,6 +65,7 @@ interface StaffRow {
   bio: string | null
   is_active: boolean
   position: number
+  google_calendar_id?: string | null
 }
 
 interface MappingRow {
@@ -113,6 +114,8 @@ export interface StaffRecord {
   bio: string | null
   isActive: boolean
   position: number
+  /** Calendario de Google de esta persona; null = el general de la conexión. */
+  googleCalendarId: string | null
 }
 
 export interface TimeOffRecord {
@@ -138,7 +141,7 @@ const SETTINGS_COLS =
 
 const SERVICE_COLS =
   'id, name, description, duration_minutes, price, is_active, position'
-const STAFF_COLS = 'id, name, bio, is_active, position'
+const STAFF_COLS = 'id, name, bio, is_active, position, google_calendar_id'
 
 function mapService(row: ServiceRow): ServiceRecord {
   return {
@@ -161,6 +164,7 @@ function mapStaff(row: StaffRow): StaffRecord {
     bio: row.bio,
     isActive: Boolean(row.is_active),
     position: Number(row.position),
+    googleCalendarId: row.google_calendar_id ?? null,
   }
 }
 
@@ -417,6 +421,7 @@ export async function updateStaff(
   if (patch.name !== undefined) update.name = patch.name
   if (patch.bio !== undefined) update.bio = patch.bio
   if (patch.isActive !== undefined) update.is_active = patch.isActive
+  if (patch.googleCalendarId !== undefined) update.google_calendar_id = patch.googleCalendarId
 
   const { data } = await db
     .from('booking_staff')

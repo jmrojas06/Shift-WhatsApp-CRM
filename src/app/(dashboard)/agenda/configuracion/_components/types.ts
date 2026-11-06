@@ -24,6 +24,8 @@ export interface StaffRow {
   bio: string | null
   is_active: boolean
   position: number
+  /** Calendario de Google de esta persona; null = el general de la conexión. */
+  google_calendar_id: string | null
 }
 
 export interface WorkingHoursRow {

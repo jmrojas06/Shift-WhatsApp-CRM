@@ -1,22 +1,35 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  FOLLOWUP_ACTIONS,
+  RATING_VALUES,
+  followupPayload,
+  ratingPayload,
+} from '@/modules/clinica/followups'
+
+import {
   actId,
   ansId,
   ansSkipId,
+  apptId,
   parseAnswerId,
   containsHandoffWord,
   containsIntentWord,
+  containsUrgencyFloor,
+  containsUrgencyWord,
+  detectsUrgency,
   isHandoffOnly,
-  isReminderLabel,
   isSkipAnswer,
   dayId,
   matchAnswerOption,
+  matchAppointmentOption,
   matchChoice,
   newBookingState,
   normalizeText,
   parseOptionId,
-  parseReminderId,
+  parseFollowupTap,
+  parseReminderTap,
+  patId,
   remId,
   slotId,
   staffId,
@@ -222,46 +235,68 @@ describe('ids del recordatorio', () => {
     expect(remId('reschedule')).toBe('rem:reschedule')
     expect(remId('cancel')).toBe('rem:cancel')
 
-    expect(parseReminderId('rem:confirm')).toBe('confirm')
-    expect(parseReminderId('rem:reschedule')).toBe('reschedule')
-    expect(parseReminderId('rem:cancel')).toBe('cancel')
+    expect(parseReminderTap('rem:confirm')).toEqual({ action: 'confirm', appointmentId: null })
+    expect(parseReminderTap('rem:reschedule')).toEqual({ action: 'reschedule', appointmentId: null })
+    expect(parseReminderTap('rem:cancel')).toEqual({ action: 'cancel', appointmentId: null })
   })
 
   it('no acepta ids de otras familias ni acciones desconocidas', () => {
-    expect(parseReminderId('act:confirm')).toBeNull()
-    expect(parseReminderId('svc:rem:x')).toBeNull()
-    expect(parseReminderId('rem:desconocido')).toBeNull()
-    expect(parseReminderId('rem:')).toBeNull()
-    expect(parseReminderId('rem:confirm:extra')).toBeNull()
-    expect(parseReminderId('')).toBeNull()
+    expect(parseReminderTap('act:confirm')).toBeNull()
+    expect(parseReminderTap('svc:rem:x')).toBeNull()
+    expect(parseReminderTap('rem:desconocido')).toBeNull()
+    expect(parseReminderTap('rem:')).toBeNull()
+    expect(parseReminderTap('')).toBeNull()
+    expect(parseReminderTap('constructor')).toBeNull()
+  })
+})
+
+describe('matchAppointmentOption', () => {
+  const citas: OfferedOption[] = [
+    { id: apptId('a1'), title: '20 oct Marta' },
+    { id: apptId('a2'), title: '21 oct Marta' },
+    { id: apptId('a3'), title: '21 oct Tomás' },
+  ]
+  const pick = (text: string, options = citas) => matchAppointmentOption({ text, options })
+
+  it('el toque manda por id y un id que no se ofreció no empareja', () => {
+    expect(matchAppointmentOption({ text: '', replyId: apptId('a2'), options: citas })).toBe(apptId('a2'))
+    expect(matchAppointmentOption({ text: '', replyId: apptId('zz'), options: citas })).toBeNull()
   })
 
-  it('lee la etiqueta del botón de la plantilla', () => {
-    expect(parseReminderId('Confirmar')).toBe('confirm')
-    expect(parseReminderId('Reprogramar')).toBe('reschedule')
-    expect(parseReminderId('Cancelar')).toBe('cancel')
+  it('un texto que coincide con una sola cita la elige', () => {
+    expect(pick('Tomás')).toBe(apptId('a3'))
+    expect(pick('tomas')).toBe(apptId('a3'))
+    expect(pick('20 oct')).toBe(apptId('a1'))
+    expect(pick('20 oct Marta')).toBe(apptId('a1'))
   })
 
-  it('solo acepta las etiquetas exactas', () => {
-    expect(parseReminderId('confirmar')).toBeNull()
-    expect(parseReminderId('CANCELAR')).toBeNull()
-    expect(parseReminderId(' Confirmar')).toBeNull()
-    expect(parseReminderId('Confirmar cita')).toBeNull()
+  it('un texto que coincide con varias es un fallo, no la primera', () => {
+    expect(pick('Marta')).toBeNull()
+    expect(pick('21 oct')).toBeNull()
+    expect(pick('oct')).toBeNull()
   })
 
-  it('no confunde propiedades heredadas con etiquetas', () => {
-    expect(parseReminderId('constructor')).toBeNull()
-    expect(parseReminderId('toString')).toBeNull()
-    expect(parseReminderId('__proto__')).toBeNull()
+  it('el número es la posición, también con varias coincidencias', () => {
+    expect(pick('2')).toBe(apptId('a2'))
+    expect(pick('3.')).toBe(apptId('a3'))
+    expect(pick('4')).toBeNull()
   })
 
-  it('distingue las etiquetas de la plantilla de los ids rem:*', () => {
-    expect(isReminderLabel('Confirmar')).toBe(true)
-    expect(isReminderLabel('Reprogramar')).toBe(true)
-    expect(isReminderLabel('Cancelar')).toBe(true)
-    expect(isReminderLabel('rem:confirm')).toBe(false)
-    expect(isReminderLabel('confirmar')).toBe(false)
-    expect(isReminderLabel('constructor')).toBe(false)
+  it('el título entero gana sobre otra cita que lo contiene', () => {
+    const options: OfferedOption[] = [
+      { id: apptId('a1'), title: 'Marta' },
+      { id: apptId('a2'), title: 'Marta Gil' },
+    ]
+    expect(pick('Marta', options)).toBe(apptId('a1'))
+  })
+
+  it('lo que no coincide con ninguna no elige nada', () => {
+    expect(pick('Pedro')).toBeNull()
+    expect(pick('')).toBeNull()
+  })
+
+  it('no toca los demás menús: matchChoice sigue eligiendo la primera coincidencia', () => {
+    expect(matchChoice({ text: 'Marta', options: citas })).toBe(apptId('a1'))
   })
 })
 
@@ -332,5 +367,503 @@ describe('isHandoffOnly', () => {
     for (const w of ['un asesor', 'es para una persona mayor', 'asesor por favor', '']) {
       expect(isHandoffOnly(w)).toBe(false)
     }
+  })
+})
+
+describe('toques del recordatorio', () => {
+  it('lleva el id de la cita cuando viaja en el botón', () => {
+    expect(remId('confirm', 'ap-1')).toBe('rem:confirm:ap-1')
+    expect(parseReminderTap('rem:confirm:ap-1')).toEqual({ action: 'confirm', appointmentId: 'ap-1' })
+  })
+
+  it('entiende la etiqueta que Meta devuelve cuando la plantilla no trae payload', () => {
+    expect(parseReminderTap('Confirmar')).toEqual({ action: 'confirm', appointmentId: null, viaLabel: true })
+    expect(parseReminderTap('Reprogramar')).toEqual({ action: 'reschedule', appointmentId: null, viaLabel: true })
+    expect(parseReminderTap('Cancelar')).toEqual({ action: 'cancel', appointmentId: null, viaLabel: true })
+  })
+
+  it('marca las etiquetas, que cualquier otra plantilla también puede traer, y los ids no', () => {
+    expect(parseReminderTap('Confirmar')?.viaLabel).toBe(true)
+    expect(parseReminderTap('rem:confirm')?.viaLabel).toBeUndefined()
+    expect(parseReminderTap('rem:cancel:ap-1')?.viaLabel).toBeUndefined()
+  })
+})
+
+describe('toques de los seguimientos después de la cita', () => {
+  const ID = '11111111-1111-4111-8111-111111111111'
+
+  it.each(FOLLOWUP_ACTIONS)('lee el payload de "%s" que arma el seguimiento', (action) => {
+    expect(parseFollowupTap(followupPayload(action, ID))).toEqual({
+      type: 'fu',
+      action,
+      followupId: ID,
+    })
+  })
+
+  it.each(RATING_VALUES)('lee el payload de la calificación "%s"', (value) => {
+    expect(parseFollowupTap(ratingPayload(value, ID))).toEqual({
+      type: 'rt',
+      value,
+      followupId: ID,
+    })
+  })
+
+  it('solo lee payloads: una etiqueta nunca es un toque de seguimiento', () => {
+    for (const label of ['Bien', 'Regular', 'Mal', 'Tengo molestias', 'Necesito ayuda', 'Ver recomendaciones']) {
+      expect(parseFollowupTap(label)).toBeNull()
+    }
+  })
+
+  it('no acepta otras familias, acciones desconocidas ni ids que faltan o sobran', () => {
+    expect(parseFollowupTap('rem:confirm:' + ID)).toBeNull()
+    expect(parseFollowupTap('act:book')).toBeNull()
+    expect(parseFollowupTap('book:again')).toBeNull()
+    expect(parseFollowupTap('fu:desconocida:' + ID)).toBeNull()
+    expect(parseFollowupTap('fu:bien')).toBeNull()
+    expect(parseFollowupTap('fu:bien:')).toBeNull()
+    expect(parseFollowupTap('fu:bien:' + ID + ':extra')).toBeNull()
+    // Cada familia lleva sus propias palabras: una calificación no es una respuesta de "¿cómo sigues?".
+    expect(parseFollowupTap('fu:regular:' + ID)).toBeNull()
+    expect(parseFollowupTap('fu:mal:' + ID)).toBeNull()
+    expect(parseFollowupTap('rt:molestias:' + ID)).toBeNull()
+    expect(parseFollowupTap('rt:cuidados:' + ID)).toBeNull()
+    expect(parseFollowupTap('')).toBeNull()
+    expect(parseFollowupTap('constructor')).toBeNull()
+    expect(parseFollowupTap('fu:constructor:' + ID)).toBeNull()
+    expect(parseFollowupTap('rt:toString:' + ID)).toBeNull()
+  })
+})
+
+describe('palabras de urgencia', () => {
+  it('compara sin tildes y por palabra completa', () => {
+    const words = ['dolor', 'se me cayo']
+    expect(containsUrgencyWord('Tengo mucho DOLOR', words)).toBe(true)
+    expect(containsUrgencyWord('se me cayó una corona', words)).toBe(true)
+    expect(containsUrgencyWord('Soy Dolores Pérez', words)).toBe(false)
+  })
+})
+
+describe('el piso fijo de urgencias', () => {
+  it.each([
+    'me ahogo',
+    'no respiro bien',
+    'tengo una hemorragia',
+    'se me está hinchando la cara',
+    'tengo el cachete inchado',
+    'tengo un flemón',
+    'tengo una infección en la encía',
+    'mi hijo se golpeó la boca',
+    'a mi hijo se le partió un diente',
+    'tengo una muela rota',
+    'tengo dos muelas rotas',
+    'se le quebraron los dientes',
+    'se le cayó un diente',
+    'tengo los dientes rotos',
+    'sangro por la encía',
+    'MI NIÑA SE GOLPEÓ',
+    'me están saliendo flemones',
+    'tiene una hinchazón enorme',
+    'se le está hinchando',
+    // Las palabras de siempre: la clínica puede dejar su lista vacía y se detectan igual.
+    'me duele una muela',
+    'me duelen las muelas',
+    'tengo dolor',
+    'Tengo MUCHO DOLOR!',
+    'es urgente',
+    'tengo una urgencia',
+    'esto es una emergencia',
+    'no puedo tragar',
+    'me cuesta tragar',
+    // Un diente que se cae, dicho en primera persona o en general.
+    'se me cayó un diente',
+    'se cayó un diente',
+    'se me cayeron los dientes',
+    'se cayeron dos muelas',
+  ])('abre los signos aunque la clínica no tenga lista: %j', (text) => {
+    expect(containsUrgencyFloor(text)).toBe(true)
+    expect(detectsUrgency(text, [])).toBe(true)
+  })
+
+  it.each([
+    'quiero agendar una limpieza',
+    'Soy Dolores Pérez',
+    'cuánto cuesta una consulta',
+    'hola buenas tardes',
+    'necesito una radiografía',
+    'tengo una cita el martes',
+    'la roturación del terreno',
+    'xhinchado',
+    // "dolor" es una palabra entera: Dolores es un nombre, no una urgencia.
+    'Dolores Ruiz pide una cita',
+    'Hola, soy Dolores',
+  ])('no confunde un mensaje normal: %j', (text) => {
+    expect(containsUrgencyFloor(text)).toBe(false)
+    expect(detectsUrgency(text, [])).toBe(false)
+  })
+
+  it('se suma a la lista de la clínica, no la reemplaza', () => {
+    expect(detectsUrgency('necesito ayuda ya', ['ayuda'])).toBe(true)
+    expect(detectsUrgency('se me ahoga', ['ayuda'])).toBe(true)
+    expect(detectsUrgency('necesito una limpieza', ['ayuda'])).toBe(false)
+  })
+})
+
+// ------------------------------------------------------------
+// Menús de decisión (autorización, marketing, signos de alarma).
+//
+// La autorización y el aviso de marketing solo se ACEPTAN TOCANDO el botón:
+// ningún texto acepta ("acepto", "sí", "autorizo"). Un texto se puede leer
+// mal (emojis, tildes, dudas, "autorizó") y una autorización tiene que ser
+// explícita. Un texto con negación es un rechazo; cualquier otro, null: el
+// bot vuelve a mostrar los botones y a la segunda pasa a una persona.
+// ------------------------------------------------------------
+
+const consentOptions: OfferedOption[] = [
+  { id: 'act:consent_yes', title: 'Sí, acepto' },
+  { id: 'act:consent_no', title: 'No acepto' },
+]
+const marketingOptions: OfferedOption[] = [
+  { id: 'act:mkt_yes', title: 'Sí, avísame' },
+  { id: 'act:mkt_no', title: 'No, gracias' },
+]
+const alarmOptions: OfferedOption[] = [
+  { id: 'act:alarm_yes', title: 'Sí, tengo alguno' },
+  { id: 'act:alarm_no', title: 'No, ninguno' },
+]
+
+describe('autorización escrita', () => {
+  const options = consentOptions
+  const choice = (text: string) => matchChoice({ text, options })
+
+  it('un no nunca se lee como aceptación', () => {
+    expect(choice('no acepto')).toBe('act:consent_no')
+    expect(choice('no, no acepto')).toBe('act:consent_no')
+    expect(choice('no autorizo')).toBe('act:consent_no')
+    expect(choice('no')).toBe('act:consent_no')
+  })
+
+  it('aceptar exige tocar el botón: ningún texto acepta', () => {
+    expect(choice('sí, acepto')).toBeNull()
+    expect(choice('acepto')).toBeNull()
+    expect(choice('autorizo')).toBeNull()
+    expect(choice('ok')).toBeNull()
+  })
+
+  it('el toque del botón sí acepta (y el del rechazo, rechaza)', () => {
+    expect(matchChoice({ text: '', replyId: 'act:consent_yes', options })).toBe('act:consent_yes')
+    expect(matchChoice({ text: '', replyId: 'act:consent_no', options })).toBe('act:consent_no')
+    expect(matchChoice({ text: 'sí, acepto', replyId: 'act:consent_yes', options })).toBe('act:consent_yes')
+  })
+
+  it.each([
+    'Sí acepto',
+    'sí, acepto.',
+    ' ACEPTO ',
+    'sí autorizo',
+    'Autorizo',
+    'autorizó',
+    '❌ acepto',
+    '✅ acepto',
+    'acepto 🤔',
+    'acepto :(',
+    'Acepto 👍',
+    'acepto 😡',
+    'sí',
+    'dale',
+    'claro que sí',
+    'ok',
+  ])('ningún texto acepta: %j', (text) => {
+    expect(choice(text)).toBeNull()
+  })
+
+  it.each([
+    'noo autorizo',
+    'nop autorizo',
+    'para nada autorizo',
+    'nunca autorizo',
+    'tampoco autorizo',
+    'ni autorizo ni nada',
+    'no sé si acepto',
+    'acepto, no hay problema',
+    '¿qué pasa si no acepto?',
+    '❌ no acepto',
+    'no 🤔',
+  ])('lo que trae una negación es rechazo: %j', (text) => {
+    expect(choice(text)).toBe('act:consent_no')
+  })
+
+  it.each([
+    '¿qué autorizo?',
+    '¿qué pasa si acepto?',
+    '¿si acepto me cobran?',
+    'mi mamá autorizó',
+    '¿acepto?',
+    'acepto?',
+    'si a',
+    'acep',
+    '1',
+    '01',
+    '3',
+    '',
+    '😀',
+  ])('una duda, una pregunta o un mensaje a medias tampoco acepta: %j', (text) => {
+    expect(choice(text)).toBeNull()
+  })
+
+  it('ningún número elige nada: ni acepta ni deja un rechazo en un registro de solo agregar', () => {
+    for (const text of ['1', '1.', '1)', '2', '2.', '2)', '02', '3']) {
+      expect(choice(text)).toBeNull()
+    }
+  })
+})
+
+describe('aviso de marketing escrito', () => {
+  const options = marketingOptions
+  const choice = (text: string) => matchChoice({ text, options })
+
+  it.each(['sí', 'Sí.', 'sí, avísame', 'avísame', 'avisame!', '✅ sí', 'avísame 🤔'])(
+    'ningún texto acepta: %j',
+    (text) => {
+      expect(choice(text)).toBeNull()
+    },
+  )
+
+  // La pregunta es opcional y el rechazo queda en un registro: solo un mensaje que ES
+  // un "no" lo registra. Una negación dentro de otra frase ("no voy a poder asistir a la
+  // cita", "¿no hay parqueadero?") no es la respuesta, y registrarla perdería el aviso.
+  it.each([
+    'no',
+    'No.',
+    'no, gracias',
+    'No gracias',
+    'mejor no',
+    'Mejor no.',
+    'no señor',
+    'no, señora',
+  ])('un no completo es el rechazo: %j', (text) => {
+    expect(choice(text)).toBe('act:mkt_no')
+  })
+
+  it.each([
+    'no voy a poder asistir a la cita',
+    'no puedo ir a la cita',
+    '¿no hay parqueadero?',
+    'no sé',
+    'no estoy segura',
+    'no, gracias por todo',
+    'no avísame',
+    'noo',
+    'nunca',
+    'tampoco',
+    '❌ no',
+    'no 🤔',
+    '¿no?',
+    'no, ¿dónde queda?',
+  ])('una negación dentro de otra frase no es la respuesta: %j', (text) => {
+    expect(choice(text)).toBeNull()
+  })
+
+  it.each(['¿avísame?', '¿qué es eso?', 'ok', 'dale', 'quizás', 'sí, gracias', '1', '2', '2.', '3', ''])(
+    'una duda, una pregunta o un mensaje a medias no acepta: %j',
+    (text) => {
+      expect(choice(text)).toBeNull()
+    },
+  )
+
+  it('el toque del botón sí acepta', () => {
+    expect(matchChoice({ text: '', replyId: 'act:mkt_yes', options })).toBe('act:mkt_yes')
+    expect(matchChoice({ text: '', replyId: 'act:mkt_no', options })).toBe('act:mkt_no')
+  })
+})
+
+describe('signos de alarma escritos', () => {
+  const options = alarmOptions
+  const choice = (text: string) => matchChoice({ text, options })
+
+  it.each([
+    'no',
+    'No.',
+    'no, ninguno',
+    'ninguno',
+    'ninguna',
+    'no tengo',
+    'no tengo ninguno',
+    'no tengo ninguna',
+    'no tengo nada',
+    'nada',
+    'Nada.',
+    'no ninguna',
+    'ninguno de esos',
+    'Ninguna de esas',
+    'ninguno de los anteriores',
+    'no ninguno de esos',
+    'no ninguna de esas',
+    'no tengo ninguno de esos',
+    'no tengo ninguna de esas',
+    'no no',
+    'no, no tengo',
+    'nop',
+    'nope',
+    'noo',
+    'no gracias',
+    'no señor',
+    'no señora',
+    'nada de eso',
+    'no, nada de eso',
+    'no doctora',
+    'No, doctor',
+    'no señorita',
+    'no senorita',
+    'creo que no',
+    'no tengo ninguno de esos signos',
+  ])('solo el mensaje completo de la lista dice que no hay signos: %j', (text) => {
+    expect(choice(text)).toBe('act:alarm_no')
+  })
+
+  it.each(['sí', 'Sí.', 'si tengo', 'sí, tengo alguno', 'tengo alguno'])(
+    'el mensaje completo de la lista dice que sí hay signos: %j',
+    (text) => {
+      expect(choice(text)).toBe('act:alarm_yes')
+    },
+  )
+
+  it.each([
+    'tengo dificultad para respirar',
+    'respiro mal',
+    'sí, tengo fiebre',
+    'fiebre alta',
+    'estoy sangrando mucho',
+    'se me hinchó la cara',
+    'tengo la encía inflamada',
+    'me cuesta tragar',
+    'me dieron un golpe fuerte en la cara',
+    'siento que me ahogo',
+    'me falta el aire',
+    'tengo calentura desde ayer',
+  ])('un signo dicho con palabras va a una persona: %j', (text) => {
+    expect(choice(text)).toBe('act:alarm_yes')
+  })
+
+  it.each([
+    'no puedo respirar',
+    'no puedo tragar',
+    'no para de sangrar',
+    'la fiebre no baja',
+    'no me llega el aire',
+    'no tengo fiebre pero no puedo respirar',
+  ])('una negación dentro de una frase CON un signo va a una persona: %j', (text) => {
+    expect(choice(text)).toBe('act:alarm_yes')
+  })
+
+  it.each([
+    'no, solo me duele',
+    'no sé',
+    'no se',
+    'no estoy seguro',
+    'no tengo ni idea',
+    'no siento nada',
+    '¿no?',
+    '¿no tengo ninguno?',
+    'no, pero me duele mucho',
+  ])('una negación dentro de una frase SIN un signo no descarta nada: %j', (text) => {
+    // Ni dice "ve a urgencias" a ciegas ni agenda: se avisa a la clínica con los signos.
+    expect(choice(text)).toBe('act:alarm_unsure')
+  })
+
+  it.each([
+    'tengo mucho dolor',
+    'hola',
+    '¿cuáles son los signos?',
+    'quiero agendar',
+    '¿ninguno?',
+    'ninguno?',
+    '3',
+    '',
+  ])('lo demás no decide (el dolor, por sí solo, no es un signo de alarma): %j', (text) => {
+    expect(choice(text)).toBeNull()
+  })
+
+  it.each(['ninguno 🤔', 'no 👍', 'nada :(', 'ninguno ❌', '✅ ninguno', 'no tengo ninguno 😀', 'nada de eso 🙏'])(
+    'con emojis o símbolos nunca descarta los signos: %j',
+    (text) => {
+      expect(choice(text)).not.toBe('act:alarm_no')
+    },
+  )
+
+  it('"ninguno 🤔" no decide: el bot vuelve a preguntar', () => {
+    expect(choice('ninguno 🤔')).toBeNull()
+  })
+
+  it('por número, "no hay signos" no vale y "sí hay" sí (lleva a una persona)', () => {
+    expect(choice('2')).toBeNull()
+    expect(choice('02')).toBeNull()
+    expect(choice('1')).toBe('act:alarm_yes')
+  })
+
+  it('con una pregunta nunca dice que no hay signos', () => {
+    expect(choice('¿ninguno?')).not.toBe('act:alarm_no')
+    expect(choice('¿no tengo ninguno?')).not.toBe('act:alarm_no')
+    expect(choice('ninguno?')).not.toBe('act:alarm_no')
+  })
+
+  it('un toque de botón siempre vale', () => {
+    expect(matchChoice({ text: '', replyId: 'act:alarm_no', options })).toBe('act:alarm_no')
+    expect(matchChoice({ text: '', replyId: 'act:alarm_yes', options })).toBe('act:alarm_yes')
+  })
+})
+
+describe('menús de decisión: nunca se acepta por accidente', () => {
+  // Frases que no son un toque: no pueden acertar la opción que acepta
+  // (consent_yes, mkt_yes) ni la que descarta los signos (alarm_no).
+  const stray = [
+    'tal vez',
+    'no sé qué hacer',
+    'lo que sea',
+    'sí, pero antes explícame',
+    'acepto, ¿y si no?',
+    'dame un momento',
+    '1 y 2',
+    '😀',
+    'sí',
+    'acepto',
+    'autorizo',
+    'autorizó',
+    '❌ acepto',
+    'acepto 🤔',
+    'acepto :(',
+    'ninguno 🤔',
+    '¿ninguno?',
+  ]
+  it.each([
+    ['autorización', consentOptions, 'act:consent_yes'],
+    ['marketing', marketingOptions, 'act:mkt_yes'],
+    ['signos de alarma', alarmOptions, 'act:alarm_no'],
+  ] as const)('%s', (_name, options, acceptingId) => {
+    for (const text of stray) {
+      expect(matchChoice({ text, options: [...options] }), text).not.toBe(acceptingId)
+    }
+  })
+
+  it('el resto de los menús sigue emparejando como antes', () => {
+    expect(matchChoice({ text: 'sí', options: [{ id: 'act:confirm', title: 'Confirmar' }] })).toBe(
+      'act:confirm',
+    )
+  })
+})
+
+describe('ids nuevos', () => {
+  it('paciente y cita se leen como opciones', () => {
+    expect(parseOptionId(patId('new'))).toEqual({ kind: 'pat', value: 'new' })
+    expect(parseOptionId(apptId('ap-1'))).toEqual({ kind: 'appt', value: 'ap-1' })
+  })
+})
+
+describe('palabras de intención en una clínica', () => {
+  it('"gracias por la atención" no abre el flujo de agendar', () => {
+    // La clínica llama "atención" a su servicio: sale de las palabras propias.
+    const clinicWords = ['cita', 'citas', 'atención', 'atenciones']
+    expect(containsIntentWord('muchas gracias por la atención', clinicWords)).toBe(false)
+    expect(containsIntentWord('gracias por las atenciones', clinicWords)).toBe(false)
+    expect(containsIntentWord('quiero una cita', clinicWords)).toBe(true)
   })
 })

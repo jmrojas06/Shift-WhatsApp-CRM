@@ -1,7 +1,7 @@
 // ============================================================
 // Cálculo de disponibilidad — puro y sin base de datos.
 //
-// El controlador junta las filas (horario semanal del barbero,
+// InternalBackend junta las filas (horario semanal del barbero,
 // time off, citas activas) y este módulo responde una sola
 // pregunta: ¿qué horas se pueden ofrecer para un servicio, un
 // día y unos barberos candidatos?

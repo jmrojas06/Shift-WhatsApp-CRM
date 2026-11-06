@@ -9,7 +9,7 @@ import type { LucideIcon } from 'lucide-react'
  * `registry.ts` es el único lugar que decide cuáles tiene una cuenta.
  * Esta unión crece una entrada por módulo publicado.
  */
-export type ModuleKey = 'agenda' | 'ventas'
+export type ModuleKey = 'agenda' | 'ventas' | 'clinica'
 
 /**
  * Valores de `accounts.vertical_key` que cuentan como la agenda. 'barberia'
@@ -80,11 +80,21 @@ export interface VerticalInboundContext {
    * claims the message on its behalf.
    */
   humanOwned?: boolean
+  /** Módulos activos de la cuenta (`getAccountModules`). */
+  modules?: readonly ModuleKey[]
 }
 
 export interface VerticalDispatchResult {
   /** True when the vertical took ownership of this inbound message. */
   consumed: boolean
+  /**
+   * The vertical closed the session this message arrived on and hands the
+   * message to the rest of the pipeline (the AI). Without it, the dispatcher
+   * keeps claiming every message that arrived while a session was open, and
+   * a question typed inside a menu would never reach the AI. Only meaningful
+   * with `consumed: false`.
+   */
+  released?: boolean
 }
 
 export type VerticalInboundHandler = (

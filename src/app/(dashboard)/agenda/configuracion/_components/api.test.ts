@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AGENDA_TEXTS as T } from '@/verticals/agenda/texts'
 
-import { agendaConfigApi } from './api'
+import { agendaConfigApi, googleCalendarApi } from './api'
+import { GOOGLE_TEXTS } from './google-calendar-texts'
 
 // ============================================================
 // Cliente HTTP de Configuración — contrato con las secciones.
@@ -183,6 +184,70 @@ describe('agendaConfigApi preguntas', () => {
     expect(await agendaConfigApi.createQuestion(body)).toEqual({
       ok: false,
       error: 'Ya tienes 5 preguntas.',
+    })
+  })
+})
+
+describe('googleCalendarApi', () => {
+  it('pide el estado con GET, sin cuerpo', async () => {
+    const spy = stubFetchSpy(200, { configured: true, connected: false })
+
+    const res = await googleCalendarApi.getSettings()
+
+    const [url, init] = lastCall(spy)
+    expect(url).toBe('/api/integrations/google-calendar/settings')
+    expect(init.method).toBe('GET')
+    expect(init.body).toBeUndefined()
+    expect(res.ok).toBe(true)
+  })
+
+  it('guarda el calendario general con PATCH y default_calendar_id', async () => {
+    const spy = stubFetchSpy(200, { default_calendar_id: 'sala-1' })
+
+    await googleCalendarApi.saveDefaultCalendar('sala-1')
+
+    const [url, init] = lastCall(spy)
+    expect(url).toBe('/api/integrations/google-calendar/settings')
+    expect(init.method).toBe('PATCH')
+    expect(JSON.parse(init.body as string)).toEqual({ default_calendar_id: 'sala-1' })
+  })
+
+  it('lista los calendarios con GET y desconecta con POST', async () => {
+    const spy = stubFetchSpy(200, { calendars: [], ok: true })
+
+    await googleCalendarApi.getCalendars()
+    expect(lastCall(spy)[0]).toBe('/api/integrations/google-calendar/calendars')
+    expect(lastCall(spy)[1].method).toBe('GET')
+
+    await googleCalendarApi.disconnect()
+    expect(lastCall(spy)[0]).toBe('/api/integrations/google-calendar/disconnect')
+    expect(lastCall(spy)[1].method).toBe('POST')
+  })
+
+  it('el botón de conectar es un enlace al connect (el navegador viaja a Google)', () => {
+    expect(googleCalendarApi.connectUrl).toBe('/api/integrations/google-calendar/connect')
+  })
+
+  it('un error del servidor llega con su mensaje', async () => {
+    stubFetchSpy(409, { error: 'Google dejó de dar permiso. Vuelve a conectar Google Calendar.' })
+
+    expect(await googleCalendarApi.getCalendars()).toEqual({
+      ok: false,
+      error: 'Google dejó de dar permiso. Vuelve a conectar Google Calendar.',
+    })
+  })
+
+  it('sin respuesta del servidor, cada llamada usa su propio mensaje (no "no se pudo guardar")', async () => {
+    stubFetch(500, undefined)
+
+    expect(await googleCalendarApi.getSettings()).toEqual({ ok: false, error: GOOGLE_TEXTS.loadFailed })
+    expect(await googleCalendarApi.getCalendars()).toEqual({
+      ok: false,
+      error: GOOGLE_TEXTS.calendarsFailed,
+    })
+    expect(await googleCalendarApi.disconnect()).toEqual({
+      ok: false,
+      error: GOOGLE_TEXTS.disconnectFailed,
     })
   })
 })

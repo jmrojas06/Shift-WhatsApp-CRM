@@ -305,6 +305,43 @@ describe('staff', () => {
     expect(findRow(db, 'booking_staff', 'st-other')?.is_active).toBe(true)
   })
 
+  it('guarda y quita el calendario de Google de un barbero, solo en su cuenta', async () => {
+    const db = makeFakeDb(baseSeed())
+
+    const withCalendar = await updateStaff(asClient(db), ACCOUNT, 'st-1', {
+      googleCalendarId: 'sala-1@group.calendar.google.com',
+    })
+    expect(withCalendar.googleCalendarId).toBe('sala-1@group.calendar.google.com')
+    expect(findRow(db, 'booking_staff', 'st-1')?.google_calendar_id).toBe(
+      'sala-1@group.calendar.google.com',
+    )
+
+    const cleared = await updateStaff(asClient(db), ACCOUNT, 'st-1', {
+      googleCalendarId: null,
+    })
+    expect(cleared.googleCalendarId).toBeNull()
+
+    await expect(
+      updateStaff(asClient(db), ACCOUNT, 'st-other', { googleCalendarId: 'x' }),
+    ).rejects.toMatchObject({ code: 'not_found' })
+    expect(findRow(db, 'booking_staff', 'st-other')?.google_calendar_id).toBeUndefined()
+  })
+
+  it('editar otro campo no borra el calendario de Google', async () => {
+    const db = makeFakeDb(baseSeed())
+    await updateStaff(asClient(db), ACCOUNT, 'st-1', { googleCalendarId: 'cal-1' })
+
+    const renamed = await updateStaff(asClient(db), ACCOUNT, 'st-1', { bio: 'Fades' })
+
+    expect(renamed.googleCalendarId).toBe('cal-1')
+  })
+
+  it('un barbero sin calendario lo devuelve como null', async () => {
+    const db = makeFakeDb(baseSeed())
+    const staff = await createStaff(asClient(db), ACCOUNT, USER, { name: 'Camilo', bio: null })
+    expect(staff.googleCalendarId).toBeNull()
+  })
+
   it('un barbero desactivado deja de ser elegible para el bot', async () => {
     const db = makeFakeDb(baseSeed())
     expect(

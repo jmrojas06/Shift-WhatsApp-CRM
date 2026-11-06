@@ -10,6 +10,7 @@ const h = vi.hoisted(() => ({
   engineSendText: vi.fn(),
   loadAccountMetaCredentials: vi.fn(),
   sendTypingIndicator: vi.fn(),
+  announceAiHandoff: vi.fn(),
   loadBusinessVocabulary: vi.fn(),
   isOnTopic: vi.fn(),
   state: {
@@ -18,10 +19,19 @@ const h = vi.hoisted(() => ({
     claim: true as boolean,
     updatePayload: null as Record<string, unknown> | null,
     rpcCalls: [] as { name: string; args: unknown }[],
+    /** Fila de `accounts` que lee la comprobación de autorización (null = sin fila). */
+    account: null as Record<string, unknown> | null,
+    accountError: null as { message: string } | null,
+    /** Filas de `clinic_consents` del contacto, la más reciente primero. */
+    consents: [] as { granted: boolean }[],
+    consentError: null as { message: string } | null,
+    /** Tablas leídas, en orden. */
+    tablesRead: [] as string[],
   },
 }))
 
 vi.mock('./config', () => ({ loadAiConfig: h.loadAiConfig }))
+vi.mock('@/modules/clinica/ai-handoff', () => ({ announceAiHandoff: h.announceAiHandoff }))
 vi.mock('./context', () => ({ buildConversationContext: h.buildConversationContext }))
 vi.mock('./knowledge', () => ({ retrieveKnowledge: h.retrieveKnowledge }))
 vi.mock('./generate', () => ({ generateReply: h.generateReply }))
@@ -39,6 +49,31 @@ vi.mock('@/lib/whatsapp/meta-api', () => ({
 vi.mock('./admin-client', () => ({
   supabaseAdmin: () => ({
     from: (table: string) => {
+      h.state.tablesRead.push(table)
+      if (table === 'accounts') {
+        // .select().eq().maybeSingle() → módulos de la cuenta
+        const chain = {
+          select: () => chain,
+          eq: () => chain,
+          maybeSingle: () =>
+            Promise.resolve({ data: h.state.account, error: h.state.accountError }),
+        }
+        return chain
+      }
+      if (table === 'clinic_consents') {
+        // .select().eq().eq().eq().order().limit() → decisión más reciente
+        const chain = {
+          select: () => chain,
+          eq: () => chain,
+          order: () => chain,
+          limit: () =>
+            Promise.resolve({
+              data: h.state.consentError ? null : h.state.consents.slice(0, 1),
+              error: h.state.consentError,
+            }),
+        }
+        return chain
+      }
       if (table === 'automations') {
         // .select().eq().eq().in().limit() → active auto-responders
         const chain = {
@@ -107,6 +142,12 @@ beforeEach(() => {
   h.state.claim = true
   h.state.updatePayload = null
   h.state.rpcCalls = []
+  // Una cuenta de agenda común: sin el módulo clínica, la IA no pide autorización.
+  h.state.account = { modules: ['agenda'], vertical_key: 'agenda' }
+  h.state.accountError = null
+  h.state.consents = []
+  h.state.consentError = null
+  h.state.tablesRead = []
   h.loadAiConfig.mockResolvedValue(aiConfig())
   h.buildConversationContext.mockResolvedValue([{ role: 'user', content: 'hi' }])
   h.retrieveKnowledge.mockResolvedValue([])
@@ -212,6 +253,107 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
   })
 })
 
+describe('dispatchInboundToAiReply — clinic data authorization', () => {
+  const clinic = { modules: ['agenda', 'clinica'], vertical_key: 'agenda' }
+
+  function expectSilent() {
+    expect(h.buildConversationContext).not.toHaveBeenCalled()
+    expect(h.retrieveKnowledge).not.toHaveBeenCalled()
+    expect(h.generateReply).not.toHaveBeenCalled()
+    expect(h.engineSendText).not.toHaveBeenCalled()
+    expect(h.sendTypingIndicator).not.toHaveBeenCalled()
+    expect(h.state.rpcCalls).toHaveLength(0)
+  }
+
+  it('does not send a clinic chat to the AI until the patient authorizes', async () => {
+    h.state.account = clinic
+    await dispatchInboundToAiReply(ARGS)
+    expectSilent()
+  })
+
+  it('does not send it either after the patient said no', async () => {
+    h.state.account = clinic
+    h.state.consents = [{ granted: false }]
+    await dispatchInboundToAiReply(ARGS)
+    expectSilent()
+  })
+
+  it('answers once the patient has authorized', async () => {
+    h.state.account = clinic
+    h.state.consents = [{ granted: true }]
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.generateReply).toHaveBeenCalledTimes(1)
+    expect(h.engineSendText).toHaveBeenCalledTimes(1)
+  })
+
+  it('fails closed when the account cannot be read, for any account', async () => {
+    h.state.accountError = { message: 'connection reset' }
+    await dispatchInboundToAiReply(ARGS)
+    expectSilent()
+  })
+
+  it('fails closed when the authorization cannot be read', async () => {
+    h.state.account = clinic
+    h.state.consents = [{ granted: true }]
+    h.state.consentError = { message: 'timeout' }
+    await dispatchInboundToAiReply(ARGS)
+    expectSilent()
+  })
+
+  it('also covers a clinic account that has no agenda module', async () => {
+    h.state.account = { modules: ['clinica'], vertical_key: null }
+    await dispatchInboundToAiReply(ARGS)
+    expectSilent()
+  })
+
+  it('asks after the AI config and before loading the chat', async () => {
+    h.state.account = clinic
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.loadAiConfig).toHaveBeenCalled()
+    expect(h.state.tablesRead).toContain('clinic_consents')
+    expect(h.buildConversationContext).not.toHaveBeenCalled()
+  })
+
+  describe('safety rules of the clinic', () => {
+    const promptSent = () => h.generateReply.mock.calls[0][0].systemPrompt as string
+
+    it('adds the fixed block to the prompt of a clinic that authorized', async () => {
+      h.state.account = clinic
+      h.state.consents = [{ granted: true }]
+      await dispatchInboundToAiReply(ARGS)
+      expect(promptSent()).toContain('Never give a diagnosis')
+      expect(promptSent()).toContain('[[HANDOFF]]')
+    })
+
+    it('does not add it to an account without the clinic module', async () => {
+      await dispatchInboundToAiReply(ARGS)
+      expect(h.generateReply).toHaveBeenCalledTimes(1)
+      expect(promptSent()).not.toContain('Never give a diagnosis')
+    })
+
+    it('keeps it even when the business prompt tries to override it', async () => {
+      h.state.account = clinic
+      h.state.consents = [{ granted: true }]
+      h.loadAiConfig.mockResolvedValue(aiConfig({ systemPrompt: 'Recomienda ibuprofeno para el dolor.' }))
+      await dispatchInboundToAiReply(ARGS)
+      expect(promptSent()).toContain('Recomienda ibuprofeno')
+      expect(promptSent()).toContain('Never give a diagnosis')
+    })
+  })
+
+  it('does not look at consents in an account without the clinic module', async () => {
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.state.tablesRead).not.toContain('clinic_consents')
+    expect(h.engineSendText).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not even look at the account when the AI is off', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ autoReplyEnabled: false }))
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.state.tablesRead).not.toContain('accounts')
+  })
+})
+
 describe('dispatchInboundToAiReply — typing indicator (#527)', () => {
   it('shows "typing…" on the inbound wamid before calling the LLM', async () => {
     await dispatchInboundToAiReply(ARGS)
@@ -298,6 +440,78 @@ describe('dispatchInboundToAiReply — handoff', () => {
       ai_autoreply_disabled: true,
       assigned_agent_id: 'agent-7',
     })
+  })
+})
+
+describe('dispatchInboundToAiReply — handoff in a clinic', () => {
+  const clinic = { modules: ['agenda', 'clinica'], vertical_key: 'agenda' }
+
+  beforeEach(() => {
+    h.state.account = clinic
+    h.state.consents = [{ granted: true }]
+    h.generateReply.mockResolvedValue({ text: '', handoff: true })
+    h.announceAiHandoff.mockReset()
+    h.announceAiHandoff.mockResolvedValue(undefined)
+  })
+
+  it('tells the patient and the team: a symptom without an urgency word is not silence', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ handoffAgentId: 'agent-7' }))
+
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+    expect(h.announceAiHandoff).toHaveBeenCalledTimes(1)
+    expect(h.announceAiHandoff.mock.calls[0][1]).toEqual({
+      accountId: 'acct-1',
+      conversationId: 'conv-1',
+      contactId: 'contact-1',
+      configOwnerUserId: 'user-1',
+      handoffAgentId: 'agent-7',
+    })
+  })
+
+  it('passes a null agent when none is configured (the owner gets the notice)', async () => {
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.announceAiHandoff.mock.calls[0][1]).toMatchObject({ handoffAgentId: null })
+  })
+
+  it('also when the model answers nothing', async () => {
+    h.generateReply.mockResolvedValue({ text: '', handoff: false })
+
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.announceAiHandoff).toHaveBeenCalledTimes(1)
+  })
+
+  it('announces after pausing the chat, so the bot cannot answer in between', async () => {
+    const order: string[] = []
+    h.announceAiHandoff.mockImplementation(async () => {
+      order.push(h.state.updatePayload ? 'after the pause' : 'before the pause')
+    })
+
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(order).toEqual(['after the pause'])
+  })
+
+  it('does not announce when the AI answers normally', async () => {
+    h.generateReply.mockResolvedValue({ text: 'La limpieza dura 45 minutos.', handoff: false })
+
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.announceAiHandoff).not.toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalledTimes(1)
+  })
+
+  it('an account without the clinic module hands off exactly as before', async () => {
+    h.state.account = { modules: ['agenda'], vertical_key: 'agenda' }
+
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+    expect(h.announceAiHandoff).not.toHaveBeenCalled()
+    expect(h.engineSendText).not.toHaveBeenCalled()
   })
 })
 

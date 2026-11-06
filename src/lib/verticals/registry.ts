@@ -5,6 +5,7 @@ import {
   type VerticalNavItem,
 } from './types'
 import { agendaManifest } from '@/verticals/agenda/manifest'
+import { clinicaManifest } from '@/modules/clinica/manifest'
 import { ventasManifest } from '@/modules/ventas/manifest'
 
 /**
@@ -18,10 +19,11 @@ import { ventasManifest } from '@/modules/ventas/manifest'
 const MANIFESTS: Readonly<Record<ModuleKey, VerticalManifest>> = {
   agenda: agendaManifest,
   ventas: ventasManifest,
+  clinica: clinicaManifest,
 }
 
 /** Orden estable de los módulos (menú y listados). */
-const MODULE_ORDER: readonly ModuleKey[] = ['agenda', 'ventas']
+const MODULE_ORDER: readonly ModuleKey[] = ['agenda', 'ventas', 'clinica']
 
 /** Clave canónica para un `vertical_key` (alias incluidos) o null. */
 export function normalizeVerticalKey(

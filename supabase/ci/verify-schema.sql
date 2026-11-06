@@ -288,10 +288,12 @@ BEGIN
   -- 050 (D2): configuration writes are owner/admin only. Every write
   -- policy on the six config tables must exist AND gate on 'admin' —
   -- a policy left at 'agent' (or dropped and not recreated) re-opens
-  -- direct PostgREST edits for agents.
+  -- direct PostgREST edits for agents. 055 adds clinic_settings and
+  -- clinic_locations to the same rule.
   FOR v_table IN SELECT unnest(ARRAY[
     'booking_services', 'booking_staff', 'booking_staff_services',
-    'booking_working_hours', 'booking_time_off', 'booking_settings'
+    'booking_working_hours', 'booking_time_off', 'booking_settings',
+    'clinic_settings', 'clinic_locations'
   ]) LOOP
     FOR v_cmd IN SELECT unnest(ARRAY['INSERT', 'UPDATE', 'DELETE']) LOOP
       IF NOT EXISTS (
@@ -867,6 +869,693 @@ BEGIN
   THEN
     RAISE EXCEPTION
       'create_order does not check account ownership / take the numbering lock — migration 054 did not apply';
+  END IF;
+
+  -- 055 instala el módulo clínica.
+  IF to_regclass('public.clinic_settings') IS NULL
+     OR to_regclass('public.clinic_locations') IS NULL
+     OR to_regclass('public.clinic_patients') IS NULL
+     OR to_regclass('public.clinic_consents') IS NULL THEN
+    RAISE EXCEPTION 'clinic_* tables are missing — migration 055 did not apply';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'conversations'
+      AND column_name = 'bot_lock_until'
+  ) THEN
+    RAISE EXCEPTION 'conversations.bot_lock_until is missing — migration 055 did not apply';
+  END IF;
+
+  IF (
+    SELECT COUNT(*) FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'booking_appointments'
+      AND column_name IN ('patient_id', 'location_id')
+  ) <> 2 THEN
+    RAISE EXCEPTION 'booking_appointments.patient_id / location_id are missing — migration 055 did not apply';
+  END IF;
+
+  -- Consent rows outlive the contact: contact_id is the only nullable one,
+  -- and the holder (contact_ref) and the accepted text (text_snapshot)
+  -- travel with the row.
+  IF (
+    SELECT COUNT(*) FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'clinic_consents'
+      AND (
+        (column_name = 'contact_id' AND is_nullable = 'YES')
+        OR (column_name IN ('contact_ref', 'text_snapshot') AND is_nullable = 'NO')
+      )
+  ) <> 3 THEN
+    RAISE EXCEPTION
+      'clinic_consents.contact_id must be nullable and contact_ref / text_snapshot NOT NULL — migration 055 did not apply';
+  END IF;
+
+  -- All four tables: RLS on, and exactly ONE policy that applies to SELECT
+  -- (a second permissive one, or a FOR ALL, would be OR-ed in and widen it)
+  -- which is the plain "any member" check. pg_policies shows the call as
+  -- `is_account_member(account_id)`, without the default role.
+  FOR v_table IN SELECT unnest(ARRAY[
+    'clinic_settings', 'clinic_locations', 'clinic_patients', 'clinic_consents'
+  ]) LOOP
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_class
+      WHERE oid = to_regclass('public.' || v_table)
+        AND relrowsecurity
+    ) THEN
+      RAISE EXCEPTION '% RLS is not enabled — migration 055 did not apply', v_table;
+    END IF;
+
+    IF (
+      SELECT COUNT(*) FROM pg_policies
+      WHERE schemaname = 'public'
+        AND tablename = v_table
+        AND cmd IN ('SELECT', 'ALL')
+    ) <> 1
+    OR NOT EXISTS (
+      SELECT 1 FROM pg_policies
+      WHERE schemaname = 'public'
+        AND tablename = v_table
+        AND cmd = 'SELECT'
+        AND qual ~ '^\(?is_account_member\(account_id[^)]*\)\)?$'
+        AND qual NOT LIKE '%''admin''%'
+        AND qual NOT LIKE '%''agent''%'
+    ) THEN
+      RAISE EXCEPTION
+        '% must have exactly one SELECT policy, open to every member — migration 055 did not apply',
+        v_table;
+    END IF;
+  END LOOP;
+
+  -- clinic_settings / clinic_locations: owner/admin write — checked by the
+  -- 050 loop above. The settings write policies must also pin the urgency
+  -- service to the same account (the FK alone does not).
+  IF (
+    SELECT COUNT(*) FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'clinic_settings'
+      AND cmd IN ('INSERT', 'UPDATE')
+      AND with_check LIKE '%booking_services%'
+  ) <> 2 THEN
+    RAISE EXCEPTION
+      'clinic_settings write policies do not pin urgency_service_id to the account — migration 055 did not apply';
+  END IF;
+
+  -- Patients: agents write, the contact must belong to the same account,
+  -- and nobody deletes (a patient with appointments is a business record).
+  IF (
+    SELECT COUNT(*) FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'clinic_patients'
+      AND cmd IN ('INSERT', 'UPDATE')
+      AND with_check LIKE '%''agent''%'
+      AND with_check LIKE '%contacts%'
+  ) <> 2 THEN
+    RAISE EXCEPTION
+      'clinic_patients write policies are missing or do not pin the contact to the account — migration 055 did not apply';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'clinic_patients'
+      AND cmd IN ('DELETE', 'ALL')
+  ) THEN
+    RAISE EXCEPTION 'clinic_patients must have no DELETE policy — migration 055 did not apply';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'clinic_consents'
+      AND cmd <> 'SELECT'
+  ) THEN
+    RAISE EXCEPTION 'clinic_consents must be read-only for clients — migration 055 did not apply';
+  END IF;
+
+  -- A contact with a patient cannot be deleted (NO ACTION: confdeltype 'a');
+  -- a contact with consents can, and the consents keep living (SET NULL: 'n').
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.clinic_patients'::regclass
+      AND contype = 'f'
+      AND confrelid = 'public.contacts'::regclass
+      AND confdeltype = 'a'
+  ) THEN
+    RAISE EXCEPTION
+      'clinic_patients.contact_id must reference contacts with NO ACTION — migration 055 did not apply';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.clinic_consents'::regclass
+      AND contype = 'f'
+      AND confrelid = 'public.contacts'::regclass
+      AND confdeltype = 'n'
+  ) THEN
+    RAISE EXCEPTION
+      'clinic_consents.contact_id must reference contacts ON DELETE SET NULL — migration 055 did not apply';
+  END IF;
+
+  -- The appointment's patient and location are tied to its own account by
+  -- composite FKs that null only their own column (ON DELETE SET NULL (col),
+  -- Postgres 15+: confdelsetcols).
+  IF (
+    SELECT COUNT(*) FROM pg_constraint
+    WHERE conrelid = 'public.booking_appointments'::regclass
+      AND contype = 'f'
+      AND conname IN ('booking_appointments_patient_fk', 'booking_appointments_location_fk')
+      AND array_length(conkey, 1) = 2
+      AND confdeltype = 'n'
+      AND confdelsetcols IS NOT NULL
+  ) <> 2 THEN
+    RAISE EXCEPTION
+      'booking_appointments patient/location must use composite (account_id, id) FKs — migration 055 did not apply';
+  END IF;
+
+  -- clinic_consents is append-only: a BEFORE UPDATE OR DELETE row trigger
+  -- (tgtype bits: row 1, before 2, insert 4, delete 8, update 16) running a
+  -- hardened SECURITY DEFINER function, and no TRUNCATE for the API roles.
+  -- The function body must still reject (RAISE EXCEPTION) and still tell FK
+  -- actions apart (pg_trigger_depth): a later migration that empties it
+  -- would otherwise leave a trigger that exists and does nothing.
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_trigger t
+    JOIN pg_proc p ON p.oid = t.tgfoid
+    WHERE t.tgrelid = 'public.clinic_consents'::regclass
+      AND t.tgname = 'clinic_consents_append_only'
+      AND NOT t.tgisinternal
+      AND t.tgenabled IN ('O', 'A')
+      AND (t.tgtype & 27) = 27
+      AND (t.tgtype & 4) = 0
+      AND p.prosecdef
+      AND p.proconfig IS NOT NULL
+      AND 'search_path=public' = ANY(p.proconfig)
+      AND p.prosrc LIKE '%RAISE EXCEPTION%'
+      AND p.prosrc LIKE '%pg_trigger_depth%'
+  ) THEN
+    RAISE EXCEPTION
+      'clinic_consents_append_only trigger is missing, disabled, emptied or not hardened — migration 055 did not apply';
+  END IF;
+
+  IF has_function_privilege('anon', 'public.clinic_consents_append_only()', 'EXECUTE')
+     OR has_function_privilege('authenticated', 'public.clinic_consents_append_only()', 'EXECUTE')
+     OR NOT has_function_privilege('service_role', 'public.clinic_consents_append_only()', 'EXECUTE')
+  THEN
+    RAISE EXCEPTION
+      'clinic_consents_append_only is executable by anon/authenticated or not by service_role — migration 055 did not apply';
+  END IF;
+
+  IF has_table_privilege('anon', 'public.clinic_consents', 'TRUNCATE')
+     OR has_table_privilege('authenticated', 'public.clinic_consents', 'TRUNCATE')
+     OR has_table_privilege('service_role', 'public.clinic_consents', 'TRUNCATE')
+  THEN
+    RAISE EXCEPTION
+      'clinic_consents can still be truncated by an API role — migration 055 did not apply';
+  END IF;
+
+  -- 056 instala las fases 2 y 3 de la clínica: recepción, Google Calendar,
+  -- llamadas por pasos y después de la cita.
+  IF to_regclass('public.agenda_calendar_connections') IS NULL
+     OR to_regclass('public.booking_call_settings') IS NULL
+     OR to_regclass('public.booking_calls') IS NULL
+     OR to_regclass('public.clinic_followups') IS NULL
+     OR to_regclass('public.clinic_ratings') IS NULL
+     OR to_regclass('public.clinic_day_closes') IS NULL THEN
+    RAISE EXCEPTION
+      'agenda_calendar_connections / booking_call_settings / booking_calls / clinic_followups / clinic_ratings / clinic_day_closes are missing — migration 056 did not apply';
+  END IF;
+
+  IF (
+    SELECT COUNT(*) FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'booking_appointments'
+      AND column_name IN (
+        'attendance_confirmed_at', 'google_calendar_id', 'google_dirty',
+        'google_synced_at', 'google_sync_error'
+      )
+  ) <> 5 THEN
+    RAISE EXCEPTION
+      'booking_appointments.attendance_confirmed_at / google_* are missing — migration 056 did not apply';
+  END IF;
+
+  -- google_dirty arranca en true: una cita nueva siempre queda pendiente de copiar.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'booking_appointments'
+      AND column_name = 'google_dirty'
+      AND is_nullable = 'NO'
+      AND column_default = 'true'
+  ) THEN
+    RAISE EXCEPTION
+      'booking_appointments.google_dirty must be NOT NULL DEFAULT true — migration 056 did not apply';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'booking_staff'
+      AND column_name = 'google_calendar_id'
+  ) THEN
+    RAISE EXCEPTION 'booking_staff.google_calendar_id is missing — migration 056 did not apply';
+  END IF;
+
+  -- Los ids de calendario de Google (el del profesional y el general de la
+  -- conexión) caben en 300 caracteres, el mismo tope que valida el código.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.booking_staff'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) LIKE '%char_length(google_calendar_id) <= 300%'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.agenda_calendar_connections'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) LIKE '%char_length(default_calendar_id) <= 300%'
+  ) THEN
+    RAISE EXCEPTION
+      'booking_staff.google_calendar_id / agenda_calendar_connections.default_calendar_id have no length limit — migration 056 did not apply';
+  END IF;
+
+  -- Las FK compuestas (account_id, appointment_id) de las tablas nuevas
+  -- necesitan este UNIQUE sobre las citas.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.booking_appointments'::regclass
+      AND contype = 'u'
+      AND conname = 'booking_appointments_account_id_id_key'
+  ) THEN
+    RAISE EXCEPTION
+      'booking_appointments must have UNIQUE (account_id, id) — migration 056 did not apply';
+  END IF;
+
+  -- Las citas del panel llevan created_via = 'dashboard'; el CHECK de 047 no lo
+  -- aceptaba, ni el de booking_events.actor (que copia created_via).
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.booking_appointments'::regclass
+      AND conname = 'booking_appointments_created_via_check'
+      AND pg_get_constraintdef(oid) LIKE '%''dashboard''%'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.booking_events'::regclass
+      AND conname = 'booking_events_actor_check'
+      AND pg_get_constraintdef(oid) LIKE '%''dashboard''%'
+  ) THEN
+    RAISE EXCEPTION
+      'created_via / booking_events.actor must accept ''dashboard'' — migration 056 did not apply';
+  END IF;
+
+  -- Las seis tablas nuevas: RLS prendida.
+  FOR v_table IN SELECT unnest(ARRAY[
+    'agenda_calendar_connections', 'booking_call_settings', 'booking_calls',
+    'clinic_followups', 'clinic_ratings', 'clinic_day_closes'
+  ]) LOOP
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_class
+      WHERE oid = to_regclass('public.' || v_table)
+        AND relrowsecurity
+    ) THEN
+      RAISE EXCEPTION '% RLS is not enabled — migration 056 did not apply', v_table;
+    END IF;
+  END LOOP;
+
+  -- El token de Google solo lo lee el servidor: la tabla no tiene ninguna
+  -- política y anon/authenticated no tienen ningún permiso sobre ella (con la
+  -- RLS prendida y sin política ya no ven filas; el REVOKE es la segunda cerradura).
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'agenda_calendar_connections'
+  ) THEN
+    RAISE EXCEPTION
+      'agenda_calendar_connections must have no policies — migration 056 did not apply';
+  END IF;
+
+  FOR v_cmd IN SELECT unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE']) LOOP
+    IF has_table_privilege('anon', 'public.agenda_calendar_connections', v_cmd)
+       OR has_table_privilege('authenticated', 'public.agenda_calendar_connections', v_cmd)
+    THEN
+      RAISE EXCEPTION
+        'anon/authenticated still have % on agenda_calendar_connections — migration 056 did not apply',
+        v_cmd;
+    END IF;
+  END LOOP;
+
+  -- Las otras cinco: exactamente UNA política que aplica a SELECT (una segunda
+  -- permisiva, o una FOR ALL, se sumaría con OR) y es la de "cualquier miembro".
+  FOR v_table IN SELECT unnest(ARRAY[
+    'booking_call_settings', 'booking_calls', 'clinic_followups',
+    'clinic_ratings', 'clinic_day_closes'
+  ]) LOOP
+    IF (
+      SELECT COUNT(*) FROM pg_policies
+      WHERE schemaname = 'public'
+        AND tablename = v_table
+        AND cmd IN ('SELECT', 'ALL')
+    ) <> 1
+    OR NOT EXISTS (
+      SELECT 1 FROM pg_policies
+      WHERE schemaname = 'public'
+        AND tablename = v_table
+        AND cmd = 'SELECT'
+        AND qual ~ '^\(?is_account_member\(account_id[^)]*\)\)?$'
+        AND qual NOT LIKE '%''admin''%'
+        AND qual NOT LIKE '%''agent''%'
+    ) THEN
+      RAISE EXCEPTION
+        '% must have exactly one SELECT policy, open to every member — migration 056 did not apply',
+        v_table;
+    END IF;
+  END LOOP;
+
+  -- Seguimientos, calificaciones y cierres: desde el navegador solo se lee.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename IN ('clinic_followups', 'clinic_ratings', 'clinic_day_closes')
+      AND cmd <> 'SELECT'
+  ) THEN
+    RAISE EXCEPTION
+      'clinic_followups / clinic_ratings / clinic_day_closes must be read-only for clients — migration 056 did not apply';
+  END IF;
+
+  -- Configuración de llamadas: owner/admin escriben (INSERT y UPDATE) y nadie
+  -- borra. Ninguna política de escritura puede mencionar 'agent'.
+  FOR v_cmd IN SELECT unnest(ARRAY['INSERT', 'UPDATE']) LOOP
+    IF (
+      SELECT COUNT(*) FROM pg_policies
+      WHERE schemaname = 'public'
+        AND tablename = 'booking_call_settings'
+        AND cmd = v_cmd
+        AND coalesce(qual, '') || coalesce(with_check, '') LIKE '%''admin''%'
+        AND coalesce(qual, '') || coalesce(with_check, '') NOT LIKE '%''agent''%'
+    ) <> 1 THEN
+      RAISE EXCEPTION
+        'booking_call_settings % policy is missing or not admin-only — migration 056 did not apply',
+        v_cmd;
+    END IF;
+  END LOOP;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'booking_call_settings'
+      AND cmd IN ('DELETE', 'ALL')
+  ) THEN
+    RAISE EXCEPTION
+      'booking_call_settings must have no DELETE policy — migration 056 did not apply';
+  END IF;
+
+  -- Llamadas: el navegador solo anota llamadas A MANO (manual, saliente, a su
+  -- nombre y con un contacto de la misma cuenta); ni UPDATE ni DELETE.
+  IF (
+    SELECT COUNT(*) FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'booking_calls'
+      AND cmd = 'INSERT'
+      AND with_check LIKE '%''agent''%'
+      AND with_check LIKE '%''manual''%'
+      AND with_check LIKE '%''outbound''%'
+      AND with_check LIKE '%created_by = auth.uid()%'
+      AND with_check LIKE '%contacts%'
+  ) <> 1
+  OR EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'booking_calls'
+      AND cmd IN ('UPDATE', 'DELETE', 'ALL')
+  ) THEN
+    RAISE EXCEPTION
+      'booking_calls write policies are not "manual outbound calls by the agent themselves, no UPDATE/DELETE" — migration 056 did not apply';
+  END IF;
+
+  -- Un número entrante, una sola cuenta; y un intento del robot por cita.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND tablename = 'booking_call_settings'
+      AND indexdef LIKE 'CREATE UNIQUE INDEX%(inbound_number)%'
+      AND indexdef LIKE '%inbound_number IS NOT NULL%'
+  ) THEN
+    RAISE EXCEPTION
+      'booking_call_settings.inbound_number must be unique when not null — migration 056 did not apply';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND tablename = 'booking_calls'
+      AND indexdef LIKE 'CREATE UNIQUE INDEX%(appointment_id, attempt)%'
+      AND indexdef LIKE '%direction%outbound%'
+      AND indexdef LIKE '%channel%robot%'
+      AND indexdef LIKE '%attempt IS NOT NULL%'
+  ) THEN
+    RAISE EXCEPTION
+      'booking_calls must be unique per (appointment_id, attempt) for outbound robot calls — migration 056 did not apply';
+  END IF;
+
+  -- Un CallSid de Telnyx, una sola fila; y una anotación a mano por (cita, intento).
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND tablename = 'booking_calls'
+      AND indexdef LIKE 'CREATE UNIQUE INDEX%(provider_call_sid)%'
+      AND indexdef LIKE '%provider_call_sid IS NOT NULL%'
+  ) THEN
+    RAISE EXCEPTION
+      'booking_calls.provider_call_sid must be unique when not null — migration 056 did not apply';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND tablename = 'booking_calls'
+      AND indexdef LIKE 'CREATE UNIQUE INDEX%(appointment_id, attempt)%'
+      AND indexdef LIKE '%channel%manual%'
+      AND indexdef LIKE '%appointment_id IS NOT NULL%'
+      AND indexdef LIKE '%attempt IS NOT NULL%'
+  ) THEN
+    RAISE EXCEPTION
+      'booking_calls must be unique per (appointment_id, attempt) for manual calls — migration 056 did not apply';
+  END IF;
+
+  -- Un seguimiento por (cita, tipo) y una calificación por seguimiento.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND tablename = 'clinic_followups'
+      AND indexdef LIKE 'CREATE UNIQUE INDEX%(appointment_id, kind)%'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND tablename = 'clinic_ratings'
+      AND indexdef LIKE 'CREATE UNIQUE INDEX%(followup_id)%'
+  ) THEN
+    RAISE EXCEPTION
+      'clinic_followups (appointment_id, kind) and clinic_ratings (followup_id) must be unique — migration 056 did not apply';
+  END IF;
+
+  -- Llamadas y seguimientos se van con la cita (CASCADE: confdeltype 'c');
+  -- las calificaciones sobreviven y solo anulan su columna (SET NULL (col):
+  -- confdeltype 'n' con confdelsetcols). Las tres usan FK compuestas
+  -- (account_id, id) hacia booking_appointments.
+  IF (
+    SELECT COUNT(*) FROM pg_constraint
+    WHERE contype = 'f'
+      AND confrelid = 'public.booking_appointments'::regclass
+      AND array_length(conkey, 1) = 2
+      AND (
+        (conrelid = 'public.booking_calls'::regclass AND confdeltype = 'c')
+        OR (conrelid = 'public.clinic_followups'::regclass AND confdeltype = 'c')
+        OR (conrelid = 'public.clinic_ratings'::regclass AND confdeltype = 'n' AND confdelsetcols IS NOT NULL)
+      )
+  ) <> 3 THEN
+    RAISE EXCEPTION
+      'booking_calls / clinic_followups / clinic_ratings must use composite (account_id, appointment_id) FKs to booking_appointments — migration 056 did not apply';
+  END IF;
+
+  -- google_dirty: BEFORE INSERT OR UPDATE por fila (tgtype: fila 1, antes 2,
+  -- insert 4, update 16; sin delete 8), que solo mira lo que Google muestra y
+  -- NO las columnas google_* (si no, la sincronización se dispararía a sí misma).
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_trigger t
+    JOIN pg_proc p ON p.oid = t.tgfoid
+    WHERE t.tgrelid = 'public.booking_appointments'::regclass
+      AND t.tgname = 'mark_booking_google_dirty'
+      AND NOT t.tgisinternal
+      AND t.tgenabled IN ('O', 'A')
+      AND (t.tgtype & 23) = 23
+      AND (t.tgtype & 8) = 0
+      AND p.proconfig IS NOT NULL
+      AND 'search_path=public' = ANY(p.proconfig)
+      AND p.prosrc LIKE '%google_dirty%'
+      AND p.prosrc LIKE '%NEW.starts_at IS DISTINCT FROM OLD.starts_at%'
+      AND p.prosrc LIKE '%NEW.status IS DISTINCT FROM OLD.status%'
+      AND p.prosrc LIKE '%NEW.notes IS DISTINCT FROM OLD.notes%'
+      AND p.prosrc NOT LIKE '%OLD.google_%'
+  ) THEN
+    RAISE EXCEPTION
+      'mark_booking_google_dirty trigger is missing, disabled or watches the google_* columns — migration 056 did not apply';
+  END IF;
+
+  IF has_function_privilege('anon', 'public.mark_booking_google_dirty()', 'EXECUTE')
+     OR has_function_privilege('authenticated', 'public.mark_booking_google_dirty()', 'EXECUTE')
+     OR NOT has_function_privilege('service_role', 'public.mark_booking_google_dirty()', 'EXECUTE')
+  THEN
+    RAISE EXCEPTION
+      'mark_booking_google_dirty is executable by anon/authenticated or not by service_role — migration 056 did not apply';
+  END IF;
+
+  -- updated_at de las citas es el candado optimista del panel y de la
+  -- sincronización: el set_updated_at de 047 (update_updated_at_column) lo subía
+  -- en todo UPDATE, también en los que solo tocan google_*. Ahora lo atiende
+  -- una función propia (BEFORE UPDATE por fila: tgtype fila 1, antes 2, update
+  -- 16; sin insert 4 ni delete 8) que deja updated_at igual cuando solo
+  -- cambian las cuatro columnas google_* y pone now() en cualquier otro caso.
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_trigger t
+    JOIN pg_proc p ON p.oid = t.tgfoid
+    WHERE t.tgrelid = 'public.booking_appointments'::regclass
+      AND t.tgname = 'set_updated_at'
+      AND NOT t.tgisinternal
+      AND t.tgenabled IN ('O', 'A')
+      AND (t.tgtype & 31) = 19
+      AND p.proname = 'booking_appointments_set_updated_at'
+      AND p.proconfig IS NOT NULL
+      AND 'search_path=public' = ANY(p.proconfig)
+      AND p.prosrc LIKE '%NEW.google_dirty IS DISTINCT FROM OLD.google_dirty%'
+      AND p.prosrc LIKE '%NEW.google_synced_at IS DISTINCT FROM OLD.google_synced_at%'
+      AND p.prosrc LIKE '%NEW.google_calendar_id IS DISTINCT FROM OLD.google_calendar_id%'
+      AND p.prosrc LIKE '%NEW.google_sync_error IS DISTINCT FROM OLD.google_sync_error%'
+      AND p.prosrc LIKE '%NEW.updated_at := OLD.updated_at%'
+      AND p.prosrc LIKE '%NEW.updated_at := now()%'
+  ) THEN
+    RAISE EXCEPTION
+      'booking_appointments.set_updated_at is not booking_appointments_set_updated_at() (google_* only updates must keep updated_at) — migration 056 did not apply';
+  END IF;
+
+  IF has_function_privilege('anon', 'public.booking_appointments_set_updated_at()', 'EXECUTE')
+     OR has_function_privilege('authenticated', 'public.booking_appointments_set_updated_at()', 'EXECUTE')
+     OR NOT has_function_privilege('service_role', 'public.booking_appointments_set_updated_at()', 'EXECUTE')
+  THEN
+    RAISE EXCEPTION
+      'booking_appointments_set_updated_at is executable by anon/authenticated or not by service_role — migration 056 did not apply';
+  END IF;
+
+  -- La función compartida sigue siendo la de 001 (las demás tablas la usan).
+  IF pg_get_functiondef('public.update_updated_at_column()'::regprocedure)
+       NOT LIKE '%NEW.updated_at = NOW()%'
+  THEN
+    RAISE EXCEPTION
+      'update_updated_at_column() was changed — migration 056 must leave the shared helper untouched';
+  END IF;
+
+  -- TRUNCATE salta la RLS y los triggers de fila, y Supabase se lo da por
+  -- defecto a anon y authenticated: 056 se lo quita en las seis tablas nuevas.
+  FOR v_table IN SELECT unnest(ARRAY[
+    'agenda_calendar_connections', 'booking_call_settings', 'booking_calls',
+    'clinic_followups', 'clinic_ratings', 'clinic_day_closes'
+  ]) LOOP
+    IF has_table_privilege('anon', 'public.' || v_table, 'TRUNCATE')
+       OR has_table_privilege('authenticated', 'public.' || v_table, 'TRUNCATE')
+    THEN
+      RAISE EXCEPTION
+        'anon/authenticated can still TRUNCATE % — migration 056 did not apply', v_table;
+    END IF;
+  END LOOP;
+
+  -- Teléfonos E.164 de booking_call_settings: de 8 a 15 dígitos, como la app
+  -- (phone-utils: [1-9]\d{7,14}). Los tres CHECK (inbound_number, caller_id,
+  -- advisor_phones) con {7,14}; ninguno con el piso viejo de 7 dígitos.
+  IF (
+    SELECT COUNT(*) FROM pg_constraint
+    WHERE conrelid = 'public.booking_call_settings'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) LIKE '%{7,14}%'
+  ) <> 3
+  OR EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.booking_call_settings'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) LIKE '%{6,14}%'
+  ) THEN
+    RAISE EXCEPTION
+      'booking_call_settings phone CHECKs must require 8 to 15 digits ({7,14}) — migration 056 did not apply';
+  END IF;
+
+  -- provider, monthly_limit, inbound_number y caller_id son de Shift, y
+  -- last_test_call_at del servidor: un admin no los cambia por PostgREST. BEFORE INSERT OR UPDATE por fila (tgtype fila
+  -- 1, antes 2, insert 4, update 16; sin delete 8), SIN SECURITY DEFINER (es lo
+  -- que hace que current_user sea el rol de la API) y habilitado ('O' o 'A').
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_trigger t
+    JOIN pg_proc p ON p.oid = t.tgfoid
+    WHERE t.tgrelid = 'public.booking_call_settings'::regclass
+      AND t.tgname = 'enforce_call_settings_protected_columns'
+      AND NOT t.tgisinternal
+      AND t.tgenabled IN ('O', 'A')
+      AND (t.tgtype & 31) = 23
+      AND NOT p.prosecdef
+      AND p.proconfig IS NOT NULL
+      AND 'search_path=public' = ANY(p.proconfig)
+      AND p.prosrc LIKE '%current_user IN (''authenticated'', ''anon'')%'
+      AND p.prosrc LIKE '%ERRCODE = ''insufficient_privilege''%'
+      AND p.prosrc LIKE '%NEW.provider IS DISTINCT FROM OLD.provider%'
+      AND p.prosrc LIKE '%NEW.monthly_limit IS DISTINCT FROM OLD.monthly_limit%'
+      AND p.prosrc LIKE '%NEW.inbound_number IS DISTINCT FROM OLD.inbound_number%'
+      AND p.prosrc LIKE '%NEW.caller_id IS DISTINCT FROM OLD.caller_id%'
+      AND p.prosrc LIKE '%NEW.inbound_number IS NOT NULL%'
+      AND p.prosrc LIKE '%NEW.caller_id IS NOT NULL%'
+      AND p.prosrc LIKE '%NEW.last_test_call_at IS DISTINCT FROM OLD.last_test_call_at%'
+      AND p.prosrc LIKE '%NEW.last_test_call_at IS NOT NULL%'
+  ) THEN
+    RAISE EXCEPTION
+      'enforce_call_settings_protected_columns trigger is missing, disabled, SECURITY DEFINER or incomplete — migration 056 did not apply';
+  END IF;
+
+  IF has_function_privilege('anon', 'public.enforce_call_settings_protected_columns()', 'EXECUTE')
+     OR has_function_privilege('authenticated', 'public.enforce_call_settings_protected_columns()', 'EXECUTE')
+     OR NOT has_function_privilege('service_role', 'public.enforce_call_settings_protected_columns()', 'EXECUTE')
+  THEN
+    RAISE EXCEPTION
+      'enforce_call_settings_protected_columns is executable by anon/authenticated or not by service_role — migration 056 did not apply';
+  END IF;
+
+  -- La reserva del minuto de espera de la llamada de prueba: timestamptz, anulable.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'booking_call_settings'
+      AND column_name = 'last_test_call_at'
+      AND data_type = 'timestamp with time zone'
+      AND is_nullable = 'YES'
+  ) THEN
+    RAISE EXCEPTION
+      'booking_call_settings.last_test_call_at must be a nullable timestamptz — migration 056 did not apply';
+  END IF;
+
+  -- El interruptor de los seguimientos: boolean NOT NULL DEFAULT false. Sin el
+  -- default en false, desplegar el código empezaría a escribirles a los
+  -- pacientes de todas las clínicas antes de que Meta apruebe las plantillas.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'clinic_settings'
+      AND column_name = 'followups_enabled'
+      AND data_type = 'boolean'
+      AND is_nullable = 'NO'
+      AND column_default = 'false'
+  ) THEN
+    RAISE EXCEPTION
+      'clinic_settings.followups_enabled must be boolean NOT NULL DEFAULT false — migration 056 did not apply';
   END IF;
 
   RAISE NOTICE 'schema verification passed';

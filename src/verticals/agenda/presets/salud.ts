@@ -20,7 +20,7 @@ const labels: AgendaLabels = {
 export const SALUD_PRESET: AgendaPreset = {
   key: 'salud',
   name: 'Consultorio / salud',
-  description: 'Odontología, fisioterapia, psicología, estética, medicina general.',
+  description: 'Fisioterapia, psicología, estética, medicina general.',
   labels,
   toggles: { ...DEFAULT_TOGGLES },
   welcome: '¡Hola! 👋 Soy el asistente del consultorio. ¿Qué consulta quieres agendar?',

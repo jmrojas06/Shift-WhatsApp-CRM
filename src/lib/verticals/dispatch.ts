@@ -57,9 +57,8 @@ export async function dispatchInboundToVertical(
     // Accounts without a module that has a bot (none, or only Ventas)
     // early-exit on this single lookup.
     const { account } = await readAccountModules(db, args.accountId)
-    const botModules = getAccountModules(account).filter(
-      (key) => VERTICAL_HANDLERS[key],
-    )
+    const modules = getAccountModules(account)
+    const botModules = modules.filter((key) => VERTICAL_HANDLERS[key])
     if (botModules.length === 0) return notConsumed
 
     // Same stand-down gates as the AI auto-reply: a human owns this
@@ -108,8 +107,12 @@ export async function dispatchInboundToVertical(
         db,
         session,
         humanOwned,
+        modules,
       })
       if (result.consumed) return { consumed: true }
+      // The handler closed the session on purpose and gives the message
+      // away: the open-session claim below must not take it back.
+      if (result.released) return { consumed: false }
     }
 
     // A human owns the thread: only what the handler explicitly took

@@ -40,7 +40,15 @@ import { Textarea } from '@/components/ui/textarea'
 import type { AgendaLabels } from '@/verticals/agenda/labels'
 import { AGENDA_TEXTS as T } from '@/verticals/agenda/texts'
 
-import { agendaConfigApi } from './api'
+import { agendaConfigApi, googleCalendarApi } from './api'
+import { CalendarSelect } from './google-calendar-section'
+import {
+  GENERAL_CALENDAR_VALUE,
+  GOOGLE_TEXTS as G,
+  calendarSelectValue,
+  calendarValueToSave,
+  type CalendarOption,
+} from './google-calendar-texts'
 import type { ServiceRow, StaffRow, StaffServicesMap } from './types'
 
 interface Draft {
@@ -49,7 +57,19 @@ interface Draft {
   name: string
   bio: string
   serviceIds: string[]
+  /** Calendario de Google propio; null = el general de la conexión. */
+  googleCalendarId: string | null
 }
+
+/**
+ * Qué se sabe de Google al abrir la ficha:
+ *   - off: no hay conexión (con `hint`, se invita a conectarla en Negocio).
+ *   - ready: se pueden elegir calendarios.
+ */
+type GoogleOptions =
+  | { phase: 'idle' | 'loading' | 'failed' }
+  | { phase: 'off'; hint: boolean }
+  | { phase: 'ready'; calendars: CalendarOption[] }
 
 interface StaffSectionProps {
   staff: StaffRow[]
@@ -73,10 +93,26 @@ export function StaffSection({
   const [saving, setSaving] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [listError, setListError] = useState<string | null>(null)
+  const [google, setGoogle] = useState<GoogleOptions>({ phase: 'idle' })
+
+  /** Al abrir la ficha: ¿hay Google conectado? Si sí, trae los calendarios. */
+  async function loadGoogleOptions() {
+    setGoogle({ phase: 'loading' })
+    const settings = await googleCalendarApi.getSettings()
+    if (!settings.ok || !settings.data.connected) {
+      setGoogle({ phase: 'off', hint: settings.ok && settings.data.configured })
+      return
+    }
+    const list = await googleCalendarApi.getCalendars()
+    setGoogle(
+      list.ok ? { phase: 'ready', calendars: list.data.calendars } : { phase: 'failed' },
+    )
+  }
 
   function openCreate() {
     setFormError(null)
-    setDraft({ id: null, name: '', bio: '', serviceIds: [] })
+    setDraft({ id: null, name: '', bio: '', serviceIds: [], googleCalendarId: null })
+    void loadGoogleOptions()
   }
 
   function openEdit(row: StaffRow) {
@@ -86,7 +122,9 @@ export function StaffSection({
       name: row.name,
       bio: row.bio ?? '',
       serviceIds: [...(staffServices[row.id] ?? [])],
+      googleCalendarId: row.google_calendar_id ?? null,
     })
+    void loadGoogleOptions()
   }
 
   function toggleService(serviceId: string) {
@@ -112,8 +150,16 @@ export function StaffSection({
     setFormError(null)
     const bio = draft.bio.trim() || null
 
+    // Solo se manda el calendario si se pudo elegir: sin la lista de Google
+    // no se borra el que ya tenía.
+    const calendarChoice = google.phase === 'ready'
+
     if (draft.id) {
-      const res = await agendaConfigApi.updateStaff(draft.id, { name, bio })
+      const res = await agendaConfigApi.updateStaff(draft.id, {
+        name,
+        bio,
+        ...(calendarChoice ? { google_calendar_id: draft.googleCalendarId } : {}),
+      })
       if (!res.ok) {
         setFormError(res.error)
         setSaving(false)
@@ -143,6 +189,19 @@ export function StaffSection({
         if (!links.ok) {
           setFormError(links.error)
           setSaving(false)
+          return
+        }
+      }
+      if (calendarChoice && draft.googleCalendarId !== null) {
+        const calendar = await agendaConfigApi.updateStaff(res.data.staff.id, {
+          google_calendar_id: draft.googleCalendarId,
+        })
+        if (!calendar.ok) {
+          // Ya quedó creada: se cierra la ficha y se avisa en la lista.
+          setSaving(false)
+          setDraft(null)
+          setListError(G.staffCalendarNotSaved)
+          await reload()
           return
         }
       }
@@ -386,6 +445,52 @@ export function StaffSection({
                   </div>
                 )}
               </div>
+
+              {(google.phase === 'loading' ||
+                google.phase === 'failed' ||
+                google.phase === 'ready' ||
+                (google.phase === 'off' && google.hint)) && (
+                <div className="space-y-2">
+                  <Label htmlFor="staff-google-calendar">{G.staffTitle}</Label>
+                  {google.phase === 'loading' && (
+                    <div role="status">
+                      <span className="sr-only">{G.staffLoading}</span>
+                      <div className="h-10 w-full animate-pulse rounded-lg bg-muted pointer-coarse:h-11 motion-reduce:animate-none" />
+                    </div>
+                  )}
+                  {google.phase === 'ready' && (
+                    <>
+                      <CalendarSelect
+                        id="staff-google-calendar"
+                        calendars={google.calendars}
+                        value={
+                          draft.googleCalendarId
+                            ? calendarSelectValue(draft.googleCalendarId, google.calendars)
+                            : GENERAL_CALENDAR_VALUE
+                        }
+                        extraOptions={[{ value: GENERAL_CALENDAR_VALUE, label: G.staffGeneral }]}
+                        disabled={saving}
+                        onChange={(value) =>
+                          setDraft({
+                            ...draft,
+                            googleCalendarId:
+                              value === GENERAL_CALENDAR_VALUE
+                                ? null
+                                : calendarValueToSave(value, google.calendars),
+                          })
+                        }
+                      />
+                      <p className="text-xs text-muted-foreground">{G.staffHint}</p>
+                    </>
+                  )}
+                  {google.phase === 'failed' && (
+                    <p className="text-sm text-muted-foreground">{G.staffFailed}</p>
+                  )}
+                  {google.phase === 'off' && (
+                    <p className="text-sm text-muted-foreground">{G.staffNotConnected}</p>
+                  )}
+                </div>
+              )}
 
               {formError && (
                 <Alert variant="destructive">

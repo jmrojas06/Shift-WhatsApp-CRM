@@ -20,51 +20,60 @@
 //   - 'asesor' / 'humano' / 'persona' o dos respuestas inválidas
 //     seguidas → handoff: IA en pausa, tag quiere-humano, aviso al
 //     equipo y mensaje claro al cliente.
+//   - Clínica: una palabra de urgencia (o el toque "Tengo una urgencia") gana
+//     sobre todo, también sobre la autorización: abre los signos de alarma y,
+//     si no responde con claridad, el aviso al equipo es el prioritario.
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-import type { VerticalDispatchResult, VerticalSession } from '@/lib/verticals/types'
+import type { ModuleKey, VerticalDispatchResult, VerticalSession } from '@/lib/verticals/types'
 import { notifyAlert } from '@/lib/ops/alert'
+import { aiWillAnswer } from '@/lib/ai/eligibility'
+import { latestConsent } from '@/modules/clinica/consent'
+import {
+  loadClinicContext,
+  loadServicePrep,
+  type ClinicContext,
+  type ClinicContextResult,
+} from '@/modules/clinica/settings'
+import {
+  buildClinicTexts,
+  DEFAULT_URGENCY_ALARM_TEXT,
+  DEFAULT_URGENCY_WORDS,
+  type ClinicTexts,
+} from '@/modules/clinica/texts'
 
 import type { AgendaAppointmentSummary } from '../texts'
 import { mergeBotTexts, type AgendaAgentTextsMerged } from '../bot-texts'
 import { listQuestions } from '../config-repo'
-import { capitalize } from '../labels'
+import { capitalize, DEFAULT_LABELS } from '../labels'
 import { readAnswerMap, validateAnswer, type AgendaQuestion, type AnswerMap } from '../questions'
-import {
-  computeDaySlots,
-  mergeSlotsByStart,
-  type MergedSlot,
-} from './availability'
+import type { MergedSlot } from './availability'
+import type { ClinicBackend } from './backend'
 import {
   applyContactTag,
-  cancelAppointment,
   claimSession,
   closeSession,
   createSession,
   expireStaleSessions,
   findNextAppointment,
-  insertAppointment,
   insertBookingEvent,
   insertNotification,
-  isStaffFree,
-  listBusy,
   listEligibleStaff,
   listServices,
-  listWorkBlocks,
   loadAccount,
   loadAppointment,
+  loadAppointmentClinicLinks,
   loadBotSettings,
   loadContact,
   hasRecentBookingEvent,
+  hasRecentNotification,
   loadConversationAssignee,
   loadConversationOwnership,
   loadHandoffAgentId,
   loadInboundMessage,
-  loadMessageTemplateName,
   loadStaffName,
-  markAppointmentConfirmed,
   markConversationHandoff,
   releaseSession,
   updateSession,
@@ -72,29 +81,32 @@ import {
   type AccountInfo,
   type AppointmentInfo,
   type BotSettings,
-  type BusyRow,
   type ServiceInfo,
   type StaffInfo,
-  type WorkBlockRow,
 } from './db'
 import { formatDayLabel, formatLongDate, formatPrice, formatTimeLabel, truncate } from './format'
-import { AGENDA_REMINDER_TEMPLATE } from './reminders'
+import { createInternalBackend } from './internal-backend'
+import { consentRevocation, type ConsentRevocation } from '@/modules/clinica/revocation'
+import { isReminderTemplateName } from './reminders'
 import {
+  BOOK_AGAIN_ID,
   actId,
   ansId,
   ansSkipId,
   containsHandoffWord,
   containsIntentWord,
   dayId,
+  detectsUrgency,
   isHandoffOnly,
-  isReminderLabel,
   isSkipAnswer,
   matchAnswerOption,
+  matchAppointmentOption,
   matchChoice,
   newBookingState,
   parseAnswerId,
+  parseFollowupTap,
   parseOptionId,
-  parseReminderId,
+  parseReminderTap,
   slotId,
   staffId,
   svcId,
@@ -102,11 +114,39 @@ import {
   type BookingStep,
   type OfferedOption,
   type ReminderAction,
+  type ReminderTap,
 } from './state'
-import { addDaysToKey, startOfZonedDay, zonedDateKey, zonedParts } from './time'
+import {
+  handleClinicChoice,
+  handleConsentRevoked,
+  handlePatientName,
+  isClinicMenuTap,
+  isClinicStep,
+  isContentless,
+  recordConsentRevoked,
+  renderClinicStep,
+  routeClinicText,
+  urgencyBookingHandoff,
+  urgencyConsentUnansweredHandoff,
+  urgencyGoErHandoff,
+  urgencyOffHoursHandoff,
+  urgencyUnconfirmedHandoff,
+  type ClinicHandoff,
+  type ClinicOutcome,
+  type ClinicStepCtx,
+} from './steps/clinic-steps'
+import { handleFollowupTap } from './steps/followup-taps'
+import { addDaysToKey, zonedDateKey, zonedParts } from './time'
 
 /** La sesión muere a los 15 minutos sin actividad. */
 export const SESSION_TTL_MS = 15 * 60_000
+
+/**
+ * Un toque de recordatorio sin id de cita se refiere a la única cita que empieza
+ * en menos de esto. Con más de una cita activa y ninguna o varias tan cercanas no
+ * dice a cuál se refiere: se pregunta, no se adivina.
+ */
+const TAP_AMBIGUITY_MS = 72 * 60 * 60 * 1000
 
 /** Días hacia adelante que se exploran al ofrecer días. */
 export const OFFER_DAYS = 7
@@ -117,6 +157,15 @@ const MAX_LIST_OPTIONS = 10
 const BUTTON_TITLE_MAX = 20
 const LIST_TITLE_MAX = 24
 const LIST_DESC_MAX = 72
+
+/**
+ * Quien contesta los signos de alarma puede tardar: está con dolor, o buscando
+ * cómo llegar a urgencias. Esa sesión dura 2 horas, no 15 minutos.
+ */
+export const URGENCY_SESSION_TTL_MS = 2 * 60 * 60_000
+
+/** Días por página: una fila de la lista queda para "Ver más días". */
+const DAY_PAGE_SIZE = MAX_LIST_OPTIONS - 1
 
 // ------------------------------------------------------------
 // Contrato de envío (inyectable; en producción lo implementa
@@ -157,6 +206,15 @@ export interface HandleAgendaInboundArgs {
    * cancelación abierta desde él; todo lo demás es del humano.
    */
   humanOwned?: boolean
+  /** Módulos de la cuenta. Con 'clinica' se prenden los pasos clínicos. */
+  modules?: readonly ModuleKey[]
+  /** Dónde viven las citas. Por defecto, la Agenda de Shift. */
+  backend?: ClinicBackend
+  /**
+   * ¿La respuesta automática con IA está prendida? Solo la lee la clínica, al
+   * soltar una duda o invitar a escribirla. Por defecto, la configuración real.
+   */
+  aiAutoReplyOn?: () => Promise<boolean>
 }
 
 // ------------------------------------------------------------
@@ -176,30 +234,68 @@ export async function handleAgendaInbound(
       )
     : null
   const text = inbound?.text ?? ''
-  const replyId = inbound?.replyId ?? null
-  const reminderAction = replyId
-    ? await readReminderAction(
-        args.db,
-        args.conversationId,
-        replyId,
-        inbound?.replyToMessageId ?? null,
-      )
-    : null
+  // "Agendar otra" (aviso de cancelación) y "Agendar" (enlace tras una llamada) viajan
+  // con `book:again`: abren la reserva igual que el botón "Agendar" del menú. Se lee
+  // como ese toque desde aquí para que valga en cualquier paso, con o sin sesión y con
+  // o sin autorización. Un hilo de una persona lo suelta como cualquier otro mensaje.
+  const bookAgain = inbound?.replyId === BOOK_AGAIN_ID
+  const replyId = bookAgain ? actId('book') : (inbound?.replyId ?? null)
+  // Una ETIQUETA ("Confirmar") la puede traer el botón de cualquier otra
+  // plantilla o difusión: solo es un toque de recordatorio si el mensaje
+  // responde a una plantilla de recordatorio. Los ids `rem:*` los pone este
+  // módulo, no necesitan esa comprobación. Sin referencia o con otra
+  // plantilla, el mensaje sigue el camino normal.
+  const parsedTap = replyId ? parseReminderTap(replyId) : null
+  const reminderTap =
+    parsedTap && (!parsedTap.viaLabel || isReminderTemplateName(inbound?.repliedTemplateName))
+      ? parsedTap
+      : null
   const humanOwned = args.humanOwned === true
+  const clinicActive = args.modules?.includes('clinica') === true
+  // Los botones de los seguimientos de después de la cita (`fu:*`, `rt:*`) los pone la
+  // clínica, y solo se leen por su payload. Son la respuesta a un mensaje del sistema,
+  // como los recordatorios: se atienden también en el hilo de una persona.
+  const followupTap = clinicActive && replyId ? parseFollowupTap(replyId) : null
+
+  // Revocar escribiendo ("ya no autorizo el uso de mis datos", "revoco mi
+  // autorización", "quiero que borren mis datos"): solo vale con una autorización
+  // vigente y no mientras responde los signos de alarma, donde manda la urgencia.
+  let textRevocation: ConsentRevocation | null = null
+  if (clinicActive && replyId === null) {
+    const detected = consentRevocation(text)
+    if (detected && sessionStep(args.session) !== 'urgency') {
+      const consent = await latestConsent(args.db, {
+        accountId: args.accountId,
+        contactId: args.contactId,
+        kind: 'datos_sensibles',
+      })
+      if (consent?.granted) textRevocation = detected
+    }
+  }
+
+  // "No acepto" es la respuesta al mensaje de la autorización, que es del
+  // sistema: retira el permiso aunque el hilo lo lleve una persona. Revocar
+  // escribiendo también.
+  const revokesConsent = clinicActive && (replyId === actId('consent_no') || textRevocation !== null)
 
   // Hilo de un humano: antes de cargar nada más, soltar todo lo que no
-  // sea respuesta a un mensaje del sistema.
+  // sea respuesta a un mensaje del sistema. El bot no contesta para no pisar a
+  // la persona, pero una urgencia en un hilo suyo no puede pasar desapercibida.
   if (
     humanOwned &&
-    !reminderAction &&
-    !isCancelConfirmTap(args.session ?? null, replyId)
+    !reminderTap &&
+    !followupTap &&
+    !revokesConsent &&
+    !isSystemTap(args.session ?? null, replyId)
   ) {
+    if (clinicActive) await warnHumanOfUrgency(args, { text, replyId })
     return { consumed: false }
   }
 
-  const [settings, account] = await Promise.all([
+  const [settings, account, clinicResult] = await Promise.all([
     loadBotSettings(args.db, args.accountId),
     loadAccount(args.db, args.accountId),
+    clinicActive ? loadClinicContext(args.db, args.accountId) : Promise.resolve(null),
   ])
   const dialog: Dialog = {
     db: args.db,
@@ -213,21 +309,56 @@ export async function handleAgendaInbound(
     account,
     settings,
     texts: mergeBotTexts(settings.botTexts, settings.labels),
+    backend:
+      args.backend ??
+      createInternalBackend({ db: args.db, accountId: args.accountId, clinic: clinicActive }),
+    clinic: clinicResult?.status === 'ok' ? clinicResult.clinic : null,
+    // Con el módulo activo, una configuración que falta o no se pudo leer NO
+    // equivale a una cuenta sin clínica: ver el cierre de más abajo.
+    clinicUnavailable: clinicResult !== null && clinicResult.status !== 'ok',
+    clinicTexts: buildClinicTexts(settings.labels),
+    inboundMessageId: args.inboundMessageId ?? null,
+    humanOwned,
+    aiProbe:
+      args.aiAutoReplyOn ??
+      (() => aiWillAnswer(args.db, { accountId: args.accountId, conversationId: args.conversationId })),
   }
 
   // 0) Tap de un recordatorio (Confirmar / Reprogramar / Cancelar).
-  //    Ni los ids `rem:*` ni las etiquetas de la plantilla de Meta
-  //    llevan la cita, así que se resuelve como la próxima cita
-  //    activa del contacto. Se atienden aunque
-  //    haya una sesión a medias (y sin abrir una nueva para confirmar),
-  //    y también cuando un humano es dueño del hilo (D1).
-  if (reminderAction) {
-    await handleReminderTap(
-      dialog,
-      args.session ?? null,
-      reminderAction,
-      humanOwned,
+  //    Los botones llevan `rem:<acción>` o, en una clínica, `rem:<acción>:<cita>`;
+  //    una plantilla enviada sin payload devuelve la etiqueta del botón
+  //    ("Confirmar"): `parseReminderTap` lee las tres formas. Con el id de la cita
+  //    se actúa sobre esa. Sin id, una cuenta sin clínica toma la próxima cita
+  //    activa del contacto, y una clínica la única que empieza en 72 h, o pregunta
+  //    cuál (`resolveTapAppointment`). Se atienden aunque haya una sesión a medias
+  //    (y sin abrir una nueva para confirmar), y también cuando un humano es dueño
+  //    del hilo (D1).
+  if (reminderTap) {
+    await handleReminderTap(dialog, args.session ?? null, reminderTap, humanOwned)
+    return { consumed: true }
+  }
+
+  // 0b) Botón de un seguimiento de después de la cita (`fu:*`, `rt:*`): también antes del
+  //     hilo de una persona y de cualquier sesión. Un id que no es de este paciente se
+  //     ignora en silencio; molestias o ayuda piden el pase a una persona (steps/followup-taps).
+  if (followupTap) {
+    const outcome = await handleFollowupTap(
+      { ...dialog, alarmText: urgencyAlarmText(dialog) },
+      followupTap,
     )
+    if (outcome.kind === 'handoff') {
+      await performHandoff(dialog, args.session?.id ?? null, outcome)
+    }
+    return { consumed: true }
+  }
+
+  // Hilo de un humano: el "No acepto" solo se registra, sin tocar el hilo.
+  if (humanOwned && revokesConsent) {
+    await revokeConsentInHumanThread(dialog, args.session?.id ?? null, {
+      deleteData: textRevocation?.deleteData,
+    })
+    // Un mensaje que revoca puede traer también un dolor: el aviso de urgencia no se pierde.
+    if (textRevocation) await warnHumanOfUrgency(args, { text, replyId })
     return { consumed: true }
   }
 
@@ -238,17 +369,85 @@ export async function handleAgendaInbound(
     return { consumed: true }
   }
 
-  // 1) Pedir un humano gana sobre cualquier paso del flujo. Excepción: mientras
-  //    el cliente escribe la respuesta a una pregunta extra de texto, solo cuenta
-  //    el mensaje que ES la palabra ("es para una persona mayor" es la respuesta).
+  // Clínica sin configuración usable (falta o no se pudo leer): no se sabe qué
+  // autorización pedir ni qué urgencias vigilar, y seguir como una agenda
+  // normal dejaría la conversación de un paciente a la IA sin su permiso. El
+  // bot consume el mensaje y lo deja con una persona. Los toques de
+  // recordatorio ya se atendieron arriba, y un hilo que ya es de una persona
+  // no llega hasta aquí.
+  if (dialog.clinicUnavailable) {
+    await handoffClinicUnavailable(dialog, args.session?.id ?? null, { text, replyId })
+    return { consumed: true }
+  }
+
+  // Sin el módulo clínica no hay menú con "Agendar": el toque abre una reserva nueva, aunque
+  // la persona tenga otra cita (ya dijo que quiere agendar). A media reserva, la reinicia en la
+  // misma sesión. En una clínica sigue el camino del menú (más abajo).
+  if (bookAgain && !dialog.clinic) {
+    const fresh = newBookingState('pick_service')
+    const sessionId = args.session?.id ?? (await openSession(dialog, fresh))
+    await conclude(dialog, sessionId, fresh)
+    return { consumed: true }
+  }
+
   const asking = args.session ? coerceState(args.session.state) : null
-  const writingAnswer = asking?.step === 'ask_question' && asking.options.length === 0
+
+  // Un "Sí, tengo alguno" de unos signos que ya no están en pantalla vale igual: sin
+  // sesión, sin autorización y en cualquier paso. (En los signos lo lee el paso.)
+  if (dialog.clinic && replyId === actId('alarm_yes') && asking?.step !== 'urgency') {
+    await performHandoff(dialog, args.session?.id ?? null, urgencyGoErHandoff(dialog.clinicTexts))
+    return { consumed: true }
+  }
+
+  // Clínica: la urgencia gana sobre todo lo demás, también sobre la autorización,
+  // sobre una reserva abierta (la reemplaza) y sobre pedir una persona. Se mira
+  // antes de que ningún otro paso lea el mensaje.
+  if (dialog.clinic && opensUrgency(dialog.clinic, { text, replyId }, asking)) {
+    const state = newBookingState('urgency')
+    const sessionId = args.session?.id ?? (await openSession(dialog, state))
+    await conclude(dialog, sessionId, state)
+    return { consumed: true }
+  }
+
+  // Revocar la autorización escribiendo gana sobre cualquier paso (menos los signos
+  // de alarma, ya atendidos arriba) y sobre pedir una persona: queda registrado y el
+  // chat pasa a una persona con una nota clara. Si pidió borrar sus datos, la nota
+  // dice que hay que atenderlo a mano.
+  if (dialog.clinic && textRevocation) {
+    await performHandoff(
+      dialog,
+      args.session?.id ?? null,
+      await handleConsentRevoked(clinicCtx(dialog), textRevocation),
+    )
+    return { consumed: true }
+  }
+
+  // 1) Pedir un humano gana sobre cualquier paso del flujo. Excepción: mientras
+  //    el cliente escribe la respuesta a una pregunta extra de texto, o el nombre
+  //    de quien va a asistir, solo cuenta el mensaje que ES la palabra ("es para
+  //    una persona mayor" es la respuesta; "Ana Persona" es un nombre).
+  const writingAnswer =
+    (asking?.step === 'ask_question' && asking.options.length === 0) ||
+    asking?.step === 'new_patient_name' ||
+    // "Otra persona" es el título de una opción de la lista de pacientes.
+    asking?.step === 'pick_patient'
   if (
     replyId === null &&
     (writingAnswer ? isHandoffOnly(text) : containsHandoffWord(text))
   ) {
-    await performHandoff(dialog, args.session?.id ?? null)
+    // Quien ya dijo que le duele y está contestando los signos de alarma no se
+    // queda con un pase cualquiera: el equipo recibe el aviso prioritario.
+    await performHandoff(
+      dialog,
+      args.session?.id ?? null,
+      personRequestHandoff(dialog, asking),
+    )
     return { consumed: true }
+  }
+
+  // Clínica: el texto libre y los toques del menú los enruta una sola regla.
+  if (dialog.clinic) {
+    return handleClinicInbound(dialog, args.session ?? null, asking, { text, replyId })
   }
 
   // 2) Con sesión activa, el flujo es dueño del mensaje.
@@ -291,6 +490,445 @@ export async function handleAgendaInbound(
 }
 
 /**
+ * ¿Este mensaje abre los signos de alarma? Un toque en "Tengo una urgencia"
+ * siempre: es una decisión de la persona, valga lo que valga el paso. Un texto
+ * con una palabra de la clínica o del piso fijo (`detectsUrgency`) también, en
+ * TODOS los pasos menos uno: la respuesta a los signos, que lee `matchChoice`.
+ * Ni el nombre ni la respuesta a una pregunta extra son una excepción: "no puedo
+ * respirar" escrito como nombre no puede quedar registrado como paciente. Una
+ * palabra de urgencia se compara entera, así que "Dolores Ruiz" no dispara.
+ * Una foto, un audio o un sticker no cuentan.
+ */
+function opensUrgency(
+  clinic: ClinicContext,
+  input: { text: string; replyId: string | null },
+  current: BookingState | null,
+): boolean {
+  if (input.replyId !== null) {
+    // Un "No, ninguno" de unos signos que ya no están no descarta nada: se vuelve a preguntar.
+    if (input.replyId === actId('alarm_no')) return current?.step !== 'urgency'
+    return input.replyId === actId('urgent')
+  }
+  if (isNonTextInbound(input.text)) return false
+  return current?.step !== 'urgency' && detectsUrgency(input.text, clinic.urgencyWords)
+}
+
+/**
+ * Los toques que dicen que hay una urgencia, para el hilo de una persona y para
+ * la clínica sin configuración (donde el bot no puede atenderlos): "Tengo una
+ * urgencia" y "Sí, tengo alguno" de los signos de alarma.
+ */
+const URGENT_TAPS: readonly string[] = [actId('urgent'), actId('alarm_yes')]
+
+/** Los signos de alarma de la clínica; sin su configuración, los de siempre. */
+function urgencyAlarmText(dialog: Dialog): string {
+  return dialog.clinic?.urgencyAlarmText ?? DEFAULT_URGENCY_ALARM_TEXT
+}
+
+/**
+ * Urgencia en un hilo de una persona: el bot no responde para no pisarla, pero
+ * le avisa a quien lo lleva (o al dueño). Corre antes de cargar nada más, así
+ * que lee lo suyo. Si la configuración de la clínica falta o no se pudo leer,
+ * valen las palabras de siempre: un fallo de lectura nunca silencia el aviso.
+ */
+async function warnHumanOfUrgency(
+  args: HandleAgendaInboundArgs,
+  input: { text: string; replyId: string | null },
+): Promise<void> {
+  const { text, replyId } = input
+  // Un toque que no es de urgencias ("Tengo una urgencia", "Sí, tengo alguno"), o un
+  // mensaje sin texto, no avisa nada.
+  if (replyId !== null ? !URGENT_TAPS.includes(replyId) : isNonTextInbound(text)) return
+
+  await bestEffort('aviso de urgencia a la persona del hilo', async () => {
+    if (replyId === null) {
+      const result: ClinicContextResult = await loadClinicContext(args.db, args.accountId).catch(
+        (err: unknown): ClinicContextResult => {
+          console.error('[clinica] no se pudo leer la configuración para vigilar la urgencia:', err)
+          return { status: 'error' }
+        },
+      )
+      const words = result.status === 'ok' ? result.clinic.urgencyWords : DEFAULT_URGENCY_WORDS
+      if (!detectsUrgency(text, words)) return
+    }
+
+    // Un aviso de urgencia por conversación cada 10 minutos: quien escribe "me
+    // duele" tres veces seguidas no llena la bandeja de quien lo lleva.
+    await notifyThreadHuman(
+      args,
+      (texts, who) => ({
+        title: texts.urgencyNotificationTitle,
+        body: texts.urgencyNotificationBody(who),
+      }),
+      { onceInMinutes: URGENCY_NOTICE_EVERY_MINUTES, now: args.now ?? new Date() },
+    )
+  })
+}
+
+/** Cada cuánto se repite el aviso de urgencia de un mismo chat. */
+export const URGENCY_NOTICE_EVERY_MINUTES = 10
+
+/**
+ * Avisa a quien lleva un hilo de una persona (el agente asignado o, si nadie lo
+ * lleva, el dueño). Cada lectura es opcional: un fallo no impide el aviso.
+ * Lanza solo si no se pudo escribir.
+ */
+async function notifyThreadHuman(
+  args: Pick<HandleAgendaInboundArgs, 'db' | 'accountId' | 'conversationId' | 'contactId'>,
+  build: (texts: ClinicTexts, who: string) => { title: string; body: string },
+  /** Con `onceInMinutes`, no repite un aviso igual de esta conversación en ese tiempo. */
+  repeat?: { onceInMinutes: number; now: Date },
+): Promise<'sent' | 'repeated' | 'nobody'> {
+  const [settings, account, assignee, who] = await Promise.all([
+    loadBotSettings(args.db, args.accountId).catch(() => null),
+    loadAccount(args.db, args.accountId).catch(() => null),
+    loadConversationAssignee(args.db, args.accountId, args.conversationId).catch(() => null),
+    contactLabel(args.db, args.accountId, args.contactId, 'Un paciente'),
+  ])
+  const userId = assignee ?? account?.ownerUserId ?? null
+  if (!userId) return 'nobody'
+  const texts = buildClinicTexts(settings?.labels ?? DEFAULT_LABELS)
+  const notice = build(texts, who)
+  if (repeat) {
+    const since = new Date(repeat.now.getTime() - repeat.onceInMinutes * 60_000).toISOString()
+    if (
+      await hasRecentNotification(args.db, {
+        accountId: args.accountId,
+        conversationId: args.conversationId,
+        title: notice.title,
+        sinceIso: since,
+      })
+    ) {
+      return 'repeated'
+    }
+  }
+  await insertNotification(args.db, {
+    accountId: args.accountId,
+    userId,
+    conversationId: args.conversationId,
+    contactId: args.contactId,
+    ...notice,
+    createdAtIso: (repeat?.now ?? new Date()).toISOString(),
+  })
+  return 'sent'
+}
+
+/**
+ * La persona abrió los signos de alarma (escribió algo que puede ser una urgencia o
+ * tocó "Tengo una urgencia"): el aviso prioritario en la app sale YA, sin esperar a
+ * que conteste. Uno por conversación cada 10 minutos (por su propio título, así el
+ * aviso de confirmación, más grave, nunca se pierde por este límite). Si el aviso
+ * falla, o no hay a quién avisar, se avisa al equipo técnico con la cuenta y la
+ * conversación, nunca con el texto del paciente: los signos de alarma salen igual.
+ */
+async function announceUrgencyOpened(dialog: Dialog): Promise<void> {
+  let problem: string | null = null
+  try {
+    const result = await notifyThreadHuman(
+      dialog,
+      (texts, who) => ({
+        title: texts.urgencyOpenedNotificationTitle,
+        body: texts.urgencyOpenedNotificationBody(who),
+      }),
+      { onceInMinutes: URGENCY_NOTICE_EVERY_MINUTES, now: dialog.now },
+    )
+    if (result === 'nobody') problem = 'avisar al equipo en la app: no hay a quién'
+  } catch (err) {
+    console.error('[agenda] el aviso de urgencia al abrir los signos de alarma falló:', err)
+    problem = 'avisar al equipo en la app'
+  }
+  if (problem) {
+    await notifyAlert(
+      `Urgencia: no se pudo ${problem} (cuenta ${dialog.accountId}, conversación ${dialog.conversationId}). Revisa ese chat ya.`,
+    ).catch(() => undefined)
+  }
+}
+
+/**
+ * "No acepto" en un hilo de una persona: el paciente retira su autorización, y
+ * eso se registra aunque el bot no tenga el hilo. Solo se registra: no pausa,
+ * no reasigna, no etiqueta y no le escribe al paciente, porque el hilo ya es de
+ * una persona. Si no se pudo guardar (o la configuración de la clínica no está),
+ * se avisa a quien lo lleva para que lo registre a mano. Una revocación que ya
+ * estaba registrada no se repite.
+ */
+async function revokeConsentInHumanThread(
+  dialog: Dialog,
+  sessionId: string | null,
+  opts: { deleteData?: boolean } = {},
+): Promise<void> {
+  // Quien retiró su autorización no sigue agendando: la sesión abierta se cierra.
+  if (sessionId) {
+    await closeSession(dialog.db, {
+      id: sessionId,
+      accountId: dialog.accountId,
+      status: 'cancelled',
+      updatedAtIso: dialog.nowIso,
+    })
+  }
+  const consent = await latestConsent(dialog.db, {
+    accountId: dialog.accountId,
+    contactId: dialog.contactId,
+    kind: 'datos_sensibles',
+  })
+  if (consent && !consent.granted) return
+  const saved = dialog.clinic ? await recordConsentRevoked(clinicCtx(dialog)) : false
+  if (!saved) {
+    await bestEffort('aviso de revocación sin registrar', () =>
+      notifyThreadHuman(dialog, (texts, who) => ({
+        title: texts.consentRevokeFailedTitle,
+        body: texts.consentRevokeFailedBody(who),
+      })),
+    )
+  }
+  // Pidió que borren sus datos: el bot no borra nada y la persona del hilo lo atiende a mano.
+  if (opts.deleteData) {
+    await bestEffort('aviso de datos por borrar', () =>
+      notifyThreadHuman(dialog, (texts, who) => ({
+        title: texts.consentDeletionRequestTitle,
+        body: texts.consentDeletionRequestBody(who),
+      })),
+    )
+  }
+}
+
+/** El paso de una sesión, o null. */
+function sessionStep(session: VerticalSession | null | undefined): BookingStep | null {
+  return session ? coerceState(session.state).step : null
+}
+
+/**
+ * Mensaje de una cuenta con clínica lista para usarse (la no disponible y el
+ * pase por palabra ya se atendieron arriba).
+ *
+ * El texto libre sigue UNA regla (`routeClinicText`), y solo en tres
+ * momentos: sin sesión, con el menú abierto y esperando una duda. En cualquier
+ * otro paso (la autorización, el nombre, los servicios, las preguntas...) el
+ * texto es la respuesta a ese paso y lo lee el paso.
+ *
+ *   sin sesión   book, greeting → menú · mine → sus citas · human → una persona ·
+ *                ai → la IA
+ *   clinic_menu  el mismo orden en los dos: book → "Agendar" · mine → "Mis
+ *   faq_open     citas" · human → una persona · greeting → el menú, sin contar
+ *                fallo · ai → la IA.
+ *                Una duda con palabra de pago ("¿cuánto cuesta el certificado?")
+ *                es una pregunta y va a la IA; un pedido ("quiero pagar") a una
+ *                persona, también con la duda abierta
+ *
+ * Soltar a la IA cierra la sesión y lo avisa con `released`: el despachador
+ * reclama todo lo que llega con una sesión abierta.
+ */
+async function handleClinicInbound(
+  dialog: Dialog,
+  session: VerticalSession | null,
+  state: BookingState | null,
+  input: { text: string; replyId: string | null },
+): Promise<VerticalDispatchResult> {
+  const { text, replyId } = input
+  const { labels } = dialog.settings
+  const step = state?.step ?? null
+  // Solo se enruta el texto: una foto, un audio, un sticker o un toque no.
+  const route =
+    replyId === null && !isNonTextInbound(text)
+      ? routeClinicText(text, [labels.cita, labels.citas])
+      : null
+
+  // "No acepto" con una autorización vigente (un botón viejo, o el menú ya abierto)
+  // la revoca. En el paso de la autorización es el rechazo de siempre.
+  if (replyId === actId('consent_no') && step !== 'consent') {
+    const consent = await latestConsent(dialog.db, {
+      accountId: dialog.accountId,
+      contactId: dialog.contactId,
+      kind: 'datos_sensibles',
+    })
+    if (consent?.granted) {
+      await performHandoff(dialog, session?.id ?? null, await handleConsentRevoked(clinicCtx(dialog)))
+      return { consumed: true }
+    }
+  }
+
+  if (session && state) {
+    // En una urgencia (los signos, la autorización o la reserva de hoy), pedir una
+    // persona con el botón avisa con prioridad, como escribirlo.
+    if (replyId === actId('human') && personRequestHandoff(dialog, state).notification) {
+      await performHandoff(dialog, session.id, personRequestHandoff(dialog, state))
+      return { consumed: true }
+    }
+    // Los botones del menú principal valen en cualquier paso: un menú viejo sigue
+    // en el chat, y tocarlo no puede dar "No entendí". Quedan aparte la
+    // autorización, que se contesta primero ("Tengo una urgencia" sí va antes: lo
+    // atiende `opensUrgency`), el propio menú, que lee el emparejamiento de
+    // siempre, y los signos de alarma, que también se contestan primero. "Mis
+    // citas" también: a media reserva deja la reserva y abre la cita.
+    if (
+      isClinicMenuTap(replyId) &&
+      step !== 'consent' &&
+      step !== 'clinic_menu' &&
+      step !== 'urgency'
+    ) {
+      await handleChoice(dialog, session.id, newBookingState('clinic_menu'), replyId)
+      return { consumed: true }
+    }
+    if (step === 'clinic_menu' || step === 'faq_open') {
+      if (route === 'book' || route === 'mine') {
+        const tap = route === 'book' ? actId('book') : actId('mine')
+        await handleChoice(dialog, session.id, newBookingState('clinic_menu'), tap)
+        return { consumed: true }
+      }
+      if (route === 'human') {
+        await performHandoff(dialog, session.id, { note: dialog.clinicTexts.humanTopicNote })
+        return { consumed: true }
+      }
+      if (route === 'greeting') {
+        // Un saludo vuelve al menú, sin contar fallo: desde la duda abierta, al
+        // menú de verdad, no a invitar a preguntar otra vez.
+        await conclude(dialog, session.id, step === 'faq_open' ? newBookingState('clinic_menu') : state)
+        return { consumed: true }
+      }
+      if (step === 'clinic_menu' && replyId === null && !isNonTextInbound(text)) {
+        // "1" o el título de una opción eligen esa opción antes de soltar nada a la
+        // IA. "ok" o "gracias" no dicen nada: se repite el menú, sin contarlo como
+        // fallo ni mandarlo a la IA.
+        const choice = matchChoice({ text, options: state.options })
+        if (choice) {
+          await handleChoice(dialog, session.id, newBookingState('clinic_menu'), choice)
+          return { consumed: true }
+        }
+        if (isContentless(text)) {
+          await conclude(dialog, session.id, state)
+          return { consumed: true }
+        }
+      }
+      if (route !== null) return releaseToAi(dialog, session.id)
+      // Una foto o un audio mientras espera la duda: no es la duda ni la cierra.
+      if (step === 'faq_open' && replyId === null) {
+        await conclude(dialog, session.id, state)
+        return { consumed: true }
+      }
+    }
+    // La pregunta de avisos de control es opcional. Quien escribe otra cosa ("gracias",
+    // una duda, un "sí" escrito) no recibe un "no entendí" ni, a la segunda, pasa a una
+    // persona: la pregunta se cierra sin registrar nada y el mensaje sigue su camino,
+    // como si no hubiera sesión. Solo el toque de sus botones o un "no" la contestan.
+    if (step === 'marketing_consent' && !matchChoice({ text, replyId, options: state.options })) {
+      await closeSession(dialog.db, {
+        id: session.id,
+        accountId: dialog.accountId,
+        status: 'completed',
+        updatedAtIso: dialog.nowIso,
+      })
+      const result = await handleClinicInbound(dialog, null, null, input)
+      // El despachador leyó esa sesión antes de llamarnos y, si el mensaje no se
+      // consumió, la reclamaría por ella: nadie lo contestaría. Se avisa que se soltó.
+      return result.consumed ? result : { ...result, released: true }
+    }
+    await advanceSession(dialog, session, input)
+    return { consumed: true }
+  }
+
+  await expireStaleSessions(dialog.db, dialog.accountId, dialog.contactId, dialog.nowIso)
+
+  // Quejas, pagos y documentos van a una persona sin esperar la autorización:
+  // nadie con una queja se queda atascado en un aviso legal.
+  if (route === 'human') {
+    await performHandoff(dialog, null, { note: dialog.clinicTexts.humanTopicNote })
+    return { consumed: true }
+  }
+
+  // Sin autorización no se sigue, y la IA no ve la conversación. Si la
+  // autorización no se pudo leer, se vuelve a pedir.
+  const consent = await latestConsent(dialog.db, {
+    accountId: dialog.accountId,
+    contactId: dialog.contactId,
+    kind: 'datos_sensibles',
+  })
+  if (!consent?.granted) {
+    const consentState = newBookingState('consent')
+    const sessionId = await openSession(dialog, consentState)
+    await conclude(dialog, sessionId, consentState)
+    return { consumed: true }
+  }
+
+  // Con autorización, los botones del menú valen aunque el menú ya haya vencido.
+  if (replyId !== null) {
+    const menu = newBookingState('clinic_menu')
+    if (isClinicMenuTap(replyId)) {
+      const sessionId = await openSession(dialog, menu)
+      await handleChoice(dialog, sessionId, menu, replyId)
+      return { consumed: true }
+    }
+    // Un botón de otro menú de este bot (un servicio, un día, una hora...) que ya no
+    // está activo: se dice, y se muestra el menú. Nunca se manda a la IA.
+    if (parseOptionId(replyId) !== null) {
+      await dialog.sender.sendText({ text: dialog.clinicTexts.optionExpired })
+      const sessionId = await openSession(dialog, menu)
+      await conclude(dialog, sessionId, menu)
+      return { consumed: true }
+    }
+    // Un toque que no es de este bot (otro botón, una plantilla) no es asunto suyo.
+    return { consumed: false }
+  }
+
+  // Una foto, un audio o un sticker: no se leen, y no se deja a nadie en silencio.
+  if (isNonTextInbound(text)) {
+    await dialog.sender.sendText({ text: dialog.clinicTexts.nonTextNotice })
+    const menu = newBookingState('clinic_menu')
+    const sessionId = await openSession(dialog, menu)
+    await conclude(dialog, sessionId, menu)
+    return { consumed: true }
+  }
+
+  if (route === 'book' || route === 'greeting') {
+    const menu = newBookingState('clinic_menu')
+    const sessionId = await openSession(dialog, menu)
+    await conclude(dialog, sessionId, menu)
+    return { consumed: true }
+  }
+
+  // Quiere cancelar o cambiar su cita (ya con autorización): se le muestran las suyas.
+  if (route === 'mine') {
+    const menu = newBookingState('clinic_menu')
+    const sessionId = await openSession(dialog, menu)
+    await handleChoice(dialog, sessionId, menu, actId('mine'))
+    return { consumed: true }
+  }
+
+  // Lo demás es para la IA. Si la IA no va a contestar, nadie se queda sin respuesta.
+  if (!(await aiAnswers(dialog))) {
+    await performHandoff(dialog, null, { note: dialog.clinicTexts.aiOffNote })
+    return { consumed: true }
+  }
+  return { consumed: false }
+}
+
+/** ¿La IA va a contestar? Se lee una vez por mensaje; si no se puede leer, no. */
+function aiAnswers(dialog: Dialog): Promise<boolean> {
+  dialog.aiOn ??= dialog.aiProbe().catch((err: unknown) => {
+    console.error('[clinica] no se pudo saber si la IA responde:', err)
+    return false
+  })
+  return dialog.aiOn
+}
+
+/**
+ * Le suelta el mensaje a la IA (ver `released`) y cierra la sesión. Si la IA no
+ * va a contestar, soltarlo sería silencio: pasa a una persona.
+ */
+async function releaseToAi(dialog: Dialog, sessionId: string): Promise<VerticalDispatchResult> {
+  if (!(await aiAnswers(dialog))) {
+    await performHandoff(dialog, sessionId, { note: dialog.clinicTexts.aiOffNote })
+    return { consumed: true }
+  }
+  await closeSession(dialog.db, {
+    id: sessionId,
+    accountId: dialog.accountId,
+    status: 'completed',
+    updatedAtIso: dialog.nowIso,
+  })
+  return { consumed: false, released: true }
+}
+
+/**
  * Abre una sesión nueva. Antes expira las vencidas que sigan en
  * 'active' (una reserva abandonada): el índice único de 047 las
  * cuenta aunque el dispatcher ya no las entregue.
@@ -308,7 +946,7 @@ async function openSession(dialog: Dialog, state: BookingState): Promise<string>
     accountId: dialog.accountId,
     contactId: dialog.contactId,
     state: toJson(state),
-    expiresAtIso: expiryIso(dialog),
+    expiresAtIso: expiryIso(dialog, state),
   })
   return sessionId
 }
@@ -318,33 +956,15 @@ async function openSession(dialog: Dialog, state: BookingState): Promise<string>
 // ------------------------------------------------------------
 
 /**
- * Acción del recordatorio que trae el tap, si la trae. Un id `rem:*`
- * solo sale de nuestro mensaje libre y vale por sí mismo. Una etiqueta
- * la puede traer cualquier plantilla o difusión con ese botón, así que
- * solo vale si el tap responde a un recordatorio enviado por plantilla.
- */
-async function readReminderAction(
-  db: SupabaseClient,
-  conversationId: string,
-  replyId: string,
-  replyToMessageId: string | null,
-): Promise<ReminderAction | null> {
-  const action = parseReminderId(replyId)
-  if (!action || !isReminderLabel(replyId)) return action
-  if (!replyToMessageId) return null
-  const templateName = await loadMessageTemplateName(
-    db,
-    conversationId,
-    replyToMessageId,
-  )
-  return templateName === AGENDA_REMINDER_TEMPLATE.name ? action : null
-}
-
-/**
  * Acciones Confirmar / Reprogramar / Cancelar del recordatorio.
  *
- * La cita sobre la que se actúa es la PRÓXIMA cita activa del
- * contacto: no viaja el id de la cita en el tap.
+ * La cita sobre la que se actúa:
+ *   - Con el id de la cita en el botón (`rem:<acción>:<cita>`), esa cita, si es de
+ *     este contacto y de esta cuenta, está activa y es futura.
+ *   - Sin id (los botones de una plantilla de Meta pueden devolver solo la etiqueta),
+ *     la PRÓXIMA cita activa del contacto. En una clínica, con más de una cita
+ *     activa y sin exactamente una en las próximas 72 horas (ninguna o varias) no
+ *     se adivina: se pregunta cuál.
  *
  *   - Confirmar: marca la cita y responde; no toca la sesión.
  *   - Reprogramar: retoma el flujo existente (`pick_day` en modo
@@ -352,42 +972,109 @@ async function readReminderAction(
  *   - Cancelar: entra a la confirmación de cancelación existente
  *     (`manage_cancel_confirm`), que ya cancela con etiqueta y evento.
  */
-/** ¿Es el tap "Sí, cancelar" / "No" de una confirmación de cancelación abierta? */
-function isCancelConfirmTap(
-  session: VerticalSession | null,
-  replyId: string | null,
-): boolean {
+
+/**
+ * ¿Es la respuesta a una pregunta que abrió el propio sistema? Se atiende aunque
+ * una persona sea dueña del hilo:
+ *   - el "Sí, cancelar" / "No" de una cancelación abierta, o
+ *   - elegir la cita cuando el toque de un recordatorio no decía cuál era.
+ * La lista de "Mis citas" no cuenta: si una persona tomó el hilo mientras tanto,
+ * lo que sigue es suyo.
+ */
+function isSystemTap(session: VerticalSession | null, replyId: string | null): boolean {
   if (!session || !replyId) return false
+  if (session.state.step === 'pick_appointment') {
+    return typeof session.state.reminderAction === 'string' && parseOptionId(replyId)?.kind === 'appt'
+  }
   if (session.state.step !== 'manage_cancel_confirm') return false
   return replyId === actId('cancel_yes') || replyId === actId('back')
+}
+
+/**
+ * La cita, solo si es de este contacto y de esta cuenta, está activa y es futura.
+ * Lanza si la lectura falla (como `listUpcoming`): un error no es "esa cita ya no
+ * está activa", y decírselo a un paciente con la cita viva es peor que fallar.
+ */
+async function loadUpcomingAppointment(
+  dialog: Dialog,
+  appointmentId: string,
+): Promise<AppointmentInfo | null> {
+  const appt = await loadAppointment(dialog.db, dialog.accountId, dialog.contactId, appointmentId, {
+    strict: true,
+  })
+  if (!appt) return null
+  if (appt.status !== 'pending' && appt.status !== 'confirmed') return null
+  return appt.startsAt > dialog.now ? appt : null
+}
+
+/**
+ * La cita del toque, o `null` si ya no hay una activa. Devuelve 'handled' cuando
+ * no se puede saber cuál es y el mensaje ya se atendió: se le preguntó al paciente
+ * o, sin la configuración de la clínica, pasó a una persona.
+ *
+ * Una cuenta sin el módulo clínica no cambia: siempre la próxima cita activa.
+ */
+async function resolveTapAppointment(
+  dialog: Dialog,
+  session: VerticalSession | null,
+  tap: ReminderTap,
+): Promise<AppointmentInfo | 'handled' | null> {
+  if (!dialog.clinic && !dialog.clinicUnavailable) {
+    return findNextAppointment(dialog.db, dialog.accountId, dialog.contactId, dialog.nowIso)
+  }
+  if (tap.appointmentId) return loadUpcomingAppointment(dialog, tap.appointmentId)
+
+  const upcoming = await dialog.backend.listUpcoming({
+    contactId: dialog.contactId,
+    nowIso: dialog.nowIso,
+  })
+  const limit = dialog.now.getTime() + TAP_AMBIGUITY_MS
+  const near = upcoming.filter((a) => a.startsAt.getTime() <= limit)
+  // Una sola cercana es la del recordatorio. Con más de una cita activa y ninguna o
+  // varias cercanas no se adivina: ni la primera ni la más próxima.
+  if (upcoming.length > 1 && near.length !== 1) {
+    // Sin la configuración de la clínica no hay lista que ofrecer, y adivinar
+    // podría confirmar o cancelar la cita de otro paciente: lo atiende una persona.
+    if (!dialog.clinic) {
+      await handoffClinicUnavailable(dialog, session?.id ?? null, { text: '', replyId: null })
+      return 'handled'
+    }
+    const state = newBookingState('pick_appointment', { reminderAction: tap.action })
+    const sessionId = session?.id ?? (await openSession(dialog, state))
+    await conclude(dialog, sessionId, state)
+    return 'handled'
+  }
+  const chosen = near[0] ?? upcoming[0]
+  return chosen ? loadUpcomingAppointment(dialog, chosen.id) : null
 }
 
 async function handleReminderTap(
   dialog: Dialog,
   session: VerticalSession | null,
-  action: ReminderAction,
+  tap: ReminderTap,
   humanOwned = false,
 ): Promise<void> {
-  const appt = await findNextAppointment(
-    dialog.db,
-    dialog.accountId,
-    dialog.contactId,
-    dialog.nowIso,
-  )
+  const appt = await resolveTapAppointment(dialog, session, tap)
+  if (appt === 'handled') return
   if (!appt) {
     await dialog.sender.sendText({
       text: dialog.texts.managedAppointmentGone,
     })
     return
   }
+  await applyReminderAction(dialog, session?.id ?? null, tap.action, appt, humanOwned)
+}
 
+async function applyReminderAction(
+  dialog: Dialog,
+  sessionId: string | null,
+  action: ReminderAction,
+  appt: AppointmentInfo,
+  humanOwned: boolean,
+): Promise<void> {
   if (action === 'confirm') {
     try {
-      await markAppointmentConfirmed(dialog.db, {
-        accountId: dialog.accountId,
-        id: appt.id,
-        confirmedAtIso: dialog.nowIso,
-      })
+      await dialog.backend.confirm({ id: appt.id, confirmedAtIso: dialog.nowIso })
     } catch (err) {
       console.error('[agenda] confirmar desde el recordatorio falló:', err)
       await dialog.sender.sendText({ text: dialog.texts.confirmError })
@@ -402,21 +1089,36 @@ async function handleReminderTap(
       }),
     )
 
-    const service = appt.serviceId
-      ? await findService(dialog, appt.serviceId)
-      : null
     const staffName = appt.staffId
       ? await loadStaffName(dialog.db, dialog.accountId, appt.staffId)
       : null
     const parts = zonedParts(appt.startsAt)
-    await dialog.sender.sendText({
-      text: dialog.texts.reminderConfirmed({
-        service: service?.name ?? dialog.texts.serviceFallback,
-        staff: staffName ?? dialog.texts.staffAnyTitle,
-        date: formatLongDate(parts.dateKey),
-        time: formatTimeLabel(parts),
-      }),
-    })
+    const date = formatLongDate(parts.dateKey)
+    const time = formatTimeLabel(parts)
+    // Una clínica (incluida la que tiene el módulo sin configurar) no nombra el
+    // procedimiento: el teléfono puede ser compartido. Dice quién va, con quién,
+    // y cuándo. Las demás cuentas siguen igual.
+    if (dialog.clinic || dialog.clinicUnavailable) {
+      await dialog.sender.sendText({
+        text: dialog.clinicTexts.reminderConfirmed({
+          patient: await appointmentPatientName(dialog, appt),
+          staff: staffName ?? dialog.clinicTexts.reminderStaffFallback,
+          date,
+          time,
+        }),
+      })
+    } else {
+      const service = appt.serviceId ? await findService(dialog, appt.serviceId) : null
+      await dialog.sender.sendText({
+        text: dialog.texts.reminderConfirmed({
+          service: service?.name ?? dialog.texts.serviceFallback,
+          staff: staffName ?? dialog.texts.staffAnyTitle,
+          date,
+          time,
+        }),
+      })
+    }
+    if (dialog.clinic) await bestEffort('instrucciones previas', () => sendPrepInfo(dialog, appt))
     return
   }
 
@@ -425,31 +1127,60 @@ async function handleReminderTap(
   if (!dialog.settings.toggles.allowReschedule) {
     await handoffChangeRequest(dialog, appt, action, {
       via: 'recordatorio',
-      sessionId: session?.id ?? null,
+      sessionId,
     })
     return
   }
 
   // Reprogramar con un humano a cargo: el bot NO abre su flujo encima
   // del agente. Avisa al agente (o al dueño), deja rastro y le dice al
-  // cliente que una persona sigue.
-  if (action === 'reschedule' && humanOwned) {
+  // cliente que una persona sigue. Lo mismo si en una clínica la persona revocó
+  // su autorización de datos: reprogramar es agendar otra cita con sus datos, y
+  // eso lo atiende una persona.
+  if (action === 'reschedule' && (humanOwned || (await consentWithdrawn(dialog)))) {
     await handoffRescheduleRequest(dialog, appt)
     return
   }
 
   const state =
     action === 'reschedule'
-      ? newBookingState('pick_day', {
-          mode: 'reschedule',
-          appointmentId: appt.id,
-          serviceId: appt.serviceId ?? undefined,
-          staffId: rescheduleStaffId(dialog, appt),
-        })
+      ? await rescheduleState(dialog, appt)
       : newBookingState('manage_cancel_confirm', { appointmentId: appt.id })
 
-  const sessionId = session?.id ?? (await openSession(dialog, state))
-  await conclude(dialog, sessionId, state)
+  await conclude(dialog, sessionId ?? (await openSession(dialog, state)), state)
+}
+
+/**
+ * ¿La última autorización de datos de esta persona es un no? Solo en una clínica
+ * (con su configuración o sin ella); sin ninguna fila (citas de antes del módulo)
+ * no. Si no se puede leer cuenta como que no: no decide nada por sí sola.
+ */
+async function consentWithdrawn(dialog: Dialog): Promise<boolean> {
+  if (!dialog.clinic && !dialog.clinicUnavailable) return false
+  const consent = await latestConsent(dialog.db, {
+    accountId: dialog.accountId,
+    contactId: dialog.contactId,
+    kind: 'datos_sensibles',
+  })
+  return consent !== null && !consent.granted
+}
+
+/**
+ * Tras confirmar: lo que la clínica escribió para ese servicio, la dirección y el
+ * mapa de la sede. Solo texto de la clínica: ni procedimiento ni consejo médico.
+ * Sin nada que decir no manda nada.
+ */
+async function sendPrepInfo(dialog: Dialog, appt: AppointmentInfo): Promise<void> {
+  const location = dialog.clinic?.location ?? null
+  const prep = appt.serviceId
+    ? await loadServicePrep(dialog.db, dialog.accountId, appt.serviceId)
+    : null
+  const mapUrl =
+    location?.latitude != null && location.longitude != null
+      ? `https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}`
+      : null
+  const text = dialog.clinicTexts.prepInfo({ prep, address: location?.address ?? null, mapUrl })
+  if (text) await dialog.sender.sendText({ text })
 }
 
 // ------------------------------------------------------------
@@ -458,6 +1189,8 @@ async function handleReminderTap(
 
 interface Dialog {
   db: SupabaseClient
+  /** Citas y disponibilidad: lo que cambia según dónde viva la agenda. */
+  backend: ClinicBackend
   sender: AgendaSender
   now: Date
   nowIso: string
@@ -473,6 +1206,21 @@ interface Dialog {
    * de Configuración ya aplicados (Fase 4).
    */
   texts: AgendaAgentTextsMerged
+  /** Configuración de la clínica; null en cuentas sin el módulo o si no está disponible. */
+  clinic: ClinicContext | null
+  /**
+   * La cuenta tiene el módulo clínica pero su configuración falta o no se pudo
+   * leer. Nunca se atiende como una agenda normal: pasa a una persona.
+   */
+  clinicUnavailable: boolean
+  /** Copy del bot clínico. No depende de la configuración, así que siempre existe. */
+  clinicTexts: ClinicTexts
+  /** Id de Meta del mensaje que se está atendiendo; queda en la autorización. */
+  inboundMessageId: string | null
+  humanOwned: boolean
+  /** Cómo saber si la IA responde sola; el resultado se guarda en `aiOn`. */
+  aiProbe: () => Promise<boolean>
+  aiOn?: Promise<boolean>
   /**
    * Preguntas extra, leídas una sola vez por mensaje del cliente y compartidas
    * por todos los pasos (null = no se pudieron leer).
@@ -488,8 +1236,36 @@ function rescheduleStaffId(dialog: Dialog, appt: AppointmentInfo): string {
   return dialog.settings.toggles.chooseStaff ? (appt.staffId ?? 'any') : 'any'
 }
 
-function expiryIso(dialog: Dialog): string {
-  return new Date(dialog.now.getTime() + SESSION_TTL_MS).toISOString()
+/**
+ * Dónde empieza reprogramar una cita. En una clínica el paciente y la sede de la
+ * cita anterior viajan en la sesión desde aquí: la cita nueva es del mismo paciente
+ * y queda en la misma sede, pase lo que pase en los pasos de en medio. Si no se
+ * pueden leer ahora, se leen al confirmar (ahí un fallo no agenda nada).
+ */
+async function rescheduleState(dialog: Dialog, appt: AppointmentInfo): Promise<BookingState> {
+  const base = newBookingState('pick_day', {
+    mode: 'reschedule',
+    appointmentId: appt.id,
+    serviceId: appt.serviceId ?? undefined,
+    staffId: rescheduleStaffId(dialog, appt),
+  })
+  if (!dialog.clinic) return base
+  try {
+    const links = await loadAppointmentClinicLinks(dialog.db, dialog.accountId, appt.id)
+    return {
+      ...base,
+      ...(links.patientId ? { patientId: links.patientId } : {}),
+      ...(links.locationId ? { locationId: links.locationId } : {}),
+    }
+  } catch (err) {
+    console.error('[clinica] no se pudo leer el paciente y la sede de la cita anterior:', err)
+    return base
+  }
+}
+
+function expiryIso(dialog: Dialog, state?: BookingState): string {
+  const ttl = state?.step === 'urgency' ? URGENCY_SESSION_TTL_MS : SESSION_TTL_MS
+  return new Date(dialog.now.getTime() + ttl).toISOString()
 }
 
 /** JSON plano para `state` (jsonb en producción, objeto en tests). */
@@ -518,6 +1294,16 @@ function coerceState(raw: Record<string, unknown>): BookingState {
     ...(raw.answers && typeof raw.answers === 'object' && !Array.isArray(raw.answers)
       ? { answers: readAnswerMap(raw.answers, { keepEmpty: true }) }
       : {}),
+    ...(typeof raw.patientId === 'string' ? { patientId: raw.patientId } : {}),
+    ...(typeof raw.locationId === 'string' ? { locationId: raw.locationId } : {}),
+    ...(typeof raw.dayPage === 'number' ? { dayPage: raw.dayPage } : {}),
+    ...(typeof raw.consentText === 'string' ? { consentText: raw.consentText } : {}),
+    ...(typeof raw.consentVersion === 'number' ? { consentVersion: raw.consentVersion } : {}),
+    ...(raw.afterConsent === 'urgency_book' ? { afterConsent: 'urgency_book' as const } : {}),
+    ...(raw.urgent === true ? { urgent: true } : {}),
+    ...(typeof raw.reminderAction === 'string'
+      ? { reminderAction: raw.reminderAction as ReminderAction }
+      : {}),
   })
 }
 
@@ -531,13 +1317,31 @@ async function advanceSession(
   input: { text: string; replyId: string | null },
 ): Promise<void> {
   const state = coerceState(session.state)
+  // Doble toque: la autorización ya se aceptó y el menú sigue abierto. El segundo
+  // toque no es un error del paciente: se ignora, sin mensaje ni fallo. (Un
+  // "No acepto" con una autorización vigente no es un doble toque: revoca.)
+  if (
+    (state.step === 'clinic_menu' || state.step === 'faq_open') &&
+    input.replyId === actId('consent_yes')
+  ) {
+    return
+  }
   // Las preguntas extra se responden escribiendo (o con la opción tocada): no
   // pasan por el emparejamiento general del menú.
   if (state.step === 'ask_question') {
     await handleAnswer(dialog, session.id, state, input)
     return
   }
-  const choice = matchChoice({
+  // El nombre de quien va a asistir se escribe: tampoco tiene menú que emparejar.
+  if (state.step === 'new_patient_name' && dialog.clinic) {
+    const outcome = await handlePatientName(clinicCtx(dialog), state, input)
+    await applyClinicOutcome(dialog, session.id, state, outcome)
+    return
+  }
+  // En la lista de citas, un texto que coincide con varias ("Marta" con dos citas de
+  // Marta) no elige la primera: cuenta como fallo. Los demás menús no cambian.
+  const match = state.step === 'pick_appointment' ? matchAppointmentOption : matchChoice
+  const choice = match({
     text: input.text,
     replyId: input.replyId,
     options: state.options,
@@ -546,7 +1350,16 @@ async function advanceSession(
     await registerFail(dialog, session.id, state)
     return
   }
-  await handleChoice(dialog, session.id, { ...state, fails: 0 }, choice)
+  // Un paso normal olvida los fallos al acertar. Los pasos clínicos no: su
+  // "fallo" también es que la base no guardó la respuesta, y si se reiniciara
+  // el paciente repetiría el toque para siempre sin llegar a una persona. Lo
+  // que avanza a otro paso nace con 0.
+  await handleChoice(
+    dialog,
+    session.id,
+    isClinicStep(state.step) ? state : { ...state, fails: 0 },
+    choice,
+  )
 }
 
 /**
@@ -562,12 +1375,37 @@ async function registerFail(
 ): Promise<void> {
   const fails = state.fails + 1
   if (fails >= 2) {
-    await performHandoff(dialog, sessionId)
+    await performHandoff(dialog, sessionId, failureHandoff(dialog, state))
     return
   }
   const next = { ...state, fails }
   await dialog.sender.sendText({ text: message })
   await conclude(dialog, sessionId, next)
+}
+
+/**
+ * El pase de quien pide una persona o falla dos veces en este paso. Una urgencia
+ * (los signos de alarma, la autorización que se pidió para agendarla, o su
+ * reserva de hoy) lleva el aviso prioritario: la persona ya dijo que le duele.
+ */
+function personRequestHandoff(
+  dialog: Dialog,
+  state: BookingState | null,
+): Omit<ClinicHandoff, 'kind'> {
+  if (state?.step === 'urgency') return pendingUrgencyHandoff(dialog)
+  if (state && (state.urgent || state.afterConsent === 'urgency_book')) {
+    return urgencyBookingHandoff(dialog.clinicTexts)
+  }
+  return {}
+}
+
+/** Dos respuestas que no se entienden: lo mismo, salvo la autorización sin responder. */
+function failureHandoff(dialog: Dialog, state: BookingState): Omit<ClinicHandoff, 'kind'> {
+  if (state.step !== 'consent') return personRequestHandoff(dialog, state)
+  // Una autorización sin responder no es un pedido de hablar con una persona.
+  return state.afterConsent === 'urgency_book'
+    ? urgencyConsentUnansweredHandoff(dialog.clinicTexts)
+    : { note: dialog.clinicTexts.consentUnansweredNote }
 }
 
 // ------------------------------------------------------------
@@ -754,6 +1592,21 @@ async function handleChoice(
 ): Promise<void> {
   const parsed = parseOptionId(choice)
 
+  if (isClinicStep(state.step)) {
+    if (!dialog.clinic) {
+      await closeSession(dialog.db, {
+        id: sessionId,
+        accountId: dialog.accountId,
+        status: 'completed',
+        updatedAtIso: dialog.nowIso,
+      })
+      return
+    }
+    const outcome = await handleClinicChoice(clinicCtx(dialog), state, parsed)
+    await applyClinicOutcome(dialog, sessionId, state, outcome)
+    return
+  }
+
   // Pieza "reprogramar/cancelar" apagada: un menú, una confirmación o
   // una reprogramación abiertos antes de apagarla no son un atajo.
   // Excepción: en el resumen de una reprogramación, "Cancelar" solo
@@ -855,6 +1708,10 @@ async function handleChoice(
     }
 
     case 'pick_day': {
+      if (parsed?.kind === 'act' && parsed.value === 'more_days') {
+        await conclude(dialog, sessionId, { ...state, dayPage: (state.dayPage ?? 0) + 1 })
+        return
+      }
       if (parsed?.kind !== 'day') break
       const dateKey = parsed.value
       if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) break
@@ -907,7 +1764,10 @@ async function handleChoice(
           ...state,
           slotStartsAt: undefined,
           questionId: undefined,
-          step: 'pick_day',
+          // Cambiar la hora es empezar a elegir otra vez: desde el primer día. Una
+          // urgencia vuelve a las horas de hoy, no al menú de días.
+          dayPage: undefined,
+          step: state.urgent ? 'pick_slot' : 'pick_day',
         })
         return
       }
@@ -931,10 +1791,12 @@ async function handleChoice(
     case 'manage_menu': {
       if (parsed?.kind !== 'act') break
       if (parsed.value === 'new') {
+        // En una clínica la cita nueva es de un paciente: sin elegirlo primero se
+        // crearía a nombre de nadie.
         await conclude(
           dialog,
           sessionId,
-          newBookingState('pick_service'),
+          newBookingState(dialog.clinic ? 'pick_patient' : 'pick_service'),
         )
         return
       }
@@ -952,14 +1814,7 @@ async function handleChoice(
           })
           return
         }
-        await conclude(dialog, sessionId, {
-          ...newBookingState('pick_day', {
-            mode: 'reschedule',
-            appointmentId: appt.id,
-            serviceId: appt.serviceId ?? undefined,
-            staffId: rescheduleStaffId(dialog, appt),
-          }),
-        })
+        await conclude(dialog, sessionId, await rescheduleState(dialog, appt))
         return
       }
       if (parsed.value === 'cancel') {
@@ -1001,8 +1856,7 @@ async function handleChoice(
           return
         }
         try {
-          await cancelAppointment(dialog.db, {
-            accountId: dialog.accountId,
+          await dialog.backend.cancel({
             id: appt.id,
             reason: 'cliente',
             cancelledAtIso: dialog.nowIso,
@@ -1106,13 +1960,11 @@ async function confirmAppointment(
   }
   let assigned: string | null = null
   for (const candidate of candidates) {
-    const free = await isStaffFree(
-      dialog.db,
-      dialog.accountId,
-      candidate,
-      start.toISOString(),
-      end.toISOString(),
-    )
+    const free = await dialog.backend.isStaffFree({
+      staffId: candidate,
+      startIso: start.toISOString(),
+      endIso: end.toISOString(),
+    })
     if (free) {
       assigned = candidate
       break
@@ -1125,6 +1977,25 @@ async function confirmAppointment(
 
   const answers = await answersForNewAppointment(dialog, state, oldAppt)
 
+  // Clínica: la cita es del paciente. Al reprogramar se conservan el paciente y la
+  // sede de la cita anterior (no la sede que tenga la clínica hoy). Se leen antes de
+  // reclamar la sesión: si la lectura falla, la sesión sigue viva y se puede
+  // reintentar, y la cita nueva no pierde al paciente.
+  let patientId = state.patientId ?? null
+  let locationId = oldAppt ? (state.locationId ?? null) : (dialog.clinic?.location?.id ?? null)
+  if (dialog.clinic && oldAppt && (!patientId || !locationId)) {
+    try {
+      const links = await loadAppointmentClinicLinks(dialog.db, dialog.accountId, oldAppt.id)
+      patientId ??= links.patientId
+      locationId ??= links.locationId
+    } catch (err) {
+      console.error('[clinica] no se pudo leer el paciente y la sede de la cita anterior:', err)
+      await dialog.sender.sendText({ text: dialog.texts.confirmError })
+      await conclude(dialog, sessionId, state)
+      return
+    }
+  }
+
   // Un solo ganador por sesión: si otro proceso (un doble tap de
   // "Confirmar") ya la reclamó, ese es el que agenda y responde.
   // Aquí no se inserta nada ni se manda un mensaje que contradiga.
@@ -1136,23 +2007,27 @@ async function confirmAppointment(
   if (!claimed) return
 
   const appointmentId = crypto.randomUUID()
-  const { error } = await insertAppointment(dialog.db, {
+  const booked = await dialog.backend.book({
     id: appointmentId,
-    accountId: dialog.accountId,
     contactId: dialog.contactId,
     conversationId: dialog.conversationId,
     serviceId: service.id,
     staffId: assigned,
+    patientId,
+    locationId,
     startsAtIso: start.toISOString(),
     endsAtIso: end.toISOString(),
-    status: 'confirmed',
-    createdVia: 'bot',
     confirmedAtIso: dialog.nowIso,
     rescheduledFrom: oldAppt?.id ?? null,
     answers,
   })
 
-  if (error) {
+  if (booked.kind !== 'ok') {
+    // Se deja constancia antes de nada: el cliente solo ve un mensaje
+    // genérico y sin esto el error real no queda en ningún log.
+    if (booked.kind === 'failed') {
+      console.error('[agenda] no se pudo crear la cita:', booked.message)
+    }
     // La cita no existe: la sesión vuelve a estar activa para que el
     // cliente pueda elegir otra hora o reintentar.
     await releaseSession(dialog.db, {
@@ -1160,7 +2035,7 @@ async function confirmAppointment(
       accountId: dialog.accountId,
       updatedAtIso: dialog.nowIso,
     })
-    if (error.code === '23P01') {
+    if (booked.kind === 'slot_taken') {
       // Choque con el EXCLUDE anti-doble-reserva: alguien ganó la carrera.
       await offerAlternatives(dialog, sessionId, state)
       return
@@ -1178,8 +2053,7 @@ async function confirmAppointment(
     // Crítica: si la cita anterior no se cancela, el cliente quedaría
     // con dos citas. Se deshace la nueva y se re-ofrece el resumen.
     try {
-      await cancelAppointment(dialog.db, {
-        accountId: dialog.accountId,
+      await dialog.backend.cancel({
         id: oldAppt.id,
         reason: 'reprogramada',
         cancelledAtIso: dialog.nowIso,
@@ -1188,8 +2062,7 @@ async function confirmAppointment(
       console.error('[agenda] cancelar la cita anterior falló:', err)
       let undone = false
       try {
-        await cancelAppointment(dialog.db, {
-          accountId: dialog.accountId,
+        await dialog.backend.cancel({
           id: appointmentId,
           reason: 'error_reprogramacion',
           cancelledAtIso: dialog.nowIso,
@@ -1279,12 +2152,48 @@ async function confirmAppointment(
 
   // La sesión ya quedó 'completed' al reclamarla (claimSession).
   const staffName = await loadStaffName(dialog.db, dialog.accountId, assigned!)
-  const summary = buildSummary(dialog, service, staffName ?? '', start)
+  const summary = withPatient(
+    buildSummary(dialog, service, staffName ?? '', start),
+    await patientName(dialog, patientId),
+  )
   await dialog.sender.sendText({
     text: oldAppt
       ? dialog.texts.rescheduleDone(summary)
       : dialog.texts.confirmed(summary),
   })
+
+  // Clínica: después de agendar se pregunta, una sola vez, si quiere que le avisen
+  // cuando le toque control. No tras reprogramar (ya la hizo), y no en una reserva
+  // de urgencia: primero la urgencia. La cita ya está hecha: si la pregunta falla,
+  // no pasa nada.
+  if (!oldAppt && dialog.clinic && !state.urgent) {
+    await bestEffort('pregunta de avisos de control', () => askMarketingConsent(dialog))
+  }
+}
+
+/** Permiso aparte para escribirle cuando le toque control (Fase 5). Solo si nunca respondió. */
+async function askMarketingConsent(dialog: Dialog): Promise<void> {
+  const answered = await latestConsent(dialog.db, {
+    accountId: dialog.accountId,
+    contactId: dialog.contactId,
+    kind: 'mercadeo',
+  })
+  if (answered) return
+  const state = newBookingState('marketing_consent')
+  const sessionId = await openSession(dialog, state)
+  try {
+    await conclude(dialog, sessionId, state)
+  } catch (err) {
+    // La pregunta no salió: una sesión abierta sin menú contestaría con "no
+    // entendí" a lo siguiente que escriba el paciente.
+    await closeSession(dialog.db, {
+      id: sessionId,
+      accountId: dialog.accountId,
+      status: 'completed',
+      updatedAtIso: dialog.nowIso,
+    })
+    throw err
+  }
 }
 
 /** Hora perdida: avisa y re-renderiza el menú de horas. */
@@ -1325,6 +2234,8 @@ async function resolveCandidates(
 interface Rendered {
   state: BookingState
   closed: boolean
+  /** El paso no tiene a quién ofrecer y pasa a una persona (una urgencia sin horas). */
+  handoff?: ClinicHandoff
 }
 
 /**
@@ -1398,10 +2309,18 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
         })
         return { state, closed: true }
       }
-      const options: OfferedOption[] = days.map((day) => ({
+      // Si la agenda cambió y la página quedó vacía, se vuelve a la primera.
+      const requested = state.dayPage ?? 0
+      const page = requested * DAY_PAGE_SIZE < days.length ? requested : 0
+      const shown = days.slice(page * DAY_PAGE_SIZE, (page + 1) * DAY_PAGE_SIZE)
+      const options: OfferedOption[] = shown.map((day) => ({
         id: dayId(day.key),
         title: day.label,
       }))
+      // "Ver más días" es de la clínica: una agenda normal ofrece 7 y cabe entera.
+      if (dialog.clinic && days.length > (page + 1) * DAY_PAGE_SIZE) {
+        options.push({ id: actId('more_days'), title: dialog.clinicTexts.moreDays })
+      }
       await sendOptions(dialog, {
         bodyText:
           state.mode === 'reschedule'
@@ -1410,14 +2329,30 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
         buttonLabel: dialog.texts.dayMenuButton,
         options,
       })
-      return { state: { ...state, options }, closed: false }
+      // La primera página no guarda `dayPage`: la sesión queda como siempre.
+      return {
+        state: { ...state, options, dayPage: page > 0 ? page : undefined },
+        closed: false,
+      }
     }
 
     case 'pick_slot': {
-      const dateKey = state.dateKey
+      // Una urgencia es para hoy: sin día, hoy.
+      const dateKey = state.dateKey ?? (state.urgent ? zonedDateKey(dialog.now) : undefined)
       if (!dateKey) return renderStep(dialog, { ...state, step: 'pick_day' })
       const slots = await mergedSlotsForDay(dialog, state, dateKey)
       if (!slots.length) {
+        // Una urgencia sin horas nunca cae al menú de días: pasa a una persona.
+        if (state.urgent && dialog.clinic) {
+          return {
+            state,
+            closed: true,
+            handoff: urgencyOffHoursHandoff(
+              dialog.clinicTexts,
+              dialog.clinic.location?.onCallPhone ?? null,
+            ),
+          }
+        }
         await dialog.sender.sendText({ text: dialog.texts.dayTaken })
         return renderStep(dialog, {
           ...state,
@@ -1558,6 +2493,17 @@ async function renderStep(dialog: Dialog, state: BookingState): Promise<Rendered
       })
       return { state: { ...state, options }, closed: false }
     }
+
+    case 'consent':
+    case 'clinic_menu':
+    case 'urgency':
+    case 'pick_patient':
+    case 'new_patient_name':
+    case 'pick_appointment':
+    case 'marketing_consent':
+    case 'faq_open':
+      if (!dialog.clinic) return { state, closed: true }
+      return renderClinicStep(clinicCtx(dialog), state)
   }
 }
 
@@ -1567,7 +2513,16 @@ async function conclude(
   sessionId: string,
   state: BookingState,
 ): Promise<void> {
-  const { state: effective, closed } = await renderStep(dialog, state)
+  // Al entrar a los signos de alarma (no al repetir la pregunta, que lleva fallos) el
+  // equipo se entera ya: el aviso no espera a que la persona conteste.
+  if (dialog.clinic && state.step === 'urgency' && state.fails === 0) {
+    await announceUrgencyOpened(dialog)
+  }
+  const { state: effective, closed, handoff } = await renderStep(dialog, state)
+  if (handoff) {
+    await performHandoff(dialog, sessionId, handoff)
+    return
+  }
   if (closed) {
     await closeSession(dialog.db, {
       id: sessionId,
@@ -1582,7 +2537,7 @@ async function conclude(
     accountId: dialog.accountId,
     state: toJson(effective),
     updatedAtIso: dialog.nowIso,
-    expiresAtIso: expiryIso(dialog),
+    expiresAtIso: expiryIso(dialog, effective),
   })
 }
 
@@ -1590,54 +2545,18 @@ async function conclude(
 // Disponibilidad
 // ------------------------------------------------------------
 
-interface AvailabilityCtx {
-  service: ServiceInfo | null
-  staffIds: string[]
-  blocks: WorkBlockRow[]
-  busy: BusyRow[]
-  now: Date
-}
-
-async function loadAvailabilityContext(
+/** Servicio y candidatos de la sesión; null si ya no hay a quién ofrecer. */
+async function slotScope(
   dialog: Dialog,
   state: BookingState,
-  fromKey: string,
-  days: number,
-): Promise<AvailabilityCtx> {
+): Promise<{ service: ServiceInfo; staffIds: string[] } | null> {
   const service = await findService(dialog, state.serviceId)
-  if (!service) {
-    return { service: null, staffIds: [], blocks: [], busy: [], now: dialog.now }
-  }
+  if (!service) return null
   const staff: Pick<StaffInfo, 'id'>[] =
     state.staffId && state.staffId !== 'any'
       ? [{ id: state.staffId }]
       : await listEligibleStaff(dialog.db, dialog.accountId, service.id)
-  const staffIds = staff.map((s) => s.id)
-  if (!staffIds.length) {
-    return { service, staffIds: [], blocks: [], busy: [], now: dialog.now }
-  }
-  const fromIso = startOfZonedDay(fromKey).toISOString()
-  const toIso = startOfZonedDay(addDaysToKey(fromKey, days)).toISOString()
-  const [blocks, busy] = await Promise.all([
-    listWorkBlocks(dialog.db, dialog.accountId, staffIds),
-    listBusy(dialog.db, dialog.accountId, staffIds, fromIso, toIso),
-  ])
-  return { service, staffIds, blocks, busy, now: dialog.now }
-}
-
-function slotsForDay(ctx: AvailabilityCtx, dateKey: string): MergedSlot[] {
-  if (!ctx.service || !ctx.staffIds.length) return []
-  const sets = ctx.staffIds.map((sid) => ({
-    staffId: sid,
-    slots: computeDaySlots({
-      dateKey,
-      durationMinutes: ctx.service!.durationMinutes,
-      workBlocks: ctx.blocks.filter((b) => b.staffId === sid),
-      busy: ctx.busy.filter((b) => b.staffId === sid),
-      now: ctx.now,
-    }),
-  }))
-  return mergeSlotsByStart(sets)
+  return staff.length ? { service, staffIds: staff.map((s) => s.id) } : null
 }
 
 async function mergedSlotsForDay(
@@ -1645,32 +2564,35 @@ async function mergedSlotsForDay(
   state: BookingState,
   dateKey: string,
 ): Promise<MergedSlot[]> {
-  const ctx = await loadAvailabilityContext(dialog, state, dateKey, 1)
-  return slotsForDay(ctx, dateKey)
+  const scope = await slotScope(dialog, state)
+  if (!scope) return []
+  return dialog.backend.getDaySlots({ ...scope, dateKey, now: dialog.now })
 }
 
-/** Próximos días (hasta 7) que tienen al menos una hora ofrecible. */
+/** Próximos días (7, o los que fije la clínica) con al menos una hora ofrecible. */
 async function dayOptions(
   dialog: Dialog,
   state: BookingState,
 ): Promise<{ key: string; label: string }[]> {
+  const scope = await slotScope(dialog, state)
+  if (!scope) return []
   const todayKey = zonedDateKey(dialog.now)
-  const keys: string[] = []
-  for (let i = 0; i < OFFER_DAYS; i += 1) keys.push(addDaysToKey(todayKey, i))
-
-  const ctx = await loadAvailabilityContext(dialog, state, keys[0], OFFER_DAYS)
-  const out: { key: string; label: string }[] = []
-  for (let i = 0; i < keys.length; i += 1) {
-    if (!slotsForDay(ctx, keys[i]).length) continue
-    const label =
-      i === 0
+  const tomorrowKey = addDaysToKey(todayKey, 1)
+  const keys = await dialog.backend.getDaysWithSlots({
+    ...scope,
+    fromKey: todayKey,
+    days: dialog.clinic?.offerDays ?? OFFER_DAYS,
+    now: dialog.now,
+  })
+  return keys.map((key) => ({
+    key,
+    label:
+      key === todayKey
         ? dialog.texts.dayToday
-        : i === 1
+        : key === tomorrowKey
           ? dialog.texts.dayTomorrow
-          : formatDayLabel(keys[i])
-    out.push({ key: keys[i], label })
-  }
-  return out
+          : formatDayLabel(key),
+  }))
 }
 
 // ------------------------------------------------------------
@@ -1720,6 +2642,41 @@ function buildSummary(
   }
 }
 
+/**
+ * El nombre de quien va a asistir, para el resumen y la confirmación (clínicas). Es
+ * un dato personal: se le muestra a quien lo escribió y no va a logs. Si no se puede
+ * leer, la cita sigue y solo falta la línea.
+ */
+async function patientName(dialog: Dialog, patientId: string | null): Promise<string | null> {
+  if (!dialog.clinic || !patientId) return null
+  try {
+    const patients = await dialog.backend.findPatients({ contactId: dialog.contactId })
+    return patients.find((p) => p.id === patientId)?.fullName ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * El paciente de una cita que ya existe, para la respuesta a Confirmar. Es un dato
+ * personal: se le muestra a quien recibió el recordatorio y no va a logs. Si no se
+ * puede leer, la cita ya quedó confirmada y solo falta la línea.
+ */
+async function appointmentPatientName(dialog: Dialog, appt: AppointmentInfo): Promise<string | null> {
+  try {
+    const { patientId } = await loadAppointmentClinicLinks(dialog.db, dialog.accountId, appt.id)
+    if (!patientId) return null
+    const patients = await dialog.backend.findPatients({ contactId: dialog.contactId })
+    return patients.find((p) => p.id === patientId)?.fullName ?? null
+  } catch {
+    return null
+  }
+}
+
+function withPatient(summary: AgendaAppointmentSummary, name: string | null): AgendaAppointmentSummary {
+  return name ? { ...summary, patient: name } : summary
+}
+
 async function buildSummaryForState(
   dialog: Dialog,
   state: BookingState,
@@ -1737,7 +2694,10 @@ async function buildSummaryForState(
           dialog.texts.staffAnyTitle)
         : dialog.texts.staffAnyTitle
   }
-  const summary = buildSummary(dialog, service, staffName, new Date(state.slotStartsAt))
+  const summary = withPatient(
+    buildSummary(dialog, service, staffName, new Date(state.slotStartsAt)),
+    await patientName(dialog, state.patientId ?? null),
+  )
   // Las respuestas a las preguntas extra, en el orden actual (solo cita nueva).
   if (state.mode === 'reschedule' || !state.answers) return summary
   const questions = await loadQuestions(dialog)
@@ -1896,13 +2856,34 @@ async function sendButtons(
 async function performHandoff(
   dialog: Dialog,
   sessionId: string | null,
+  opts: Omit<ClinicHandoff, 'kind'> = {},
 ): Promise<void> {
-  await markConversationHandoff(dialog.db, {
-    accountId: dialog.accountId,
-    conversationId: dialog.conversationId,
-    note: dialog.texts.handoffNote,
-    agentId: await loadHandoffAgentId(dialog.db, dialog.accountId),
-  })
+  // Con un aviso propio (el de urgencia) la persona ya dijo que le duele: su
+  // mensaje sale aunque falle la pausa, el aviso o el cierre de la sesión. Lo
+  // que falle se registra y se alerta, para que alguien mire ese chat. Un pase
+  // normal sigue subiendo el error: no se le promete una persona al cliente si
+  // el bot no se pudo pausar.
+  const priority = opts.notification !== undefined
+  const failed: string[] = []
+  const critical = async (label: string, fn: () => Promise<unknown>) => {
+    try {
+      await fn()
+    } catch (err) {
+      if (!priority) throw err
+      console.error(`[agenda] ${label} falló en una urgencia:`, err)
+      failed.push(label)
+    }
+  }
+
+  const agentId = await loadHandoffAgentId(dialog.db, dialog.accountId)
+  await critical('pausar el bot', () =>
+    markConversationHandoff(dialog.db, {
+      accountId: dialog.accountId,
+      conversationId: dialog.conversationId,
+      note: opts.note ?? dialog.texts.handoffNote,
+      agentId,
+    }),
+  )
 
   await bestEffort('etiqueta quiere-humano', () =>
     applyContactTag(dialog.db, {
@@ -1914,38 +2895,86 @@ async function performHandoff(
   )
 
   // El trigger de asignación avisa al agente; el dueño recibe su
-  // aviso aquí para que el equipo lo vea aunque no haya agente.
-  const agentId = await loadHandoffAgentId(dialog.db, dialog.accountId)
+  // aviso aquí para que el equipo lo vea aunque no haya agente. Un aviso
+  // propio (el de urgencia) no se puede perder: sale siempre, también cuando
+  // el dueño es el agente y el trigger solo le dice que le asignaron un chat,
+  // y le llega además al agente.
   const owner = dialog.account?.ownerUserId ?? null
-  if (owner && owner !== agentId) {
-    const contact = await loadContact(
-      dialog.db,
-      dialog.accountId,
-      dialog.contactId,
-    )
-    const who = contact?.name?.trim() || contact?.phone || 'Un cliente'
-    await bestEffort('aviso de handoff al equipo', () =>
-      insertNotification(dialog.db, {
+  const recipients = new Set<string>()
+  if (owner && (owner !== agentId || opts.notification)) recipients.add(owner)
+  if (opts.notification && agentId) recipients.add(agentId)
+  if (recipients.size) {
+    const who = await contactLabel(dialog.db, dialog.accountId, dialog.contactId)
+    for (const userId of recipients) {
+      try {
+        await insertNotification(dialog.db, {
+          accountId: dialog.accountId,
+          userId,
+          conversationId: dialog.conversationId,
+          contactId: dialog.contactId,
+          title: opts.notification?.title ?? dialog.texts.handoffNotificationTitle,
+          body: (opts.notification?.body ?? dialog.texts.handoffNotificationBody)(who),
+          // La hora del bot: así el siguiente aviso de urgencia de este chat ve este.
+          createdAtIso: dialog.nowIso,
+        })
+      } catch (err) {
+        console.error('[agenda] aviso de handoff al equipo falló:', err)
+        if (priority) failed.push('avisar al equipo en la app')
+      }
+    }
+  } else if (priority) {
+    failed.push('avisar al equipo en la app: no hay a quién')
+  }
+
+  if (sessionId) {
+    await critical('cerrar la sesión', () =>
+      closeSession(dialog.db, {
+        id: sessionId,
         accountId: dialog.accountId,
-        userId: owner,
-        conversationId: dialog.conversationId,
-        contactId: dialog.contactId,
-        title: dialog.texts.handoffNotificationTitle,
-        body: dialog.texts.handoffNotificationBody(who),
+        status: 'cancelled',
+        updatedAtIso: dialog.nowIso,
       }),
     )
   }
 
-  if (sessionId) {
-    await closeSession(dialog.db, {
-      id: sessionId,
-      accountId: dialog.accountId,
-      status: 'cancelled',
-      updatedAtIso: dialog.nowIso,
-    })
+  // El respaldo del aviso: sin datos del paciente, solo dónde mirar.
+  if (failed.length) {
+    await notifyAlert(
+      `Urgencia: no se pudo ${[...new Set(failed)].join(', ')} ` +
+        `(cuenta ${dialog.accountId}, conversación ${dialog.conversationId}). Revisa ese chat ya.`,
+    )
   }
 
-  await dialog.sender.sendText({ text: dialog.texts.handoff })
+  await dialog.sender.sendText({ text: opts.message ?? dialog.texts.handoff })
+}
+
+/**
+ * Clínica sin configuración usable: el hilo queda con una persona. Si el
+ * mensaje parece una urgencia (con las palabras de siempre, porque las de la
+ * clínica no se pudieron leer) o es el toque de "Tengo una urgencia", el aviso
+ * al equipo es el prioritario.
+ */
+async function handoffClinicUnavailable(
+  dialog: Dialog,
+  sessionId: string | null,
+  input: { text: string; replyId: string | null },
+): Promise<void> {
+  const { clinicTexts: texts } = dialog
+  const urgent =
+    (input.replyId !== null && URGENT_TAPS.includes(input.replyId)) ||
+    detectsUrgency(input.text, DEFAULT_URGENCY_WORDS)
+  if (!urgent) {
+    await performHandoff(dialog, sessionId, { note: texts.clinicUnavailableNote })
+    return
+  }
+  // Sin la configuración no se sabe qué signos de alarma mostrar: valen los de
+  // siempre. Quien tocó "Sí, tengo alguno" ya sabe que los tiene; los demás
+  // reciben los signos repetidos, no el pase genérico.
+  const answer =
+    input.replyId === actId('alarm_yes')
+      ? urgencyGoErHandoff(texts)
+      : urgencyUnconfirmedHandoff(texts, DEFAULT_URGENCY_ALARM_TEXT)
+  await performHandoff(dialog, sessionId, { ...answer, note: texts.clinicUnavailableUrgentNote })
 }
 
 /**
@@ -1969,12 +2998,7 @@ async function handoffRescheduleRequest(
   const time = formatTimeLabel(parts)
 
   if (notifyUserId) {
-    const contact = await loadContact(
-      dialog.db,
-      dialog.accountId,
-      dialog.contactId,
-    )
-    const who = contact?.name?.trim() || contact?.phone || 'Un cliente'
+    const who = await contactLabel(dialog.db, dialog.accountId, dialog.contactId)
     await bestEffort('aviso de reprogramación al agente', () =>
       insertNotification(dialog.db, {
         accountId: dialog.accountId,
@@ -2090,12 +3114,7 @@ async function handoffChangeRequest(
   }
 
   if (notify.size) {
-    const contact = await loadContact(
-      dialog.db,
-      dialog.accountId,
-      dialog.contactId,
-    )
-    const who = contact?.name?.trim() || contact?.phone || 'Un cliente'
+    const who = await contactLabel(dialog.db, dialog.accountId, dialog.contactId)
     for (const userId of notify) {
       await bestEffort('aviso de cambio de cita al equipo', () =>
         insertNotification(dialog.db, {
@@ -2162,12 +3181,7 @@ async function escalateBrokenReschedule(
 
   const owner = dialog.account?.ownerUserId ?? null
   if (owner && owner !== agentId) {
-    const contact = await loadContact(
-      dialog.db,
-      dialog.accountId,
-      dialog.contactId,
-    )
-    const who = contact?.name?.trim() || contact?.phone || 'Un cliente'
+    const who = await contactLabel(dialog.db, dialog.accountId, dialog.contactId)
     await bestEffort('aviso de reprogramación rota al equipo', () =>
       insertNotification(dialog.db, {
         accountId: dialog.accountId,
@@ -2183,10 +3197,118 @@ async function escalateBrokenReschedule(
   await dialog.sender.sendText({ text: dialog.texts.rescheduleBroken })
 }
 
+/** Cómo se llama el contacto en un aviso: su nombre, su teléfono o `fallback`. */
+async function contactLabel(
+  db: SupabaseClient,
+  accountId: string,
+  contactId: string,
+  fallback = 'Un cliente',
+): Promise<string> {
+  const contact = await loadContact(db, accountId, contactId).catch(() => null)
+  return contact?.name?.trim() || contact?.phone || fallback
+}
+
+/** El pase de quien dijo que le duele y no confirmó si tiene signos de alarma. */
+function pendingUrgencyHandoff(dialog: Dialog): ClinicHandoff {
+  return urgencyUnconfirmedHandoff(dialog.clinicTexts, urgencyAlarmText(dialog))
+}
+
 async function bestEffort(label: string, fn: () => Promise<unknown>) {
   try {
     await fn()
   } catch (err) {
     console.error(`[agenda] ${label} falló:`, err)
+  }
+}
+
+// ------------------------------------------------------------
+// Pasos clínicos
+// ------------------------------------------------------------
+
+function clinicCtx(dialog: Dialog): ClinicStepCtx {
+  return {
+    db: dialog.db,
+    sender: dialog.sender,
+    backend: dialog.backend,
+    clinic: dialog.clinic!,
+    texts: dialog.clinicTexts,
+    accountId: dialog.accountId,
+    contactId: dialog.contactId,
+    conversationId: dialog.conversationId,
+    now: dialog.now,
+    nowIso: dialog.nowIso,
+    inboundMessageId: dialog.inboundMessageId,
+    aiAutoReplyOn: () => aiAnswers(dialog),
+    serviceScope: (serviceId) =>
+      slotScope(dialog, newBookingState('pick_day', { serviceId, staffId: 'any' })),
+    sendOptions: (args) => sendOptions(dialog, args),
+  }
+}
+
+async function applyClinicOutcome(
+  dialog: Dialog,
+  sessionId: string,
+  state: BookingState,
+  outcome: ClinicOutcome,
+): Promise<void> {
+  switch (outcome.kind) {
+    case 'next':
+      // `advanceSession` no reinicia los fallos en los pasos clínicos, así que
+      // aquí un paso nuevo nace con 0: un error en el menú anterior no puede
+      // adelantar el pase a una persona del paso que sigue.
+      await conclude(
+        dialog,
+        sessionId,
+        outcome.state.step === state.step ? outcome.state : { ...outcome.state, fails: 0 },
+      )
+      return
+    case 'handoff':
+      await performHandoff(dialog, sessionId, outcome)
+      return
+    case 'done':
+      await closeSession(dialog.db, {
+        id: sessionId,
+        accountId: dialog.accountId,
+        status: 'completed',
+        updatedAtIso: dialog.nowIso,
+      })
+      return
+    case 'fail':
+      await registerFail(dialog, sessionId, state, outcome.message)
+      return
+    case 'reminder': {
+      const appt = await loadUpcomingAppointment(dialog, outcome.appointmentId)
+      if (!appt) {
+        await dialog.sender.sendText({ text: dialog.texts.managedAppointmentGone })
+        await closeSession(dialog.db, {
+          id: sessionId,
+          accountId: dialog.accountId,
+          status: 'completed',
+          updatedAtIso: dialog.nowIso,
+        })
+        return
+      }
+      // La pregunta "¿cuál?" ya cumplió. Confirmar termina aquí, y reprogramar con
+      // una persona a cargo también (solo le avisa). Cancelar y reprogramar siguen
+      // en la misma sesión, que cambia de paso, o la cierra quien las pasa a una persona.
+      const endsHere =
+        outcome.action === 'confirm' || (outcome.action === 'reschedule' && dialog.humanOwned)
+      if (endsHere) {
+        await closeSession(dialog.db, {
+          id: sessionId,
+          accountId: dialog.accountId,
+          status: 'completed',
+          updatedAtIso: dialog.nowIso,
+        })
+      }
+      await applyReminderAction(
+        dialog,
+        endsHere ? null : sessionId,
+        outcome.action,
+        appt,
+        dialog.humanOwned,
+      )
+      return
+    }
   }
 }

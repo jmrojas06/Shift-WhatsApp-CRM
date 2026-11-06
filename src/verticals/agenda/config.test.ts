@@ -156,6 +156,26 @@ describe('validateStaffCreate / validateStaffUpdate', () => {
     expect(validateStaffUpdate({}).ok).toBe(false)
     expect(validateStaffUpdate({ bio: 12 }).ok).toBe(false)
   })
+
+  it('update del calendario de Google: recorta, vacío o null lo quita', () => {
+    expect(
+      validateStaffUpdate({ google_calendar_id: '  sala-1@group.calendar.google.com ' }),
+    ).toEqual({ ok: true, value: { googleCalendarId: 'sala-1@group.calendar.google.com' } })
+    expect(validateStaffUpdate({ google_calendar_id: null })).toEqual({
+      ok: true,
+      value: { googleCalendarId: null },
+    })
+    expect(validateStaffUpdate({ google_calendar_id: '   ' })).toEqual({
+      ok: true,
+      value: { googleCalendarId: null },
+    })
+  })
+
+  it('rechaza un calendario de Google que no es texto, es largo o tiene saltos de línea', () => {
+    expect(validateStaffUpdate({ google_calendar_id: 12 }).ok).toBe(false)
+    expect(validateStaffUpdate({ google_calendar_id: 'x'.repeat(301) }).ok).toBe(false)
+    expect(validateStaffUpdate({ google_calendar_id: 'a\nb' }).ok).toBe(false)
+  })
 })
 
 describe('validateStaffServices', () => {

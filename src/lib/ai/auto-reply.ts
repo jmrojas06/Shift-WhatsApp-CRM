@@ -14,6 +14,9 @@ import {
 } from '@/lib/flows/meta-send'
 import { sendTypingIndicator } from '@/lib/whatsapp/meta-api'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
+import { announceAiHandoff } from '@/modules/clinica/ai-handoff'
+import { clinicAiGate } from '@/modules/clinica/ai-gate'
+import { hasActiveAutoResponder, replyCapReached } from './eligibility'
 import { getT } from '@/lib/i18n/translate'
 
 const tApi = getT('Api')
@@ -73,6 +76,12 @@ export async function dispatchInboundToAiReply(
     const config = await loadAiConfig(db, accountId)
     if (!config || !config.autoReplyEnabled) return
 
+    // Clinic accounts: a patient's chat can carry health data, so it never
+    // reaches the provider until they authorize it. Fails closed (an
+    // unreadable account or authorization is a no).
+    const gate = await clinicAiGate(db, { accountId, contactId })
+    if (!gate.allowed) return
+
     // Deterministic, user-configured responders win over the LLM — the
     // caller already excludes messages a Flow consumed. Message-level
     // automations (`new_message_received` / `keyword_match`) are
@@ -81,14 +90,7 @@ export async function dispatchInboundToAiReply(
     // avoid double-texting the customer. (Relationship triggers like
     // `first_inbound_message` don't count — they're not per-message
     // auto-responders.)
-    const { data: autoResponders } = await db
-      .from('automations')
-      .select('id')
-      .eq('account_id', accountId)
-      .eq('is_active', true)
-      .in('trigger_type', ['new_message_received', 'keyword_match'])
-      .limit(1)
-    if (autoResponders && autoResponders.length > 0) return
+    if (await hasActiveAutoResponder(db, accountId)) return
 
     const { data: conv, error: convErr } = await db
       .from('conversations')
@@ -100,7 +102,7 @@ export async function dispatchInboundToAiReply(
     if (conv.ai_autoreply_disabled) return // handed off / turned off here
     // Cheap early-out; the authoritative cap check is the atomic claim
     // below (this read can race a concurrent inbound).
-    if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) return
+    if (replyCapReached(conv, config)) return
 
     const messages = await buildConversationContext(db, conversationId)
     if (messages.length === 0) return
@@ -163,6 +165,8 @@ export async function dispatchInboundToAiReply(
       userPrompt: config.systemPrompt,
       mode: 'auto_reply',
       knowledge,
+      // En una clínica, el bloque fijo: nada de diagnósticos ni medicamentos.
+      clinic: gate.clinic,
     })
 
     const { text, handoff, usage } = await generateReply({
@@ -207,6 +211,18 @@ export async function dispatchInboundToAiReply(
         update.assigned_agent_id = config.handoffAgentId
       }
       await db.from('conversations').update(update).eq('id', conversationId)
+      // En una clínica el paciente no se queda en silencio ni el equipo sin saberlo:
+      // un texto fijo con los signos de alarma y un aviso en la app (ver ai-handoff).
+      // Va después de la pausa, y no lanza.
+      if (gate.clinic) {
+        await announceAiHandoff(db, {
+          accountId,
+          conversationId,
+          contactId,
+          configOwnerUserId,
+          handoffAgentId: config.handoffAgentId ?? null,
+        })
+      }
       return
     }
 

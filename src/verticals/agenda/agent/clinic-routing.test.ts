@@ -1,0 +1,1099 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { CLINIC_HUMAN_WORDS, buildClinicTexts } from '@/modules/clinica/texts'
+
+import { DEFAULT_LABELS } from '../labels'
+import { AGENDA_AGENT_TEXTS } from '../texts'
+import {
+  ACCOUNT,
+  CONTACT,
+  clinicDb,
+  grantedConsent,
+  last,
+  makeRecorder,
+  send,
+} from './testing/clinic-harness'
+
+// La configuración de la IA se lee de verdad; aquí solo se fija qué devuelve.
+const loadAiConfig = vi.hoisted(() => vi.fn())
+vi.mock('@/lib/ai/config', () => ({ loadAiConfig }))
+
+const texts = buildClinicTexts(DEFAULT_LABELS)
+
+const MENU_IDS = ['act:book', 'act:mine', 'act:faq', 'act:urgent', 'act:human']
+const CONSENT_BUTTONS = ['act:consent_yes', 'act:consent_no']
+
+const session = (state: Record<string, unknown>) => ({
+  id: 'ses-1',
+  account_id: ACCOUNT,
+  contact_id: CONTACT,
+  status: 'active',
+  expires_at: '2026-10-19T13:10:00.000Z',
+  state: { mode: 'book', options: [], fails: 0, ...state },
+})
+
+const authorized = () => clinicDb({ clinic_consents: [grantedConsent()] })
+
+/** Una cita confirmada de Marta para el martes 20 a las 9:00 en Bogotá (la hora actual es el lunes 19). */
+const UPCOMING = {
+  id: 'ap-1',
+  account_id: ACCOUNT,
+  contact_id: CONTACT,
+  service_id: 'svc-limpieza',
+  staff_id: 'st-ana',
+  patient_id: 'pat-1',
+  starts_at: '2026-10-20T14:00:00.000Z',
+  ends_at: '2026-10-20T14:30:00.000Z',
+  status: 'confirmed',
+  answers: {},
+}
+
+/** Abre el menú como lo haría un paciente: con un saludo. */
+async function withMenuOpen() {
+  const db = authorized()
+  const rec = makeRecorder()
+  await send(db, rec, { text: 'Hola' })
+  return { db, rec, sent: rec.calls.length }
+}
+
+/** Abre el menú y entra a "Precios y dudas". */
+async function withFaqOpen() {
+  const { db, rec } = await withMenuOpen()
+  await send(db, rec, { replyId: 'act:faq' })
+  return { db, rec, sent: rec.calls.length }
+}
+
+const activeStates = (db: ReturnType<typeof clinicDb>) =>
+  db._tables.booking_sessions
+    .filter((s) => s.status === 'active')
+    .map((s) => s.state as { step: string; fails: number })
+
+const activeSteps = (db: ReturnType<typeof clinicDb>) => activeStates(db).map((s) => s.step)
+
+/**
+ * "Agendar" salió del menú principal y siguió la reserva, sin "No entendí". Qué
+ * pregunta primero (el servicio, o antes el paciente) lo deciden otras tareas.
+ */
+function expectBookingStarted(db: ReturnType<typeof clinicDb>, rec: ReturnType<typeof makeRecorder>) {
+  expect(last(rec).ids).not.toEqual(MENU_IDS)
+  expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(false)
+  expect(activeSteps(db)).toHaveLength(1)
+  expect(activeSteps(db)).not.toContain('clinic_menu')
+}
+
+describe('sin sesión', () => {
+  describe('con autorización', () => {
+    it.each([
+      'quiero una cita',
+      'necesito cita para mi hijo',
+      'cita',
+      'agendar',
+      '¿me das una cita?',
+      '¿puedo agendar una cita para mañana?',
+      'Qué pena, necesito una cita',
+      'Tienen citas disponibles',
+      'quiero una cita para una radiografía',
+      'quiero agendar, ya hice el pago',
+      'hola',
+      'buenas',
+      'Buenos días',
+      'buen día',
+      'buenas tardes',
+    ])('abre el menú: %j', async (text) => {
+      const db = authorized()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).ids).toEqual(MENU_IDS)
+    })
+
+    it.each([
+      'cuánto vale una cita',
+      'dónde es la cita',
+      '¿Cuánto vale una cita de valoración?',
+      'cuánto vale una limpieza',
+      '¿aceptan tarjeta?',
+      '¿puedo pagar con tarjeta?',
+      '¿dónde quedan?',
+      'gracias, buenas noches',
+      'excelente, no tengo ninguna queja',
+      'muchas gracias por la receta',
+      'Buenos días, ¿cuánto vale la limpieza?',
+    ])('va a la IA: %j', async (text) => {
+      const db = authorized()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text })
+      expect(result).toEqual({ consumed: false })
+      expect(rec.calls).toHaveLength(0)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    })
+
+    it.each([
+      'quiero pagar',
+      'tengo una queja',
+      'el saldo',
+      'documento de identidad',
+      'necesito mi historia clínica',
+    ])('pasa a una persona: %j', async (text) => {
+      const db = authorized()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text })
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.humanTopicNote)
+      expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
+    })
+
+    it('usa la palabra que la clínica le da a la cita', async () => {
+      const db = clinicDb({
+        clinic_consents: [grantedConsent()],
+        booking_settings: [
+          {
+            account_id: ACCOUNT,
+            bot_texts: {},
+            labels: { cita: 'turno', citas: 'turnos' },
+            choose_staff: true,
+            show_price: false,
+            show_duration: false,
+            reminders_enabled: true,
+            allow_reschedule: true,
+          },
+        ],
+      })
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: 'cuándo tienen turnos para el viernes' })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).ids).toEqual(MENU_IDS)
+    })
+
+    it('una foto, un audio o un tipo no soportado: una línea que lo dice y el menú, no silencio', async () => {
+      for (const text of ['', '[Unsupported message type: audio]', '[Unsupported message type: image]']) {
+        const db = authorized()
+        const rec = makeRecorder()
+        const result = await send(db, rec, { text })
+        expect(result).toEqual({ consumed: true })
+        expect(rec.calls.map((c) => c.bodyText)).toEqual([
+          'Aún no puedo oír audios ni ver fotos. Escríbeme o elige una opción.',
+          texts.menuBody,
+        ])
+        expect(rec.calls[0].bodyText).toBe(texts.nonTextNotice)
+        expect(last(rec).ids).toEqual(MENU_IDS)
+        expect(activeSteps(db)).toEqual(['clinic_menu'])
+        expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+      }
+    })
+
+    it('sin autorización, una foto o un audio pide la autorización como cualquier mensaje', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: '[Unsupported message type: audio]' })
+      expect(result).toEqual({ consumed: true })
+      expect(rec.calls.some((c) => c.bodyText === texts.nonTextNotice)).toBe(false)
+      expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
+    })
+
+    it('"gracias por la atención" no abre el menú aunque la clínica llame "atención" a su servicio', async () => {
+      const db = clinicDb({
+        clinic_consents: [grantedConsent()],
+        booking_settings: [
+          {
+            account_id: ACCOUNT,
+            bot_texts: {},
+            labels: { servicio: 'atención', servicios: 'atenciones' },
+            choose_staff: true,
+            show_price: false,
+            show_duration: false,
+            reminders_enabled: true,
+            allow_reschedule: true,
+          },
+        ],
+      })
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: 'Muchas gracias por la atención' })
+      expect(result).toEqual({ consumed: false })
+      expect(rec.calls).toHaveLength(0)
+    })
+  })
+
+  describe('sin autorización', () => {
+    it.each(['quiero una cita', 'hola', '¿cuánto vale una limpieza?', 'gracias'])(
+      'lo demás pide la autorización antes de nada: %j',
+      async (text) => {
+        const db = clinicDb()
+        const rec = makeRecorder()
+        const result = await send(db, rec, { text })
+        expect(result).toEqual({ consumed: true })
+        expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
+      },
+    )
+
+    it('una queja, un pago o un documento no la esperan: nadie se queda atascado en un aviso legal', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: 'Tengo una queja de mi última cita' })
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.clinic_consents).toHaveLength(0)
+      expect(db._tables.booking_sessions).toHaveLength(0)
+      expect(rec.calls.every((c) => !c.ids.includes('act:consent_yes'))).toBe(true)
+    })
+  })
+
+  describe('quejas, pagos y documentos', () => {
+    it('la lista tiene lo que pide la spec, sin tildes', () => {
+      expect([...CLINIC_HUMAN_WORDS]).toEqual([
+        'queja',
+        'reclamo',
+        'pqr',
+        'pqrs',
+        'factura',
+        'pago',
+        'pagar',
+        'abono',
+        'saldo',
+        'certificado',
+        'incapacidad',
+        'historia clinica',
+        'radiografia',
+        'receta',
+        'documento',
+        'documentos',
+        'pague',
+        'quejas',
+        'reclamos',
+        'pagos',
+        'facturas',
+        'abonos',
+        'certificados',
+        'radiografias',
+        'recetas',
+      ])
+    })
+
+    it.each([
+      'Tengo una queja del servicio',
+      'Quiero poner un reclamo',
+      'Necesito radicar una PQR',
+      'Una pqrs por favor',
+      'Necesito mi factura',
+      'Quiero hacer el pago',
+      'Voy a pagar hoy',
+      'Hice un abono ayer',
+      'Quiero saber mi saldo',
+      'Necesito un certificado',
+      'Necesito la incapacidad',
+      'Mi historia clínica, por favor',
+      'Necesito la radiografía de mi hijo',
+      'Necesito una receta',
+      'Envíenme el documento',
+      'Documentos para el seguro',
+      'Hola, quiero pagar mi factura',
+    ])('un pedido pasa a una persona: %j', async (text) => {
+      const db = authorized()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text })
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.humanTopicNote)
+    })
+
+    it.each([
+      '¿Cuánto cuesta el certificado?',
+      '¿Puedo pagar con tarjeta?',
+      'cómo pago',
+      'qué documentos piden para el primer día',
+      'dónde recojo mi factura',
+      '¿Me das el certificado?',
+      'no tengo ninguna queja',
+      'gracias por la factura',
+    ])('una duda, una negación o un agradecimiento va a la IA: %j', async (text) => {
+      const db = authorized()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text })
+      expect(result).toEqual({ consumed: false })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+      expect(rec.calls).toHaveLength(0)
+    })
+
+    it('no confunde una palabra más larga: "pagado" no es "pago"', async () => {
+      const db = authorized()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: 'ya está pagado, quiero una cita' })
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    })
+
+    it('un toque de un botón no es texto y no dispara nada', async () => {
+      const db = authorized()
+      const rec = makeRecorder()
+      await send(db, rec, { replyId: 'act:book' })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    })
+
+    it('en una cuenta sin clínica no cambia nada', async () => {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: 'Necesito mi factura' }, { modules: ['agenda'] })
+      expect(result).toEqual({ consumed: false })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    })
+
+    it('un hilo que ya es de una persona no se toca', async () => {
+      const db = authorized()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: 'Necesito mi factura' }, { humanOwned: true })
+      expect(result).toEqual({ consumed: false })
+      expect(rec.calls).toHaveLength(0)
+    })
+  })
+})
+
+describe('con el menú abierto', () => {
+  it('pedir una cita elige "Agendar" sin pasar por "No entendí"', async () => {
+    const { db, rec } = await withMenuOpen()
+    const result = await send(db, rec, { text: 'necesito una cita para mañana' })
+    expect(result).toEqual({ consumed: true })
+    // Sin pacientes registrados, "Agendar" pide el nombre de quien va a asistir.
+    expectBookingStarted(db, rec)
+  })
+
+  it('un saludo vuelve a mostrar el menú sin contarlo como fallo', async () => {
+    const { db, rec, sent } = await withMenuOpen()
+    for (let i = 0; i < 3; i += 1) {
+      const result = await send(db, rec, { text: 'hola' })
+      expect(result).toEqual({ consumed: true })
+    }
+    expect(rec.calls).toHaveLength(sent + 3)
+    expect(last(rec).ids).toEqual(MENU_IDS)
+    expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(false)
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    const open = db._tables.booking_sessions.filter((s) => s.status === 'active')
+    expect((open[0].state as { fails: number }).fails).toBe(0)
+  })
+
+  it('una queja, un pago o un documento pasa a una persona y cierra la sesión', async () => {
+    const { db, rec } = await withMenuOpen()
+    const result = await send(db, rec, { text: 'quiero pagar' })
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.humanTopicNote)
+    expect(db._tables.booking_sessions[0].status).toBe('cancelled')
+  })
+
+  it.each([
+    '¿Cuánto vale una limpieza?',
+    'qué precio tiene la limpieza',
+    'cuánto vale una cita',
+    'me arde la encía desde ayer y no sé qué hacer',
+  ])('lo demás se suelta a la IA y cierra la sesión: %j', async (text) => {
+    const { db, rec, sent } = await withMenuOpen()
+    const result = await send(db, rec, { text })
+    // `released` le dice al despachador que no la reclame por tener sesión.
+    expect(result).toEqual({ consumed: false, released: true })
+    expect(rec.calls).toHaveLength(sent)
+    expect(activeSteps(db)).toEqual([])
+    expect(db._tables.booking_sessions[0].status).toBe('completed')
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+  })
+
+  it('una foto o un audio sigue el camino de siempre: se vuelve a preguntar', async () => {
+    const { db, rec } = await withMenuOpen()
+    const result = await send(db, rec, { text: '[Unsupported message type: audio]' })
+    expect(result).toEqual({ consumed: true })
+    expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(true)
+    expect(activeSteps(db)).toEqual(['clinic_menu'])
+  })
+
+  it('un toque del menú sigue su camino', async () => {
+    const { db, rec } = await withMenuOpen()
+    const result = await send(db, rec, { replyId: 'act:book' })
+    expect(result).toEqual({ consumed: true })
+    expectBookingStarted(db, rec)
+  })
+})
+
+describe('esperando la duda ("Precios y dudas")', () => {
+  it('deja la sesión esperando y invita a preguntar', async () => {
+    const { db, rec } = await withFaqOpen()
+    expect(last(rec).bodyText).toBe(texts.faqPrompt)
+    expect(activeSteps(db)).toEqual(['faq_open'])
+  })
+
+  it.each([
+    'cuánto vale la cita de valoración',
+    'quiero saber cuánto vale',
+    '¿Cuánto cuesta el certificado?',
+    '¿Puedo pagar con tarjeta?',
+    'no tengo ninguna queja',
+    'gracias por la factura',
+    'me arde la encía desde ayer y no sé qué hacer',
+  ])('el siguiente texto, si es la duda, se suelta a la IA: %j', async (text) => {
+    const { db, rec, sent } = await withFaqOpen()
+    const result = await send(db, rec, { text })
+    expect(result).toEqual({ consumed: false, released: true })
+    expect(rec.calls).toHaveLength(sent)
+    expect(activeSteps(db)).toEqual([])
+    expect(db._tables.booking_sessions[0].status).toBe('completed')
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+  })
+
+  it.each(['quiero pagar', 'tengo una queja', 'Necesito mi factura', 'Hola, quiero pagar mi factura'])(
+    'una queja, un pago o un documento pasa a una persona, como con el menú abierto: %j',
+    async (text) => {
+      const { db, rec } = await withFaqOpen()
+      const result = await send(db, rec, { text })
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.humanTopicNote)
+      expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
+      expect(db._tables.booking_sessions[0].status).toBe('cancelled')
+    },
+  )
+
+  it('un saludo vuelve al menú, sin contarlo como fallo ni soltarlo a la IA', async () => {
+    const { db, rec, sent } = await withFaqOpen()
+    const result = await send(db, rec, { text: 'hola' })
+    expect(result).toEqual({ consumed: true })
+    expect(rec.calls).toHaveLength(sent + 1)
+    expect(last(rec).bodyText).toBe(texts.menuBody)
+    expect(last(rec).ids).toEqual(MENU_IDS)
+    expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(false)
+    expect(activeStates(db)).toMatchObject([{ step: 'clinic_menu', fails: 0 }])
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+  })
+
+  it('un pase a una persona no consulta a la IA', async () => {
+    let asked = 0
+    const { db, rec } = await withFaqOpen()
+    await send(db, rec, { text: 'quiero pagar' }, { aiOn: async () => (asked += 1) > 0 })
+    expect(asked).toBe(0)
+  })
+
+  it('pedir una cita elige "Agendar"', async () => {
+    const { db, rec } = await withFaqOpen()
+    const result = await send(db, rec, { text: 'quiero una cita para mañana' })
+    expect(result).toEqual({ consumed: true })
+    expectBookingStarted(db, rec)
+  })
+
+  it.each(['', '[Unsupported message type: audio]', '   '])(
+    'una foto, un audio o un tipo no soportado (%j) no cierra la sesión',
+    async (text) => {
+      const { db, rec, sent } = await withFaqOpen()
+      const result = await send(db, rec, { text })
+      expect(result).toEqual({ consumed: true })
+      expect(activeSteps(db)).toEqual(['faq_open'])
+      // Se vuelve a invitar a escribir la duda, sin contarlo como fallo.
+      expect(rec.calls).toHaveLength(sent + 1)
+      expect(last(rec).bodyText).toBe(texts.faqPrompt)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    },
+  )
+
+  it('pedir una persona sigue ganando', async () => {
+    const { db, rec } = await withFaqOpen()
+    const result = await send(db, rec, { text: 'mejor quiero hablar con una persona' })
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+  })
+})
+
+describe('el menú sigue vivo', () => {
+  it('sin sesión y con autorización, "Agendar" funciona', async () => {
+    const db = authorized()
+    const rec = makeRecorder()
+    const result = await send(db, rec, { replyId: 'act:book' })
+    expect(result).toEqual({ consumed: true })
+    expectBookingStarted(db, rec)
+  })
+
+  it('sin sesión, "Precios y dudas" invita a preguntar', async () => {
+    const db = authorized()
+    const rec = makeRecorder()
+    const result = await send(db, rec, { replyId: 'act:faq' })
+    expect(result).toEqual({ consumed: true })
+    expect(last(rec).bodyText).toBe(texts.faqPrompt)
+    expect(activeSteps(db)).toEqual(['faq_open'])
+  })
+
+  it('sin sesión, "Hablar con una persona" pasa el hilo', async () => {
+    const db = authorized()
+    const rec = makeRecorder()
+    const result = await send(db, rec, { replyId: 'act:human' })
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
+  })
+
+  // "Tengo una urgencia" (act:urgent) no pasa por el menú: abre los signos de
+  // alarma antes que la autorización. Sus pruebas están en clinic-urgency.test.ts.
+
+  it('sin sesión, "Mis citas" abre la gestión de la única cita del paciente', async () => {
+    const db = clinicDb({
+      clinic_consents: [grantedConsent()],
+      clinic_patients: [{ id: 'pat-1', account_id: ACCOUNT, contact_id: CONTACT, full_name: 'Marta Ruiz' }],
+      booking_appointments: [UPCOMING],
+    })
+    const rec = makeRecorder()
+    const result = await send(db, rec, { replyId: 'act:mine' })
+    expect(result).toEqual({ consumed: true })
+    expect(last(rec).ids).toEqual(['act:new', 'act:reschedule', 'act:cancel'])
+    expect(activeSteps(db)).toEqual(['manage_menu'])
+    expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(false)
+  })
+
+  it('sin sesión, "Mis citas" sin citas lo dice y muestra el menú', async () => {
+    const db = authorized()
+    const rec = makeRecorder()
+    const result = await send(db, rec, { replyId: 'act:mine' })
+    expect(result).toEqual({ consumed: true })
+    expect(rec.calls.at(-2)?.bodyText).toBe(texts.noUpcoming)
+    expect(last(rec).ids).toEqual(MENU_IDS)
+    expect(activeSteps(db)).toEqual(['clinic_menu'])
+  })
+
+  it('con el menú abierto, "Mis citas" abre la gestión de la cita', async () => {
+    const { db, rec } = await withMenuOpen()
+    db._tables.booking_appointments.push(UPCOMING)
+    const result = await send(db, rec, { replyId: 'act:mine' })
+    expect(result).toEqual({ consumed: true })
+    expect(last(rec).ids).toEqual(['act:new', 'act:reschedule', 'act:cancel'])
+    expect(activeSteps(db)).toEqual(['manage_menu'])
+  })
+
+  it('sin sesión y sin IA, "Precios y dudas" pasa a una persona', async () => {
+    const db = authorized()
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: 'act:faq' }, { aiOn: false })
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+  })
+
+  it('sin autorización, el toque muestra la autorización', async () => {
+    for (const replyId of ['act:book', 'act:mine', 'act:faq', 'act:human']) {
+      const db = clinicDb()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    }
+  })
+
+  it('desde "Precios y dudas", "Agendar" funciona', async () => {
+    const { db, rec } = await withFaqOpen()
+    const result = await send(db, rec, { replyId: 'act:book' })
+    expect(result).toEqual({ consumed: true })
+    expectBookingStarted(db, rec)
+    expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(false)
+  })
+
+  it('desde "Precios y dudas", "Hablar con una persona" pasa el hilo', async () => {
+    const { db, rec } = await withFaqOpen()
+    await send(db, rec, { replyId: 'act:human' })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(db._tables.booking_sessions[0].status).toBe('cancelled')
+  })
+
+  it('desde "Precios y dudas", tocar "Precios y dudas" otra vez vuelve a invitar', async () => {
+    const { db, rec, sent } = await withFaqOpen()
+    await send(db, rec, { replyId: 'act:faq' })
+    expect(rec.calls).toHaveLength(sent + 1)
+    expect(last(rec).bodyText).toBe(texts.faqPrompt)
+    expect(activeSteps(db)).toEqual(['faq_open'])
+  })
+
+  it('una cuenta sin clínica no cambia: un toque sin sesión no arranca nada', async () => {
+    const db = authorized()
+    const rec = makeRecorder()
+    const result = await send(db, rec, { replyId: 'act:book' }, { modules: ['agenda'] })
+    expect(result).toEqual({ consumed: false })
+    expect(rec.calls).toHaveLength(0)
+  })
+})
+
+/**
+ * Los botones del menú principal valen en cualquier paso de una sesión: un
+ * menú viejo sigue en el chat y tocarlo no puede dar "No entendí" ni, en el
+ * nombre, "Necesito nombre y apellidos". Quedan fuera la autorización (se
+ * contesta primero), el propio menú (lo lee el emparejamiento de siempre) y los
+ * signos de alarma (también se contestan primero). "Tengo una urgencia" y los
+ * signos de alarma se prueban en clinic-urgency.test.ts. "Mis citas"
+ * (act:mine) vale igual que los demás: a media reserva la deja y abre la cita.
+ */
+describe('los toques del menú valen en cualquier paso', () => {
+  const PATIENT = { id: 'pat-1', account_id: ACCOUNT, contact_id: CONTACT, full_name: 'Marta Ruiz' }
+  const day = { id: 'day:2026-10-19', title: 'Hoy' }
+  const slot = { id: 'slot:2026-10-19T14:00:00.000Z', title: '9:00 a. m.' }
+  const booking = { serviceId: 'svc-limpieza', staffId: 'st-ana' }
+
+  const STEPS: [string, Record<string, unknown>][] = [
+    [
+      'pick_patient',
+      {
+        step: 'pick_patient',
+        options: [
+          { id: 'pat:pat-1', title: 'Marta Ruiz' },
+          { id: 'pat:new', title: texts.patientOther },
+        ],
+      },
+    ],
+    ['new_patient_name', { step: 'new_patient_name' }],
+    ['pick_service', { step: 'pick_service', options: [{ id: 'svc:svc-limpieza', title: 'Limpieza' }] }],
+    [
+      'pick_staff',
+      { step: 'pick_staff', serviceId: 'svc-limpieza', options: [{ id: 'staff:any', title: 'Cualquiera' }] },
+    ],
+    ['pick_day', { step: 'pick_day', ...booking, options: [day] }],
+    ['pick_slot', { step: 'pick_slot', ...booking, dateKey: '2026-10-19', options: [slot] }],
+    [
+      'ask_question',
+      {
+        step: 'ask_question',
+        ...booking,
+        dateKey: '2026-10-19',
+        questionId: 'q-1',
+        slotStartsAt: slot.id.slice(5),
+      },
+    ],
+    [
+      'summary',
+      {
+        step: 'summary',
+        ...booking,
+        dateKey: '2026-10-19',
+        slotStartsAt: slot.id.slice(5),
+        options: [{ id: 'act:confirm', title: 'Confirmar' }],
+      },
+    ],
+  ]
+
+  const open = (state: Record<string, unknown>) =>
+    clinicDb({
+      clinic_consents: [grantedConsent()],
+      clinic_patients: [PATIENT],
+      booking_sessions: [session(state)],
+    })
+
+  const saidRetry = (rec: ReturnType<typeof makeRecorder>) =>
+    rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry || c.bodyText === texts.patientNameRetry)
+
+  describe.each(STEPS)('en %s', (_step, state) => {
+    it('"Mis citas" deja la reserva y abre la gestión de la cita', async () => {
+      const db = open(state)
+      db._tables.booking_appointments.push(UPCOMING)
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:mine' })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).ids).toEqual(['act:new', 'act:reschedule', 'act:cancel'])
+      expect(saidRetry(rec)).toBe(false)
+      expect(activeSteps(db)).toEqual(['manage_menu'])
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    })
+
+    it('"Mis citas" sin citas lo dice y vuelve al menú', async () => {
+      const db = open(state)
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:mine' })
+      expect(result).toEqual({ consumed: true })
+      expect(rec.calls.at(-2)?.bodyText).toBe(texts.noUpcoming)
+      expect(last(rec).ids).toEqual(MENU_IDS)
+      expect(saidRetry(rec)).toBe(false)
+      expect(activeSteps(db)).toEqual(['clinic_menu'])
+    })
+
+    it('"Agendar" empieza de nuevo por el paciente', async () => {
+      const db = open(state)
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:book' })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).bodyText).toBe(texts.patientMenuBody)
+      expect(last(rec).ids).toEqual(['pat:pat-1', 'pat:new'])
+      expect(saidRetry(rec)).toBe(false)
+      expect(activeSteps(db)).toEqual(['pick_patient'])
+    })
+
+    it('"Precios y dudas" invita a preguntar', async () => {
+      const db = open(state)
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:faq' })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).bodyText).toBe(texts.faqPrompt)
+      expect(saidRetry(rec)).toBe(false)
+      expect(activeSteps(db)).toEqual(['faq_open'])
+    })
+
+    it('"Hablar con una persona" pasa el hilo', async () => {
+      const db = open(state)
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId: 'act:human' })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
+      expect(saidRetry(rec)).toBe(false)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+      expect(db._tables.booking_sessions[0].status).toBe('cancelled')
+    })
+  })
+
+  it('"Precios y dudas" sin IA pasa a una persona, no promete una respuesta', async () => {
+    const db = open({ step: 'pick_slot', ...booking, dateKey: '2026-10-19', options: [slot] })
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: 'act:faq' }, { aiOn: false })
+    expect(rec.calls.some((c) => c.bodyText === texts.faqPrompt)).toBe(false)
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+  })
+
+  it('un toque que no es del menú sigue dando "No entendí"', async () => {
+    const db = open({ step: 'pick_service', options: [{ id: 'svc:svc-limpieza', title: 'Limpieza' }] })
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: 'day:2026-10-19' })
+    expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(true)
+    expect(activeSteps(db)).toEqual(['pick_service'])
+  })
+
+  describe('en la autorización', () => {
+    const consent = () =>
+      clinicDb({
+        booking_sessions: [
+          session({
+            step: 'consent',
+            consentText: 'Texto de autorización',
+            consentVersion: 2,
+            options: [
+              { id: 'act:consent_yes', title: texts.consentAccept },
+              { id: 'act:consent_no', title: texts.consentDecline },
+            ],
+          }),
+        ],
+      })
+
+    it.each(['act:book', 'act:mine', 'act:faq', 'act:human'])('%s sigue pidiendo la autorización', async (replyId) => {
+      const db = consent()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId })
+      expect(result).toEqual({ consumed: true })
+      expect(last(rec).bodyText).toBe('Texto de autorización')
+      expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
+      expect(db._tables.clinic_consents).toHaveLength(0)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+      expect(activeSteps(db)).toEqual(['consent'])
+    })
+  })
+
+  it('"Mis citas" con varias citas ofrece la lista, también a media reserva', async () => {
+    const db = open({ step: 'pick_slot', ...booking, dateKey: '2026-10-19', options: [slot] })
+    db._tables.booking_appointments.push(UPCOMING, {
+      ...UPCOMING,
+      id: 'ap-2',
+      starts_at: '2026-10-21T14:00:00.000Z',
+      ends_at: '2026-10-21T14:30:00.000Z',
+    })
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: 'act:mine' })
+    expect(last(rec).ids).toEqual(['appt:ap-1', 'appt:ap-2'])
+    expect(last(rec).bodyText).toContain('Marta Ruiz')
+    expect(activeSteps(db)).toEqual(['pick_appointment'])
+  })
+
+  it('en el menú principal el toque sigue su camino de siempre', async () => {
+    const db = open({ step: 'clinic_menu', options: MENU_IDS.map((id) => ({ id, title: id })) })
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: 'act:book' })
+    expect(last(rec).bodyText).toBe(texts.patientMenuBody)
+  })
+
+})
+
+describe('si la IA está apagada', () => {
+  it('una duda con el menú abierto pasa a una persona, no queda en silencio', async () => {
+    const { db, rec } = await withMenuOpen()
+    const result = await send(db, rec, { text: '¿Cuánto vale una limpieza?' }, { aiOn: false })
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+    expect(db._tables.booking_sessions[0].status).toBe('cancelled')
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
+  })
+
+  it('lo que se escribe esperando la duda también', async () => {
+    const { db, rec } = await withFaqOpen()
+    const result = await send(db, rec, { text: 'cuánto vale la limpieza' }, { aiOn: false })
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+    expect(db._tables.booking_sessions[0].status).toBe('cancelled')
+  })
+
+  it('"Precios y dudas" no promete una respuesta que nadie va a dar', async () => {
+    const { db, rec } = await withMenuOpen()
+    const result = await send(db, rec, { replyId: 'act:faq' }, { aiOn: false })
+    expect(result).toEqual({ consumed: true })
+    expect(rec.calls.some((c) => c.bodyText === texts.faqPrompt)).toBe(false)
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+    expect(activeSteps(db)).toEqual([])
+  })
+
+  it('si no se pudo leer la configuración de la IA, cuenta como apagada', async () => {
+    const { db, rec } = await withMenuOpen()
+    const result = await send(
+      db,
+      rec,
+      { text: '¿Cuánto vale una limpieza?' },
+      { aiOn: () => Promise.reject(new Error('no se pudo descifrar la llave')) },
+    )
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+  })
+
+  it('con la IA prendida nada cambia', async () => {
+    const { db, rec } = await withMenuOpen()
+    const result = await send(db, rec, { text: '¿Cuánto vale una limpieza?' }, { aiOn: true })
+    expect(result).toEqual({ consumed: false, released: true })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+  })
+
+  it('lo que no es para la IA no la consulta: pedir una cita, un saludo, una queja', async () => {
+    for (const text of ['necesito una cita', 'hola', 'quiero pagar']) {
+      let asked = 0
+      const { db, rec } = await withMenuOpen()
+      await send(db, rec, { text }, { aiOn: async () => (asked += 1) > 0 })
+      expect(asked).toBe(0)
+    }
+  })
+
+  it('se consulta una sola vez por mensaje', async () => {
+    let asked = 0
+    const { db, rec } = await withMenuOpen()
+    await send(db, rec, { text: '¿Cuánto vale?' }, { aiOn: async () => (asked += 1) > 0 })
+    expect(asked).toBe(1)
+  })
+
+  it('sin sesión y con la IA apagada, una duda pasa a una persona: nadie se queda sin respuesta', async () => {
+    const db = authorized()
+    const rec = makeRecorder()
+    const result = await send(db, rec, { text: '¿Cuánto vale una limpieza?' }, { aiOn: false })
+    expect(result).toEqual({ consumed: true })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+    expect(last(rec).bodyText).toBe(AGENDA_AGENT_TEXTS.handoff)
+  })
+
+  it('sin sesión y con la IA prendida, la duda sigue para la IA', async () => {
+    const db = authorized()
+    const rec = makeRecorder()
+    const result = await send(db, rec, { text: '¿Cuánto vale una limpieza?' }, { aiOn: true })
+    expect(result).toEqual({ consumed: false })
+    expect(rec.calls).toHaveLength(0)
+  })
+
+  it('lo que no es para la IA no la consulta, ni sin sesión', async () => {
+    for (const text of ['necesito una cita', 'hola', 'quiero pagar']) {
+      let asked = 0
+      await send(authorized(), makeRecorder(), { text }, { aiOn: async () => (asked += 1) > 0 })
+      expect(asked).toBe(0)
+    }
+  })
+
+  describe('la lectura real de "¿la IA va a contestar?"', () => {
+    beforeEach(() => {
+      loadAiConfig.mockReset()
+      loadAiConfig.mockResolvedValue({ autoReplyEnabled: true, autoReplyMaxPerConversation: 3 })
+    })
+
+    it('con la IA prendida y nada que la frene, la duda es para ella', async () => {
+      const db = authorized()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { text: '¿Cuánto vale una limpieza?' }, { aiOn: 'default' })
+      expect(result).toEqual({ consumed: false })
+      expect(rec.calls).toHaveLength(0)
+    })
+
+    it('una automatización que contesta la frena: pasa a una persona', async () => {
+      const db = authorized()
+      db._tables.automations = [
+        { id: 'a', account_id: ACCOUNT, is_active: true, trigger_type: 'new_message_received' },
+      ]
+      const result = await send(db, makeRecorder(), { text: '¿Cuánto vale una limpieza?' }, { aiOn: 'default' })
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+    })
+
+    it('el tope de respuestas de la conversación también', async () => {
+      const db = authorized()
+      db._tables.automations = []
+      db._tables.conversations[0].ai_reply_count = 3
+      const result = await send(db, makeRecorder(), { text: '¿Cuánto vale una limpieza?' }, { aiOn: 'default' })
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+    })
+
+    it('con el menú abierto, una duda tampoco se suelta si nadie va a contestar', async () => {
+      const { db, rec } = await withMenuOpen()
+      db._tables.automations = [
+        { id: 'a', account_id: ACCOUNT, is_active: true, trigger_type: 'keyword_match' },
+      ]
+      const result = await send(db, rec, { text: '¿Cuánto vale una limpieza?' }, { aiOn: 'default' })
+      expect(result).toEqual({ consumed: true })
+      expect(db._tables.booking_sessions[0].status).toBe('cancelled')
+      expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.aiOffNote)
+    })
+  })
+})
+
+describe('un menú que ya no está activo', () => {
+  it.each(['svc:svc-limpieza', 'day:2026-10-20', 'act:confirm', 'pat:abc', 'slot:2026-10-19T14:00:00.000Z'])(
+    '%s responde que venció y muestra el menú, sin mandarlo a la IA',
+    async (replyId) => {
+      let asked = 0
+      const db = authorized()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId }, { aiOn: async () => (asked += 1) > 0 })
+      expect(result).toEqual({ consumed: true })
+      expect(rec.calls.map((c) => c.bodyText)).toEqual(['Esa opción venció.', texts.menuBody])
+      expect(rec.calls[0].bodyText).toBe(texts.optionExpired)
+      expect(last(rec).ids).toEqual(MENU_IDS)
+      expect(activeSteps(db)).toEqual(['clinic_menu'])
+      expect(asked).toBe(0)
+      expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    },
+  )
+
+  it('un toque que no es de este bot (otro botón, una plantilla) no se toca', async () => {
+    for (const replyId of ['btn_promo_1', 'Ver ofertas', 'otra:cosa']) {
+      const db = authorized()
+      const rec = makeRecorder()
+      const result = await send(db, rec, { replyId })
+      expect(result).toEqual({ consumed: false })
+      expect(rec.calls).toHaveLength(0)
+    }
+  })
+
+  it('sin autorización, muestra la autorización', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: 'svc:svc-limpieza' })
+    expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
+    expect(rec.calls.some((c) => c.bodyText === texts.optionExpired)).toBe(false)
+  })
+
+  it('con una sesión abierta sigue como siempre: "No entendí" y el paso otra vez', async () => {
+    const db = clinicDb({
+      clinic_consents: [grantedConsent()],
+      booking_sessions: [session({ step: 'pick_service', options: [{ id: 'svc:svc-limpieza', title: 'Limpieza' }] })],
+    })
+    const rec = makeRecorder()
+    await send(db, rec, { replyId: 'day:2026-10-19' })
+    expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(true)
+    expect(rec.calls.some((c) => c.bodyText === texts.optionExpired)).toBe(false)
+  })
+})
+
+describe('con el menú abierto, "1", "ok" o "gracias"', () => {
+  it('un número elige esa opción del menú, antes de soltar nada a la IA', async () => {
+    let asked = 0
+    const { db, rec } = await withMenuOpen()
+    await send(db, rec, { text: '1' }, { aiOn: async () => (asked += 1) > 0 })
+    expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
+    expect(activeSteps(db)).toEqual(['new_patient_name'])
+    expect(asked).toBe(0)
+  })
+
+  it('el título de una opción también', async () => {
+    const { db, rec } = await withMenuOpen()
+    await send(db, rec, { text: 'precios' })
+    expect(last(rec).bodyText).toBe(texts.faqPrompt)
+    expect(activeSteps(db)).toEqual(['faq_open'])
+  })
+
+  it.each(['ok', 'gracias', 'Muchas gracias', 'listo', 'vale', 'perfecto', 'de nada', '👍', 'ok 🙏'])(
+    '%j repite el menú, sin contarlo como fallo ni mandarlo a la IA',
+    async (text) => {
+      let asked = 0
+      const { db, rec, sent } = await withMenuOpen()
+      const result = await send(db, rec, { text }, { aiOn: async () => (asked += 1) > 0 })
+      expect(result).toEqual({ consumed: true })
+      expect(rec.calls).toHaveLength(sent + 1)
+      expect(last(rec).ids).toEqual(MENU_IDS)
+      expect(rec.calls.some((c) => c.bodyText === AGENDA_AGENT_TEXTS.retry)).toBe(false)
+      expect(activeStates(db)).toMatchObject([{ step: 'clinic_menu', fails: 0 }])
+      expect(asked).toBe(0)
+    },
+  )
+
+  it('una pregunta con una de esas palabras sigue siendo una duda para la IA', async () => {
+    const { db, rec, sent } = await withMenuOpen()
+    const result = await send(db, rec, { text: 'gracias, ¿y cuánto vale la limpieza?' })
+    expect(result).toEqual({ consumed: false, released: true })
+    expect(rec.calls).toHaveLength(sent)
+    expect(activeSteps(db)).toEqual([])
+  })
+})
+
+describe('"Otra persona" escrito al elegir el paciente', () => {
+  const PATIENT = { id: 'pat-1', account_id: ACCOUNT, contact_id: CONTACT, full_name: 'Marta Ruiz' }
+  const atPatients = () =>
+    clinicDb({
+      clinic_consents: [grantedConsent()],
+      clinic_patients: [PATIENT],
+      booking_sessions: [
+        session({
+          step: 'pick_patient',
+          options: [
+            { id: 'pat:pat-1', title: 'Marta Ruiz' },
+            { id: 'pat:new', title: texts.patientOther },
+          ],
+        }),
+      ],
+    })
+
+  it('no pasa el hilo a una persona: es la opción "Otra persona"', async () => {
+    const db = atPatients()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Otra persona' })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(false)
+    expect(last(rec).bodyText).toBe(texts.patientNamePrompt)
+    expect(activeSteps(db)).toEqual(['new_patient_name'])
+  })
+
+  it('pedir una persona, solo, sí la pasa', async () => {
+    const db = atPatients()
+    await send(db, makeRecorder(), { text: 'asesor' })
+    expect(db._tables.conversations[0].ai_autoreply_disabled).toBe(true)
+  })
+})
+
+describe('las palabras de quejas, pagos y documentos solo valen sin sesión, con el menú abierto y esperando la duda', () => {
+  it('no en la autorización: "no acepto dar mis documentos" es un rechazo registrado', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { text: 'no acepto dar mis documentos' })
+    expect(db._tables.clinic_consents).toMatchObject([{ granted: false }])
+    expect(db._tables.conversations[0].ai_handoff_summary).toBe(texts.consentDeclinedNote)
+  })
+
+  it('no en la autorización, aunque sea un pedido: "quiero pagar" no la salta', async () => {
+    const db = clinicDb()
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Hola' })
+    await send(db, rec, { text: 'quiero pagar' })
+    expect(db._tables.conversations[0].ai_handoff_summary).not.toBe(texts.humanTopicNote)
+    expect(last(rec).ids).toEqual(CONSENT_BUTTONS)
+  })
+
+  it.each([
+    ['pick_service', { step: 'pick_service' }],
+    ['pick_day', { step: 'pick_day', serviceId: 'svc-limpieza', staffId: 'any' }],
+    ['summary', { step: 'summary' }],
+    ['ask_question', { step: 'ask_question', questionId: 'q-1' }],
+    ['new_patient_name', { step: 'new_patient_name' }],
+    ['manage_menu', { step: 'manage_menu' }],
+  ])('no en %s', async (_name, state) => {
+    const db = clinicDb({
+      clinic_consents: [grantedConsent()],
+      booking_sessions: [session(state)],
+    })
+    const rec = makeRecorder()
+    await send(db, rec, { text: 'Voy a pagar con tarjeta, documento listo' })
+    expect(db._tables.conversations[0].ai_handoff_summary).not.toBe(texts.humanTopicNote)
+  })
+})

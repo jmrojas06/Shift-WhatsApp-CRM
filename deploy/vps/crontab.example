@@ -1,5 +1,6 @@
 # /etc/cron.d/shift-crm — tareas programadas del CRM (docs/despliegue-vps.md §6).
-# En Vercel solo corría el primero; en el VPS van los tres.
+# En Vercel solo corría el primero (vercel.json trae hoy los de recordatorios, Google
+# Calendar, llamadas y seguimientos); en el VPS van los seis.
 # Formato de /etc/cron.d: minuto hora día mes día-semana USUARIO comando.
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -13,3 +14,15 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # Cierra flujos abandonados. Sin esto, un contacto que deja un flujo a medias
 # no vuelve a entrar a ningún flujo (lo usa la plantilla de inmobiliarias).
 */5 * * * * root /usr/local/bin/shift-crm-cron /api/flows/cron
+
+# Copia de las citas a Google Calendar (docs/clinica-montaje.md §17). Solo trabaja
+# para las cuentas que conectaron Google; las demás no hacen nada.
+*/5 * * * * root /usr/local/bin/shift-crm-cron /api/verticals/agenda/calendar-sync/run
+
+# Llamadas de confirmación del robot de voz (§18). Si no están las variables de
+# Telnyx o la cuenta tiene las llamadas apagadas, no llama a nadie.
+*/10 * * * * root /usr/local/bin/shift-crm-cron /api/verticals/agenda/calls/run
+
+# Después de la cita (solo clínicas): cuidados, "¿Cómo sigues?", calificación y
+# el aviso del cierre del día. Idempotente: dos corridas no duplican mensajes.
+*/10 * * * * root /usr/local/bin/shift-crm-cron /api/verticals/clinica/followups/run

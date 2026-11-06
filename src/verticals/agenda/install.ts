@@ -1,6 +1,6 @@
 // ============================================================
 // Instalador de la plantilla de la agenda según un punto de partida
-// (barbería, salón, salud, taller, clases o en blanco).
+// (barbería, salón, salud, odontología, taller, clases o en blanco).
 //
 // Deja lista una cuenta recién marcada como `vertical_key =
 // 'agenda'` (o la clave anterior 'barberia'): catálogo de servicios, un
@@ -41,6 +41,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { chunkText } from '@/lib/ai/chunk'
+import { ensureClinicSetup } from '@/modules/clinica/settings'
 import { AGENDA_PRESETS, getPreset, isPresetKey, type PresetKey } from './presets'
 import { MAX_QUESTIONS } from './questions'
 import {
@@ -649,6 +650,14 @@ export async function installAgendaTemplate(
     .from('booking_settings')
     .upsert(settingsPatch, { onConflict: 'account_id' })
   if (settingsError) throw settingsError
+
+  // ----------------------------------------------------------
+  // 13. Configuración de la clínica (solo odontología)
+  //
+  // El módulo `clinica` lo activa Shift en la base; esto deja listas su
+  // autorización, sus urgencias y su sede. Idempotente.
+  // ----------------------------------------------------------
+  if (preset.key === 'odontologia') await ensureClinicSetup(db, accountId)
 
   return report
 }

@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const dbState = vi.hoisted(() => ({
   responses: {} as Record<string, { data: unknown; error: unknown }>,
   throwOn: null as string | null,
-  handlerResult: { consumed: false } as { consumed: boolean },
+  handlerResult: { consumed: false } as { consumed: boolean; released?: boolean },
   handlerThrows: false,
   handlerCalls: [] as Record<string, unknown>[],
   /** Simula una base sin la migración 053: pedir `modules` falla (42703). */
@@ -186,6 +186,46 @@ describe('dispatchInboundToVertical', () => {
     })
   })
 
+  it('does not claim the message when the handler releases it, even with an active session', async () => {
+    dbState.responses = {
+      accounts: agendaAccount,
+      conversations: openConversation,
+      booking_sessions: {
+        data: {
+          id: 'sess-1',
+          state: { step: 'clinic_menu' },
+          expires_at: '2099-01-01T00:00:00.000Z',
+        },
+        error: null,
+      },
+    }
+    dbState.handlerResult = { consumed: false, released: true }
+
+    await expect(dispatchInboundToVertical(baseArgs)).resolves.toEqual({
+      consumed: false,
+    })
+  })
+
+  it('a handler that declines without releasing still leaves the active session in charge', async () => {
+    dbState.responses = {
+      accounts: agendaAccount,
+      conversations: openConversation,
+      booking_sessions: {
+        data: {
+          id: 'sess-1',
+          state: { step: 'pick_service' },
+          expires_at: '2099-01-01T00:00:00.000Z',
+        },
+        error: null,
+      },
+    }
+    dbState.handlerResult = { consumed: false }
+
+    await expect(dispatchInboundToVertical(baseArgs)).resolves.toEqual({
+      consumed: true,
+    })
+  })
+
   it('routes accounts still on the legacy barberia key to the agenda handler', async () => {
     dbState.responses = {
       accounts: legacyAgendaAccount,
@@ -220,6 +260,15 @@ describe('dispatchInboundToVertical', () => {
       inboundMessageId: 'wamid-1',
       session: null,
     })
+  })
+
+  it('le pasa al handler los módulos de la cuenta', async () => {
+    dbState.responses = {
+      accounts: { data: { modules: ['agenda', 'clinica'] }, error: null },
+      conversations: openConversation,
+    }
+    await dispatchInboundToVertical(baseArgs)
+    expect(dbState.handlerCalls[0].modules).toEqual(['agenda', 'clinica'])
   })
 
   it('hands the fresh booking session to the handler', async () => {
