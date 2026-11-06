@@ -208,3 +208,34 @@ describe('sede por defecto', () => {
     expect(body).not.toMatch(/sede sede/i)
   })
 })
+
+describe('respuestas a los botones de los seguimientos', () => {
+  it('los textos del diseño (§7.4)', () => {
+    expect(texts.followupWellReply).toBe('¡Qué bueno! Cualquier cosa, escríbenos por aquí.')
+    expect(texts.followupTroubleReply('Signos de alarma')).toBe(
+      'Le avisamos al equipo para que te contacten pronto.\n\nSignos de alarma',
+    )
+    expect(texts.followupRatingThanks(null)).toBe('¡Gracias por contarnos!')
+    expect(texts.followupRatingThanks('https://g.page/r/abc')).toBe(
+      '¡Gracias por contarnos! Si quieres, déjanos tu opinión en Google: https://g.page/r/abc',
+    )
+  })
+
+  it('los cuidados salen sin espacios de más y con la palabra del negocio', () => {
+    expect(texts.followupCareReply('  No comas por 2 horas.\n')).toBe(
+      'Estas son las recomendaciones de cuidado después de tu cita:\n\nNo comas por 2 horas.',
+    )
+    const turno = buildClinicTexts({ ...DEFAULT_LABELS, cita: 'turno', citas: 'turnos' })
+    expect(turno.followupCareReply('Reposo.')).toContain('después de tu turno:')
+  })
+
+  it('el aviso de una calificación baja dice cuál fue', () => {
+    expect(texts.followupLowRatingNotificationTitle('mal')).toBe('Calificación Mal: llama al paciente')
+    expect(texts.followupLowRatingNotificationTitle('regular')).toBe(
+      'Calificación Regular: llama al paciente',
+    )
+    expect(texts.followupLowRatingNotificationBody('Marta Ruiz', 'regular')).toContain(
+      'Marta Ruiz calificó su visita como Regular.',
+    )
+  })
+})

@@ -35,6 +35,21 @@ mensajes, «cita» y «barbero» siguen el vocabulario del negocio.
   autorización de datos: la señal no se gasta y sale en la siguiente
   corrida si cambia (`skipped` en la respuesta). Las demás cuentas no
   cambian.
+- **Confirmar anota que el paciente va.** Tocar **Confirmar** (en el mensaje
+  libre o en la plantilla) deja la cita confirmada y además anota
+  `attendance_confirmed_at` ("el paciente dijo que va"), en cualquier
+  cuenta. No es lo mismo que `confirmed_at`, que el bot pone al reservar.
+  La lista **Para llamar** de `/agenda` y las llamadas de confirmación
+  usan esa marca para saber a quién no hay que insistirle.
+- **Mover una cita limpia las marcas.** Si la recepción mueve una cita desde
+  `/agenda/calendario`, se borran `reminder_sent_at`, `reminder_2h_sent_at`
+  y `attendance_confirmed_at`: los recordatorios vuelven a salir para la
+  nueva hora y el paciente tiene que confirmar otra vez.
+- **El recordatorio de 24 h arranca lo que sigue.** La lista **Para llamar**
+  y el robot de llamadas parten de las citas cuyo recordatorio de 24 h salió
+  hace más de `call_after_minutes` (180 por defecto) y que siguen sin
+  confirmar. La lista suma además las que el robot dejó sin resolver. Ver
+  `docs/clinica-montaje.md`, secciones 18 y 19.
 - Zona horaria del negocio: America/Bogota (fija para todas las cuentas).
 
 Los botones llevan ids `rem:confirm`, `rem:reschedule` y `rem:cancel`.
@@ -127,6 +142,11 @@ atienda por el chat.
 > (`CLINIC_REMINDER_TEMPLATE`): nombra al paciente y la sede, nunca el
 > procedimiento, y envía el id de la cita en el payload. Se crea según
 > `docs/clinica-montaje.md`.
+>
+> Los avisos de una cita **creada, movida o cancelada desde el panel** usan
+> otras plantillas: `cita_agendada` y `cita_cancelada` (y sus versiones
+> `_clinica`). Sirven para cualquier negocio con agenda y se crean según
+> `docs/clinica-montaje.md`, sección 15, con el cuerpo exacto de cada una.
 
 ## Activar la señal de 2 h
 
@@ -158,6 +178,10 @@ automatizaciones). Acepta el secreto de dos formas:
   existe la env `CRON_SECRET` en el proyecto.
 
 Sin secreto configurado responde 503; con secreto incorrecto, 401.
+
+Los otros crons de la agenda (copia a Google Calendar, llamadas de
+confirmación y seguimientos de las clínicas) usan el mismo secreto y se
+programan igual: ver `docs/clinica-montaje.md`, sección 20.
 
 > **URL vieja:** `/api/verticals/barberia/reminders/run` sigue
 > funcionando como alias de la nueva. Apunta los crons externos a
@@ -252,7 +276,8 @@ where id = '<uuid-de-la-cita>';
   ayuda por el mismo chat. Cualquier otro mensaje en ese chat es del
   asesor: el bot no responde.
 - **¿La confirmación por botón etiqueta al cliente?** No: solo marca la
-  cita como confirmada y registra el evento (`via: recordatorio`). Las
+  cita como confirmada, anota `attendance_confirmed_at` y registra el
+  evento (`via: recordatorio`). Las
   etiquetas se reservan para cancelación/reprogramación/handoff.
 - **¿Por qué no me llegó la plantilla?** Revisa que la plantilla esté
   **aprobada** en Meta, que el nombre/idioma coincidan (`recordatorio_cita`

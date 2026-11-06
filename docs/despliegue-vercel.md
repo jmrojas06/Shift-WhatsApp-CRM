@@ -1,5 +1,8 @@
 # Despliegue en Vercel — Shift WhatsApp CRM
 
+> **Producción va en el VPS desde noviembre de 2026:** ver
+> `docs/despliegue-vps.md`. Esta guía queda de referencia.
+
 Guía para operar Shift WhatsApp CRM en producción con **Vercel Pro**:
 una sola instancia sirve a varios negocios con agenda (multi-cliente por
 `account`, con RLS por `account_id`).
@@ -26,7 +29,8 @@ una sola instancia sirve a varios negocios con agenda (multi-cliente por
 3. Región de funciones: elige la más cercana a tu proyecto Supabase
    (Project → Settings → Functions → Region) para bajar latencia.
 
-`vercel.json` ya viene en el repo con el cron de recordatorios (§5).
+`vercel.json` ya viene en el repo con los cuatro crons (§5): recordatorios,
+copia a Google Calendar, llamadas y seguimientos de las clínicas.
 
 ## 2. Variables de entorno
 
@@ -74,23 +78,35 @@ Las migraciones del repo son aditivas e idempotentes por diseño
 (`IF NOT EXISTS` / `DROP IF EXISTS`). Antes de aplicar una nueva,
 exporta un backup (`docs/operacion-datos-y-secretos.md`).
 
-## 5. Cron de recordatorios
+## 5. Crons
 
-`vercel.json` ya lo declara:
+`vercel.json` ya declara cuatro:
+
+| Ruta | Cada | Qué hace |
+| --- | --- | --- |
+| `/api/verticals/agenda/reminders/run` | 10 min | Recordatorios de citas (24 h y 2 h antes) |
+| `/api/verticals/agenda/calendar-sync/run` | 5 min | Copia las citas a Google Calendar (solo cuentas que conectaron Google) |
+| `/api/verticals/agenda/calls/run` | 10 min | Llamadas de confirmación del robot de voz |
+| `/api/verticals/clinica/followups/run` | 10 min | Después de la cita (solo clínicas): cuidados, «¿Cómo sigues?», calificación y aviso del cierre del día |
 
 ```json
 {
   "crons": [
-    {
-      "path": "/api/verticals/agenda/reminders/run",
-      "schedule": "*/10 * * * *"
-    }
+    { "path": "/api/verticals/agenda/reminders/run", "schedule": "*/10 * * * *" },
+    { "path": "/api/verticals/agenda/calendar-sync/run", "schedule": "*/5 * * * *" },
+    { "path": "/api/verticals/agenda/calls/run", "schedule": "*/10 * * * *" },
+    { "path": "/api/verticals/clinica/followups/run", "schedule": "*/10 * * * *" }
   ]
 }
 ```
 
-- Requiere plan Pro y las envs `AUTOMATION_CRON_SECRET` + `CRON_SECRET`
-  (§2). Sin ellas el endpoint responde 503/401 y el cron no sirve.
+- Requiere plan Pro (el de cada 5 minutos no existe en Hobby) y las envs
+  `AUTOMATION_CRON_SECRET` + `CRON_SECRET` (§2). Sin ellas el endpoint
+  responde 503/401 y el cron no sirve.
+- Los tres nuevos son de las Fases 2 y 3 de la clínica y no hacen nada sin
+  sus variables y sin que la cuenta los prenda (`docs/clinica-montaje.md`
+  §16.5, §17, §19 y §20). `NEXT_PUBLIC_SITE_URL` también arma la URL de
+  retorno de Google y las URL firmadas de la voz.
 - Verificación: Project → **Cron Jobs** (cada corrida con su log), o
   manual:
 
@@ -110,7 +126,8 @@ curl -s -H "x-cron-secret: $AUTOMATION_CRON_SECRET" \
   Detalle en `docs/agenda-recordatorios.md`.
 - Si usas automatizaciones con esperas o flujos (`/api/automations/cron`,
   `/api/flows/cron`): agrégalos a un pinger externo con `x-cron-secret`
-  (no están en `vercel.json`).
+  (no están en `vercel.json`; en el VPS sí corren, `docs/despliegue-vps.md`
+  §6).
 
 ## 6. Healthcheck y monitoreo
 
@@ -174,7 +191,9 @@ detalle del contenedor está en `docs/docker.md`.
    ```
 
 4. Cron del host (el crontab no expande variables: pon el valor o un
-   script que lea el secreto):
+   script que lea el secreto). Son seis rutas; la lista completa, con su
+   frecuencia, está en `docs/despliegue-vps.md` §6 y el crontab listo en
+   `deploy/vps/crontab.example`. El de recordatorios, de ejemplo:
 
    ```cron
    */10 * * * * curl -fsS -H "x-cron-secret: EL_SECRETO" https://crm.tu-dominio.com/api/verticals/agenda/reminders/run

@@ -13,6 +13,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { isUndefinedColumnError } from '@/lib/modules/undefined-column'
 import type { VerticalSession } from '@/lib/verticals/types'
 
 import { sanitizeBotTexts, type BotTextOverrides } from '../bot-texts'
@@ -346,29 +347,42 @@ export async function listServices(
   }))
 }
 
-/** Barberos activos que atienden un servicio, en orden de posición. */
+/**
+ * Barberos activos que atienden un servicio, en orden de posición.
+ *
+ * Con `strict` (el panel) un fallo de lectura lanza: la recepción no puede
+ * ver "no hay horas" cuando en realidad no se pudo leer la agenda. El bot
+ * conserva su conducta de siempre.
+ */
 export async function listEligibleStaff(
   db: SupabaseClient,
   accountId: string,
   serviceId: string,
+  options: { strict?: boolean } = {},
 ): Promise<StaffInfo[]> {
-  const { data: links } = await db
+  const { data: links, error: linksError } = await db
     .from('booking_staff_services')
     .select('staff_id')
     .eq('account_id', accountId)
     .eq('service_id', serviceId)
+  if (linksError && options.strict) {
+    throw new Error(`No se pudo leer quién atiende el servicio: ${linksError.message}`)
+  }
   const staffIds = ((links ?? []) as Record<string, unknown>[]).map(
     (row) => row.staff_id as string,
   )
   if (!staffIds.length) return []
 
-  const { data } = await db
+  const { data, error: staffError } = await db
     .from('booking_staff')
     .select('id, name')
     .eq('account_id', accountId)
     .eq('is_active', true)
     .in('id', staffIds)
     .order('position')
+  if (staffError && options.strict) {
+    throw new Error(`No se pudo leer el equipo: ${staffError.message}`)
+  }
   return ((data ?? []) as Record<string, unknown>[]).map((row) => ({
     id: row.id as string,
     name: row.name as string,
@@ -447,6 +461,9 @@ export async function listWorkBlocks(
  * Citas activas + bloqueos de time off de los barberos, en una
  * ventana [fromIso, toIso). Los intervalos se devuelven crudos: el
  * cálculo de solapes vive en availability.ts.
+ *
+ * Con `excludeAppointmentId` esa cita no cuenta como ocupada (al mover una
+ * cita, la propia no debe taparse a sí misma). Los bloqueos siempre cuentan.
  */
 export async function listBusy(
   db: SupabaseClient,
@@ -454,11 +471,12 @@ export async function listBusy(
   staffIds: string[],
   fromIso: string,
   toIso: string,
+  excludeAppointmentId?: string,
 ): Promise<BusyRow[]> {
   if (!staffIds.length) return []
   const out: BusyRow[] = []
 
-  const { data: appts } = await db
+  let apptsQuery = db
     .from('booking_appointments')
     .select('staff_id, starts_at, ends_at')
     .eq('account_id', accountId)
@@ -466,6 +484,8 @@ export async function listBusy(
     .in('status', ['pending', 'confirmed'])
     .lt('starts_at', toIso)
     .gt('ends_at', fromIso)
+  if (excludeAppointmentId) apptsQuery = apptsQuery.neq('id', excludeAppointmentId)
+  const { data: appts } = await apptsQuery
   for (const row of (appts ?? []) as Record<string, unknown>[]) {
     out.push({
       staffId: row.staff_id as string,
@@ -582,7 +602,10 @@ export async function insertAppointment(
     startsAtIso: string
     endsAtIso: string
     status: 'confirmed'
-    createdVia: 'bot'
+    /** 'bot' lo manda el controlador de WhatsApp; 'dashboard', la recepción desde el panel (migración 056). */
+    createdVia: 'bot' | 'dashboard'
+    /** Quién la creó (usuario del panel). Solo se envía si viene. */
+    createdBy?: string | null
     confirmedAtIso: string
     rescheduledFrom?: string | null
     /** Módulo clínica. Solo se envían si vienen: las demás cuentas no tienen estas columnas. */
@@ -604,6 +627,7 @@ export async function insertAppointment(
     ends_at: args.endsAtIso,
     status: args.status,
     created_via: args.createdVia,
+    ...(args.createdBy ? { created_by: args.createdBy } : {}),
     confirmed_at: args.confirmedAtIso,
     ...(args.rescheduledFrom
       ? { rescheduled_from: args.rescheduledFrom }
@@ -668,7 +692,15 @@ export async function cancelAppointment(
 /**
  * Confirmación de una cita existente (botón Confirmar del
  * recordatorio). Idempotente: una cita ya confirmada solo refresca
- * `confirmed_at`. El trigger de 047 registra el cambio de estado.
+ * `confirmed_at` y `attendance_confirmed_at`. El trigger de 047
+ * registra el cambio de estado.
+ *
+ * `attendance_confirmed_at` (migración 056) es "el paciente dijo que va";
+ * no es lo mismo que `confirmed_at`, que el bot pone al reservar.
+ *
+ * Si la 056 aún no está aplicada (columna ausente: 42703 / PGRST204) repite
+ * una vez sin esa columna, para que el botón Confirmar de las cuentas ya
+ * en producción siga funcionando como antes de la 056.
  */
 export async function markAppointmentConfirmed(
   db: SupabaseClient,
@@ -678,15 +710,25 @@ export async function markAppointmentConfirmed(
     confirmedAtIso: string
   },
 ): Promise<void> {
-  const { error } = await db
-    .from('booking_appointments')
-    .update({
-      status: 'confirmed',
-      confirmed_at: args.confirmedAtIso,
-      updated_at: args.confirmedAtIso,
-    })
-    .eq('id', args.id)
-    .eq('account_id', args.accountId)
+  const base = {
+    status: 'confirmed',
+    confirmed_at: args.confirmedAtIso,
+    updated_at: args.confirmedAtIso,
+  }
+  const write = (patch: Record<string, unknown>) =>
+    db
+      .from('booking_appointments')
+      .update(patch)
+      .eq('id', args.id)
+      .eq('account_id', args.accountId)
+
+  let { error } = await write({
+    ...base,
+    attendance_confirmed_at: args.confirmedAtIso,
+  })
+  if (isUndefinedColumnError(error)) {
+    ;({ error } = await write(base))
+  }
   if (error) throw new Error(`No se pudo confirmar la cita: ${error.message}`)
 }
 
@@ -980,8 +1022,9 @@ export async function insertNotification(
   args: {
     accountId: string
     userId: string
-    conversationId: string
-    contactId: string
+    /** null en avisos que no son de una conversación (la columna lo permite). */
+    conversationId: string | null
+    contactId: string | null
     title: string
     body: string
     createdAtIso?: string

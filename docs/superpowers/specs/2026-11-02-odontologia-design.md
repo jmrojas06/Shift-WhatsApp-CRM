@@ -429,8 +429,8 @@ OK del usuario. Nunca `supabase db push`.
 | Fase | Entrega | Depende de |
 | --- | --- | --- |
 | 1 | Bot dental sobre `ClinicBackend` con la Agenda de Shift: pacientes y familia, autorización, urgencias, punto de partida, candado, citas lejanas, plantilla sin procedimiento. Demo con clínica ficticia, presentada como ficticia. Después, texto libre y audio con IA. | Nada |
-| 2 | Agenda para recepción: calendario, crear, mover y cancelar citas, cupo de sillones (§6.9), y citas sin confirmar para llamar. | Fase 1 |
-| 3 | Después de la cita: cierre del día, cuidados, "¿Cómo sigues?", calificación. | Fase 1 |
+| 2 | **Hecha en la rama `feat/clinica-fases-2-3`** (05/11/2026, falta unirla): agenda para recepción, con calendario, crear, mover y cancelar citas, cupo de sillones (§6.9) y citas sin confirmar para llamar. Se le sumaron la copia a Google Calendar y las llamadas con voz por pasos. | Fase 1 |
+| 3 | **Hecha en la misma rama** (falta unirla): después de la cita, con cierre del día, cuidados, "¿Cómo sigues?" y calificación. | Fase 1 |
 | 0 | Acceso a Dentalink y prueba real de la API (§10). Sin código de producto. | Respuesta de Dentalink |
 | 4 | Conector Dentalink: copia de citas, sedes, ficha de ingreso, cambios de la clínica, montaje guiado. | Fases 0 y 1 |
 | 5 | Volver y pagar, y lista de espera. | Fase 3 |
@@ -440,8 +440,14 @@ OK del usuario. Nunca `supabase db push`.
 fases 2 y 3 son independientes entre sí. La Fase 0 ya no bloquea a la primera clínica: se hace cuando
 aparezca una que no quiera dejar su software.
 
+**Las Fases 2 y 3 ya están construidas en la rama `feat/clinica-fases-2-3`**, hecha desde
+`feat/clinica-odontologia`. Su diseño y sus cambios respecto a este documento están en
+[`2026-11-05-clinica-fases-2-3-design.md`](./2026-11-05-clinica-fases-2-3-design.md); los pasos para montarlas
+(migración 056, plantillas de Meta, Google Cloud, Telnyx) están en `docs/clinica-montaje.md`, secciones 13 a 23.
+
 Todo sale en ramas desde `main`, con PR por fase. Cada módulo se activa solo para cuentas de clínica:
-ningún negocio actual cambia de conducta, con **dos excepciones** que también tocan a las cuentas actuales:
+ningún negocio actual cambia de conducta, con **tres excepciones** que también tocan a las cuentas actuales
+(la tercera llegó con la Fase 2):
 
 1. **Los botones de `recordatorio_cita` ahora funcionan.** Antes, una plantilla enviada sin payload devolvía
    la etiqueta del botón ("Confirmar") y el bot no la entendía: el toque no hacía nada. Ahora la etiqueta se
@@ -450,6 +456,8 @@ ningún negocio actual cambia de conducta, con **dos excepciones** que también 
 2. **"Atención" ya no abre el flujo de reservas.** Las palabras propias del negocio abren el flujo salvo que
    sean muy comunes; "atención" ("gracias por la atención") se agregó a esa lista. Un negocio que use
    "atención" como su palabra para la cita deja de abrir el flujo con ella.
+3. **Confirmar en un recordatorio ahora también anota `attendance_confirmed_at`** ("el paciente dijo que va"),
+   en cualquier cuenta. Es lo que usan la lista "Para llamar" y las llamadas (diseño de las Fases 2 y 3, §4.1).
 
 ## 10. Fase 0: preguntas por responder
 

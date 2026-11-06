@@ -12,7 +12,9 @@ import {
   loadActiveSession,
   loadAppointmentClinicLinks,
   loadBotSettings,
+  listBusy,
   loadHumanOwned,
+  markAppointmentConfirmed,
 } from './db'
 import { asClient, makeFakeDb } from './testing/fake-db'
 
@@ -197,6 +199,150 @@ describe('insertAppointment: paciente y sede', () => {
     expect('location_id' in inserted[0]).toBe(false)
     expect(inserted[1]).toMatchObject({ location_id: 'loc-1' })
     expect('patient_id' in inserted[1]).toBe(false)
+  })
+})
+
+describe('insertAppointment: citas hechas desde el panel', () => {
+  const base = {
+    id: 'a1',
+    accountId: 'acc-1',
+    contactId: 'ct-1',
+    conversationId: 'cv-1',
+    serviceId: 'svc-1',
+    staffId: 'st-1',
+    startsAtIso: '2026-10-19T14:00:00.000Z',
+    endsAtIso: '2026-10-19T14:30:00.000Z',
+    status: 'confirmed' as const,
+    confirmedAtIso: '2026-10-19T13:00:00.000Z',
+  }
+
+  function recordingClient() {
+    const inserted: Record<string, unknown>[] = []
+    const client = {
+      from: () => ({
+        insert: async (row: Record<string, unknown>) => {
+          inserted.push(row)
+          return { error: null }
+        },
+      }),
+    } as unknown as SupabaseClient
+    return { client, inserted }
+  }
+
+  it('guarda created_via dashboard y quién la creó', async () => {
+    const { client, inserted } = recordingClient()
+    await insertAppointment(client, { ...base, createdVia: 'dashboard', createdBy: 'user-1' })
+    expect(inserted[0]).toMatchObject({ created_via: 'dashboard', created_by: 'user-1' })
+  })
+
+  it('lo que manda el bot no cambia: created_via bot y sin created_by', async () => {
+    const { client, inserted } = recordingClient()
+    await insertAppointment(client, { ...base, createdVia: 'bot' })
+    expect(inserted[0]).toMatchObject({ created_via: 'bot' })
+    expect('created_by' in inserted[0]).toBe(false)
+  })
+})
+
+describe('markAppointmentConfirmed', () => {
+  const CONFIRMED_AT = '2026-10-19T13:00:00.000Z'
+  const seed = () =>
+    makeFakeDb({
+      booking_appointments: [
+        { id: 'ap-1', account_id: 'acc-1', status: 'pending', confirmed_at: null },
+        { id: 'ap-2', account_id: 'acc-1', status: 'pending', confirmed_at: null },
+        { id: 'ap-3', account_id: 'acc-2', status: 'pending', confirmed_at: null },
+      ],
+    })
+
+  it('deja la cita confirmada y anota la hora en confirmed_at y attendance_confirmed_at', async () => {
+    const db = seed()
+    await markAppointmentConfirmed(asClient(db), {
+      accountId: 'acc-1',
+      id: 'ap-1',
+      confirmedAtIso: CONFIRMED_AT,
+    })
+    expect(db._tables.booking_appointments[0]).toMatchObject({
+      status: 'confirmed',
+      confirmed_at: CONFIRMED_AT,
+      attendance_confirmed_at: CONFIRMED_AT,
+      updated_at: CONFIRMED_AT,
+    })
+  })
+
+  it('solo toca esa cita de esa cuenta', async () => {
+    const db = seed()
+    await markAppointmentConfirmed(asClient(db), {
+      accountId: 'acc-1',
+      id: 'ap-3',
+      confirmedAtIso: CONFIRMED_AT,
+    })
+    expect(db._tables.booking_appointments.map((a) => a.status)).toEqual([
+      'pending',
+      'pending',
+      'pending',
+    ])
+    expect(db._tables.booking_appointments.some((a) => 'attendance_confirmed_at' in a)).toBe(false)
+  })
+
+  it('si la base lo rechaza, lanza: no se puede decir "confirmada" sobre una cita que sigue igual', async () => {
+    const db = seed()
+    db._failNext('update', 'booking_appointments', { message: 'boom' })
+    await expect(
+      markAppointmentConfirmed(asClient(db), {
+        accountId: 'acc-1',
+        id: 'ap-1',
+        confirmedAtIso: CONFIRMED_AT,
+      }),
+    ).rejects.toThrow('No se pudo confirmar la cita')
+  })
+
+  it.each(['42703', 'PGRST204'])(
+    'si la migración 056 no está aplicada (%s) repite sin attendance_confirmed_at y confirma igual',
+    async (code) => {
+      const db = seed()
+      db._failNext('update', 'booking_appointments', {
+        code,
+        message: 'column "attendance_confirmed_at" does not exist',
+      })
+      await markAppointmentConfirmed(asClient(db), {
+        accountId: 'acc-1',
+        id: 'ap-1',
+        confirmedAtIso: CONFIRMED_AT,
+      })
+      expect(db._tables.booking_appointments[0]).toMatchObject({
+        status: 'confirmed',
+        confirmed_at: CONFIRMED_AT,
+        updated_at: CONFIRMED_AT,
+      })
+      expect('attendance_confirmed_at' in db._tables.booking_appointments[0]).toBe(false)
+    },
+  )
+
+  it('si el reintento sin la columna también falla, lanza', async () => {
+    const db = seed()
+    db._failNext('update', 'booking_appointments', { code: '42703', message: 'no column' })
+    db._failNext('update', 'booking_appointments', { message: 'boom' })
+    await expect(
+      markAppointmentConfirmed(asClient(db), {
+        accountId: 'acc-1',
+        id: 'ap-1',
+        confirmedAtIso: CONFIRMED_AT,
+      }),
+    ).rejects.toThrow('No se pudo confirmar la cita')
+    expect(db._tables.booking_appointments[0].status).toBe('pending')
+  })
+
+  it('un error que no es de columna ausente no se reintenta', async () => {
+    const db = seed()
+    db._failNext('update', 'booking_appointments', { code: '57014', message: 'timeout' })
+    await expect(
+      markAppointmentConfirmed(asClient(db), {
+        accountId: 'acc-1',
+        id: 'ap-1',
+        confirmedAtIso: CONFIRMED_AT,
+      }),
+    ).rejects.toThrow('No se pudo confirmar la cita')
+    expect(db._tables.booking_appointments[0].status).toBe('pending')
   })
 })
 
@@ -427,5 +573,56 @@ describe('loadHumanOwned', () => {
     const fake = makeFakeDb({ conversations: [] })
     fake._failNext('select', 'conversations', { message: 'la base se cayó' })
     await expect(loadHumanOwned(asClient(fake), 'acc', 'cv-1')).rejects.toThrow('la base se cayó')
+  })
+})
+
+describe('listBusy', () => {
+  const FROM = '2026-10-19T05:00:00.000Z'
+  const TO = '2026-10-20T05:00:00.000Z'
+  const tables = () => ({
+    booking_appointments: [
+      {
+        id: 'ap-1',
+        account_id: 'acc-1',
+        staff_id: 'st-1',
+        status: 'confirmed',
+        starts_at: '2026-10-19T14:00:00.000Z',
+        ends_at: '2026-10-19T14:30:00.000Z',
+      },
+      {
+        id: 'ap-2',
+        account_id: 'acc-1',
+        staff_id: 'st-1',
+        status: 'pending',
+        starts_at: '2026-10-19T15:00:00.000Z',
+        ends_at: '2026-10-19T15:30:00.000Z',
+      },
+    ],
+    booking_time_off: [
+      {
+        id: 'off-1',
+        account_id: 'acc-1',
+        staff_id: 'st-1',
+        starts_at: '2026-10-19T16:00:00.000Z',
+        ends_at: '2026-10-19T17:00:00.000Z',
+      },
+    ],
+  })
+
+  it('sin excludeAppointmentId trae las citas activas y los bloqueos', async () => {
+    const busy = await listBusy(asClient(makeFakeDb(tables())), 'acc-1', ['st-1'], FROM, TO)
+    expect(busy.map((b) => b.startsAt.toISOString())).toEqual([
+      '2026-10-19T14:00:00.000Z',
+      '2026-10-19T15:00:00.000Z',
+      '2026-10-19T16:00:00.000Z',
+    ])
+  })
+
+  it('con excludeAppointmentId deja fuera solo esa cita; los bloqueos siguen', async () => {
+    const busy = await listBusy(asClient(makeFakeDb(tables())), 'acc-1', ['st-1'], FROM, TO, 'ap-1')
+    expect(busy.map((b) => b.startsAt.toISOString())).toEqual([
+      '2026-10-19T15:00:00.000Z',
+      '2026-10-19T16:00:00.000Z',
+    ])
   })
 })

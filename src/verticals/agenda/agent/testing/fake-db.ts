@@ -62,7 +62,70 @@ export interface FakeDb {
   from(table: string): unknown
 }
 
-type FilterKind = 'eq' | 'in' | 'lt' | 'lte' | 'gt' | 'gte' | 'is'
+type FilterKind = 'eq' | 'neq' | 'in' | 'lt' | 'lte' | 'gt' | 'gte' | 'is' | 'or'
+
+type RowPredicate = (row: Row) => boolean
+
+/** Parte por las comas de más afuera (las de dentro de un paréntesis no cuentan). */
+function splitTopLevel(expression: string): string[] {
+  const parts: string[] = []
+  let depth = 0
+  let start = 0
+  for (let i = 0; i < expression.length; i++) {
+    const char = expression[i]
+    if (char === '(') depth++
+    else if (char === ')') depth--
+    else if (char === ',' && depth === 0) {
+      parts.push(expression.slice(start, i))
+      start = i + 1
+    }
+  }
+  parts.push(expression.slice(start))
+  return parts.map((part) => part.trim()).filter((part) => part !== '')
+}
+
+/**
+ * Lo que PostgREST acepta en `.or()`: condiciones `columna.operador.valor` separadas
+ * por coma y grupos `and(...)` / `or(...)` anidados. Un valor ausente en la fila cuenta
+ * como NULL (así se comporta una columna sin dato en la base).
+ */
+function parseOrExpression(expression: string): RowPredicate {
+  const terms = splitTopLevel(expression).map((term): RowPredicate => {
+    const group = /^(and|or)\(([\s\S]*)\)$/.exec(term)
+    if (group) {
+      const inner = splitTopLevel(group[2]).map(parseOrExpression)
+      return group[1] === 'and' ? (row) => inner.every((p) => p(row)) : (row) => inner.some((p) => p(row))
+    }
+    const first = term.indexOf('.')
+    const second = term.indexOf('.', first + 1)
+    if (first < 0 || second < 0) throw new Error(`fake-db: condición de .or() no soportada: ${term}`)
+    const col = term.slice(0, first)
+    const operator = term.slice(first + 1, second)
+    const value = term.slice(second + 1)
+    return (row) => {
+      const v = row[col]
+      switch (operator) {
+        case 'is':
+          return value === 'null' ? v == null : String(v) === value
+        case 'eq':
+          return v != null && String(v) === value
+        case 'neq':
+          return v == null || String(v) !== value
+        case 'lt':
+          return v != null && String(v) < value
+        case 'lte':
+          return v != null && String(v) <= value
+        case 'gt':
+          return v != null && String(v) > value
+        case 'gte':
+          return v != null && String(v) >= value
+        default:
+          throw new Error(`fake-db: operador de .or() no soportado: ${operator}`)
+      }
+    }
+  })
+  return (row) => terms.some((term) => term(row))
+}
 
 /** Tablas donde el código deja que Postgres genere el `id` al insertar. */
 const GENERATED_ID_TABLES = new Set(['flows'])
@@ -137,6 +200,8 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
         switch (kind) {
           case 'eq':
             return v === value
+          case 'neq':
+            return v !== value
           case 'in':
             return (value as unknown[]).includes(v)
           case 'lt':
@@ -149,6 +214,8 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
             return String(v) >= String(value)
           case 'is':
             return v === value
+          case 'or':
+            return (value as RowPredicate)(row)
         }
       })
 
@@ -264,6 +331,10 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
         filters.push({ col, kind: 'eq', value })
         return api
       },
+      neq: (col: string, value: unknown) => {
+        filters.push({ col, kind: 'neq', value })
+        return api
+      },
       in: (col: string, value: unknown[]) => {
         filters.push({ col, kind: 'in', value })
         return api
@@ -286,6 +357,10 @@ export function makeFakeDb(seed: Record<string, Row[]>): FakeDb {
       },
       is: (col: string, value: unknown) => {
         filters.push({ col, kind: 'is', value })
+        return api
+      },
+      or: (expression: string) => {
+        filters.push({ col: '', kind: 'or', value: parseOrExpression(expression) })
         return api
       },
       order: (col: string, o?: { ascending?: boolean; nullsFirst?: boolean }) => {

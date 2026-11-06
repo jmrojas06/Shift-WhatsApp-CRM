@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  FOLLOWUP_ACTIONS,
+  RATING_VALUES,
+  followupPayload,
+  ratingPayload,
+} from '@/modules/clinica/followups'
+
+import {
   actId,
   ansId,
   ansSkipId,
@@ -20,6 +27,7 @@ import {
   newBookingState,
   normalizeText,
   parseOptionId,
+  parseFollowupTap,
   parseReminderTap,
   patId,
   remId,
@@ -378,6 +386,51 @@ describe('toques del recordatorio', () => {
     expect(parseReminderTap('Confirmar')?.viaLabel).toBe(true)
     expect(parseReminderTap('rem:confirm')?.viaLabel).toBeUndefined()
     expect(parseReminderTap('rem:cancel:ap-1')?.viaLabel).toBeUndefined()
+  })
+})
+
+describe('toques de los seguimientos después de la cita', () => {
+  const ID = '11111111-1111-4111-8111-111111111111'
+
+  it.each(FOLLOWUP_ACTIONS)('lee el payload de "%s" que arma el seguimiento', (action) => {
+    expect(parseFollowupTap(followupPayload(action, ID))).toEqual({
+      type: 'fu',
+      action,
+      followupId: ID,
+    })
+  })
+
+  it.each(RATING_VALUES)('lee el payload de la calificación "%s"', (value) => {
+    expect(parseFollowupTap(ratingPayload(value, ID))).toEqual({
+      type: 'rt',
+      value,
+      followupId: ID,
+    })
+  })
+
+  it('solo lee payloads: una etiqueta nunca es un toque de seguimiento', () => {
+    for (const label of ['Bien', 'Regular', 'Mal', 'Tengo molestias', 'Necesito ayuda', 'Ver recomendaciones']) {
+      expect(parseFollowupTap(label)).toBeNull()
+    }
+  })
+
+  it('no acepta otras familias, acciones desconocidas ni ids que faltan o sobran', () => {
+    expect(parseFollowupTap('rem:confirm:' + ID)).toBeNull()
+    expect(parseFollowupTap('act:book')).toBeNull()
+    expect(parseFollowupTap('book:again')).toBeNull()
+    expect(parseFollowupTap('fu:desconocida:' + ID)).toBeNull()
+    expect(parseFollowupTap('fu:bien')).toBeNull()
+    expect(parseFollowupTap('fu:bien:')).toBeNull()
+    expect(parseFollowupTap('fu:bien:' + ID + ':extra')).toBeNull()
+    // Cada familia lleva sus propias palabras: una calificación no es una respuesta de "¿cómo sigues?".
+    expect(parseFollowupTap('fu:regular:' + ID)).toBeNull()
+    expect(parseFollowupTap('fu:mal:' + ID)).toBeNull()
+    expect(parseFollowupTap('rt:molestias:' + ID)).toBeNull()
+    expect(parseFollowupTap('rt:cuidados:' + ID)).toBeNull()
+    expect(parseFollowupTap('')).toBeNull()
+    expect(parseFollowupTap('constructor')).toBeNull()
+    expect(parseFollowupTap('fu:constructor:' + ID)).toBeNull()
+    expect(parseFollowupTap('rt:toString:' + ID)).toBeNull()
   })
 })
 

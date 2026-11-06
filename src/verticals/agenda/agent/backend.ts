@@ -36,6 +36,11 @@ export interface SlotQuery {
   /** Día local 'YYYY-MM-DD'. */
   dateKey: string
   now: Date
+  /**
+   * Cita que no debe contar como ocupada ni ocupar silla: al mover una cita
+   * desde el panel, la propia. El bot no lo usa.
+   */
+  excludeAppointmentId?: string
 }
 
 export interface DayRangeQuery {

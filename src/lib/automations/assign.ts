@@ -1,3 +1,5 @@
+import { isShiftStaffEmail } from '@/lib/view-mode'
+
 /**
  * "Rotativo" (round_robin): reparte entre los miembros que atienden
  * (owner, admin, agent; nunca viewer) dándole el chat al que tenga
@@ -6,6 +8,18 @@
  * desincronice si una corrida falla.
  */
 export const ASSIGNABLE_ROLES = ['owner', 'admin', 'agent'] as const
+
+/**
+ * Quiénes entran al reparto. El equipo de Shift (SHIFT_STAFF_EMAILS) es
+ * admin en cada cuenta de cliente para configurarla, pero no atiende sus
+ * chats: si entrara, se quedaría con parte de los leads del negocio.
+ */
+export function assignableMemberIds(
+  members: readonly { user_id: string; email: string | null }[],
+  staffList: string | undefined = process.env.SHIFT_STAFF_EMAILS,
+): string[] {
+  return members.filter((m) => !isShiftStaffEmail(m.email, staffList)).map((m) => m.user_id)
+}
 
 export function pickLeastLoadedAgent(
   memberIds: readonly string[],
